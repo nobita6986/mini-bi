@@ -158,8 +158,49 @@ test("Work Reports predicates enforce capability and compatible scope", () => {
     makeActor(["report_assign"], team)), true);
 });
 
-test("F2 review nav includes direct and server-projected delegated reviewers, delegation stays explicit", () => {
+test("F2 review nav includes canonical Full Admin, direct and server-projected delegated reviewers; delegation admits Full Admin or explicit report_delegate without expanding Team Leader", () => {
+  const all = [{ kind: "all", reference: "all" }];
   const team = [{ kind: "team", reference: "team-1" }];
+  const fullAdmin = makeActor(
+    ["entry_admin", "recruiter_master_manage", "team_master_manage"],
+    all,
+  );
+  assert.equal(workReportReviewPredicate(fullAdmin), true, "canonical Full Admin sees Duyệt báo cáo");
+  assert.equal(workReportDelegationPredicate(fullAdmin), true, "canonical Full Admin sees Ủy quyền");
+  assert.equal(resolveNavCapabilityPredicate("work_report_reviews")(fullAdmin), true);
+
+  // Partial admin triples or non-all scope must NOT trigger Full Admin fallback
+  assert.equal(
+    workReportReviewPredicate(makeActor(["entry_admin", "recruiter_master_manage"], all)),
+    false,
+  );
+  assert.equal(
+    workReportDelegationPredicate(makeActor(["entry_admin", "recruiter_master_manage"], all)),
+    false,
+  );
+  assert.equal(
+    workReportReviewPredicate(
+      makeActor(["entry_admin", "recruiter_master_manage", "team_master_manage"], team),
+    ),
+    false,
+  );
+  assert.equal(
+    workReportDelegationPredicate(
+      makeActor(["entry_admin", "recruiter_master_manage", "team_master_manage"], team),
+    ),
+    false,
+  );
+
+  // Team Leader bundle: has report_review/report_view/report_analytics_view/report_assign @ team,
+  // NOT expanded to report_delegate or template management
+  const teamLeader = makeActor(
+    ["team_manager_assign", "report_view", "report_analytics_view", "report_assign", "report_review"],
+    team,
+  );
+  assert.equal(workReportReviewPredicate(teamLeader), true);
+  assert.equal(workReportDelegationPredicate(teamLeader), false, "Team Leader is not auto-expanded to Ủy quyền");
+  assert.equal(workReportTemplateManagePredicate(teamLeader), false, "Team Leader is not auto-expanded to Mẫu biểu");
+
   assert.equal(workReportReviewPredicate(makeActor(["report_review"], team)), true);
   const delegated = { capabilities: [], scopes: [{ kind: "own" }], effective_report_review_scopes: [{ kind: "team", team_id: "team-1", label: "Team 1" }] };
   assert.equal(workReportReviewPredicate(delegated), true);
@@ -170,6 +211,7 @@ test("F2 review nav includes direct and server-projected delegated reviewers, de
   assert.equal(resolveNavCapabilityPredicate("work_report_reviews")(staff), false);
   assert.equal(workReportReviewPredicate(makeActor(["report_review"], [{ kind: "own" }])), false);
   assert.equal(workReportDelegationPredicate(makeActor(["report_delegate"], team)), true);
+  assert.equal(workReportDelegationPredicate(makeActor(["report_delegate"], [{ kind: "own" }])), false);
   assert.equal(workReportDelegationPredicate(delegated), false, "effective delegated review does not grant delegation management");
 });
 
@@ -336,9 +378,9 @@ test("filterEntriesForActor: owner (đủ 3 admin) + viewport=mobile → các kh
     actor: ownerActor,
     decide: decideFor(ownerActor, "mobile"),
   });
-  // Full Admin thấy Admin và Work Reports cùng các khu vực đã có quyền.
+  // Full Admin thấy Admin, Work Reports, Duyệt báo cáo cùng các khu vực đã có quyền.
   assert.deepEqual(result.map((e) => e.id).sort(),
-    ["admin", "change-requests", "dashboard", "direct-entry", "project-operations", "work-reports", "worker-operations"]);
+    ["admin", "change-requests", "dashboard", "direct-entry", "project-operations", "work-report-reviews", "work-reports", "worker-operations"]);
 });
 
 test("filterEntriesForActor: Direct Entry off bởi env → chỉ Dashboard dù actor có quyền", () => {

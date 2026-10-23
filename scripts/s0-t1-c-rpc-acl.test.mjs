@@ -32,6 +32,8 @@ import {
   WF02_WORKFORCE_BALANCE_WAITING_MIGRATION_NAME,
   DUPLICATE_CCCD_SELF_SERVICE_MIGRATION_NAME,
   DUPLICATE_CCCD_SELF_SERVICE_RPC_SIGNATURES,
+  WORK_REPORTS_READER_CONTRACT_MIGRATION_NAME,
+  WORK_REPORTS_READER_CONTRACT_RPC_SIGNATURES,
   migrationChecksum,
   migrationSqlForTransaction,
   runMigrationApply,
@@ -561,6 +563,19 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
         /revoke all on function public\.direct_entry__internal_apply_entry_void\(\s*uuid,\s*uuid,\s*uuid,\s*integer,\s*uuid,\s*text,\s*text,\s*text,\s*uuid\s*\)\s*from public, anon, authenticated, service_role;/i,
         "shared internal entry-void helper revokes EXECUTE from all roles including service_role",
       );
+      const workReportsReaderMigration = await readFile(
+        path.join(MIGRATION_DIR, WORK_REPORTS_READER_CONTRACT_MIGRATION_NAME), "utf8",
+      );
+      const workReportsReaderNormalized = workReportsReaderMigration.replace(/\s+/g, " ")
+        .replace(/\(\s+/g, "(").replace(/\s+\)/g, ")").toLowerCase();
+      for (const sig of WORK_REPORTS_READER_CONTRACT_RPC_SIGNATURES) {
+        const sigGrant = `grant execute on function ${sig.toLowerCase()} to service_role;`;
+        const sigRevoke = `revoke all on function ${sig.toLowerCase()} from public, anon, authenticated, service_role;`;
+        assert.ok(workReportsReaderNormalized.includes(sigGrant),
+          `Work Reports reader RPC ${sig} is explicitly granted only to service_role`);
+        assert.ok(workReportsReaderNormalized.includes(sigRevoke),
+          `Work Reports reader RPC ${sig} revokes client and inherited EXECUTE before granting service_role`);
+      }
       expectedSignatures.push(R1_2_SERVICE_RPC, ...F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES,
         F1_WORK_REPORTS_ASSIGNMENT_OPTIONS_RPC_SIGNATURE,
         F1_WORK_REPORTS_ASSIGNMENT_TRACKING_RPC_SIGNATURE,
@@ -568,7 +583,8 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
         ...F2_WORK_REPORTS_REVIEW_AND_DELEGATION_RPC_SIGNATURES,
         WF01_WORKFORCE_SNAPSHOT_RPC_SIGNATURE,
         PROJECT_TEAM_SCOPE_SEARCH_RPC_SIGNATURE,
-        ...DUPLICATE_CCCD_SELF_SERVICE_RPC_SIGNATURES);
+        ...DUPLICATE_CCCD_SELF_SERVICE_RPC_SIGNATURES,
+        ...WORK_REPORTS_READER_CONTRACT_RPC_SIGNATURES);
       assert.ok(expectedSignatures.length > 0, "the explicit server/invoker allowlist is not empty");
       assert.equal(new Set(expectedSignatures).size, expectedSignatures.length, "the allowlist has no duplicates");
       const { rows: resolvedExpected } = await client.query(
@@ -591,7 +607,8 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
           ...F2_WORK_REPORTS_REVIEW_AND_DELEGATION_RPC_SIGNATURES,
           WF01_WORKFORCE_SNAPSHOT_RPC_SIGNATURE,
           PROJECT_TEAM_SCOPE_SEARCH_RPC_SIGNATURE,
-          ...DUPLICATE_CCCD_SELF_SERVICE_RPC_SIGNATURES].sort(),
+          ...DUPLICATE_CCCD_SELF_SERVICE_RPC_SIGNATURES,
+          ...WORK_REPORTS_READER_CONTRACT_RPC_SIGNATURES].sort(),
         "only explicitly reviewed post-S0 RPCs add service_role grants after the S0 baseline",
       );
       const removedSourceService = sourceService

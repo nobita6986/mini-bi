@@ -172,13 +172,16 @@ export const workReportAnalyticsPredicate: NavCapabilityPredicate = (actor) =>
   );
 
 export const workReportReviewPredicate: NavCapabilityPredicate = (actor) =>
+  adminAuthorityNavPredicate(actor) ||
   (actor.capabilities.some((capability) => (capability as string) === "report_review") &&
     actor.scopes.some((scope) => scope.kind === "team" || scope.kind === "all")) ||
   (actor.effective_report_review_scopes?.some((scope) => scope.kind === "all" || scope.kind === "team") ?? false);
 
 export const workReportDelegationPredicate: NavCapabilityPredicate = (actor) =>
-  actor.capabilities.some((capability) => (capability as string) === "report_delegate") &&
-  actor.scopes.some((scope) => scope.kind === "team" || scope.kind === "all");
+  adminAuthorityNavPredicate(actor) || (
+    actor.capabilities.some((capability) => (capability as string) === "report_delegate") &&
+    actor.scopes.some((scope) => scope.kind === "team" || scope.kind === "all")
+  );
 
 /** Staff access is projected by the server from an active obligation, never inferred from role/title. */
 export const workReportsNavPredicate: NavCapabilityPredicate = (actor) =>
