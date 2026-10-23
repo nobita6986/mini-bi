@@ -28,6 +28,13 @@ import {
 import { formatTimestamp, todayDateIso } from "@/lib/format";
 import { resolveTabTarget } from "@/components/dashboard/ai-settings-panel-logic";
 import { useNotify } from "@/components/ui/notify-provider";
+import {
+  isIndeterminateAiJobRunning,
+  settleTrackedJobToast,
+  validateDownloadableExportBlob,
+  validateHtmlExportDocument,
+  type TrackedJobToast,
+} from "@/lib/ui/long-running-feedback";
 import { ReportView } from "./report-view";
 
 const POLL_INTERVAL_MS = 2000;
@@ -118,6 +125,12 @@ export function AiReportPanel() {
   const firstFieldRef = useRef<HTMLInputElement>(null);
   const drawerRef = useRef<HTMLElement>(null);
   const controllerRef = useRef<ReturnType<typeof createReportController> | null>(null);
+  const activeJobToastRef = useRef<TrackedJobToast | null>(null);
+  const notifyRef = useRef(notify);
+
+  useEffect(() => {
+    notifyRef.current = notify;
+  });
 
   function getController() {
     if (!controllerRef.current) {
@@ -131,10 +144,34 @@ export function AiReportPanel() {
               setErrorText(err);
               setStatusText("Không đọc được trạng thái báo cáo.");
               setJobStatus((cur) => cur ?? { status: "failed_internal", error_code: "AI_INTERNAL", attempts: 0, max_attempts: 1 });
+              const outcome = settleTrackedJobToast({
+                tracker: activeJobToastRef.current,
+                incomingJobId: id,
+                status: null,
+                errorCode: null,
+                transportError: err,
+                codeToText: (code) => codeToMessage(code).text,
+                notify: notifyRef.current,
+              });
+              activeJobToastRef.current = outcome.nextTracker;
               return;
             }
             if (view) {
               setJobStatus({ status: view.status, error_code: view.error_code, attempts: view.attempts, max_attempts: view.max_attempts });
+              if (view.status === "draft" || view.status === "completed") {
+                setStatusText("Báo cáo AI đã sẵn sàng.");
+              } else if (isFailedJobStatus(view.status)) {
+                setStatusText(codeToMessage(view.error_code ?? "AI_INTERNAL").text);
+              }
+              const outcome = settleTrackedJobToast({
+                tracker: activeJobToastRef.current,
+                incomingJobId: id,
+                status: view.status,
+                errorCode: view.error_code,
+                codeToText: (code) => codeToMessage(code).text,
+                notify: notifyRef.current,
+              });
+              activeJobToastRef.current = outcome.nextTracker;
               if (view.revision) {
                 setAnalysis(view.revision.analysis);
                 setLifecycle(view.revision.lifecycle_status);
@@ -191,6 +228,18 @@ export function AiReportPanel() {
 
   useEffect(() => { if (!open) getController().stopPolling(); }, [open]);
   useEffect(() => () => getController().stopPolling(), []);
+  useEffect(() => {
+    if (!open && activeJobToastRef.current) {
+      notifyRef.current.dismiss(activeJobToastRef.current.toastId);
+      activeJobToastRef.current = null;
+    }
+  }, [open]);
+  useEffect(() => () => {
+    if (activeJobToastRef.current) {
+      notifyRef.current.dismiss(activeJobToastRef.current.toastId);
+      activeJobToastRef.current = null;
+    }
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -248,7 +297,14 @@ export function AiReportPanel() {
     if (!result.ok) { setErrorText(result.message); setStatusText("Không tạo được báo cáo AI."); notify.error({ title: result.message }); return; }
     setJobId(result.jobId); setAnalysis(null); setLifecycle(null); setRevisionNumber(null); setRevisionCreatedAt(null); setExportData(null);
     setStatusText("Đã gửi yêu cầu. Đang theo dõi trạng thái…");
-    notify.info({ title: "Đã gửi yêu cầu tạo báo cáo AI." });
+    if (activeJobToastRef.current) {
+      notify.dismiss(activeJobToastRef.current.toastId);
+    }
+    const toastId = notify.pending({
+      title: "Đang tổng hợp báo cáo AI…",
+      dedupeKey: "ai-report-job:" + result.jobId,
+    });
+    activeJobToastRef.current = { jobId: result.jobId, toastId };
     void loadHistory(null);
   }
 
@@ -263,7 +319,14 @@ export function AiReportPanel() {
     if (!result.ok) { setErrorText(result.message); setStatusText("Không tạo lại được báo cáo."); notify.error({ title: result.message }); return; }
     setRegenerateOpen(false); setRegenerateReason(""); setJobId(result.jobId); setAnalysis(null); setLifecycle(null); setRevisionNumber(null); setRevisionCreatedAt(null); setExportData(null);
     setStatusText("Đã gửi yêu cầu tạo lại. Đang theo dõi…");
-    notify.info({ title: "Đã gửi yêu cầu tạo lại báo cáo AI." });
+    if (activeJobToastRef.current) {
+      notify.dismiss(activeJobToastRef.current.toastId);
+    }
+    const toastId = notify.pending({
+      title: "Đang tạo lại báo cáo AI…",
+      dedupeKey: "ai-report-job:" + result.jobId,
+    });
+    activeJobToastRef.current = { jobId: result.jobId, toastId };
     void loadHistory(null);
   }
 
@@ -309,23 +372,39 @@ export function AiReportPanel() {
 
   function handleExport() {
     if (!analysis || !exportData || !jobId || !revisionCreatedAt) return;
-    const title = currentHistoryItem ? reportTitleForPeriod(currentHistoryItem.period) : `Báo cáo AI ${analysis.period_ref}`;
-    const html = buildReportExportHtml({
-      title,
-      reportCode: jobId.slice(0, 8),
-      lifecycleLabel: lifecycleLabel(lifecycle),
-      revisionCreatedAt,
-      analysis,
-      exportData,
-    });
-    const url = URL.createObjectURL(new Blob([html], { type: "text/html;charset=utf-8" }));
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = reportExportFileName(title, revisionCreatedAt);
-    anchor.click();
-    setTimeout(() => URL.revokeObjectURL(url), 0);
-    setStatusText("Đã xuất báo cáo HTML kèm biểu đồ. Có thể mở ngoại tuyến hoặc in thành PDF.");
-    notify.success({ title: "Đã xuất báo cáo HTML kèm biểu đồ." });
+    try {
+      const title = currentHistoryItem ? reportTitleForPeriod(currentHistoryItem.period) : `Báo cáo AI ${analysis.period_ref}`;
+      const html = buildReportExportHtml({
+        title,
+        reportCode: jobId.slice(0, 8),
+        lifecycleLabel: lifecycleLabel(lifecycle),
+        revisionCreatedAt,
+        analysis,
+        exportData,
+      });
+      if (!validateHtmlExportDocument(html)) {
+        setErrorText("Không tạo được nội dung xuất HTML hợp lệ.");
+        notify.error({ title: "Không tạo được tệp HTML báo cáo hợp lệ. Vui lòng thử lại." });
+        return;
+      }
+      const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+      if (!validateDownloadableExportBlob({ blob, allowedMimeTypes: ["text/html"] }).ok) {
+        setErrorText("Tệp báo cáo xuất ra bị rỗng.");
+        notify.error({ title: "Không tạo được tệp HTML báo cáo hợp lệ. Vui lòng thử lại." });
+        return;
+      }
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = reportExportFileName(title, revisionCreatedAt);
+      anchor.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setStatusText("Đã xuất báo cáo HTML kèm biểu đồ. Có thể mở ngoại tuyến hoặc in thành PDF.");
+      notify.success({ title: "Đã xuất báo cáo HTML kèm biểu đồ." });
+    } catch {
+      setErrorText("Không thể tải tệp HTML xuống thiết bị.");
+      notify.error({ title: "Không thể tải tệp HTML xuống thiết bị. Vui lòng thử lại." });
+    }
   }
 
   return (
@@ -393,6 +472,9 @@ export function AiReportPanel() {
                   <DetailRow label="Tạo lúc" value={formatTimestamp(currentHistoryItem?.created_at)} />
                   <DetailRow label="Mã" value={jobId.slice(0, 8)} />
                 </dl>
+                {isIndeterminateAiJobRunning(jobStatus?.status) ? (
+                  <progress aria-label="Đang tổng hợp báo cáo AI" className="mt-2 h-2 w-full" />
+                ) : null}
               </section>
             ) : null}
             {analysis ? (<ReportView analysis={analysis} lifecycle={lifecycle} />) : null}

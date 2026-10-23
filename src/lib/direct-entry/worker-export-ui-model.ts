@@ -26,6 +26,8 @@ export const WORKER_EXPORT_REASON_MAX = 4000;
 export const WORKER_EXPORT_FALLBACK_LIMIT = 10000;
 
 export const WORKER_EXPORT_LIMIT_MESSAGE_PREFIX = "Danh sách vượt giới hạn";
+export const WORKER_EXPORT_EMPTY_FILE_MESSAGE =
+  "Tệp xuất trả về không hợp lệ hoặc rỗng. Không có tệp nào được tải xuống; vui lòng thử lại.";
 
 export type WorkerExportEmploymentStatus = (typeof WORKER_EMPLOYMENT_STATUSES)[number];
 
@@ -150,15 +152,46 @@ export function workerExportRowLimit(payload: unknown): number {
  * huong dan thu hep bo loc — khong bao gio tai file thieu dong.
  */
 export function workerExportErrorMessage(status: number, payload: unknown): string {
+  if (status === 0) return "Không kết nối được tới máy chủ. Vui lòng kiểm tra kết nối mạng rồi thử lại.";
   if (status === 401) return "Phiên làm việc đã hết hiệu lực. Vui lòng đăng nhập lại.";
   if (status === 403) return "Bạn không có quyền xuất danh sách người lao động.";
   if (status === 404) return "Chức năng xuất Excel chưa được bật.";
+  if (status === 429) return "Thao tác quá nhanh. Vui lòng chờ giây lát rồi thử lại.";
   if (status === 422) {
     return WORKER_EXPORT_LIMIT_MESSAGE_PREFIX + " " + String(workerExportRowLimit(payload)) +
       " dòng. Vui lòng thu hẹp bộ lọc (dự án, người tuyển, trạng thái làm việc) rồi thử lại.";
   }
   if (status === 400) return "Yêu cầu xuất không hợp lệ. Vui lòng kiểm tra lại bộ lọc và lý do.";
   return "Không xuất được danh sách. Vui lòng thử lại.";
+}
+
+const NON_XLSX_MIME_TYPES = new Set([
+  "application/json",
+  "application/problem+json",
+  "text/plain",
+  "text/html",
+  "application/xhtml+xml",
+  "application/xml",
+  "text/xml",
+]);
+
+/**
+ * Xac minh Blob xuat Excel thuc su co du lieu su dung duoc truoc khi kich hoat tai tep va bao thanh cong.
+ */
+export function isUsableWorkerExportBlob(
+  blob: { size: number; type?: string } | null | undefined,
+  contentTypeHeader?: string | null,
+): boolean {
+  if (!blob || typeof blob.size !== "number" || !Number.isFinite(blob.size) || blob.size <= 0) {
+    return false;
+  }
+  const headerMime = (contentTypeHeader ?? "").toLowerCase().split(";")[0]?.trim() ?? "";
+  const blobMime = (blob.type ?? "").toLowerCase().split(";")[0]?.trim() ?? "";
+  const effectiveMime = headerMime || blobMime;
+  if (effectiveMime && NON_XLSX_MIME_TYPES.has(effectiveMime)) {
+    return false;
+  }
+  return true;
 }
 
 const XLSX_FILENAME = /^[A-Za-z0-9._-]+\.xlsx$/;
