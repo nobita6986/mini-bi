@@ -119,18 +119,20 @@ async function createDatabase({ stopBeforeLast = false } = {}) {
   const db = new PGlite();
   await db.exec(AUTH_PROLOGUE);
   const migrations = await loadMigrations();
-  assert.equal(migrations.at(-1)?.name, WORK_REPORTS_READER_CONTRACT_MIGRATION_NAME);
-  const slice = stopBeforeLast ? migrations.slice(0, -1) : migrations;
+  const targetIndex = migrations.findIndex(
+    (m) => m.name === WORK_REPORTS_READER_CONTRACT_MIGRATION_NAME,
+  );
+  assert.ok(targetIndex >= 0, "work_reports_reader_contract migration must exist");
+  const slice = stopBeforeLast ? migrations.slice(0, targetIndex) : migrations;
   for (const migration of slice) {
     await db.exec(migration.sql);
   }
-  return { db, migrations };
+  return { db, migrations, targetMigration: migrations[targetIndex] };
 }
 
 test("Migration transaction rollback on failure leaves zero partial RPC, index, or schema_migrations row, and ledger apply is idempotent", async () => {
-  const { db, migrations } = await createDatabase({ stopBeforeLast: true });
+  const { db, targetMigration: latest } = await createDatabase({ stopBeforeLast: true });
   try {
-    const latest = migrations.at(-1);
     assert.equal(latest.name, WORK_REPORTS_READER_CONTRACT_MIGRATION_NAME);
     const expectedChecksum = migrationChecksum(latest.sql);
     assert.match(expectedChecksum, /^[0-9a-f]{64}$/);

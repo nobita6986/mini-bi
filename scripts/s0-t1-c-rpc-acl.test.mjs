@@ -34,6 +34,8 @@ import {
   DUPLICATE_CCCD_SELF_SERVICE_RPC_SIGNATURES,
   WORK_REPORTS_READER_CONTRACT_MIGRATION_NAME,
   WORK_REPORTS_READER_CONTRACT_RPC_SIGNATURES,
+  ATTENDANCE_WP1_MIGRATION_NAME,
+  ATTENDANCE_WP1_RPC_SIGNATURES,
   migrationChecksum,
   migrationSqlForTransaction,
   runMigrationApply,
@@ -48,7 +50,7 @@ const R1_2_MIGRATION = "20261021100000_r1_2_worker_management_uat_fixes.sql";
 const R2_1_MIGRATION = "20261021120000_r2_1_change_request_queues_and_project_team_guard.sql";
 const R1_2_SERVICE_RPC =
   "public.direct_entry_list_workers(uuid, uuid, text, text, uuid, text, text, integer, text)";
-const TARGET_PATTERN = "^(direct_entry_|work_report_|ai_report_|ai_provider_config_|recruitment_|(expand|replace|reject|upsert)_daily_recruitment|record_recruitment_source_failure_|set_updated_at$)";
+const TARGET_PATTERN = "^(direct_entry_|work_report_|attendance_|ai_report_|ai_provider_config_|recruitment_|(expand|replace|reject|upsert)_daily_recruitment|record_recruitment_source_failure_|set_updated_at$)";
 
 function binary(name) {
   const binDir = process.env.P3_1_W02A_PG_BIN
@@ -576,6 +578,24 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
         assert.ok(workReportsReaderNormalized.includes(sigRevoke),
           `Work Reports reader RPC ${sig} revokes client and inherited EXECUTE before granting service_role`);
       }
+      const attendanceWp1Migration = await readFile(
+        path.join(MIGRATION_DIR, ATTENDANCE_WP1_MIGRATION_NAME), "utf8",
+      );
+      const attendanceWp1Normalized = attendanceWp1Migration.replace(/\s+/g, " ")
+        .replace(/\(\s+/g, "(").replace(/\s+\)/g, ")").toLowerCase();
+      for (const sig of ATTENDANCE_WP1_RPC_SIGNATURES) {
+        const sigGrant = `grant execute on function ${sig.toLowerCase()} to service_role;`;
+        const sigRevoke = `revoke all on function ${sig.toLowerCase()} from public, anon, authenticated, service_role;`;
+        assert.ok(attendanceWp1Normalized.includes(sigGrant),
+          `Attendance WP1 RPC ${sig} is explicitly granted only to service_role`);
+        assert.ok(attendanceWp1Normalized.includes(sigRevoke),
+          `Attendance WP1 RPC ${sig} revokes client and inherited EXECUTE before granting service_role`);
+      }
+      assert.match(
+        attendanceWp1Migration,
+        /revoke all on function public\.attendance__internal_immutable_guard\(\)\s+from public, anon, authenticated, service_role;/i,
+        "Attendance WP1 immutable guard trigger helper revokes EXECUTE from all roles including service_role",
+      );
       expectedSignatures.push(R1_2_SERVICE_RPC, ...F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES,
         F1_WORK_REPORTS_ASSIGNMENT_OPTIONS_RPC_SIGNATURE,
         F1_WORK_REPORTS_ASSIGNMENT_TRACKING_RPC_SIGNATURE,
@@ -584,7 +604,8 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
         WF01_WORKFORCE_SNAPSHOT_RPC_SIGNATURE,
         PROJECT_TEAM_SCOPE_SEARCH_RPC_SIGNATURE,
         ...DUPLICATE_CCCD_SELF_SERVICE_RPC_SIGNATURES,
-        ...WORK_REPORTS_READER_CONTRACT_RPC_SIGNATURES);
+        ...WORK_REPORTS_READER_CONTRACT_RPC_SIGNATURES,
+        ...ATTENDANCE_WP1_RPC_SIGNATURES);
       assert.ok(expectedSignatures.length > 0, "the explicit server/invoker allowlist is not empty");
       assert.equal(new Set(expectedSignatures).size, expectedSignatures.length, "the allowlist has no duplicates");
       const { rows: resolvedExpected } = await client.query(
@@ -608,7 +629,8 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
           WF01_WORKFORCE_SNAPSHOT_RPC_SIGNATURE,
           PROJECT_TEAM_SCOPE_SEARCH_RPC_SIGNATURE,
           ...DUPLICATE_CCCD_SELF_SERVICE_RPC_SIGNATURES,
-          ...WORK_REPORTS_READER_CONTRACT_RPC_SIGNATURES].sort(),
+          ...WORK_REPORTS_READER_CONTRACT_RPC_SIGNATURES,
+          ...ATTENDANCE_WP1_RPC_SIGNATURES].sort(),
         "only explicitly reviewed post-S0 RPCs add service_role grants after the S0 baseline",
       );
       const removedSourceService = sourceService

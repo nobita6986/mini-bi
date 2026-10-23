@@ -63,6 +63,12 @@ export const WORK_REPORTS_READER_CONTRACT_MIGRATION_NAME =
 export const WORK_REPORTS_READER_CONTRACT_RPC_SIGNATURES = Object.freeze([
   "public.work_report_list_readable_submissions(uuid, uuid, uuid, uuid, date, date, uuid, uuid, text, text, integer)",
 ]);
+export const ATTENDANCE_WP1_MIGRATION_NAME =
+  "20261023180000_attendance_wp1_checkin_sync.sql";
+export const ATTENDANCE_WP1_RPC_SIGNATURES = Object.freeze([
+  "public.attendance_lookup_checkin_idempotency(uuid, uuid, uuid, text)",
+  "public.attendance_record_checkin(uuid, uuid, uuid, text, double precision, double precision, double precision, text, text, timestamp with time zone, text, timestamp with time zone, bigint, text, text, text, integer, text, timestamp with time zone)",
+]);
 export const F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES = Object.freeze([
   "public.work_report_list_templates(uuid, uuid)",
   "public.work_report_get_template(uuid, uuid, uuid)",
@@ -81,7 +87,7 @@ export const F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES = Object.freeze([
   "public.work_report_submit(uuid, uuid, uuid, jsonb, integer, text)",
 ]);
 export const S0_T1_C_TARGET_ROUTINE_PATTERN =
-  "^(direct_entry_|work_report_|ai_report_|ai_provider_config_|recruitment_|(expand|replace|reject|upsert)_daily_recruitment|record_recruitment_source_failure_|set_updated_at$)";
+  "^(direct_entry_|work_report_|attendance_|ai_report_|ai_provider_config_|recruitment_|(expand|replace|reject|upsert)_daily_recruitment|record_recruitment_source_failure_|set_updated_at$)";
 
 export function migrationChecksum(text) {
   // Git may materialize SQL files as CRLF on Windows even though the same
@@ -278,7 +284,8 @@ export async function verifyS0T1CHistoricalCompatibility(
     f2ReviewAndDelegationApplied = false, wf01WorkforceSnapshotApplied = false,
     projectTeamScopeSearchApplied = false,
     duplicateCccdSelfServiceApplied = false,
-    workReportsReaderContractApplied = false } = {},
+    workReportsReaderContractApplied = false,
+    attendanceWp1Applied = false } = {},
 ) {
   const baseAllowlist = extractS0T1CAllowlistSignatures(migrationSql);
   if (baseAllowlist.length === 0) {
@@ -299,6 +306,7 @@ export async function verifyS0T1CHistoricalCompatibility(
     ...(projectTeamScopeSearchApplied ? [PROJECT_TEAM_SCOPE_SEARCH_RPC_SIGNATURE] : []),
     ...(duplicateCccdSelfServiceApplied ? DUPLICATE_CCCD_SELF_SERVICE_RPC_SIGNATURES : []),
     ...(workReportsReaderContractApplied ? WORK_REPORTS_READER_CONTRACT_RPC_SIGNATURES : []),
+    ...(attendanceWp1Applied ? ATTENDANCE_WP1_RPC_SIGNATURES : []),
   ];
 
   const { rows } = await client.query(
@@ -357,7 +365,7 @@ export async function verifyS0T1CHistoricalCompatibility(
           join pg_catalog.pg_namespace n on n.oid = p.pronamespace
          where n.nspname = 'public'
            and p.prokind in ('f', 'p')
-           and p.proname ~ '^direct_entry_'
+           and p.proname ~ '^(direct_entry_|attendance_)'
            and p.prosecdef
            and not coalesce(
              'search_path=pg_catalog, public' = any(p.proconfig)
@@ -501,6 +509,8 @@ export async function verifyAppliedMigrationChecksum(
           appliedMap.has(DUPLICATE_CCCD_SELF_SERVICE_MIGRATION_NAME),
         workReportsReaderContractApplied:
           appliedMap.has(WORK_REPORTS_READER_CONTRACT_MIGRATION_NAME),
+        attendanceWp1Applied:
+          appliedMap.has(ATTENDANCE_WP1_MIGRATION_NAME),
       },
     );
     if (postconditions.ok) {
