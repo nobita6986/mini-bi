@@ -1,6 +1,7 @@
 import { prefersReducedMotion } from "./chart-motion";
 
 export const KPI_TRANSITION_DURATION_MS = 220;
+export const KPI_RAPID_BURST_MS = 120;
 export const KPI_DEFAULT_FRAME_STEPS = 8;
 
 const viVnIntegerFormatter = new Intl.NumberFormat("vi-VN", {
@@ -13,6 +14,7 @@ export type KpiTransitionReason =
   | "non-numeric"
   | "unchanged"
   | "reduced-motion"
+  | "rapid-burst"
   | "animate";
 
 export interface KpiTransitionPlan {
@@ -30,6 +32,7 @@ export interface KpiTransitionInput {
   hasMounted: boolean;
   animateNumeric?: boolean;
   reducedMotion?: boolean;
+  elapsedSinceLastUpdateMs?: number | null;
   durationMs?: number;
 }
 
@@ -158,6 +161,22 @@ export function resolveKpiTransitionPlan(
     };
   }
 
+  if (
+    typeof input.elapsedSinceLastUpdateMs === "number" &&
+    Number.isFinite(input.elapsedSinceLastUpdateMs) &&
+    input.elapsedSinceLastUpdateMs >= 0 &&
+    input.elapsedSinceLastUpdateMs < KPI_RAPID_BURST_MS
+  ) {
+    return {
+      shouldAnimate: false,
+      fromValue,
+      toValue,
+      finalDisplay,
+      durationMs,
+      reason: "rapid-burst",
+    };
+  }
+
   return {
     shouldAnimate: true,
     fromValue,
@@ -166,4 +185,30 @@ export function resolveKpiTransitionPlan(
     durationMs,
     reason: "animate",
   };
+}
+
+/**
+ * Xác định số nguyên hiển thị ở pha render trước khi `useEffect` chạy:
+ * - Giữ nguyên `displayedNumeric` đang trên màn hình khi chuyển giữa hai số nguyên hợp lệ,
+ *   tuyệt đối không chớp `toValue` trong 1 frame rồi quay ngược về `fromValue`.
+ * - Hiện ngay `value` mới nếu `animateNumeric=false`, `reduced-motion`, hoặc vừa chuyển từ `—`/`N/A`.
+ */
+export function resolveRenderedKpiNumeric(options: {
+  value: unknown;
+  displayedNumeric: number | null;
+  animateNumeric?: boolean;
+  reducedMotion?: boolean;
+}): number | null {
+  if (!isAnimatableKpiInteger(options.value)) {
+    return null;
+  }
+  const animateNumeric = options.animateNumeric ?? true;
+  const reducedMotion = options.reducedMotion ?? prefersReducedMotion();
+  if (!animateNumeric || reducedMotion) {
+    return options.value;
+  }
+  if (!isAnimatableKpiInteger(options.displayedNumeric)) {
+    return options.value;
+  }
+  return options.displayedNumeric;
 }

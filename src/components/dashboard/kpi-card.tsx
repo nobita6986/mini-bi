@@ -8,6 +8,7 @@ import {
   isAnimatableKpiInteger,
   KPI_TRANSITION_DURATION_MS,
   resolveKpiTransitionPlan,
+  resolveRenderedKpiNumeric,
 } from "./kpi-motion";
 
 export function KpiCard({
@@ -27,29 +28,59 @@ export function KpiCard({
 }) {
   const compact = variant === "compact";
   const hasMountedRef = useRef(false);
-  const previousValueRef = useRef<unknown>(value);
-  const [activeFrame, setActiveFrame] = useState<{
-    target: number;
-    current: number;
-  } | null>(null);
+  const displayedValueRef = useRef<unknown>(value);
+  const lastUpdateAtRef = useRef<number | null>(null);
+  const [displayedNumeric, setDisplayedNumeric] = useState<number | null>(() =>
+    isAnimatableKpiInteger(value) ? value : null,
+  );
 
   useEffect(() => {
+    const nowMs =
+      typeof performance !== "undefined" && typeof performance.now === "function"
+        ? performance.now()
+        : Date.now();
+    const elapsedSinceLastUpdateMs =
+      hasMountedRef.current && lastUpdateAtRef.current !== null
+        ? Math.max(0, nowMs - lastUpdateAtRef.current)
+        : null;
+
     const plan = resolveKpiTransitionPlan({
-      previousValue: previousValueRef.current,
+      previousValue: displayedValueRef.current,
       nextValue: value,
       hasMounted: hasMountedRef.current,
       animateNumeric,
+      elapsedSinceLastUpdateMs,
       durationMs: KPI_TRANSITION_DURATION_MS,
     });
     hasMountedRef.current = true;
-    previousValueRef.current = value;
+    lastUpdateAtRef.current = nowMs;
 
     if (!plan.shouldAnimate || plan.fromValue === null || plan.toValue === null) {
-      return;
+      const settledNumeric = isAnimatableKpiInteger(value) ? value : null;
+      displayedValueRef.current = value;
+      let cancelled = false;
+      queueMicrotask(() => {
+        if (!cancelled) {
+          setDisplayedNumeric((cur) => (cur === settledNumeric ? cur : settledNumeric));
+        }
+      });
+      return () => {
+        cancelled = true;
+      };
     }
 
     if (typeof window === "undefined" || typeof window.requestAnimationFrame !== "function") {
-      return;
+      const targetNumeric = plan.toValue;
+      displayedValueRef.current = targetNumeric;
+      let cancelled = false;
+      queueMicrotask(() => {
+        if (!cancelled) {
+          setDisplayedNumeric((cur) => (cur === targetNumeric ? cur : targetNumeric));
+        }
+      });
+      return () => {
+        cancelled = true;
+      };
     }
 
     const fromValue = plan.fromValue;
@@ -65,11 +96,13 @@ export function KpiCard({
       const elapsed = now - startTime;
       const progress = durationMs <= 0 ? 1 : Math.min(1, elapsed / durationMs);
       if (progress >= 1) {
-        setActiveFrame(null);
+        displayedValueRef.current = toValue;
+        setDisplayedNumeric(toValue);
         return;
       }
       const current = interpolateKpiIntegerFrame(fromValue, toValue, progress);
-      setActiveFrame({ target: toValue, current });
+      displayedValueRef.current = current;
+      setDisplayedNumeric(current);
       rafId = window.requestAnimationFrame(tick);
     };
 
@@ -83,14 +116,13 @@ export function KpiCard({
   }, [value, animateNumeric]);
 
   const numericValue = isAnimatableKpiInteger(value) ? value : null;
-  const displayedNumeric =
-    numericValue !== null &&
-    activeFrame !== null &&
-    activeFrame.target === numericValue
-      ? activeFrame.current
-      : numericValue;
+  const effectiveDisplayedNumeric = resolveRenderedKpiNumeric({
+    value,
+    displayedNumeric,
+    animateNumeric,
+  });
   const renderedValue: ReactNode =
-    displayedNumeric !== null ? formatKpiIntegerValue(displayedNumeric) : value;
+    effectiveDisplayedNumeric !== null ? formatKpiIntegerValue(effectiveDisplayedNumeric) : value;
   const authoritativeNumericText =
     numericValue !== null ? formatKpiIntegerValue(numericValue) : undefined;
 

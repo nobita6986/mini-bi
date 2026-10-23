@@ -78,11 +78,13 @@ registerHooks({
 });
 
 const {
+  KPI_RAPID_BURST_MS,
   KPI_TRANSITION_DURATION_MS,
   formatKpiIntegerValue,
   interpolateKpiIntegerFrame,
   isAnimatableKpiInteger,
   resolveKpiTransitionPlan,
+  resolveRenderedKpiNumeric,
   sampleKpiTransitionFrames,
 } = await import("./kpi-motion.ts");
 
@@ -232,5 +234,75 @@ describe("UIUX S2-02 — KPI Numeric Value Transition", () => {
     assert.match(html, />1\.250</);
     assert.match(html, />2\.3</);
     assert.match(html, />—</);
+  });
+
+  it("prevents target-value flash before useEffect, resumes from displayed frame on mid-animation change, and skips animation on rapid bursts", () => {
+    // 1. Prop changes 100 -> 200: render phase BEFORE useEffect holds displayedNumeric=100 (zero 200->100 flash)
+    assert.equal(
+      resolveRenderedKpiNumeric({
+        value: 200,
+        displayedNumeric: 100,
+        animateNumeric: true,
+        reducedMotion: false,
+      }),
+      100,
+    );
+    // Reduced motion or disabled animation shows 200 immediately on first render
+    assert.equal(
+      resolveRenderedKpiNumeric({
+        value: 200,
+        displayedNumeric: 100,
+        animateNumeric: true,
+        reducedMotion: true,
+      }),
+      200,
+    );
+    assert.equal(
+      resolveRenderedKpiNumeric({
+        value: 200,
+        displayedNumeric: null,
+        animateNumeric: true,
+        reducedMotion: false,
+      }),
+      200,
+    );
+
+    // 2. Mid-animation filter change (100 -> 200 currently at displayed frame 145, then prop becomes 300 after 150ms):
+    //    render holds 145, and transition plan starts from 145 (never jumps to 200)
+    assert.equal(
+      resolveRenderedKpiNumeric({
+        value: 300,
+        displayedNumeric: 145,
+        animateNumeric: true,
+        reducedMotion: false,
+      }),
+      145,
+    );
+    const midFlightPlan = resolveKpiTransitionPlan({
+      previousValue: 145,
+      nextValue: 300,
+      hasMounted: true,
+      reducedMotion: false,
+      elapsedSinceLastUpdateMs: KPI_RAPID_BURST_MS + 30,
+    });
+    assert.equal(midFlightPlan.shouldAnimate, true);
+    assert.equal(midFlightPlan.fromValue, 145);
+    assert.equal(midFlightPlan.toValue, 300);
+
+    // 3. Rapid filter burst (< KPI_RAPID_BURST_MS): skips animation and snaps straight to new target
+    const burstPlan = resolveKpiTransitionPlan({
+      previousValue: 120,
+      nextValue: 300,
+      hasMounted: true,
+      reducedMotion: false,
+      elapsedSinceLastUpdateMs: 40,
+    });
+    assert.equal(burstPlan.shouldAnimate, false);
+    assert.equal(burstPlan.reason, "rapid-burst");
+    assert.equal(burstPlan.toValue, 300);
+
+    const kpiCardSrc = readFileSync(path.join(repoRoot, "src/components/dashboard/kpi-card.tsx"), "utf8");
+    assert.match(kpiCardSrc, /displayedValueRef\.current/);
+    assert.doesNotMatch(kpiCardSrc, /previousValueRef/);
   });
 });
