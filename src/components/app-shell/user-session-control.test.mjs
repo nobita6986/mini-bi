@@ -74,6 +74,9 @@ test("HF-R5: logout keeps the busy lock, navigates on 204 and never leaks the er
   assert.match(source, /if \(busy\) return;/);
   assert.match(source, /method: "POST", credentials: "same-origin"/);
   assert.match(source, /res\.status === 204/);
+  const clearIdx = source.indexOf("notify.clear()");
+  const replaceIdx = source.indexOf('router.replace("/login")');
+  assert.ok(clearIdx > -1 && clearIdx < replaceIdx, "notify.clear() must run before router.replace('/login') on 204");
   assert.match(source, /router\.replace\("\/login"\)/);
   assert.match(source, /router\.refresh\(\)/);
   assert.match(source, /role="alert"/);
