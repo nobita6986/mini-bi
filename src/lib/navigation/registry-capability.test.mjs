@@ -380,7 +380,7 @@ test("filterEntriesForActor: owner (đủ 3 admin) + viewport=mobile → các kh
   });
   // Full Admin thấy Admin, Work Reports, Duyệt báo cáo cùng các khu vực đã có quyền.
   assert.deepEqual(result.map((e) => e.id).sort(),
-    ["admin", "change-requests", "dashboard", "direct-entry", "project-operations", "work-report-reviews", "work-reports", "worker-operations"]);
+    ["admin", "change-requests", "dashboard", "direct-entry", "project-operations", "work-report-reviews", "work-reports", "worker-operations", "workforce-offboarding"]);
 });
 
 test("filterEntriesForActor: Direct Entry off bởi env → chỉ Dashboard dù actor có quyền", () => {

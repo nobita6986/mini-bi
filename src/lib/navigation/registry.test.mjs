@@ -37,7 +37,7 @@ test("Work Reports nav groups preserve their routes and omit empty groups", () =
       label: "Báo cáo cấp mới",
       children: ["direct-entry", "project-operations", "worker-operations", "change-requests"],
     },
-    { id: "daily-reports", label: "Báo cáo hàng ngày", children: ["work-reports", "work-report-reviews"] },
+    { id: "daily-reports", label: "Báo cáo hàng ngày", children: ["work-reports", "work-report-reviews", "workforce-offboarding"] },
   ]);
   const dashboardOnly = CURRENT_NAV_ENTRIES.filter((entry) => entry.id === "dashboard")
     .map(({ id, label, path, group }) => ({ id, label, path, group }));
