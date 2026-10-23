@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-import { buildDailyTrend, sortBuckets } from "@/lib/reporting/p1-dashboard";
+import { buildDailyTrend } from "@/lib/reporting/p1-dashboard";
 import {
   computeDashboardSummary,
   formatAvgPerActiveDay,
@@ -24,6 +24,7 @@ import { Card, CardHeader } from "@/components/ui/card";
 import { EmptyState } from "@/components/reporting/empty-state";
 import { ErrorState } from "@/components/reporting/error-state";
 import {
+  BucketList,
   FiltersOrError,
   NoMatchesBlock,
   PeriodComparisonBanner,
@@ -31,6 +32,7 @@ import {
   type WorkforceOverviewResult,
   type WorkforceReportingResult,
 } from "./dashboard-shared";
+import { BiHighlightScope } from "./bi-cross-highlight";
 import { EmploymentComposition } from "./employment-composition";
 import { KpiCard } from "./kpi-card";
 import { OwnDashboardView } from "./own-dashboard-view";
@@ -43,26 +45,7 @@ import { TrendChart } from "./trend-chart";
 import { BodDashboardTabs } from "./bod-dashboard-tabs";
 
 function FullList({ buckets }: { buckets: Record<string, ReportingBucket> }) {
-  const sorted = sortBuckets(buckets);
-  return (
-    <details className="mt-3">
-      <summary className="cursor-pointer text-sm font-medium text-primary">
-        Xem danh sách đầy đủ ({sorted.length})
-      </summary>
-      <div className="mt-2 max-h-72 overflow-y-auto rounded-xl border border-border bg-surface">
-        <table className="r22-report-table w-full text-sm">
-          <tbody className="divide-y divide-border">
-            {sorted.map((b) => (
-              <tr key={b.key} className="text-foreground hover:bg-surface-hover">
-                <td className="px-3 py-1.5">{b.display}</td>
-                <td className="px-3 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">{b.recruitedCount}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </details>
-  );
+  return <BucketList buckets={buckets} />;
 }
 
 export function DashboardView({
@@ -254,6 +237,8 @@ function DashboardBody({
   }
 
   const insights = computeCompositionInsights(data);
+  const projectSlices = buildProjectDonutData(data.byProject);
+  const recruiterBars = buildBarData(data.byRecruiter, 10);
 
   return (
     <div className="space-y-4">
@@ -340,8 +325,13 @@ function DashboardBody({
                     : ""}
                 </p>
               ) : null}
-              <ProjectDonut slices={buildProjectDonutData(data.byProject)} title="Biểu đồ theo dự án" />
-              <FullList buckets={data.byProject} />
+              <BiHighlightScope
+                validKeys={Object.keys(data.byProject)}
+                topSliceKeys={projectSlices.filter((s) => s.key !== "__other__").map((s) => s.key)}
+              >
+                <ProjectDonut slices={projectSlices} title="Biểu đồ theo dự án" />
+                <FullList buckets={data.byProject} />
+              </BiHighlightScope>
             </Card>
             <Card className="p-4 lg:col-span-5">
               <CardHeader title="Theo HRP/Vendor" description="Tỷ trọng trên tập kết quả đang lọc." />
@@ -377,8 +367,10 @@ function DashboardBody({
             </Card>
             <Card className="p-4 lg:col-span-7">
               <CardHeader title="Theo người tuyển" description="Top 10 người tuyển theo số người tuyển." />
-              <RecruiterBarChart data={buildBarData(data.byRecruiter, 10)} title="Biểu đồ theo người tuyển" />
-              <FullList buckets={data.byRecruiter} />
+              <BiHighlightScope validKeys={Object.keys(data.byRecruiter)}>
+                <RecruiterBarChart data={recruiterBars} title="Biểu đồ theo người tuyển" />
+                <FullList buckets={data.byRecruiter} />
+              </BiHighlightScope>
             </Card>
             <Card className="p-4 lg:col-span-5">
               <CardHeader title="Theo loại hình làm việc" description="Tỷ trọng trên tập kết quả đang lọc." />

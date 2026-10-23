@@ -52,6 +52,11 @@ import {
 import type { ReportingBucket, ReportingData } from "@/lib/reporting/p1-reporting";
 import type { ReportingOptionsResult } from "@/lib/reporting/p1-options-server";
 
+import {
+  BiClearHighlightButton,
+  isBucketRowHighlighted,
+  useBiHighlight,
+} from "./bi-cross-highlight";
 import { DashboardFilters } from "./dashboard-filters";
 
 export type { WorkforceOverviewResult, WorkforceReportingResult };
@@ -2362,6 +2367,8 @@ export function WorkforceDeepReportPanel({
  */
 export function BucketList({ buckets, label = "Xem danh sách đầy đủ" }: { buckets: Record<string, ReportingBucket>; label?: string }) {
   const sorted = sortBuckets(buckets);
+  const bucketKeys = sorted.map((b) => b.key);
+  const highlight = useBiHighlight(bucketKeys);
   if (sorted.length === 0) return <p className="mt-2 text-sm text-muted">Chưa có dữ liệu cho mục này.</p>;
   return (
     <details className="mt-3">
@@ -2371,15 +2378,41 @@ export function BucketList({ buckets, label = "Xem danh sách đầy đủ" }: {
       <div className="mt-2 max-h-72 overflow-y-auto rounded-xl border border-border bg-surface">
         <table className="r22-report-table w-full text-sm">
           <tbody className="divide-y divide-border">
-            {sorted.map((b) => (
-              <tr key={b.key} className="text-foreground hover:bg-surface-hover">
-                <td className="px-3 py-1.5">{b.display}</td>
-                <td className="px-3 py-1.5 text-right tabular-nums whitespace-nowrap">{b.recruitedCount}</td>
-              </tr>
-            ))}
+            {sorted.map((b) => {
+              const isHighlighted = isBucketRowHighlighted(
+                b.key,
+                highlight.activeKey,
+                highlight.topSliceKeys,
+              );
+              return (
+                <tr
+                  key={b.key}
+                  tabIndex={0}
+                  data-bi-highlighted={isHighlighted ? "true" : undefined}
+                  onMouseEnter={() => highlight.onHover(b.key)}
+                  onMouseLeave={() => highlight.onHover(null)}
+                  onFocus={() => highlight.onFocus(b.key)}
+                  onBlur={() => highlight.onFocus(null)}
+                  onClick={() => highlight.onTogglePin(b.key)}
+                  onKeyDown={(event) => highlight.handleKeyDown(event, b.key)}
+                  className={`cursor-pointer text-foreground transition-colors duration-[var(--ui-motion-hover,160ms)] focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/40 ${
+                    isHighlighted
+                      ? "bg-primary/10 font-medium"
+                      : "hover:bg-surface-hover"
+                  }`}
+                >
+                  <td className="px-3 py-1.5">{b.display}</td>
+                  <td className="px-3 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">{b.recruitedCount}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
+      <BiClearHighlightButton
+        visible={highlight.pinnedKey !== null}
+        onClear={highlight.onClear}
+      />
     </details>
   );
 }

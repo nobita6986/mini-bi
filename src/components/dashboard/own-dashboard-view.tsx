@@ -17,6 +17,7 @@ import type { ReportingOptionsResult } from "@/lib/reporting/p1-options-server";
 
 import { Card, CardHeader } from "@/components/ui/card";
 import { EmptyState } from "@/components/reporting/empty-state";
+import { BiHighlightScope } from "./bi-cross-highlight";
 import { EmploymentComposition } from "./employment-composition";
 import { KpiCard } from "./kpi-card";
 import { ProjectDonut } from "./project-donut";
@@ -47,6 +48,7 @@ export function OwnDashboardView({
 }) {
   const summary = computeDashboardSummary(data);
   const insights = computeCompositionInsights(data);
+  const projectSlices = buildProjectDonutData(data.byProject);
   const trend = buildDailyTrend(data.byDate, data.applied.from, data.applied.to);
   const dataDays = trend.filter((p) => p.count > 0);
   const noData = data.empty.noSources || data.empty.noFacts;
@@ -126,8 +128,13 @@ export function OwnDashboardView({
                       : ""}
                   </p>
                 ) : null}
-                <ProjectDonut slices={buildProjectDonutData(data.byProject)} title="Biểu đồ theo dự án của tôi" />
-                <BucketList buckets={data.byProject} />
+                <BiHighlightScope
+                  validKeys={Object.keys(data.byProject)}
+                  topSliceKeys={projectSlices.filter((s) => s.key !== "__other__").map((s) => s.key)}
+                >
+                  <ProjectDonut slices={projectSlices} title="Biểu đồ theo dự án của tôi" />
+                  <BucketList buckets={data.byProject} />
+                </BiHighlightScope>
               </Card>
             </section>
 
