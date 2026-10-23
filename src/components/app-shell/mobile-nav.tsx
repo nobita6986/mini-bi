@@ -101,6 +101,7 @@ export function MobileNav({
 
       <Dialog.Portal>
         <Dialog.Overlay
+          data-ui-overlay-motion="true"
           className={cn(
             "fixed inset-0 z-30 bg-black/40 backdrop-blur-sm motion-reduce:animate-none",
             "data-[state=open]:animate-in data-[state=closed]:animate-out",
@@ -113,6 +114,7 @@ export function MobileNav({
             if (themePickerOpen) event.preventDefault();
           }}
           id="mobile-nav-sheet"
+          data-ui-drawer-motion="left"
           aria-describedby={undefined}
           className={cn(
             "fixed inset-y-0 left-0 z-40 flex w-72 max-w-[85vw] flex-col gap-2 border-r border-border bg-surface p-4 shadow-xl motion-reduce:animate-none",

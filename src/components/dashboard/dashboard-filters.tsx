@@ -112,7 +112,7 @@ export function DashboardFilters({
         </div>
       </section>
 
-      <div id="advanced-filters" hidden={!advancedOpen} className="mt-2 rounded-2xl border border-border bg-surface p-3.5 shadow-sm">
+      <div id="advanced-filters" hidden={!advancedOpen} data-ui-panel-motion="true" className="mt-2 rounded-2xl border border-border bg-surface p-3.5 shadow-sm">
         <div className="grid max-h-[70vh] grid-cols-1 gap-3 overflow-y-auto sm:grid-cols-2 lg:grid-cols-4">
           <Field id="f-from" label="Từ ngày">
             <input

@@ -38,7 +38,7 @@ export function RowOverflowMenu({
           type="button"
           aria-label={ariaLabel}
           className={cn(
-            "inline-flex min-h-11 min-w-11 md:min-h-8 md:min-w-8 md:h-8 md:w-8 items-center justify-center rounded-md border border-border bg-surface text-foreground hover:bg-muted/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
+            "inline-flex min-h-11 min-w-11 md:min-h-8 md:min-w-8 md:h-8 md:w-8 items-center justify-center rounded-md border border-border bg-surface text-foreground transition-colors duration-[var(--ui-motion-hover,160ms)] ease-[var(--ui-motion-ease,cubic-bezier(0.22,1,0.36,1))] motion-reduce:transition-none hover:bg-muted/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
             className,
           )}
         >
@@ -49,6 +49,7 @@ export function RowOverflowMenu({
         <DropdownMenu.Content
           align="end"
           sideOffset={6}
+          data-ui-popover-motion="true"
           className="z-50 min-w-[12rem] overflow-hidden rounded-xl border border-border bg-surface p-1.5 text-foreground shadow-lg"
         >
           {actions.map((action) => (

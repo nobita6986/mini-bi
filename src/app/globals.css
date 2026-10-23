@@ -185,7 +185,99 @@ table.r22-report-table thead th:first-child {
   z-index: 20;
 }
 
-/* Chart và Toast tôn trọng prefers-reduced-motion. */
+/* ============================================================================
+   UIUX Chặng 2 (S2-03) — Tab Panel, Dialog, Drawer & Popover Motion
+   Chỉ dùng transform + opacity (<= 6px, 200ms) và tự tắt khi reduced-motion.
+   ============================================================================ */
+@keyframes ui-panel-enter {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 4px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes ui-overlay-enter {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Dialog.Content thường căn giữa bằng -translate-x-1/2 -translate-y-1/2:
+   tuyệt đối không ghi đè transform trên [data-ui-dialog-motion="true"]. */
+@keyframes ui-dialog-enter {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes ui-popover-enter {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 4px, 0) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes ui-drawer-left-enter {
+  from {
+    opacity: 0;
+    transform: translate3d(-6px, 0, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes ui-drawer-right-enter {
+  from {
+    opacity: 0;
+    transform: translate3d(6px, 0, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+[data-ui-panel-motion="true"]:not([hidden]) {
+  animation: ui-panel-enter var(--ui-motion-tab, 200ms) var(--ui-motion-ease, cubic-bezier(0.22, 1, 0.36, 1)) both;
+}
+
+[data-ui-overlay-motion="true"] {
+  animation: ui-overlay-enter var(--ui-motion-reveal, 200ms) var(--ui-motion-ease, cubic-bezier(0.22, 1, 0.36, 1)) both;
+}
+
+[data-ui-dialog-motion="true"] {
+  animation: ui-dialog-enter var(--ui-motion-reveal, 200ms) var(--ui-motion-ease, cubic-bezier(0.22, 1, 0.36, 1)) both;
+}
+
+[data-ui-popover-motion="true"] {
+  animation: ui-popover-enter var(--ui-motion-reveal, 200ms) var(--ui-motion-ease, cubic-bezier(0.22, 1, 0.36, 1)) both;
+}
+
+[data-ui-drawer-motion="left"] {
+  animation: ui-drawer-left-enter var(--ui-motion-reveal, 200ms) var(--ui-motion-ease, cubic-bezier(0.22, 1, 0.36, 1)) both;
+}
+
+[data-ui-drawer-motion="right"] {
+  animation: ui-drawer-right-enter var(--ui-motion-reveal, 200ms) var(--ui-motion-ease, cubic-bezier(0.22, 1, 0.36, 1)) both;
+}
+
+/* Chart, Toast, Panel và Dialog tôn trọng prefers-reduced-motion. */
 @media (prefers-reduced-motion: reduce) {
   :root {
     --ui-motion-fast: 0ms;
@@ -198,7 +290,12 @@ table.r22-report-table thead th:first-child {
     --ui-motion-kpi: 0ms;
   }
   .recharts-wrapper *,
-  [data-ui-toast-viewport] * {
+  [data-ui-toast-viewport] *,
+  [data-ui-panel-motion],
+  [data-ui-overlay-motion],
+  [data-ui-dialog-motion],
+  [data-ui-drawer-motion],
+  [data-ui-popover-motion] {
     animation: none !important;
     transition: none !important;
   }

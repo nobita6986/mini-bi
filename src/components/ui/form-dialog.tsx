@@ -42,9 +42,13 @@ export function FormDialog({
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       {trigger ? <Dialog.Trigger asChild>{trigger}</Dialog.Trigger> : null}
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-40 bg-black/50 backdrop-blur-[1px]" />
+        <Dialog.Overlay
+          data-ui-overlay-motion="true"
+          className="fixed inset-0 z-40 bg-black/50 backdrop-blur-[1px]"
+        />
         <Dialog.Content
           data-testid={dataTestId}
+          data-ui-dialog-motion="true"
           aria-describedby={descriptionId}
           onCloseAutoFocus={onCloseAutoFocus}
           className={cn(
@@ -74,7 +78,7 @@ export function FormDialog({
                 type="button"
                 aria-label={closeAriaLabel}
                 disabled={closeDisabled}
-                className="inline-flex min-h-11 min-w-11 sm:min-h-10 sm:min-w-10 items-center justify-center rounded-lg border border-border bg-surface px-3 text-sm font-medium text-foreground hover:bg-muted/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex min-h-11 min-w-11 sm:min-h-10 sm:min-w-10 items-center justify-center rounded-lg border border-border bg-surface px-3 text-sm font-medium text-foreground transition-colors duration-[var(--ui-motion-hover,160ms)] ease-[var(--ui-motion-ease,cubic-bezier(0.22,1,0.36,1))] motion-reduce:transition-none hover:bg-muted/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 ×
               </button>

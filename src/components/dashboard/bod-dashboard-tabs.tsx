@@ -151,11 +151,11 @@ export function BodDashboardTabs({
       </div>
 
       {activeTab === "general" ? (
-        <div id="bod-panel-general" role="tabpanel" aria-labelledby="bod-tab-general" tabIndex={0} className="pt-4">
+        <div id="bod-panel-general" role="tabpanel" aria-labelledby="bod-tab-general" tabIndex={0} data-ui-panel-motion="true" className="pt-4">
           {general}
         </div>
       ) : activeTab === "deep" && primaryTabLabel === undefined ? (
-        <div id="bod-panel-deep" role="tabpanel" aria-labelledby="bod-tab-deep" tabIndex={0} className="pt-4">
+        <div id="bod-panel-deep" role="tabpanel" aria-labelledby="bod-tab-deep" tabIndex={0} data-ui-panel-motion="true" className="pt-4">
           <WorkforceDeepReportPanel
             data={data}
             generatedAt={generatedAt}
@@ -163,7 +163,7 @@ export function BodDashboardTabs({
           />
         </div>
       ) : activeTab === "team" && primaryTabLabel === undefined ? (
-        <div id="bod-panel-team" role="tabpanel" aria-labelledby="bod-tab-team" tabIndex={0} className="pt-4">
+        <div id="bod-panel-team" role="tabpanel" aria-labelledby="bod-tab-team" tabIndex={0} data-ui-panel-motion="true" className="pt-4">
           <TeamReportView
             data={data}
             generatedAt={generatedAt}
@@ -172,7 +172,7 @@ export function BodDashboardTabs({
           />
         </div>
       ) : (
-        <div id="bod-panel-duplicate-cccd" role="tabpanel" aria-labelledby="bod-tab-duplicate-cccd" tabIndex={0} className="pt-4">
+        <div id="bod-panel-duplicate-cccd" role="tabpanel" aria-labelledby="bod-tab-duplicate-cccd" tabIndex={0} data-ui-panel-motion="true" className="pt-4">
           <DuplicateCccdReportPanel />
         </div>
       )}

@@ -143,11 +143,12 @@ export function WorkerDetailDialog({
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className={styles.drawerOverlay} />
+        <Dialog.Overlay className={styles.drawerOverlay} data-ui-overlay-motion="true" />
         {open && row ? (
           <Dialog.Content
             className={styles.documentsDialog}
             data-testid="worker-detail-dialog"
+            data-ui-drawer-motion="right"
             aria-describedby="worker-detail-description"
             onCloseAutoFocus={(event) => {
               if (openerRef?.current) {
