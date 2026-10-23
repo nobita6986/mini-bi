@@ -412,11 +412,12 @@ export function DirectEntryChangeRequestReviewer({
   return (
     <Dialog.Root open={request !== null} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className={styles.drawerOverlay} />
+        <Dialog.Overlay data-ui-overlay-motion="true" className={styles.drawerOverlay} />
         {request && (
           <Dialog.Content
             className={styles.drawer}
             data-testid="reviewer-dialog"
+            data-ui-drawer-motion="right"
             onCloseAutoFocus={(event) => {
               const opener = openerRef.current;
               if (opener && opener.isConnected) {

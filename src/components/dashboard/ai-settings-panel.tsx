@@ -225,7 +225,7 @@ function StepIndicator({ flow }: { flow: FlowState }) {
           <li key={label} className="flex items-center gap-1">
             <span
               className={
-                "inline-flex h-6 w-6 items-center justify-center rounded-full border text-xs font-semibold " +
+                "inline-flex h-6 w-6 items-center justify-center rounded-full border text-xs font-semibold transition-colors duration-[var(--ui-motion-tab,200ms)] motion-reduce:transition-none " +
                 (done ? "border-emerald-500 bg-emerald-500 text-white" : current ? "border-primary bg-primary text-on-primary" : "border-border text-muted")
               }
             >
@@ -466,9 +466,10 @@ export function AiSettingsPanel() {
           </button>
         </Dialog.Trigger>
         <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 z-40 bg-black/40 motion-safe:data-[state=open]:animate-in" />
+          <Dialog.Overlay data-ui-overlay-motion="true" className="fixed inset-0 z-40 bg-black/40 motion-safe:data-[state=open]:animate-in" />
           <Dialog.Content
             aria-describedby="ai-settings-desc"
+            data-ui-drawer-motion="right"
             className="fixed inset-0 z-50 flex flex-col bg-surface text-foreground shadow-xl outline-none sm:inset-y-0 sm:right-0 sm:left-auto sm:w-[30rem] sm:border-l sm:border-border"
           >
             <header className="flex items-start justify-between gap-3 border-b border-border px-4 py-4">
@@ -546,7 +547,7 @@ export function AiSettingsPanel() {
                           </Select.Icon>
                         </Select.Trigger>
                         <Select.Portal>
-                          <Select.Content position="popper" className="z-50 max-h-72 overflow-y-auto rounded-lg border border-border bg-surface p-1 text-sm text-foreground shadow-xl">
+                          <Select.Content position="popper" data-ui-popover-motion="true" className="z-50 max-h-72 overflow-y-auto rounded-lg border border-border bg-surface p-1 text-sm text-foreground shadow-xl">
                             <Select.Viewport>
                               {(profiles.length > 0 ? profiles : [{ id: DEFAULT_PROVIDER_PROFILE, label: "OpenAI-compatible" }]).map((profile) => (
                                 <Select.Item key={profile.id} value={profile.id} className="flex cursor-pointer select-none items-center justify-between rounded-md px-3 py-2 outline-none data-[highlighted]:bg-muted/15">

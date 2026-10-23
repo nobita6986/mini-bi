@@ -126,13 +126,15 @@ type Incoming<T> = {
 type FetchOutcome<T> = { ok: true; page: Incoming<T> } | { ok: false; state: PageState; message: string | null };
 
 const tabClass =
-  "inline-flex min-h-11 items-center rounded-t-lg px-3.5 text-sm font-medium whitespace-nowrap transition-colors outline-none " +
-  "focus-visible:ring-2 focus-visible:ring-ring/40";
+  "inline-flex min-h-11 items-center rounded-t-lg px-3.5 text-sm font-medium whitespace-nowrap " +
+  "transition-colors duration-[var(--ui-motion-tab,200ms)] ease-[var(--ui-motion-ease,cubic-bezier(0.22,1,0.36,1))] " +
+  "motion-reduce:transition-none outline-none focus-visible:ring-2 focus-visible:ring-ring/40";
 const buttonClass = buttonClasses({ variant: "secondary", size: "md" });
 const primaryClass = buttonClasses({ variant: "primary", size: "md" });
 const inputClass =
   "min-h-11 sm:min-h-10 w-full rounded-lg border border-border bg-surface px-3 text-base sm:text-sm text-foreground " +
-  "outline-none transition-colors focus:border-primary focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed " +
+  "outline-none transition-colors duration-[var(--ui-motion-hover,160ms)] motion-reduce:transition-none " +
+  "focus:border-primary focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed " +
   "disabled:bg-muted/10 disabled:text-muted";
 const errorClass =
   "rounded-lg border border-red-500/40 bg-red-50 p-3 text-sm text-red-700 " +
@@ -485,6 +487,7 @@ export function WorkerOperations({
         role="tabpanel"
         id={"workers-panel-" + tab}
         aria-labelledby={"workers-tab-" + tab}
+        data-ui-panel-motion="true"
         className="flex flex-col gap-3.5"
         aria-busy={activePage.state === "loading"}
       >
@@ -1186,8 +1189,9 @@ function ProposeDrawer({
   return (
     <Dialog.Root open={row !== null} onOpenChange={(open) => { if (!open && !busy) onOpenChange(false); }}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-40 bg-black/50" />
+        <Dialog.Overlay className="fixed inset-0 z-40 bg-black/50" data-ui-overlay-motion="true" />
         <Dialog.Content
+          data-ui-dialog-motion="true"
           onCloseAutoFocus={(event) => {
             const opener = openerRef.current;
             if (opener && opener.isConnected) {
@@ -1648,8 +1652,9 @@ function WorkerExportDialog({
   return (
     <Dialog.Root open={open} onOpenChange={(next) => { if (!next && !busy) onOpenChange(false); }}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-40 bg-black/50" />
+        <Dialog.Overlay className="fixed inset-0 z-40 bg-black/50" data-ui-overlay-motion="true" />
         <Dialog.Content
+          data-ui-dialog-motion="true"
           className="fixed left-1/2 top-1/2 z-50 flex max-h-[calc(100dvh-2rem)]
             w-[calc(100vw-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2
             overflow-hidden rounded-2xl border border-border bg-surface text-foreground shadow-2xl

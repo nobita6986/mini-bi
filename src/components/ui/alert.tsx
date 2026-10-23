@@ -17,7 +17,14 @@ export function Alert({ tone = "info", title, children, role = "status" }: {
   role?: "alert" | "status";
 }) {
   return (
-    <div role={role} className={cn("rounded-md border px-4 py-3 text-sm", TONE_CLASSES[tone])}>
+    <div
+      role={role}
+      data-ui-panel-motion="true"
+      className={cn(
+        "rounded-md border px-4 py-3 text-sm transition-colors duration-[var(--ui-motion-hover,160ms)] motion-reduce:transition-none",
+        TONE_CLASSES[tone],
+      )}
+    >
       <p className="font-medium">{title}</p>
       {children ? <div className="mt-1 [&>p]:mt-1">{children}</div> : null}
     </div>

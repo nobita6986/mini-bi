@@ -30,8 +30,10 @@ type ReportState =
   | { kind: "error" };
 
 const button = "inline-flex min-h-10 items-center justify-center rounded-md border border-border " +
-  "bg-surface px-3 text-sm font-medium text-foreground focus-visible:outline-none " +
-  "focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-50";
+  "bg-surface px-3 text-sm font-medium text-foreground transition-[background-color,border-color,color,transform] " +
+  "duration-[var(--ui-motion-hover,160ms)] ease-[var(--ui-motion-ease,cubic-bezier(0.22,1,0.36,1))] " +
+  "hover:enabled:bg-surface-hover active:enabled:scale-[0.99] motion-reduce:transition-none motion-reduce:transform-none " +
+  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-50";
 
 function StatusBadge({ status }: { status: DuplicateCccdReportGroup["episodes"][number]["latest_status"] }) {
   const active = status !== "OFF";
@@ -74,7 +76,7 @@ function GroupCard({ group }: { group: DuplicateCccdReportGroup }) {
           </thead>
           <tbody className="divide-y divide-border">
             {group.episodes.map((episode, index) => (
-              <tr key={index} className="hover:bg-surface-hover">
+              <tr key={index} className="transition-colors duration-[var(--ui-motion-hover,160ms)] motion-reduce:transition-none hover:bg-surface-hover">
                 <td className="px-3 py-3 font-medium">{episode.display_name ?? "—"}</td>
                 <td className="px-3 py-3 font-mono tabular-nums whitespace-nowrap text-xs">{episode.employee_code ?? "—"}</td>
                 <td className="px-3 py-3">{episode.project_display ?? "—"}</td>

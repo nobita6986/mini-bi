@@ -32,7 +32,12 @@ export function StatusBanner({
       role={resolvedRole}
       aria-live={resolvedRole === "status" ? "polite" : undefined}
       data-testid={dataTestId}
-      className={cn("rounded-md border px-4 py-3 text-sm", TONE_CLASSES[tone], className)}
+      data-ui-panel-motion="true"
+      className={cn(
+        "rounded-md border px-4 py-3 text-sm transition-colors duration-[var(--ui-motion-hover,160ms)] motion-reduce:transition-none",
+        TONE_CLASSES[tone],
+        className,
+      )}
     >
       {title ? <p className="font-medium">{title}</p> : null}
       <div className={title ? "mt-1" : undefined}>{children}</div>

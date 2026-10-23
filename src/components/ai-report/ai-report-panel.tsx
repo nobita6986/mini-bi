@@ -71,10 +71,10 @@ async function fetchJson(path: string, options: { method: "GET" | "POST"; body?:
   return { ok: true, httpStatus: response.status, code: "AI_INTERNAL", record: payload };
 }
 
-const inputClass = "w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary";
-const primaryButtonClass = "inline-flex h-9 items-center rounded-lg bg-primary px-3 text-sm font-medium text-on-primary hover:bg-primary/90 disabled:opacity-50";
-const secondaryButtonClass = "inline-flex h-9 items-center rounded-lg border border-border bg-surface px-3 text-sm font-medium text-foreground hover:bg-surface/80 disabled:opacity-50";
-const triggerButtonClass = "inline-flex h-11 items-center rounded-lg border border-border bg-surface px-3 text-sm font-medium text-foreground hover:bg-surface/80 disabled:opacity-50";
+const inputClass = "w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground outline-none transition-colors duration-[var(--ui-motion-hover,160ms)] motion-reduce:transition-none focus:ring-2 focus:ring-primary";
+const primaryButtonClass = "inline-flex h-9 items-center rounded-lg bg-primary px-3 text-sm font-medium text-on-primary transition-[background-color,transform] duration-[var(--ui-motion-hover,160ms)] hover:bg-primary/90 active:enabled:scale-[0.99] motion-reduce:transition-none motion-reduce:transform-none disabled:opacity-50";
+const secondaryButtonClass = "inline-flex h-9 items-center rounded-lg border border-border bg-surface px-3 text-sm font-medium text-foreground transition-[background-color,border-color,color,transform] duration-[var(--ui-motion-hover,160ms)] hover:bg-surface/80 active:enabled:scale-[0.99] motion-reduce:transition-none motion-reduce:transform-none disabled:opacity-50";
+const triggerButtonClass = "inline-flex h-11 items-center rounded-lg border border-border bg-surface px-3 text-sm font-medium text-foreground transition-[background-color,border-color,color,transform] duration-[var(--ui-motion-hover,160ms)] hover:bg-surface/80 active:enabled:scale-[0.99] motion-reduce:transition-none motion-reduce:transform-none disabled:opacity-50";
 
 function Skeleton() {
   return (
@@ -458,8 +458,8 @@ export function AiReportPanel() {
       <button ref={triggerRef} type="button" aria-haspopup="dialog" aria-expanded={open} aria-controls="ai-report-drawer" onClick={() => (open ? requestClose() : setOpen(true))} className={triggerButtonClass}>Tạo báo cáo AI</button>
       {open ? (
         <>
-          <div aria-hidden onClick={requestClose} className="fixed inset-0 z-40 bg-black/40" />
-          <aside ref={drawerRef} id="ai-report-drawer" role="dialog" aria-modal="true" aria-labelledby="ai-report-title" tabIndex={-1} className="fixed inset-0 z-50 flex flex-col gap-4 overflow-y-auto border border-border bg-surface p-4 text-foreground shadow-xl sm:inset-y-0 sm:right-0 sm:left-auto sm:w-[32rem] sm:rounded-l-2xl sm:p-5">
+          <div aria-hidden onClick={requestClose} data-ui-overlay-motion="true" className="fixed inset-0 z-40 bg-black/40" />
+          <aside ref={drawerRef} id="ai-report-drawer" role="dialog" aria-modal="true" aria-labelledby="ai-report-title" tabIndex={-1} data-ui-drawer-motion="right" className="fixed inset-0 z-50 flex flex-col gap-4 overflow-y-auto border border-border bg-surface p-4 text-foreground shadow-xl sm:inset-y-0 sm:right-0 sm:left-auto sm:w-[32rem] sm:rounded-l-2xl sm:p-5">
             <header className="flex items-start justify-between gap-3">
               <div>
                 <h2 id="ai-report-title" className="text-base font-semibold text-foreground">Báo cáo AI</h2>
