@@ -175,23 +175,64 @@ const NON_XLSX_MIME_TYPES = new Set([
   "text/xml",
 ]);
 
+const ALLOWED_XLSX_MIME_TYPES = new Set([
+  "",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/octet-stream",
+]);
+
+/** Kich thuoc toi thieu cua mot ZIP Local File Header (`PK\x03\x04` = 30 bytes). */
+export const MIN_XLSX_ZIP_BYTES = 30;
+
 /**
- * Xac minh Blob xuat Excel thuc su co du lieu su dung duoc truoc khi kich hoat tai tep va bao thanh cong.
+ * Kiem tra 4 byte dau cua goi OpenXML/ZIP `.xlsx` (`0x50 0x4B 0x03 0x04` = `"PK\x03\x04"`).
+ * Tu choi binary loi, text/JSON ngụy trang `application/octet-stream`, hoac ZIP rong (`PK\x05\x06`).
  */
-export function isUsableWorkerExportBlob(
-  blob: { size: number; type?: string } | null | undefined,
+export function hasXlsxZipSignature(headerBytes: ArrayBuffer | Uint8Array): boolean {
+  const bytes = headerBytes instanceof Uint8Array ? headerBytes : new Uint8Array(headerBytes);
+  return (
+    bytes.byteLength >= 4 &&
+    bytes[0] === 0x50 &&
+    bytes[1] === 0x4b &&
+    bytes[2] === 0x03 &&
+    bytes[3] === 0x04
+  );
+}
+
+/**
+ * Xac minh Blob xuat Excel thuc su la tep ZIP/XLSX hop le truoc khi kich hoat tai tep va bao thanh cong.
+ */
+export async function isUsableWorkerExportBlob(
+  blob: Pick<Blob, "size" | "type" | "slice"> | null | undefined,
   contentTypeHeader?: string | null,
-): boolean {
-  if (!blob || typeof blob.size !== "number" || !Number.isFinite(blob.size) || blob.size <= 0) {
+): Promise<boolean> {
+  if (
+    !blob ||
+    typeof blob.size !== "number" ||
+    !Number.isFinite(blob.size) ||
+    blob.size < MIN_XLSX_ZIP_BYTES ||
+    typeof blob.slice !== "function"
+  ) {
     return false;
   }
   const headerMime = (contentTypeHeader ?? "").toLowerCase().split(";")[0]?.trim() ?? "";
   const blobMime = (blob.type ?? "").toLowerCase().split(";")[0]?.trim() ?? "";
-  const effectiveMime = headerMime || blobMime;
-  if (effectiveMime && NON_XLSX_MIME_TYPES.has(effectiveMime)) {
+  if (headerMime && (NON_XLSX_MIME_TYPES.has(headerMime) || !ALLOWED_XLSX_MIME_TYPES.has(headerMime))) {
     return false;
   }
-  return true;
+  if (blobMime && (NON_XLSX_MIME_TYPES.has(blobMime) || !ALLOWED_XLSX_MIME_TYPES.has(blobMime))) {
+    return false;
+  }
+  try {
+    const headerSlice = blob.slice(0, 4);
+    if (!headerSlice || typeof headerSlice.arrayBuffer !== "function") {
+      return false;
+    }
+    const headerBuffer = await headerSlice.arrayBuffer();
+    return hasXlsxZipSignature(headerBuffer);
+  } catch {
+    return false;
+  }
 }
 
 const XLSX_FILENAME = /^[A-Za-z0-9._-]+\.xlsx$/;

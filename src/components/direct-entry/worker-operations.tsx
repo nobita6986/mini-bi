@@ -1616,7 +1616,7 @@ function WorkerExportDialog({
       });
       if (response.status === 200) {
         const blob = await response.blob();
-        if (!isUsableWorkerExportBlob(blob, response.headers.get("content-type"))) {
+        if (!(await isUsableWorkerExportBlob(blob, response.headers.get("content-type")))) {
           setBusy(false);
           notify.error({
             title: WORKER_EXPORT_EMPTY_FILE_MESSAGE,

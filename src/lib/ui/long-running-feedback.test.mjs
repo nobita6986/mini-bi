@@ -61,11 +61,14 @@ registerHooks({
 const {
   isIndeterminateAiJobRunning,
   settleTrackedJobToast,
+  shouldShowAiJobProgress,
   validateDownloadableExportBlob,
   validateHtmlExportDocument,
 } = await import("./long-running-feedback.ts");
 
 const {
+  MIN_XLSX_ZIP_BYTES,
+  hasXlsxZipSignature,
   isUsableWorkerExportBlob,
   workerExportErrorMessage,
   WORKER_EXPORT_EMPTY_FILE_MESSAGE,
@@ -75,38 +78,81 @@ const { codeToMessage } = await import("../ai-report/report-contract.ts");
 const { createNotifyStore } = await import("../../components/ui/notify-store.ts");
 
 describe("UIUX-S2-06 — Long-Running Operation Feedback, Indeterminate Progress & Usable File Verification", () => {
-  it("rejects empty or error-payload HTTP 200 Blobs and only accepts genuinely usable export files", () => {
-    assert.equal(isUsableWorkerExportBlob(null, null), false);
-    assert.equal(isUsableWorkerExportBlob({ size: 0, type: "" }, null), false);
+  it("rejects empty, corrupt binary, or error-payload HTTP 200 Blobs and only accepts genuine ZIP/XLSX export files", async () => {
+    assert.equal(await isUsableWorkerExportBlob(null, null), false);
+    assert.equal(await isUsableWorkerExportBlob(new Blob([], { type: "" }), null), false);
     assert.equal(
-      isUsableWorkerExportBlob(
-        { size: 128, type: "application/json" },
+      await isUsableWorkerExportBlob(
+        new Blob(['{"error":"denied"}'], { type: "application/json" }),
         "application/json; charset=utf-8",
       ),
       false,
     );
     assert.equal(
-      isUsableWorkerExportBlob({ size: 512, type: "text/html" }, "text/html"),
+      await isUsableWorkerExportBlob(
+        new Blob(["<html><body>Error</body></html>"], { type: "text/html" }),
+        "text/html",
+      ),
+      false,
+    );
+    // HTTP 200 with application/octet-stream carrying error text or arbitrary binary WITHOUT PK\x03\x04 ZIP header MUST be rejected
+    assert.equal(
+      await isUsableWorkerExportBlob(
+        new Blob(['{"ok":false,"message":"Internal Server Error — padded beyond 30 bytes"}'], {
+          type: "application/octet-stream",
+        }),
+        "application/octet-stream",
+      ),
       false,
     );
     assert.equal(
-      isUsableWorkerExportBlob({ size: 256, type: "application/xml" }, "application/xml"),
+      await isUsableWorkerExportBlob(
+        new Blob([new Uint8Array(64).fill(0xff)], {
+          type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        }),
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      ),
+      false,
+    );
+    // Empty ZIP archive (PK\x05\x06) or truncated < 30B header is NOT a valid .xlsx
+    const emptyZipBytes = new Uint8Array(40);
+    emptyZipBytes.set([0x50, 0x4b, 0x05, 0x06], 0);
+    assert.equal(hasXlsxZipSignature(emptyZipBytes), false);
+    assert.equal(
+      await isUsableWorkerExportBlob(
+        new Blob([emptyZipBytes], { type: "application/octet-stream" }),
+        "application/octet-stream",
+      ),
+      false,
+    );
+    assert.equal(
+      await isUsableWorkerExportBlob(
+        new Blob([new Uint8Array([0x50, 0x4b, 0x03, 0x04])], {
+          type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        }),
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      ),
       false,
     );
 
-    // Valid .xlsx spreadsheetml MIME (note: contains 'openxmlformats' which must NOT be confused with raw xml)
+    // Valid .xlsx ZIP Local File Header (PK\x03\x04 + >= MIN_XLSX_ZIP_BYTES)
+    const validXlsxBytes = new Uint8Array(Math.max(64, MIN_XLSX_ZIP_BYTES));
+    validXlsxBytes.set([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00], 0);
+    assert.equal(hasXlsxZipSignature(validXlsxBytes), true);
     assert.equal(
-      isUsableWorkerExportBlob(
-        {
-          size: 18432,
+      await isUsableWorkerExportBlob(
+        new Blob([validXlsxBytes], {
           type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        },
+        }),
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       ),
       true,
     );
     assert.equal(
-      isUsableWorkerExportBlob({ size: 4096, type: "application/octet-stream" }, null),
+      await isUsableWorkerExportBlob(
+        new Blob([validXlsxBytes], { type: "application/octet-stream" }),
+        "application/octet-stream",
+      ),
       true,
     );
     assert.ok(WORKER_EXPORT_EMPTY_FILE_MESSAGE.includes("không hợp lệ hoặc rỗng"));
@@ -150,6 +196,12 @@ describe("UIUX-S2-06 — Long-Running Operation Feedback, Indeterminate Progress
     assert.equal(isIndeterminateAiJobRunning("draft"), false);
     assert.equal(isIndeterminateAiJobRunning("failed_provider_transient"), false);
     assert.equal(isIndeterminateAiJobRunning(null), false);
+
+    // Progress bar stops immediately when pollState enters "error" even if last known status was "computing"
+    assert.equal(shouldShowAiJobProgress("computing", "polling"), true);
+    assert.equal(shouldShowAiJobProgress("computing", "error"), false);
+    assert.equal(shouldShowAiJobProgress("computing", "idle"), false);
+    assert.equal(shouldShowAiJobProgress("draft", "polling"), false);
 
     const store = createNotifyStore();
     const toastId = store.api.pending({
@@ -249,16 +301,28 @@ describe("UIUX-S2-06 — Long-Running Operation Feedback, Indeterminate Progress
     const exportDialogSlice = workerOpsSrc.slice(
       workerOpsSrc.indexOf("function WorkerExportDialog("),
     );
-    assert.match(exportDialogSlice, /isUsableWorkerExportBlob\(blob,\s*response\.headers\.get\("content-type"\)\)/);
+    assert.match(exportDialogSlice, /await isUsableWorkerExportBlob\(blob,\s*response\.headers\.get\("content-type"\)\)/);
     assert.doesNotMatch(
       exportDialogSlice,
       /notify\.pending\(/,
       "WorkerExportDialog must not duplicate its modal button/progress pending state with a second pending Toast",
     );
 
-    // 3. AiReportPanel uses notify.pending + settleTrackedJobToast and validates HTML + Blob before download
+    // 3. AiReportPanel keeps background polling/Toast across drawer close, stops progress on poll error, exposes safe re-check, and validates HTML + Blob before download
     assert.match(aiPanelSrc, /notify\.pending\(/);
     assert.match(aiPanelSrc, /settleTrackedJobToast\(/);
+    assert.match(aiPanelSrc, /shouldShowAiJobProgress\(jobStatus\?\.status,\s*pollState\)/);
+    assert.match(aiPanelSrc, /Kiểm tra lại trạng thái/);
+    assert.doesNotMatch(
+      aiPanelSrc,
+      /if\s*\(!open\)\s*getController\(\)\.stopPolling\(\)/,
+      "Closing drawer must not abort active server-side AI report job polling",
+    );
+    assert.doesNotMatch(
+      aiPanelSrc,
+      /if\s*\(!open\s*&&\s*activeJobToastRef\.current\)/,
+      "Closing drawer must not dismiss pending Toast while job is still running",
+    );
     assert.match(aiPanelSrc, /validateHtmlExportDocument\(html\)/);
     assert.match(aiPanelSrc, /validateDownloadableExportBlob\(/);
   });

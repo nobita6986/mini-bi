@@ -1,9 +1,11 @@
 import { isActiveJobStatus, isFailedJobStatus } from "@/lib/ai-report/report-contract";
-import type { NotifyApi } from "@/components/ui/notify-store";
+import type { NotifyActionProps, NotifyApi } from "@/components/ui/notify-store";
 
 export type BlobValidationOutcome =
   | { ok: true }
-  | { ok: false; reason: "EMPTY_BLOB" | "UNEXPECTED_CONTENT_TYPE" };
+  | { ok: false; reason: "EMPTY_BLOB" | "UNEXPECTED_CONTENT_TYPE" | "CORRUPT_ARCHIVE" };
+
+export type AiJobPollState = "idle" | "polling" | "error";
 
 const ERROR_PAYLOAD_MIME_TYPES = new Set([
   "application/json",
@@ -74,6 +76,18 @@ export function isIndeterminateAiJobRunning(status: string | null | undefined): 
   return isActiveJobStatus(status);
 }
 
+/**
+ * Thanh `<progress>` bất định chỉ được phép chạy khi job đang ở pha active VÀ vòng lặp polling
+ * thực sự còn đang hoạt động (`pollState === "polling"`). Nếu một lượt poll gặp lỗi mạng/projection
+ * khiến controller dừng lập lịch, progress phải dừng ngay để không báo "đang chạy" giả.
+ */
+export function shouldShowAiJobProgress(
+  status: string | null | undefined,
+  pollState: AiJobPollState,
+): boolean {
+  return pollState === "polling" && isActiveJobStatus(status);
+}
+
 export type TrackedJobToast = {
   jobId: string;
   toastId: string;
@@ -89,6 +103,7 @@ export function settleTrackedJobToast(params: {
   status: string | null;
   errorCode: string | null;
   transportError?: string | null;
+  retryAction?: NotifyActionProps;
   codeToText: (code: string) => string;
   notify: Pick<NotifyApi, "update">;
 }): {
@@ -101,6 +116,7 @@ export function settleTrackedJobToast(params: {
     status,
     errorCode,
     transportError,
+    retryAction,
     codeToText,
     notify,
   } = params;
@@ -114,6 +130,7 @@ export function settleTrackedJobToast(params: {
       tone: "error",
       title: transportError,
       pending: false,
+      action: retryAction ?? null,
     });
     return { settled: true, nextTracker: null };
   }
