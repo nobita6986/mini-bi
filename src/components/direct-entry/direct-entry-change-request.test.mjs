@@ -93,9 +93,9 @@ test("idempotency intent covers payload, 409 does not retry, 5xx keeps the key",
   assert.match(conflictBlock, /onConflict\(\)/);
   const serverBranchEnd = submitBody.indexOf("return;", serverError);
   const serverBlock = submitBody.slice(serverError, serverBranchEnd + "return;".length);
-  assert.match(serverBlock, /setStatusMessage\(changeRequestErrorMessage\(status\)\)/);
+  assert.match(serverBlock, /notify\.error\(\{\s*\n\s*title: changeRequestErrorMessage\(status\)/);
   assert.doesNotMatch(serverBlock, /clearIntentKey/);
-  assert.match(submitBody, /catch \{\s*\n\s*setStatusMessage\(changeRequestErrorMessage\(0\)\)/);
+  assert.match(submitBody, /catch \{\s*\n\s*notify\.error\(\{\s*\n\s*title: changeRequestErrorMessage\(0\)/);
   assert.doesNotMatch(submitBody, /retry|setTimeout/);
 });
 

@@ -147,7 +147,7 @@ test("idempotency theo intent, 409 khong retry, 5xx giu key", () => {
   assert.match(conflictBlock, /onConflict\(reviewerErrorMessage\(status\)\)/);
   assert.match(conflictBlock, /setReloadToken\(\(current\) => current \+ 1\)/);
   assert.match(conflictBlock, /status === 401 \|\| status === 403/);
-  assert.match(decideBody, /catch \{\s*\n\s*setStatusMessage\(reviewerErrorMessage\(0\)\)/);
+  assert.match(decideBody, /catch \{\s*\n\s*notify\.error\(\{\s*\n\s*title: reviewerErrorMessage\(0\)/);
   assert.match(decideBody, /if \(!updated\) \{/);
   assert.doesNotMatch(decideBody, /retry|setTimeout|setInterval/);
   assert.match(reviewer, /disabled=\{busy !== null\}/);
