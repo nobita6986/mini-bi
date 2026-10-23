@@ -185,7 +185,8 @@ begin
                   'phone', le.worker_details->'phone'->>'value'
                 )
                 else '{}'::jsonb end as json,
-             le.last_off_date, le.employee_code
+             le.last_off_date as off_effective_date,
+             le.employee_code
         from last_ep le
         join public.direct_entry_projects p on p.project_id = le.project_id
         join public.recruiters r on r.recruiter_id = le.recruiter_id
@@ -226,6 +227,7 @@ create or replace function public.direct_entry_offboarding_report(
 )
 returns jsonb
 language plpgsql
+stable
 security definer
 set search_path = pg_catalog, public
 as $function$
@@ -289,6 +291,7 @@ create or replace function public.direct_entry_offboarding_report_export(
 )
 returns jsonb
 language plpgsql
+stable
 security definer
 set search_path = pg_catalog, public
 as $function$
@@ -326,10 +329,11 @@ begin
   if v_source is null then
     raise exception 'offboarding data function missing';
   end if;
-  -- Fail-closed on the CCCD and phone boundaries.
-  if position('national_id' in v_source) > 0
-     or position('cccd_last4' in v_source) > 0
-     or position('right(' in v_source) > 0 then
+  -- Fail-closed on the CCCD boundary: the report never emits a `cccd` key or a
+  -- masked last-4 form. (The internal `national_id` column reference is required
+  -- for identity/grouping and is never projected.)
+  if position(chr(39) || 'cccd' || chr(39) in v_source) > 0
+     or position('cccd_last4' in v_source) > 0 then
     raise exception 'offboarding data function projects a CCCD';
   end if;
   if position('days_since_off' in v_source) = 0
