@@ -29,8 +29,16 @@ function initialPayload(detail: WorkReportRendererDetail): Record<string, unknow
 }
 
 function fieldControl(field: WorkReportField, value: unknown, setValue: (value: unknown) => void, disabled: boolean) {
-  const common = { id: field.field_key, disabled, required: field.required,
-    className: "min-h-11 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground disabled:opacity-60" };
+  const common = {
+    id: field.field_key,
+    disabled,
+    required: field.required,
+    className:
+      "min-h-11 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground " +
+      "transition-[border-color,box-shadow,background-color] duration-[var(--ui-motion-hover,160ms)] " +
+      "focus-visible:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 " +
+      "motion-reduce:transition-none disabled:opacity-60",
+  };
   if (field.field_type === "textarea") return <textarea {...common} rows={4} maxLength={Number(field.validation.max_length)}
     value={typeof value === "string" ? value : ""} onChange={(event) => setValue(event.target.value)} />;
   if (field.field_type === "boolean") return <select {...common} value={typeof value === "boolean" ? String(value) : ""}
@@ -126,8 +134,8 @@ export function WorkReportFormRenderer({ detail, onSaved }: { detail: WorkReport
         {fieldControl(field, payload[field.field_key] ?? field.default_value, (value) => setPayload((current) => ({ ...current, [field.field_key]: value })), !canEdit || busy)}
       </div>)}
     </fieldset>)}
-    {detail.revisions.length > 0 ? <details><summary className="cursor-pointer text-sm font-medium">Lịch sử các lần nộp ({detail.revisions.length})</summary>
-      <ol className="mt-2 space-y-2 text-sm text-muted">{detail.revisions.map((revision) => <li key={revision.revision_id}>Lần {revision.revision_no} · {new Date(revision.created_at).toLocaleString("vi-VN")}</li>)}</ol>
+    {detail.revisions.length > 0 ? <details data-ui-disclosure="true"><summary className="cursor-pointer rounded-md py-1 text-sm font-medium hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40">Lịch sử các lần nộp ({detail.revisions.length})</summary>
+      <ol data-ui-disclosure-body="true" className="mt-2 space-y-2 text-sm text-muted">{detail.revisions.map((revision) => <li key={revision.revision_id}>Lần {revision.revision_no} · {new Date(revision.created_at).toLocaleString("vi-VN")}</li>)}</ol>
     </details> : null}
     {canEdit ? <div className="flex flex-wrap gap-2">
       <Button variant="secondary" disabled={busy} onClick={() => void save("draft")}>{busy ? "Đang lưu…" : "Lưu nháp"}</Button>

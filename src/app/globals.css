@@ -277,6 +277,14 @@ table.r22-report-table thead th:first-child {
   animation: ui-drawer-right-enter var(--ui-motion-reveal, 200ms) var(--ui-motion-ease, cubic-bezier(0.22, 1, 0.36, 1)) both;
 }
 
+details[data-ui-disclosure="true"] > summary {
+  transition: color var(--ui-motion-hover, 160ms) var(--ui-motion-ease, cubic-bezier(0.22, 1, 0.36, 1));
+}
+
+details[data-ui-disclosure="true"][open] > [data-ui-disclosure-body="true"] {
+  animation: ui-panel-enter var(--ui-motion-reveal, 200ms) var(--ui-motion-ease, cubic-bezier(0.22, 1, 0.36, 1)) both;
+}
+
 /* Chart, Toast, Panel và Dialog tôn trọng prefers-reduced-motion. */
 @media (prefers-reduced-motion: reduce) {
   :root {
@@ -295,7 +303,9 @@ table.r22-report-table thead th:first-child {
   [data-ui-overlay-motion],
   [data-ui-dialog-motion],
   [data-ui-drawer-motion],
-  [data-ui-popover-motion] {
+  [data-ui-popover-motion],
+  details[data-ui-disclosure="true"] > summary,
+  [data-ui-disclosure-body] {
     animation: none !important;
     transition: none !important;
   }

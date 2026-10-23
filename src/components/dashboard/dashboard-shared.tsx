@@ -2342,7 +2342,7 @@ export function WorkforceDeepReportPanel({
             <button
               type="button"
               onClick={handleRetry}
-              className="mt-2 min-h-10 rounded-md border border-current px-3 text-xs font-medium"
+              className="mt-2 min-h-10 rounded-md border border-current px-3 text-xs font-medium transition-[background-color,transform] duration-[var(--ui-motion-hover,160ms)] hover:bg-black/5 dark:hover:bg-white/10 active:scale-[0.99] motion-reduce:transition-none motion-reduce:transform-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
             >
               Thử tải lại
             </button>
@@ -2371,11 +2371,11 @@ export function BucketList({ buckets, label = "Xem danh sách đầy đủ" }: {
   const highlight = useBiHighlight(bucketKeys);
   if (sorted.length === 0) return <p className="mt-2 text-sm text-muted">Chưa có dữ liệu cho mục này.</p>;
   return (
-    <details className="mt-3">
-      <summary className="cursor-pointer text-sm font-medium text-primary">
+    <details className="mt-3" data-ui-disclosure="true">
+      <summary className="cursor-pointer rounded-md py-0.5 text-sm font-medium text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40">
         {label} ({sorted.length})
       </summary>
-      <div className="mt-2 max-h-72 overflow-y-auto rounded-xl border border-border bg-surface">
+      <div data-ui-disclosure-body="true" className="mt-2 max-h-72 overflow-y-auto rounded-xl border border-border bg-surface">
         <table className="r22-report-table w-full text-sm">
           <tbody className="divide-y divide-border">
             {sorted.map((b) => {

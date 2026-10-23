@@ -63,7 +63,7 @@ export function DirectEntryQueueTabs<Value extends string>({
           );
         })}
       </div>
-      <div id={panelId} role="tabpanel" tabIndex={0}
+      <div id={panelId} role="tabpanel" tabIndex={0} data-ui-panel-motion="true"
         aria-labelledby={`${panelId}-tab-${Math.max(selectedIndex, 0)}`}>
         {children}
       </div>
