@@ -1,10 +1,16 @@
 "use client";
 
+import { useMemo } from "react";
 import { Bar, BarChart, CartesianGrid, Cell, LabelList, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 import { useTheme } from "@/lib/theme/theme-provider";
 import { useMounted } from "@/lib/theme/use-mounted";
 import type { BarDatum } from "@/lib/reporting/p1-chart-data";
+import {
+  buildBarDatasetSignature,
+  CHART_MAX_ANIMATED_BAR_ITEMS,
+  useChartDataAnimation,
+} from "./chart-motion";
 import { ChartTooltip } from "./chart-tooltip";
 
 function truncateTick(s: string) {
@@ -14,6 +20,15 @@ function truncateTick(s: string) {
 export function RecruiterBarChart({ data, title }: { data: BarDatum[]; title: string }) {
   const { resolveColor, tokens } = useTheme();
   const mounted = useMounted();
+  const dataset = useMemo(() => buildBarDatasetSignature(data), [data]);
+  const chartMotion = useChartDataAnimation({
+    chartId: `recruiter-bar:${title}`,
+    mounted,
+    signature: dataset.signature,
+    valid: dataset.valid,
+    itemCount: dataset.itemCount,
+    maxItems: CHART_MAX_ANIMATED_BAR_ITEMS,
+  });
   if (!mounted) return <div className="h-72 w-full" role="img" aria-label={title} />;
   return (
     <div className="h-72 w-full" role="img" aria-label={title}>
@@ -22,10 +37,22 @@ export function RecruiterBarChart({ data, title }: { data: BarDatum[]; title: st
           <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke={tokens.border} />
           <XAxis type="number" allowDecimals={false} tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: tokens.muted }} />
           <YAxis type="category" dataKey="name" width={132} tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: tokens.fg }} tickFormatter={truncateTick} />
-          <Tooltip content={<ChartTooltip valueFormatter={(v) => v + " người"} />} cursor={{ fill: tokens.border, opacity: 0.4 }} />
-          <Bar dataKey="value" name="Số người" radius={[0, 6, 6, 0]} barSize={18} isAnimationActive={false}>
+          <Tooltip
+            key={chartMotion.signature}
+            content={<ChartTooltip valueFormatter={(v) => v + " người"} />}
+            cursor={{ fill: tokens.border, opacity: 0.4 }}
+          />
+          <Bar
+            dataKey="value"
+            name="Số người"
+            radius={[0, 6, 6, 0]}
+            barSize={18}
+            isAnimationActive={chartMotion.isAnimationActive}
+            animationDuration={chartMotion.animationDuration}
+            animationEasing={chartMotion.animationEasing}
+          >
             {data.map((d) => <Cell key={d.key} fill={resolveColor(d.color)} />)}
-            <LabelList dataKey="value" position="right" formatter={(v) => String(v)} style={{ fontSize: 11, fill: tokens.muted }} />
+            <LabelList key={chartMotion.signature} dataKey="value" position="right" formatter={(v) => String(v)} style={{ fontSize: 11, fill: tokens.muted }} />
           </Bar>
         </BarChart>
       </ResponsiveContainer>

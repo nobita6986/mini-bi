@@ -600,7 +600,7 @@ describe("UIUX-S1-02 — Global NotifyProvider, Independent Timers, Enter/Exit L
     const filtersSrc = readRel("src/components/dashboard/dashboard-filters.tsx");
     assert.match(filtersSrc, /duration-\[180ms\]/);
 
-    // Recharts data animation must remain disabled in Chặng 1 (only on components actually rendering Recharts)
+    // Recharts data animation must never be unconditionally hardcoded to true (S1-08 & S2-01)
     for (const chartRel of [
       "src/components/dashboard/trend-chart.tsx",
       "src/components/dashboard/recruiter-bar-chart.tsx",
@@ -609,7 +609,11 @@ describe("UIUX-S1-02 — Global NotifyProvider, Independent Timers, Enter/Exit L
     ]) {
       const chartSrc = readRel(chartRel);
       assert.match(chartSrc, /from\s+["']recharts["']/);
-      assert.match(chartSrc, /isAnimationActive=\{false\}/, `${chartRel} must keep isAnimationActive={false} in Chặng 1`);
+      assert.match(
+        chartSrc,
+        /isAnimationActive=\{(?:false|chartMotion\.isAnimationActive)\}/,
+        `${chartRel} must gate isAnimationActive via false or chartMotion.isAnimationActive`,
+      );
       assert.doesNotMatch(chartSrc, /isAnimationActive=\{true\}/);
     }
 

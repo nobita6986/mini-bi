@@ -38,13 +38,14 @@
   --primary-soft: color-mix(in srgb, var(--primary) 10%, transparent);
   --primary-soft-border: color-mix(in srgb, var(--primary) 24%, transparent);
 
-  /* UIUX Chặng 1 — Motion tokens */
+  /* UIUX Chặng 1 & 2 — Motion tokens */
   --ui-motion-fast: 120ms;
   --ui-motion-hover: 160ms;
   --ui-motion-tab: 200ms;
   --ui-motion-reveal: 200ms;
   --ui-motion-toast-in: 200ms;
   --ui-motion-toast-out: 160ms;
+  --ui-motion-chart: 340ms;
   --ui-motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
@@ -192,6 +193,7 @@ table.r22-report-table thead th:first-child {
     --ui-motion-reveal: 0ms;
     --ui-motion-toast-in: 0ms;
     --ui-motion-toast-out: 0ms;
+    --ui-motion-chart: 0ms;
   }
   .recharts-wrapper *,
   [data-ui-toast-viewport] * {

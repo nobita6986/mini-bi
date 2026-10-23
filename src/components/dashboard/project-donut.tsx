@@ -1,10 +1,16 @@
 "use client";
 
+import { useMemo } from "react";
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 
 import { useTheme } from "@/lib/theme/theme-provider";
 import { useMounted } from "@/lib/theme/use-mounted";
 import type { ProjectDonutSlice } from "@/lib/reporting/p1-chart-data";
+import {
+  buildDonutDatasetSignature,
+  CHART_MAX_ANIMATED_DONUT_SLICES,
+  useChartDataAnimation,
+} from "./chart-motion";
 
 interface TooltipEntry {
   name?: string;
@@ -31,16 +37,36 @@ export function ProjectDonut({ slices, title }: { slices: ProjectDonutSlice[]; t
   const { resolveColor } = useTheme();
   const mounted = useMounted();
   const total = slices.reduce((a, s) => a + s.value, 0);
+  const dataset = useMemo(() => buildDonutDatasetSignature(slices), [slices]);
+  const chartMotion = useChartDataAnimation({
+    chartId: `project-donut:${title}`,
+    mounted,
+    signature: dataset.signature,
+    valid: dataset.valid,
+    itemCount: dataset.itemCount,
+    maxItems: CHART_MAX_ANIMATED_DONUT_SLICES,
+  });
   if (!mounted) return <div className="grid grid-cols-1 items-center gap-4 sm:grid-cols-2"><div className="h-56 w-full" role="img" aria-label={title} /></div>;
   return (
     <div className="grid grid-cols-1 items-center gap-4 sm:grid-cols-2">
       <div className="relative h-56 w-full" role="img" aria-label={title}>
         <ResponsiveContainer width="100%" height="100%">
           <PieChart accessibilityLayer>
-            <Pie data={slices} dataKey="value" nameKey="display" innerRadius="60%" outerRadius="88%" paddingAngle={1.5} strokeWidth={1} isAnimationActive={false}>
+            <Pie
+              data={slices}
+              dataKey="value"
+              nameKey="display"
+              innerRadius="60%"
+              outerRadius="88%"
+              paddingAngle={1.5}
+              strokeWidth={1}
+              isAnimationActive={chartMotion.isAnimationActive}
+              animationDuration={chartMotion.animationDuration}
+              animationEasing={chartMotion.animationEasing}
+            >
               {slices.map((s) => <Cell key={s.key} fill={resolveColor(s.color)} />)}
             </Pie>
-            <Tooltip content={<DonutTooltip />} />
+            <Tooltip key={chartMotion.signature} content={<DonutTooltip />} />
           </PieChart>
         </ResponsiveContainer>
         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
