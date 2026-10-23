@@ -31,6 +31,7 @@ const NAV_ICONS: Record<string, typeof LayoutDashboard> = {
   "change-requests": FileDiff,
   "work-reports": NotebookPen,
   "work-report-reviews": ClipboardList,
+  "workforce-offboarding": Users,
   admin: ShieldCheck,
 } as const;
 
