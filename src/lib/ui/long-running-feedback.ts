@@ -94,6 +94,53 @@ export type TrackedJobToast = {
 };
 
 /**
+ * Khởi tạo hoặc tái kích hoạt (re-track) Toast `pending` cho một job báo cáo AI theo `dedupeKey` ổn định:
+ * - Nếu đang theo dõi một job khác thì đóng Toast cũ trước.
+ * - Gọi `notify.pending` với cùng `dedupeKey` (`countBurst: false`) để tái sử dụng nguyên `toastId`
+ *   tại chỗ (kể cả khi khôi phục từ Toast lỗi mạng), xóa action cũ mà không tự đóng Toast.
+ */
+export function startOrRetrackAiJobToast(params: {
+  currentTracker: TrackedJobToast | null;
+  jobId: string;
+  title: string;
+  notify: Pick<NotifyApi, "pending" | "dismiss">;
+}): TrackedJobToast {
+  const { currentTracker, jobId, title, notify } = params;
+  if (currentTracker && currentTracker.jobId !== jobId) {
+    notify.dismiss(currentTracker.toastId);
+  }
+  const toastId = notify.pending({
+    title,
+    dedupeKey: "ai-report-job:" + jobId,
+    countBurst: false,
+  });
+  return { jobId, toastId };
+}
+
+/**
+ * Tạo action "Kiểm tra lại" an toàn (chỉ-đọc, gọi lại polling, không tạo job mới) cho Toast lỗi polling AI.
+ * Tuyệt đối KHÔNG bật `dismissOnAction: true` vì `onRecheck` gọi `notify.pending` cùng `dedupeKey`
+ * để chuyển chính Toast hiện tại về `pending`; nếu `dismissOnAction: true`, `executeToastActionClick`
+ * sẽ gọi `onDismiss()` ngay sau `onClick()` và đóng mất chính Toast `pending` vừa khôi phục.
+ */
+export function buildAiJobRecheckRetryAction(params: {
+  jobId: string;
+  isMounted: () => boolean;
+  onRecheck: (jobId: string) => void;
+}): NotifyActionProps {
+  const { jobId, isMounted, onRecheck } = params;
+  return {
+    kind: "retry",
+    safeToRetry: true,
+    isValid: isMounted,
+    label: "Kiểm tra lại",
+    onClick: () => {
+      onRecheck(jobId);
+    },
+  };
+}
+
+/**
  * Cập nhật tại chỗ (in-place) cùng một Toast từ trạng thái `pending` sang `success` hoặc `error`
  * khi job bất đồng bộ hoàn tất hoặc thất bại (không phát thông báo thứ hai gây trùng lặp).
  */
@@ -140,6 +187,7 @@ export function settleTrackedJobToast(params: {
       tone: "success",
       title: "Báo cáo AI đã sẵn sàng.",
       pending: false,
+      action: null,
     });
     return { settled: true, nextTracker: null };
   }
@@ -149,6 +197,7 @@ export function settleTrackedJobToast(params: {
       tone: "error",
       title: codeToText(errorCode ?? "AI_INTERNAL"),
       pending: false,
+      action: null,
     });
     return { settled: true, nextTracker: null };
   }

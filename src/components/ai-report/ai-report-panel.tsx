@@ -29,9 +29,11 @@ import { formatTimestamp, todayDateIso } from "@/lib/format";
 import { resolveTabTarget } from "@/components/dashboard/ai-settings-panel-logic";
 import { useNotify } from "@/components/ui/notify-provider";
 import {
+  buildAiJobRecheckRetryAction,
   isIndeterminateAiJobRunning,
   settleTrackedJobToast,
   shouldShowAiJobProgress,
+  startOrRetrackAiJobToast,
   validateDownloadableExportBlob,
   validateHtmlExportDocument,
   type AiJobPollState,
@@ -142,14 +144,12 @@ export function AiReportPanel() {
     setStatusText("Đang kiểm tra lại trạng thái báo cáo…");
     setPollState("polling");
     if (retrackToast) {
-      if (activeJobToastRef.current && activeJobToastRef.current.jobId !== targetJobId) {
-        notifyRef.current.dismiss(activeJobToastRef.current.toastId);
-      }
-      const toastId = notifyRef.current.pending({
+      activeJobToastRef.current = startOrRetrackAiJobToast({
+        currentTracker: activeJobToastRef.current,
+        jobId: targetJobId,
         title: "Đang kiểm tra lại tiến trình báo cáo AI…",
-        dedupeKey: "ai-report-job:" + targetJobId,
+        notify: notifyRef.current,
       });
-      activeJobToastRef.current = { jobId: targetJobId, toastId };
     }
     getController().startPolling(targetJobId);
   }
@@ -173,16 +173,13 @@ export function AiReportPanel() {
                 status: null,
                 errorCode: null,
                 transportError: err,
-                retryAction: {
-                  kind: "retry",
-                  safeToRetry: true,
-                  dismissOnAction: true,
-                  isValid: () => mountedRef.current,
-                  label: "Kiểm tra lại",
-                  onClick: () => {
-                    recheckJobStatus(id, true);
+                retryAction: buildAiJobRecheckRetryAction({
+                  jobId: id,
+                  isMounted: () => mountedRef.current,
+                  onRecheck: (nextId) => {
+                    recheckJobStatus(nextId, true);
                   },
-                },
+                }),
                 codeToText: (code) => codeToMessage(code).text,
                 notify: notifyRef.current,
               });
