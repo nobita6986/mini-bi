@@ -20,10 +20,12 @@ import {
   MAX_PENDING_TOASTS,
   MAX_VISIBLE_TOASTS,
   resolveNotifyDuration,
+  resolveSafeNotifyAction,
   sanitizeNotifyText,
   syncNotifyPathname,
   TOAST_ENTER_DURATION_MS,
   TOAST_EXIT_DURATION_MS,
+  type NotifyActionKind,
   type NotifyActionProps,
   type NotifyApi,
   type NotifyClock,
@@ -33,6 +35,7 @@ import {
   type NotifySnapshot,
   type NotifyStore,
   type NotifyTone,
+  type NotifyUpdateOptions,
 } from "@/components/ui/notify-store";
 
 export {
@@ -43,10 +46,12 @@ export {
   MAX_PENDING_TOASTS,
   MAX_VISIBLE_TOASTS,
   resolveNotifyDuration,
+  resolveSafeNotifyAction,
   sanitizeNotifyText,
   syncNotifyPathname,
   TOAST_ENTER_DURATION_MS,
   TOAST_EXIT_DURATION_MS,
+  type NotifyActionKind,
   type NotifyActionProps,
   type NotifyApi,
   type NotifyClock,
@@ -56,6 +61,7 @@ export {
   type NotifySnapshot,
   type NotifyStore,
   type NotifyTone,
+  type NotifyUpdateOptions,
 };
 
 const defaultNotifyStore = getDefaultNotifyStore();
