@@ -64,6 +64,7 @@ test("Admin internal navigation exposes mapping only to Full Admin", () => {
     { id: "labor-types", href: "/admin/catalog/labor-types" },
     { id: "accounts", href: "/admin/access/accounts" },
     { id: "project-team-scopes", href: "/admin/catalog/project-team-scopes" },
+    { id: "attendance", href: "/admin/attendance" },
   ]);
   assert.deepEqual(ADMIN_SECTIONS.map(({ id, label }) => ({ id, label })), [
     { id: "personnel", label: "Nhân sự tuyển dụng" },
@@ -72,11 +73,19 @@ test("Admin internal navigation exposes mapping only to Full Admin", () => {
     { id: "labor-types", label: "Loại hình lao động" },
     { id: "accounts", label: "Tài khoản truy cập" },
     { id: "project-team-scopes", label: "Mapping Dự án ↔ Nhóm" },
+    { id: "attendance", label: "Báo cáo chấm công" },
   ]);
   const serializableSections = ADMIN_SECTIONS.map(({ id, label, href }) => ({ id, label, href }));
-  const catalogOnly = serializableSections.filter(({ id }) => !["accounts", "project-team-scopes"].includes(id));
-  // Accounting (catalog operator) sees catalog sections, never accounts or project mappings.
+  const catalogOnly = serializableSections.filter(({ id }) => !["accounts", "project-team-scopes", "attendance"].includes(id));
+  const attendanceOnly = serializableSections.filter(({ id }) => id === "attendance");
+  // Accounting (catalog operator) sees catalog sections, never accounts, project mappings, or attendance.
   assert.deepEqual(visibleAdminSections(accountingCatalog), catalogOnly);
+  // Canonical BoD (entry_privileged_edit @ all or report_analytics_view + report_view @ all) sees only Attendance Report.
+  assert.deepEqual(visibleAdminSections({ capabilities: ["entry_privileged_edit"], scopes: [{ kind: "all" }] }), attendanceOnly);
+  assert.deepEqual(visibleAdminSections({ capabilities: ["report_analytics_view", "report_view"], scopes: [{ kind: "all" }] }), attendanceOnly);
+  // Aggregate-only or submission-only report viewers do not receive Attendance Report access.
+  assert.deepEqual(visibleAdminSections({ capabilities: ["report_analytics_view"], scopes: [{ kind: "all" }] }), []);
+  assert.deepEqual(visibleAdminSections({ capabilities: ["report_view"], scopes: [{ kind: "all" }] }), []);
   // The canonical Full Admin triple sees every section, including restricted sections.
   assert.deepEqual(visibleAdminSections(fullAdmin), serializableSections);
   assert.equal(visibleAdminSections(fullAdmin).some((section) => Object.values(section).some((value) => typeof value === "function")), false);

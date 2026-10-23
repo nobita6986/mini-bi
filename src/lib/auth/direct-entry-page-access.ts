@@ -8,7 +8,9 @@ import type { ActorResolution } from "./direct-entry-v2";
 import type { NavActorProjection, NavCapabilityPredicate } from "../navigation/registry-capability.ts";
 import {
   adminAreaNavPredicate,
+  adminPanelNavPredicate,
   adminSecurityNavPredicate,
+  attendanceReportNavPredicate,
   changeRequestsNavPredicate,
   projectAdminNavPredicate,
   workReportAnalyticsPredicate,
@@ -48,7 +50,7 @@ export function decideAdminAreaAccess(input: {
 }): DirectEntryPageDecision {
   return decideCapabilityPageAccess({
     actor: input.actor,
-    allowed: adminAreaNavPredicate,
+    allowed: adminPanelNavPredicate,
   });
 }
 
@@ -56,28 +58,53 @@ export function decideAdminAreaAccess(input: {
 export function decidePersonnelCatalogPageAccess(input: {
   actor: ActorResolution | null;
 }): DirectEntryPageDecision {
-  return decideAdminAreaAccess(input);
+  return decideCapabilityPageAccess({
+    actor: input.actor,
+    allowed: adminAreaNavPredicate,
+  });
 }
 
 /** Separate direct-URL gate for the implemented Team catalog page. */
 export function decideTeamCatalogPageAccess(input: {
   actor: ActorResolution | null;
 }): DirectEntryPageDecision {
-  return decideAdminAreaAccess(input);
+  return decideCapabilityPageAccess({
+    actor: input.actor,
+    allowed: adminAreaNavPredicate,
+  });
 }
 
 /** Separate direct-URL gate for the implemented Vendor catalog page. */
 export function decideVendorCatalogPageAccess(input: {
   actor: ActorResolution | null;
 }): DirectEntryPageDecision {
-  return decideAdminAreaAccess(input);
+  return decideCapabilityPageAccess({
+    actor: input.actor,
+    allowed: adminAreaNavPredicate,
+  });
 }
 
 /** Separate direct-URL gate for the implemented Labor Type catalog page. */
 export function decideLaborTypeCatalogPageAccess(input: {
   actor: ActorResolution | null;
 }): DirectEntryPageDecision {
-  return decideAdminAreaAccess(input);
+  return decideCapabilityPageAccess({
+    actor: input.actor,
+    allowed: adminAreaNavPredicate,
+  });
+}
+
+/**
+ * Separate direct-URL gate for `/admin/attendance` (Admin and BoD only).
+ * Catalog-only operators (`catalog_master_manage`) and Team Leaders are denied.
+ */
+export function decideAttendanceReportPageAccess(input: {
+  actor: ActorResolution | null;
+}): DirectEntryPageDecision {
+  return decideCapabilityPageAccess({
+    actor: input.actor,
+    allowed: attendanceReportNavPredicate,
+  });
 }
 
 /**

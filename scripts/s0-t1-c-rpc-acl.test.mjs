@@ -36,6 +36,7 @@ import {
   WORK_REPORTS_READER_CONTRACT_RPC_SIGNATURES,
   ATTENDANCE_WP1_MIGRATION_NAME,
   ATTENDANCE_WP1_RPC_SIGNATURES,
+  ATTENDANCE_ADMIN_REPORT_RPC_SIGNATURES,
   OFFBOARDING_REPORT_MIGRATION_NAME,
   OFFBOARDING_REPORT_RPC_SIGNATURES,
   migrationChecksum,
@@ -622,6 +623,7 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
         ...DUPLICATE_CCCD_SELF_SERVICE_RPC_SIGNATURES,
         ...WORK_REPORTS_READER_CONTRACT_RPC_SIGNATURES,
         ...ATTENDANCE_WP1_RPC_SIGNATURES,
+        ...ATTENDANCE_ADMIN_REPORT_RPC_SIGNATURES,
         ...OFFBOARDING_REPORT_RPC_SIGNATURES);
       assert.ok(expectedSignatures.length > 0, "the explicit server/invoker allowlist is not empty");
       assert.equal(new Set(expectedSignatures).size, expectedSignatures.length, "the allowlist has no duplicates");
@@ -648,6 +650,7 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
           ...DUPLICATE_CCCD_SELF_SERVICE_RPC_SIGNATURES,
           ...WORK_REPORTS_READER_CONTRACT_RPC_SIGNATURES,
           ...ATTENDANCE_WP1_RPC_SIGNATURES,
+          ...ATTENDANCE_ADMIN_REPORT_RPC_SIGNATURES,
           ...OFFBOARDING_REPORT_RPC_SIGNATURES].sort(),
         "only explicitly reviewed post-S0 RPCs add service_role grants after the S0 baseline",
       );

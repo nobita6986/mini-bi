@@ -70,9 +70,33 @@ export const catalogOperatorNavPredicate: NavCapabilityPredicate = (actor) =>
 /** Security administration remains limited to the canonical Full Admin triple. */
 export const adminSecurityNavPredicate = adminAuthorityNavPredicate;
 
-/** Admin area is available to catalog operators or Full Admin. */
+/** Admin area catalog tabs remain available to catalog operators or Full Admin. */
 export const adminAreaNavPredicate: NavCapabilityPredicate = (actor) =>
   catalogOperatorNavPredicate(actor) || adminSecurityNavPredicate(actor);
+
+/**
+ * Canonical BoD executive report reader authority (requires effective `all` scope):
+ * - `entry_privileged_edit` (Direct Entry / P3.1 BoD executive capability), OR
+ * - BOTH `report_analytics_view` AND `report_view` (Work Reports F0 §2 BoD executive bundle).
+ *
+ * Aggregate-only (`report_analytics_view` without `report_view`), submission-only (`report_view`
+ * without `report_analytics_view`), Form Admin (`report_form_manage`), Accounting (`catalog_master_manage`),
+ * Project Admin (`entry_admin` without Full Admin triple), Reviewer (`change_review`), Team Leader
+ * (`@ team`), and Staff (`@ own`) are denied so raw check-in GPS & notes remain Admin/BoD-only.
+ */
+export const attendanceReportNavPredicate: NavCapabilityPredicate = (actor) => {
+  if (adminSecurityNavPredicate(actor)) return true;
+  if (!actor.scopes.some((scope) => scope.kind === "all")) return false;
+  if (actor.capabilities.includes("entry_privileged_edit")) return true;
+  return (
+    actor.capabilities.includes("report_analytics_view") &&
+    actor.capabilities.includes("report_view")
+  );
+};
+
+/** Top-level Admin panel shell admits catalog operators, Full Admin, or Attendance Report readers (BoD). */
+export const adminPanelNavPredicate: NavCapabilityPredicate = (actor) =>
+  adminAreaNavPredicate(actor) || attendanceReportNavPredicate(actor);
 
 /**
  * P2.5-W06A-R1: Project Operations authority chinh xac theo DB W02
@@ -204,7 +228,7 @@ export const workforceOffboardingNavPredicate: NavCapabilityPredicate = (actor) 
 export const NAV_CAPABILITY_PREDICATES: Readonly<Record<string, NavCapabilityPredicate>> = {
   any: () => true,
   owner: adminAuthorityNavPredicate,
-  admin_area: adminAreaNavPredicate,
+  admin_area: adminPanelNavPredicate,
   finance: () => false, // P3 chưa có entry finance; fail-closed.
   hrp: directEntryNavPredicate,
   entry_own: directEntryNavPredicate,
