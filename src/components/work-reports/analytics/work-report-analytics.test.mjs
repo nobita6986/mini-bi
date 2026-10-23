@@ -65,7 +65,8 @@ test("reader version filter follows the draft template and detail requests guard
   assert.match(reader, /detailGeneration/);
   assert.match(reader, /gen !== detailGeneration\.current/);
   assert.match(reader, /cause instanceof DOMException && cause\.name === "AbortError"/);
-  assert.match(reader, /detailControllerRef\.current\?\.abort\(\)/);
+  assert.match(reader, /function closeDetail\(\)[\s\S]*detailGeneration\.current \+= 1;[\s\S]*detailControllerRef\.current\?\.abort\(\)/);
+  assert.match(reader, /if \(!open\) closeDetail\(\)/);
 });
 
 test("reader list shows a single retryable error state", () => {

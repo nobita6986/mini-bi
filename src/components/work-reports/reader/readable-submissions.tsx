@@ -133,6 +133,12 @@ export function ReadableSubmissions() {
     }
   }
 
+  function closeDetail() {
+    detailGeneration.current += 1;
+    detailControllerRef.current?.abort();
+    setDetailOpen(false);
+  }
+
   const templates = payload?.filter_options.templates ?? [];
   const selectedTemplate = templates.find((template) => template.template_id === draft.templateId);
   const versionOptions = selectedTemplate?.versions ?? [];
@@ -280,7 +286,7 @@ export function ReadableSubmissions() {
 
       <FormDialog
         open={detailOpen}
-        onOpenChange={(open) => { if (!open) setDetailOpen(false); }}
+        onOpenChange={(open) => { if (!open) closeDetail(); }}
         title={detail ? detail.value.template.display_name : "Chi tiết báo cáo"}
         description={detail ? `Phiên bản v${detail.item.template_version_no} · ${detail.item.assignee_display_name}` : undefined}
         descriptionId="reader-detail-desc"
