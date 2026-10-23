@@ -3,37 +3,60 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 const component = await readFile(new URL("./work-report-analytics.tsx", import.meta.url), "utf8");
+const tabs = await readFile(new URL("./work-report-analytics-tabs.tsx", import.meta.url), "utf8");
 const page = await readFile(new URL("../../../app/work-reports/analytics/page.tsx", import.meta.url), "utf8");
-const uiModel = await readFile(new URL("../../../lib/work-reports/analytics-ui-model.mjs", import.meta.url), "utf8");
+const reader = await readFile(new URL("../reader/readable-submissions.tsx", import.meta.url), "utf8");
+const readerModel = await readFile(new URL("../../../lib/work-reports/reader-ui-model.ts", import.meta.url), "utf8");
 const reviewUi = await readFile(new URL("../renderer/review-inbox.tsx", import.meta.url), "utf8");
 const delegationUi = await readFile(new URL("../renderer/delegation-manager.tsx", import.meta.url), "utf8");
-const navigationPredicates = await readFile(new URL("../../../lib/navigation/registry-capability.ts", import.meta.url), "utf8");
-const workReportsPage = await readFile(new URL("../../../app/work-reports/page.tsx", import.meta.url), "utf8");
+const nav = await readFile(new URL("../work-reports-nav.tsx", import.meta.url), "utf8");
+const shell = await readFile(new URL("../work-reports-shell.tsx", import.meta.url), "utf8");
 const reviewsPage = await readFile(new URL("../../../app/work-reports/reviews/page.tsx", import.meta.url), "utf8");
 const delegationsPage = await readFile(new URL("../../../app/work-reports/delegations/page.tsx", import.meta.url), "utf8");
 
-test("analytics page is capability gated and consumes only the F1.5 API contract", () => {
+test("analytics page stays capability gated and hosts two server-scoped tabs", () => {
   assert.match(page, /decideWorkReportAnalyticsPageAccess/);
   assert.match(page, /WORK_REPORTS_API_ENABLED/);
+  assert.match(page, /workReportViewPredicate\(actor\.actor\)/);
+  assert.match(page, /<WorkReportAnalyticsTabs canViewSubmissions=\{canViewSubmissions\} \/>/);
+  assert.match(tabs, /role="tablist"/);
+  assert.match(tabs, /role="tab"/);
+  assert.match(tabs, /role="tabpanel"/);
+  assert.match(tabs, /Bài nộp/);
+  assert.match(tabs, /Tổng hợp/);
+  assert.match(tabs, /useState<"submissions" \| "summary">/);
+  // The original analytics dashboard stays the "Tổng hợp" tab.
   assert.match(component, /\/api\/work-reports\/analytics\/overview/);
   assert.match(component, /\/api\/work-reports\/analytics\/breakdown/);
-  assert.match(uiModel, /\/api\/work-reports\/analytics\/contributions/);
-  assert.match(component, /\/api\/work-reports\/submissions/);
-  assert.match(component, /useState<Finality>\("final"\)/);
-  assert.match(component, /new URLSearchParams\(\{ finality \}\)/);
-  assert.match(component, /Tạm tính \(Chờ duyệt\)/);
-  assert.match(component, /Chốt \(Đã duyệt\)/);
-  assert.match(component, /effective_scope\.label/);
-  assert.doesNotMatch(component, /payload_json/);
-  assert.doesNotMatch(component, /role|BoD|Team Leader/);
 });
 
-test("review inbox uses server-filtered queue, reviewer detail and versioned decision API", () => {
+test("reader list uses body.data, human labels, server cursor and stale-request isolation", () => {
+  assert.match(reader, /parseReaderList\(body\)/);
+  assert.match(reader, /body\.data/);
+  assert.match(reader, /filter_options\.templates/);
+  assert.match(reader, /\/api\/work-reports\/submissions/);
+  assert.match(reader, /CursorLoadMore/);
+  assert.match(reader, /Xem báo cáo/);
+  assert.match(reader, /readerStateLabel\(/);
+  assert.match(reader, /generation\.current/);
+  assert.match(reader, /AbortController/);
+  assert.match(reader, /mergeReaderItems\(current, parsed\.items\)/);
+  assert.doesNotMatch(reader, />\{item\.(obligation_id|submission_id|template_id|template_version_id|assignee_app_user_id)\}</);
+  assert.doesNotMatch(reader, /JSON\.stringify/);
+  // The reader model mirrors the F0 field vocabulary and select-label mapping.
+  for (const type of ["integer", "decimal", "boolean", "single_select", "multi_select"]) {
+    assert.ok(readerModel.includes(`field.field_type === "${type}"`), `reader model missing ${type}`);
+  }
+  assert.match(readerModel, /return Array\.isArray\(value\) \? value\.map\(String\)\.join\(", "\) : String\(value\)/);
+  assert.match(readerModel, /Có/);
+  assert.match(readerModel, /Không/);
+  assert.match(readerModel, /option\.option_key === code\)\?\.label/);
+  assert.match(readerModel, /return "—"/);
+});
+
+test("review inbox loads the full scoped queue without a template UUID input", () => {
   assert.match(reviewsPage, /WORK_REPORTS_API_ENABLED/);
   assert.match(reviewsPage, /workReportReviewPredicate\(resolution\.actor\)/);
-  assert.match(workReportsPage, /href="\/work-reports\/reviews"/);
-  assert.match(navigationPredicates, /effective_report_review_scopes/);
-  assert.match(navigationPredicates, /workReportReviewPredicate/);
   assert.match(reviewUi, /\/api\/work-reports\/reviews\?/);
   assert.match(reviewUi, /page_size: "50"/);
   assert.match(reviewUi, /\/api\/work-reports\/reviews\/\$\{encodeURIComponent\(item\.obligation_id\)\}/);
@@ -41,12 +64,26 @@ test("review inbox uses server-filtered queue, reviewer detail and versioned dec
   assert.match(reviewUi, /expected_version: detail\.value\.submission\.version/);
   assert.match(reviewUi, /decision === "REJECT" && !normalizedReason/);
   assert.match(reviewUi, /crypto\.randomUUID\(\)/);
+  assert.match(reviewUi, /ReportReadonlyContent/);
+  assert.doesNotMatch(reviewUi, /template_id|Mã mẫu|templateId/);
   assert.doesNotMatch(reviewUi, /actor\.(?:role|title)|role_name|job_title|Team Leader|BoD/);
+});
+
+test("module navigation exposes authority-driven links with an active state", () => {
+  assert.match(nav, /usePathname\(\)/);
+  assert.match(nav, /aria-current=\{active \? "page" : undefined\}/);
+  assert.match(nav, /role="tablist"|aria-label="Báo cáo công việc"/);
+  assert.match(nav, /flex-wrap/);
+  assert.match(shell, /workReportAnalyticsPredicate\(actor\)/);
+  assert.match(shell, /workReportAssignmentPredicate\(actor\)/);
+  assert.match(shell, /workReportTemplateManagePredicate\(actor\)/);
+  assert.match(shell, /workReportReviewPredicate\(actor\)/);
+  assert.match(shell, /workReportDelegationPredicate\(actor\)/);
+  assert.doesNotMatch(shell, /actor\.(?:role|title)|role_name|job_title|Team Leader|BoD/);
 });
 
 test("delegation UI consumes server-projected scope/options and versioned revoke contract", () => {
   assert.match(delegationsPage, /workReportDelegationPredicate\(resolution\.actor\)/);
-  assert.match(workReportsPage, /href="\/work-reports\/delegations"/);
   assert.match(delegationUi, /\/api\/work-reports\/delegations/);
   assert.match(delegationUi, /options\.capabilities/);
   assert.match(delegationUi, /options\.delegates/);

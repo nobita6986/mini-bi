@@ -168,10 +168,10 @@ describe("UIUX S2-07 — Selected Module Micro-Motion", () => {
     assert.match(adminSubnavSrc, /motion-reduce:transform-none/);
     assert.match(adminSubnavSrc, /min-h-11/);
 
-    const workReportsPageSrc = readRel("src/app/work-reports/page.tsx");
-    assert.match(workReportsPageSrc, /min-h-11/);
-    assert.match(workReportsPageSrc, /active:scale-\[0\.99\]/);
-    assert.match(workReportsPageSrc, /motion-reduce:transform-none/);
+    const workReportsNavSrc = readRel("src/components/work-reports/work-reports-nav.tsx");
+    assert.match(workReportsNavSrc, /min-h-11/);
+    assert.match(workReportsNavSrc, /active:scale-\[0\.99\]/);
+    assert.match(workReportsNavSrc, /motion-reduce:transform-none/);
 
     const formRendererSrc = readRel(
       "src/components/work-reports/renderer/work-report-form-renderer.tsx",
