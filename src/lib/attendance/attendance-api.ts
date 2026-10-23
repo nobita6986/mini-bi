@@ -14,6 +14,7 @@ import { isAttendanceEnabled, loadAttendanceSigningSecret } from "./attendance-c
 import {
   ATTENDANCE_CLIENT_TIME_SKEW_TOLERANCE_MS,
   ATTENDANCE_FUTURE_TIMESTAMP_TOLERANCE_MS,
+  ATTENDANCE_MAX_SYNC_WINDOW_MS,
   ATTENDANCE_PHOTO_MIME_TYPE,
   attendanceHttpStatusForError,
   computeAttendanceRequestFingerprint,
@@ -361,6 +362,7 @@ export async function postAttendanceCheckIn(
       token: meta.time_token,
       expected_app_user_id: actorResult.actor.app_user_id,
       now_ms: nowMs,
+      allow_expired_anchor: true,
     });
     if (!verifiedToken.ok) {
       return attendanceError(verifiedToken.code);
@@ -375,10 +377,15 @@ export async function postAttendanceCheckIn(
     }
 
     if (
+      verifiedToken.issued_at_ms > nowMs + ATTENDANCE_FUTURE_TIMESTAMP_TOLERANCE_MS ||
       serverComputedCapturedAtMs > nowMs + ATTENDANCE_FUTURE_TIMESTAMP_TOLERANCE_MS ||
       meta.device_claimed_at_ms > nowMs + ATTENDANCE_FUTURE_TIMESTAMP_TOLERANCE_MS
     ) {
       return attendanceError("CAPTURED_AT_FUTURE");
+    }
+
+    if (nowMs - serverComputedCapturedAtMs > ATTENDANCE_MAX_SYNC_WINDOW_MS) {
+      return attendanceError("ATTENDANCE_SYNC_WINDOW_EXPIRED");
     }
 
     timeAnchorIssuedAtIso = verifiedToken.issued_at_iso;
@@ -480,6 +487,7 @@ export async function postAttendanceCheckIn(
       photo_sha256: computedPhotoSha256,
       photo_size_bytes: photoBytes.byteLength,
       photo_mime_type: ATTENDANCE_PHOTO_MIME_TYPE,
+      received_at: new Date(nowMs).toISOString(),
     });
   } catch {
     if (ensuredPhoto.created_now) {

@@ -9,7 +9,9 @@ import test from "node:test";
 
 import { PGlite } from "@electric-sql/pglite";
 import {
+  ATTENDANCE_MAX_SYNC_WINDOW_MS,
   ATTENDANCE_PHOTO_MIME_TYPE,
+  ATTENDANCE_TIME_TOKEN_TTL_MS,
   computeAttendanceRequestFingerprint,
 } from "../src/lib/attendance/attendance-contract.ts";
 import {
@@ -111,7 +113,8 @@ async function callCheckInAsServiceRole(db, args) {
         $15::text,
         $16::text,
         $17::integer,
-        $18::text
+        $18::text,
+        $19::timestamptz
       ) as data`,
       [
         args.auth_subject,
@@ -132,6 +135,7 @@ async function callCheckInAsServiceRole(db, args) {
         args.photo_sha256,
         args.photo_size_bytes,
         args.photo_mime_type,
+        args.received_at,
       ],
     );
     await db.exec("commit;");
@@ -161,6 +165,7 @@ function buildRpcArgs(overrides = {}) {
     photo_sha256: PHOTO_SHA_1,
     photo_size_bytes: 4096,
     photo_mime_type: ATTENDANCE_PHOTO_MIME_TYPE,
+    received_at: "2026-10-23T12:00:00.000Z",
     ...overrides,
   };
 
@@ -255,7 +260,7 @@ test("database ACLs deny direct table access to PUBLIC, anon, authenticated, and
     await db.exec("begin; set local role authenticated;");
     await assert.rejects(
       db.query(
-        "select public.attendance_record_checkin(null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null)",
+        "select public.attendance_record_checkin(null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null)",
       ),
       (err) => err.code === "42501",
     );
@@ -393,7 +398,84 @@ test("SERVER_ANCHORED, DEVICE_CLOCK_UNVERIFIED, Asia/Ho_Chi_Minh business_date b
       (err) => err.code === "22023" && err.message.includes("ATTENDANCE_TIME_MISMATCH"),
     );
 
-    // 7. Append-only immutability trigger blocks UPDATE and DELETE even from table owner / superuser!
+    // 7. Offline sync grace in SQL RPC:
+    //    - Token > 24h old, elapsed = 24h exact, received_at at exact 7-day boundary (604,800,000 ms): ACCEPTED
+    const anchorBoundaryMs = Date.parse("2026-10-10T01:00:00.000Z");
+    const exactMaxCapturedMs = anchorBoundaryMs + ATTENDANCE_TIME_TOKEN_TTL_MS; // 2026-10-11T01:00:00.000Z
+    const exact7dReceivedMs = exactMaxCapturedMs + ATTENDANCE_MAX_SYNC_WINDOW_MS; // 2026-10-18T01:00:00.000Z
+    const exact7dRow = await callCheckInAsServiceRole(
+      db,
+      buildRpcArgs({
+        idempotency_key: "e1000000-0000-4000-8000-000000000020",
+        time_anchor_issued_at: new Date(anchorBoundaryMs).toISOString(),
+        elapsed_since_anchor_ms: ATTENDANCE_TIME_TOKEN_TTL_MS,
+        device_claimed_at: new Date(exactMaxCapturedMs).toISOString(),
+        received_at: new Date(exact7dReceivedMs).toISOString(),
+        photo_storage_key: `preview/attendance-checkins/${ACTIVE_ACTOR_A.app}/e1000000-0000-4000-8000-000000000020.jpg`,
+      }),
+    );
+    assert.equal(exact7dRow.captured_at, "2026-10-11T01:00:00.000Z");
+    assert.equal(exact7dRow.received_at, "2026-10-18T01:00:00.000Z");
+    assert.equal(exact7dRow.business_date, "2026-10-11");
+    assert.equal(exact7dRow.replayed, false);
+
+    //    - 1 millisecond past 7-day sync window: REJECTED with 22023 ATTENDANCE_SYNC_WINDOW_EXPIRED
+    await assert.rejects(
+      callCheckInAsServiceRole(
+        db,
+        buildRpcArgs({
+          idempotency_key: "e1000000-0000-4000-8000-000000000021",
+          time_anchor_issued_at: new Date(anchorBoundaryMs).toISOString(),
+          elapsed_since_anchor_ms: ATTENDANCE_TIME_TOKEN_TTL_MS,
+          device_claimed_at: new Date(exactMaxCapturedMs).toISOString(),
+          received_at: new Date(exact7dReceivedMs + 1).toISOString(),
+          photo_storage_key: `preview/attendance-checkins/${ACTIVE_ACTOR_A.app}/e1000000-0000-4000-8000-000000000021.jpg`,
+        }),
+      ),
+      (err) => err.code === "22023" && err.message.includes("ATTENDANCE_SYNC_WINDOW_EXPIRED"),
+    );
+
+    //    - elapsed_since_anchor_ms > 24h (86,400,001 ms) rejected even when received_at - captured_at <= 7d
+    await assert.rejects(
+      callCheckInAsServiceRole(
+        db,
+        buildRpcArgs({
+          idempotency_key: "e1000000-0000-4000-8000-000000000022",
+          time_anchor_issued_at: new Date(anchorBoundaryMs).toISOString(),
+          elapsed_since_anchor_ms: ATTENDANCE_TIME_TOKEN_TTL_MS + 1,
+          device_claimed_at: new Date(exactMaxCapturedMs + 1).toISOString(),
+          received_at: new Date(exactMaxCapturedMs + 3_600_000).toISOString(),
+          photo_storage_key: `preview/attendance-checkins/${ACTIVE_ACTOR_A.app}/e1000000-0000-4000-8000-000000000022.jpg`,
+        }),
+      ),
+      (err) => err.code === "22023" && err.message.includes("ATTENDANCE_TIME_ELAPSED_INVALID"),
+    );
+
+    //    - Default received_at = null uses live pg_catalog.clock_timestamp() cleanly for 36h-delayed sync
+    const { rows: liveClockRows } = await db.query(
+      "select pg_catalog.clock_timestamp() as now_ts",
+    );
+    const liveNowMs = new Date(liveClockRows[0].now_ts).getTime();
+    const liveAnchorMs = liveNowMs - 36 * 3_600_000;
+    const liveElapsedMs = 3_600_000;
+    const liveCapturedMs = liveAnchorMs + liveElapsedMs;
+    const liveRow = await callCheckInAsServiceRole(
+      db,
+      buildRpcArgs({
+        app_user_id: ACTIVE_ACTOR_B.app,
+        auth_subject: ACTIVE_ACTOR_B.auth,
+        idempotency_key: "e1000000-0000-4000-8000-000000000023",
+        time_anchor_issued_at: new Date(liveAnchorMs).toISOString(),
+        elapsed_since_anchor_ms: liveElapsedMs,
+        device_claimed_at: new Date(liveCapturedMs).toISOString(),
+        received_at: null,
+        photo_storage_key: `preview/attendance-checkins/${ACTIVE_ACTOR_B.app}/e1000000-0000-4000-8000-000000000023.jpg`,
+      }),
+    );
+    assert.equal(liveRow.captured_at, new Date(liveCapturedMs).toISOString());
+    assert.equal(liveRow.replayed, false);
+
+    // 8. Append-only immutability trigger blocks UPDATE and DELETE even from table owner / superuser!
     await assert.rejects(
       db.query("update public.attendance_checkins set note = 'tampered' where checkin_id = $1", [
         first.checkin_id,

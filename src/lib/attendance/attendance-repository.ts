@@ -34,6 +34,7 @@ export type RecordAttendanceCheckInInput = {
   photo_sha256: string;
   photo_size_bytes: number;
   photo_mime_type: "image/jpeg";
+  received_at: string;
 };
 
 export type RecordAttendanceCheckInResult =
@@ -53,6 +54,7 @@ const KNOWN_RPC_ERROR_TOKENS: ReadonlyMap<string, AttendanceErrorCode> = new Map
   ["CAPTURED_AT_INVALID", "CAPTURED_AT_INVALID"],
   ["CAPTURED_AT_FUTURE", "CAPTURED_AT_FUTURE"],
   ["ATTENDANCE_TIME_TOKEN_INVALID", "ATTENDANCE_TIME_TOKEN_INVALID"],
+  ["ATTENDANCE_SYNC_WINDOW_EXPIRED", "ATTENDANCE_SYNC_WINDOW_EXPIRED"],
   ["ATTENDANCE_TIME_ELAPSED_INVALID", "ATTENDANCE_TIME_ELAPSED_INVALID"],
   ["ATTENDANCE_TIME_MISMATCH", "ATTENDANCE_TIME_MISMATCH"],
   ["PHOTO_INVALID", "PHOTO_INVALID"],
@@ -119,6 +121,7 @@ export function createServiceAttendanceRepository(
           p_photo_sha256: input.photo_sha256,
           p_photo_size_bytes: input.photo_size_bytes,
           p_photo_mime_type: input.photo_mime_type,
+          p_received_at: input.received_at,
         });
 
         if (result.error) {

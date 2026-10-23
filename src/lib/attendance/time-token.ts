@@ -41,6 +41,7 @@ export type VerifiedAttendanceTimeToken =
       issued_at_iso: string;
       expires_at_iso: string;
       ttl_ms: number;
+      anchor_expired: boolean;
       nonce: string;
       token_digest: string;
     }
@@ -111,6 +112,7 @@ export function verifyAttendanceTimeToken(input: {
   token: string;
   expected_app_user_id: string;
   now_ms?: number;
+  allow_expired_anchor?: boolean;
 }): VerifiedAttendanceTimeToken {
   if (!Buffer.isBuffer(input.secret) || input.secret.byteLength < 32) {
     return { ok: false, code: "ATTENDANCE_TIME_TOKEN_INVALID" };
@@ -215,7 +217,8 @@ export function verifyAttendanceTimeToken(input: {
   }
 
   const nowMs = Math.trunc(input.now_ms ?? Date.now());
-  if (nowMs > expiresAtMs) {
+  const anchorExpired = nowMs > expiresAtMs;
+  if (anchorExpired && !input.allow_expired_anchor) {
     return { ok: false, code: "ATTENDANCE_TIME_TOKEN_EXPIRED" };
   }
 
@@ -226,6 +229,7 @@ export function verifyAttendanceTimeToken(input: {
     issued_at_iso: new Date(issuedAtMs).toISOString(),
     expires_at_iso: new Date(expiresAtMs).toISOString(),
     ttl_ms: expiresAtMs - issuedAtMs,
+    anchor_expired: anchorExpired,
     nonce,
     token_digest: computeTimeTokenDigest(rawToken),
   };

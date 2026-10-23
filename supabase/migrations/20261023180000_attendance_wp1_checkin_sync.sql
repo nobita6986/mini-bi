@@ -97,10 +97,13 @@ create table public.attendance_checkins (
         and time_verified = true
         and time_anchor_issued_at is not null
         and time_anchor_issued_at not in ('infinity'::timestamp with time zone, '-infinity'::timestamp with time zone)
+        and time_anchor_issued_at <= received_at + interval '30 seconds'
         and elapsed_since_anchor_ms is not null
         and elapsed_since_anchor_ms >= 0
         and elapsed_since_anchor_ms <= 86400000
         and time_token_digest is not null
+        and captured_at = time_anchor_issued_at + (elapsed_since_anchor_ms * interval '1 millisecond')
+        and received_at <= captured_at + interval '168 hours'
       )
       or
       (
@@ -170,7 +173,8 @@ create or replace function public.attendance_record_checkin(
   p_photo_storage_key text,
   p_photo_sha256 text,
   p_photo_size_bytes integer,
-  p_photo_mime_type text
+  p_photo_mime_type text,
+  p_received_at timestamp with time zone default null
 )
 returns jsonb
 language plpgsql
@@ -302,7 +306,10 @@ begin
     );
   end if;
 
-  v_received_at := pg_catalog.clock_timestamp();
+  v_received_at := coalesce(p_received_at, pg_catalog.clock_timestamp());
+  if v_received_at in ('infinity'::timestamp with time zone, '-infinity'::timestamp with time zone) then
+    raise exception 'ATTENDANCE_REQUEST_INVALID' using errcode = '22023';
+  end if;
 
   if p_time_source = 'SERVER_ANCHORED' then
     if p_time_anchor_issued_at is null
@@ -320,8 +327,19 @@ begin
 
     v_captured_at := p_time_anchor_issued_at + (p_elapsed_since_anchor_ms * interval '1 millisecond');
 
-    if pg_catalog.abs(extract(epoch from (p_device_claimed_at - v_captured_at)) * 1000.0) > 5000.0 then
+    if p_device_claimed_at - v_captured_at > interval '5 seconds'
+       or v_captured_at - p_device_claimed_at > interval '5 seconds' then
       raise exception 'ATTENDANCE_TIME_MISMATCH' using errcode = '22023';
+    end if;
+
+    if p_time_anchor_issued_at > v_received_at + interval '30 seconds'
+       or v_captured_at > v_received_at + interval '30 seconds'
+       or p_device_claimed_at > v_received_at + interval '30 seconds' then
+      raise exception 'CAPTURED_AT_FUTURE' using errcode = '22023';
+    end if;
+
+    if v_received_at > v_captured_at + interval '168 hours' then
+      raise exception 'ATTENDANCE_SYNC_WINDOW_EXPIRED' using errcode = '22023';
     end if;
 
     v_time_verified := true;
@@ -426,9 +444,9 @@ end;
 $function$;
 
 comment on function public.attendance_record_checkin(
-  uuid, uuid, uuid, text, double precision, double precision, double precision, text, text, timestamp with time zone, text, timestamp with time zone, bigint, text, text, text, integer, text
+  uuid, uuid, uuid, text, double precision, double precision, double precision, text, text, timestamp with time zone, text, timestamp with time zone, bigint, text, text, text, integer, text, timestamp with time zone
 ) is
-  'Service-role-only Attendance WP1 check-in writer. Enforces server-bound actor mapping, per-actor advisory locking, Asia/Ho_Chi_Minh business_date, SERVER_ANCHORED vs DEVICE_CLOCK_UNVERIFIED evidence, and idempotent replay/conflict.';
+  'Service-role-only Attendance WP1 check-in writer. Enforces server-bound actor mapping, per-actor advisory locking, Asia/Ho_Chi_Minh business_date, SERVER_ANCHORED (24h capture / 7d sync window) vs DEVICE_CLOCK_UNVERIFIED evidence, and idempotent replay/conflict.';
 
 -- -----------------------------------------------------------------------------
 -- 4. Owner alignment and helper privileges (`s0_t1c_runner` & `postgres` safe).
@@ -463,7 +481,7 @@ begin
 
   foreach v_sig in array array[
     'public.attendance__internal_immutable_guard()',
-    'public.attendance_record_checkin(uuid,uuid,uuid,text,double precision,double precision,double precision,text,text,timestamp with time zone,text,timestamp with time zone,bigint,text,text,text,integer,text)'
+    'public.attendance_record_checkin(uuid,uuid,uuid,text,double precision,double precision,double precision,text,text,timestamp with time zone,text,timestamp with time zone,bigint,text,text,text,integer,text,timestamp with time zone)'
   ]
   loop
     select p.proowner
@@ -481,7 +499,7 @@ begin
     select distinct r.rolname
       from pg_catalog.pg_proc p
       join pg_catalog.pg_roles r on r.oid = p.proowner
-     where p.oid = 'public.attendance_record_checkin(uuid,uuid,uuid,text,double precision,double precision,double precision,text,text,timestamp with time zone,text,timestamp with time zone,bigint,text,text,text,integer,text)'::pg_catalog.regprocedure
+     where p.oid = 'public.attendance_record_checkin(uuid,uuid,uuid,text,double precision,double precision,double precision,text,text,timestamp with time zone,text,timestamp with time zone,bigint,text,text,text,integer,text,timestamp with time zone)'::pg_catalog.regprocedure
   loop
     execute pg_catalog.format(
       'grant execute on function public.direct_entry_assert_actor_mapping(uuid,uuid) to %I',
@@ -501,11 +519,11 @@ revoke all on function public.attendance__internal_immutable_guard()
   from public, anon, authenticated, service_role;
 
 revoke all on function public.attendance_record_checkin(
-  uuid, uuid, uuid, text, double precision, double precision, double precision, text, text, timestamp with time zone, text, timestamp with time zone, bigint, text, text, text, integer, text
+  uuid, uuid, uuid, text, double precision, double precision, double precision, text, text, timestamp with time zone, text, timestamp with time zone, bigint, text, text, text, integer, text, timestamp with time zone
 ) from public, anon, authenticated, service_role;
 
 grant execute on function public.attendance_record_checkin(
-  uuid, uuid, uuid, text, double precision, double precision, double precision, text, text, timestamp with time zone, text, timestamp with time zone, bigint, text, text, text, integer, text
+  uuid, uuid, uuid, text, double precision, double precision, double precision, text, text, timestamp with time zone, text, timestamp with time zone, bigint, text, text, text, integer, text, timestamp with time zone
 ) to service_role;
 
 -- -----------------------------------------------------------------------------
@@ -517,7 +535,7 @@ declare
   v_guard constant pg_catalog.regprocedure :=
     'public.attendance__internal_immutable_guard()'::pg_catalog.regprocedure;
   v_rpc constant pg_catalog.regprocedure :=
-    'public.attendance_record_checkin(uuid,uuid,uuid,text,double precision,double precision,double precision,text,text,timestamp with time zone,text,timestamp with time zone,bigint,text,text,text,integer,text)'::pg_catalog.regprocedure;
+    'public.attendance_record_checkin(uuid,uuid,uuid,text,double precision,double precision,double precision,text,text,timestamp with time zone,text,timestamp with time zone,bigint,text,text,text,integer,text,timestamp with time zone)'::pg_catalog.regprocedure;
   v_rls boolean;
   v_force_rls boolean;
   v_policy_count integer;

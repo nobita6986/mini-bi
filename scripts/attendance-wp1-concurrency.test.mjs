@@ -108,8 +108,17 @@ async function applyMigrations(client) {
   }
 }
 
-function buildParams({ idempotencyKey, capturedIso, shaChar }) {
+function buildParams({
+  idempotencyKey,
+  anchorIso = "2026-10-20T00:00:00.000Z",
+  elapsedMs,
+  receivedIso = "2026-10-23T12:00:00.000Z",
+  shaChar,
+}) {
   const photoSha256 = shaChar.repeat(64);
+  const tokenDigest = "d".repeat(64);
+  const capturedMs = Date.parse(anchorIso) + elapsedMs;
+  const capturedIso = new Date(capturedMs).toISOString();
   const fingerprint = computeAttendanceRequestFingerprint({
     app_user_id: ACTOR.app,
     latitude: 10.7769,
@@ -117,10 +126,10 @@ function buildParams({ idempotencyKey, capturedIso, shaChar }) {
     accuracy_meters: 9.0,
     address_hint: "TP.HCM",
     note: "",
-    device_claimed_at_ms: Date.parse(capturedIso),
-    time_source: "DEVICE_CLOCK_UNVERIFIED",
-    time_token_digest: null,
-    elapsed_since_anchor_ms: null,
+    device_claimed_at_ms: capturedMs,
+    time_source: "SERVER_ANCHORED",
+    time_token_digest: tokenDigest,
+    elapsed_since_anchor_ms: elapsedMs,
     photo_sha256: photoSha256,
     photo_size_bytes: 2048,
     photo_mime_type: ATTENDANCE_PHOTO_MIME_TYPE,
@@ -137,14 +146,15 @@ function buildParams({ idempotencyKey, capturedIso, shaChar }) {
     "TP.HCM",
     "",
     capturedIso,
-    "DEVICE_CLOCK_UNVERIFIED",
-    null,
-    null,
-    null,
+    "SERVER_ANCHORED",
+    anchorIso,
+    elapsedMs,
+    tokenDigest,
     `preview/attendance-checkins/${ACTOR.app}/${idempotencyKey}.jpg`,
     photoSha256,
     2048,
     ATTENDANCE_PHOTO_MIME_TYPE,
+    receivedIso,
   ];
 }
 
@@ -154,7 +164,7 @@ const CALL_RPC_SQL = `
     $5::double precision, $6::double precision, $7::double precision,
     $8::text, $9::text, $10::timestamptz, $11::text,
     $12::timestamptz, $13::bigint, $14::text,
-    $15::text, $16::text, $17::integer, $18::text
+    $15::text, $16::text, $17::integer, $18::text, $19::timestamptz
   ) as data
 `;
 
@@ -234,7 +244,7 @@ test("concurrent check-ins allocate distinct sequence_in_day and concurrent same
       CALL_RPC_SQL,
       buildParams({
         idempotencyKey: keyA,
-        capturedIso: "2026-10-20T01:00:00.000Z",
+        elapsedMs: 3_600_000, // +1h => 2026-10-20T01:00:00.000Z
         shaChar: "1",
       }),
     );
@@ -248,7 +258,7 @@ test("concurrent check-ins allocate distinct sequence_in_day and concurrent same
       CALL_RPC_SQL,
       buildParams({
         idempotencyKey: keyB,
-        capturedIso: "2026-10-20T02:00:00.000Z",
+        elapsedMs: 7_200_000, // +2h => 2026-10-20T02:00:00.000Z
         shaChar: "2",
       }),
     );
@@ -271,7 +281,7 @@ test("concurrent check-ins allocate distinct sequence_in_day and concurrent same
     const keySame = "f1000000-0000-4000-8000-000000000003";
     const sameParams = buildParams({
       idempotencyKey: keySame,
-      capturedIso: "2026-10-20T03:00:00.000Z",
+      elapsedMs: 10_800_000, // +3h => 2026-10-20T03:00:00.000Z
       shaChar: "3",
     });
 

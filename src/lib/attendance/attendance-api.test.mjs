@@ -13,6 +13,7 @@ import { sha256Hex } from "../direct-entry/document-r2-contract.ts";
 import { getAttendanceTime, postAttendanceCheckIn } from "./attendance-api.ts";
 import {
   ATTENDANCE_ERROR_CODES,
+  ATTENDANCE_MAX_SYNC_WINDOW_MS,
   attendanceHttpStatusForError,
 } from "./attendance-contract.ts";
 import {
@@ -181,10 +182,18 @@ function createInMemoryCheckInRepo() {
           };
         }
 
+        const receivedAtMs = Date.parse(input.received_at);
         const capturedAtMs =
           input.time_source === "SERVER_ANCHORED"
             ? Date.parse(input.time_anchor_issued_at) + input.elapsed_since_anchor_ms
             : Date.parse(input.device_claimed_at);
+
+        if (
+          input.time_source === "SERVER_ANCHORED" &&
+          receivedAtMs - capturedAtMs > ATTENDANCE_MAX_SYNC_WINDOW_MS
+        ) {
+          return { ok: false, code: "ATTENDANCE_SYNC_WINDOW_EXPIRED" };
+        }
 
         const hcmDate = new Intl.DateTimeFormat("en-CA", {
           timeZone: "Asia/Ho_Chi_Minh",
@@ -205,7 +214,7 @@ function createInMemoryCheckInRepo() {
           sequence_in_day: sequenceInDay,
           daily_count: sequenceInDay,
           captured_at: new Date(capturedAtMs).toISOString(),
-          received_at: new Date(FIXED_NOW_MS).toISOString(),
+          received_at: new Date(receivedAtMs).toISOString(),
           time_source: input.time_source,
           replayed: false,
         };
@@ -303,8 +312,9 @@ function buildMultipartCheckInRequest({
   });
 }
 
-test("all 22 required Attendance WP1 stable error codes map to deterministic HTTP statuses", () => {
-  assert.equal(ATTENDANCE_ERROR_CODES.length, 22);
+test("all 23 Attendance WP1 stable error codes map to deterministic HTTP statuses", () => {
+  assert.equal(ATTENDANCE_ERROR_CODES.length, 23);
+  assert.equal(attendanceHttpStatusForError("ATTENDANCE_SYNC_WINDOW_EXPIRED"), 422);
   for (const code of ATTENDANCE_ERROR_CODES) {
     const status = attendanceHttpStatusForError(code);
     assert.equal(typeof status, "number");
@@ -489,6 +499,16 @@ test("GET /api/attendance/time enforces active session, blocks actor/time spoofi
     ok: false,
     code: "ATTENDANCE_TIME_TOKEN_EXPIRED",
   });
+
+  const verifiedExpiredForSync = verifyAttendanceTimeToken({
+    secret: Buffer.from(DEDICATED_SECRET, "utf8"),
+    token: body.time_token,
+    expected_app_user_id: ACTOR_A.app_user_id,
+    now_ms: ANCHOR_ISSUED_MS + ATTENDANCE_TIME_TOKEN_TTL_MS + 1,
+    allow_expired_anchor: true,
+  });
+  assert.equal(verifiedExpiredForSync.ok, true);
+  assert.equal(verifiedExpiredForSync.anchor_expired, true);
 
   const tamperedToken = `${body.time_token.slice(0, -2)}ab`;
   const verifiedTampered = verifyAttendanceTimeToken({
@@ -741,8 +761,9 @@ test("POST /api/attendance/check-in validates multipart parts, 11-key metadata, 
     code: "ATTENDANCE_TIME_TOKEN_ACTOR_MISMATCH",
   });
 
-  // Expired token rejected with 422 ATTENDANCE_TIME_TOKEN_EXPIRED
-  const expiredTokenRes = await postAttendanceCheckIn(
+  // Sync outside 7-day window rejected with 422 ATTENDANCE_SYNC_WINDOW_EXPIRED
+  const capturedAtEpochMs = ANCHOR_ISSUED_MS + ELAPSED_MS;
+  const expiredSyncWindowRes = await postAttendanceCheckIn(
     buildMultipartCheckInRequest({
       metadataObj: buildMetadata({ photo_sha256: sha }),
       photoBytes: jpeg,
@@ -750,13 +771,13 @@ test("POST /api/attendance/check-in validates multipart parts, 11-key metadata, 
     VALID_ENV,
     {
       ...deps,
-      now: () => ANCHOR_ISSUED_MS + ATTENDANCE_TIME_TOKEN_TTL_MS + 5_000,
+      now: () => capturedAtEpochMs + ATTENDANCE_MAX_SYNC_WINDOW_MS + 1,
     },
   );
-  assert.equal(expiredTokenRes.status, 422);
-  assert.deepEqual(await expiredTokenRes.json(), {
+  assert.equal(expiredSyncWindowRes.status, 422);
+  assert.deepEqual(await expiredSyncWindowRes.json(), {
     ok: false,
-    code: "ATTENDANCE_TIME_TOKEN_EXPIRED",
+    code: "ATTENDANCE_SYNC_WINDOW_EXPIRED",
   });
 
   // Client skew > 5 seconds rejected with 422 ATTENDANCE_TIME_MISMATCH
@@ -1167,6 +1188,280 @@ test("SERVER_ANCHORED and DEVICE_CLOCK_UNVERIFIED succeed with deterministic R2 
   assert.equal(r2.objects.has(key2StorageKey), true);
 });
 
+test("SERVER_ANCHORED offline sync grace enforces 24h capture ceiling, deterministic 7-day sync window, original captured_at preservation, and idempotent multi-retry", async () => {
+  const jpeg = await realJpegA();
+  const sha = sha256Hex(jpeg);
+  const r2 = createFakeR2Harness();
+  const repo = createInMemoryCheckInRepo();
+
+  const anchorMs = Date.parse("2026-10-15T01:00:00.000Z"); // 08:00:00.000+07:00
+  const issued = issueAttendanceTimeToken({
+    secret: Buffer.from(DEDICATED_SECRET, "utf8"),
+    app_user_id: ACTOR_A.app_user_id,
+    now_ms: anchorMs,
+    nonce_hex: "aa11bb22cc33dd44ee55ff6677889900",
+  });
+
+  // 1. Token past 24h TTL (synced 78h after anchor), elapsed = 2h (<= 24h):
+  //    captured_at = 2026-10-15T03:00:00.000Z (10:00+07:00), sync delay = 76h (<= 7d)
+  const keyDelayed = "c1000000-0000-4000-8000-0000000000a1";
+  const twoHoursMs = 2 * 3_600_000;
+  const originalCapturedMs = anchorMs + twoHoursMs; // 2026-10-15T03:00:00.000Z
+  const syncAt78hMs = anchorMs + 78 * 3_600_000; // 2026-10-18T07:00:00.000Z
+  const delayedMeta = {
+    latitude: 10.7769,
+    longitude: 106.7009,
+    accuracy_meters: 6.5,
+    address_hint: "Nhà máy Bình Dương",
+    client_captured_at: "2026-10-15T10:00:01.500+07:00", // +1.5s skew within 5s tolerance
+    note: "Mất sóng công trường",
+    idempotency_key: keyDelayed,
+    photo_sha256: sha,
+    time_source: "SERVER_ANCHORED",
+    time_token: issued.time_token,
+    elapsed_since_anchor_ms: twoHoursMs,
+  };
+
+  const delayedCreateRes = await postAttendanceCheckIn(
+    buildMultipartCheckInRequest({
+      idempotencyHeader: keyDelayed,
+      metadataObj: delayedMeta,
+      photoBytes: jpeg,
+    }),
+    VALID_ENV,
+    {
+      resolveSession: activeSession(ACTOR_A),
+      repository: repo.repository,
+      storage: r2.storage,
+      now: () => syncAt78hMs,
+    },
+  );
+  assert.equal(delayedCreateRes.status, 201);
+  const delayedCreateBody = await delayedCreateRes.json();
+  assert.equal(delayedCreateBody.ok, true);
+  assert.equal(
+    delayedCreateBody.checkin.captured_at,
+    new Date(originalCapturedMs).toISOString(),
+    "delayed sync must preserve exact original server-derived captured_at without re-anchoring",
+  );
+  assert.equal(delayedCreateBody.checkin.business_date, "2026-10-15");
+  assert.equal(
+    delayedCreateBody.checkin.received_at,
+    new Date(syncAt78hMs).toISOString(),
+  );
+  assert.equal(delayedCreateBody.checkin.time_source, "SERVER_ANCHORED");
+  assert.equal(delayedCreateBody.checkin.replayed, false);
+  assert.equal(r2.objects.size, 1);
+  assert.equal(r2.commands.filter((c) => c.op === "put").length, 1);
+
+  // 2. Multiple retries of the same idempotency_key later inside the 7-day window (+96h and +150h)
+  //    never create duplicate check-in rows or duplicate R2 uploads, and never mutate captured_at!
+  for (const retryHours of [96, 150]) {
+    const retryRes = await postAttendanceCheckIn(
+      buildMultipartCheckInRequest({
+        idempotencyHeader: keyDelayed,
+        metadataObj: delayedMeta,
+        photoBytes: jpeg,
+      }),
+      VALID_ENV,
+      {
+        resolveSession: activeSession(ACTOR_A),
+        repository: repo.repository,
+        storage: r2.storage,
+        now: () => anchorMs + retryHours * 3_600_000,
+      },
+    );
+    assert.equal(retryRes.status, 200);
+    const retryBody = await retryRes.json();
+    assert.equal(retryBody.checkin.checkin_id, delayedCreateBody.checkin.checkin_id);
+    assert.equal(
+      retryBody.checkin.captured_at,
+      new Date(originalCapturedMs).toISOString(),
+    );
+    assert.equal(
+      retryBody.checkin.received_at,
+      new Date(syncAt78hMs).toISOString(),
+    );
+    assert.equal(retryBody.checkin.sequence_in_day, 1);
+    assert.equal(retryBody.checkin.daily_count, 1);
+    assert.equal(retryBody.checkin.replayed, true);
+  }
+  assert.equal(repo.byActorKey.size, 1);
+  assert.equal(r2.objects.size, 1);
+  assert.equal(r2.commands.filter((c) => c.op === "put").length, 1);
+
+  // 3. Exact 24h elapsed_since_anchor_ms boundary (86,400,000 ms) + exact 7-day sync window boundary
+  //    (server_now - captured_at === 604,800,000 ms): ACCEPTED!
+  const keyBoundaryExact = "c1000000-0000-4000-8000-0000000000a2";
+  const maxElapsedCapturedMs = anchorMs + ATTENDANCE_TIME_TOKEN_TTL_MS; // 2026-10-16T01:00:00.000Z
+  const exact7dSyncNowMs = maxElapsedCapturedMs + ATTENDANCE_MAX_SYNC_WINDOW_MS; // 2026-10-23T01:00:00.000Z
+  const exactBoundaryRes = await postAttendanceCheckIn(
+    buildMultipartCheckInRequest({
+      idempotencyHeader: keyBoundaryExact,
+      metadataObj: {
+        ...delayedMeta,
+        idempotency_key: keyBoundaryExact,
+        elapsed_since_anchor_ms: ATTENDANCE_TIME_TOKEN_TTL_MS,
+        client_captured_at: new Date(maxElapsedCapturedMs).toISOString(),
+      },
+      photoBytes: jpeg,
+    }),
+    VALID_ENV,
+    {
+      resolveSession: activeSession(ACTOR_A),
+      repository: repo.repository,
+      storage: r2.storage,
+      now: () => exact7dSyncNowMs,
+    },
+  );
+  assert.equal(exactBoundaryRes.status, 201);
+  const exactBoundaryBody = await exactBoundaryRes.json();
+  assert.equal(
+    exactBoundaryBody.checkin.captured_at,
+    new Date(maxElapsedCapturedMs).toISOString(),
+  );
+  assert.equal(exactBoundaryBody.checkin.business_date, "2026-10-16");
+
+  // 4. 1 millisecond past the 7-day sync window (server_now - captured_at === 604,800,001 ms):
+  //    REJECTED with 422 ATTENDANCE_SYNC_WINDOW_EXPIRED before touching R2 or DB!
+  const keyPast7d = "c1000000-0000-4000-8000-0000000000a3";
+  const putCountBeforeRejects = r2.commands.filter((c) => c.op === "put").length;
+  const repoCallsBeforeRejects = repo.calls.length;
+
+  const past7dBy1msRes = await postAttendanceCheckIn(
+    buildMultipartCheckInRequest({
+      idempotencyHeader: keyPast7d,
+      metadataObj: {
+        ...delayedMeta,
+        idempotency_key: keyPast7d,
+        elapsed_since_anchor_ms: twoHoursMs,
+        client_captured_at: new Date(originalCapturedMs).toISOString(),
+      },
+      photoBytes: jpeg,
+    }),
+    VALID_ENV,
+    {
+      resolveSession: activeSession(ACTOR_A),
+      repository: repo.repository,
+      storage: r2.storage,
+      now: () => originalCapturedMs + ATTENDANCE_MAX_SYNC_WINDOW_MS + 1,
+    },
+  );
+  assert.equal(past7dBy1msRes.status, 422);
+  assert.deepEqual(await past7dBy1msRes.json(), {
+    ok: false,
+    code: "ATTENDANCE_SYNC_WINDOW_EXPIRED",
+  });
+
+  // 5. elapsed_since_anchor_ms exceeding 24h (86,400,001 ms) is STILL rejected even when
+  //    server_now - captured_at is well within 7 days (e.g. synced 2 days after anchor)!
+  const keyElapsedOver24h = "c1000000-0000-4000-8000-0000000000a4";
+  const over24hElapsedMs = ATTENDANCE_TIME_TOKEN_TTL_MS + 1;
+  const over24hRes = await postAttendanceCheckIn(
+    buildMultipartCheckInRequest({
+      idempotencyHeader: keyElapsedOver24h,
+      metadataObj: {
+        ...delayedMeta,
+        idempotency_key: keyElapsedOver24h,
+        elapsed_since_anchor_ms: over24hElapsedMs,
+        client_captured_at: new Date(anchorMs + over24hElapsedMs).toISOString(),
+      },
+      photoBytes: jpeg,
+    }),
+    VALID_ENV,
+    {
+      resolveSession: activeSession(ACTOR_A),
+      repository: repo.repository,
+      storage: r2.storage,
+      now: () => anchorMs + 2 * 86_400_000, // only ~24h after capture (<= 7d), yet elapsed > 24h!
+    },
+  );
+  assert.equal(over24hRes.status, 400);
+  assert.deepEqual(await over24hRes.json(), {
+    ok: false,
+    code: "ATTENDANCE_TIME_ELAPSED_INVALID",
+  });
+
+  // 6. Invalid signature, wrong actor, and future timestamp during grace window remain fail-closed!
+  const keyGraceFailClosed = "c1000000-0000-4000-8000-0000000000a5";
+  const tamperedGraceRes = await postAttendanceCheckIn(
+    buildMultipartCheckInRequest({
+      idempotencyHeader: keyGraceFailClosed,
+      metadataObj: {
+        ...delayedMeta,
+        idempotency_key: keyGraceFailClosed,
+        time_token: `${issued.time_token.slice(0, -2)}zz`,
+      },
+      photoBytes: jpeg,
+    }),
+    VALID_ENV,
+    {
+      resolveSession: activeSession(ACTOR_A),
+      repository: repo.repository,
+      storage: r2.storage,
+      now: () => syncAt78hMs,
+    },
+  );
+  assert.equal(tamperedGraceRes.status, 422);
+  assert.deepEqual(await tamperedGraceRes.json(), {
+    ok: false,
+    code: "ATTENDANCE_TIME_TOKEN_INVALID",
+  });
+
+  const wrongActorGraceRes = await postAttendanceCheckIn(
+    buildMultipartCheckInRequest({
+      idempotencyHeader: keyGraceFailClosed,
+      metadataObj: {
+        ...delayedMeta,
+        idempotency_key: keyGraceFailClosed,
+      },
+      photoBytes: jpeg,
+    }),
+    VALID_ENV,
+    {
+      resolveSession: activeSession(ACTOR_B),
+      repository: repo.repository,
+      storage: r2.storage,
+      now: () => syncAt78hMs,
+    },
+  );
+  assert.equal(wrongActorGraceRes.status, 403);
+  assert.deepEqual(await wrongActorGraceRes.json(), {
+    ok: false,
+    code: "ATTENDANCE_TIME_TOKEN_ACTOR_MISMATCH",
+  });
+
+  const futureGraceRes = await postAttendanceCheckIn(
+    buildMultipartCheckInRequest({
+      idempotencyHeader: keyGraceFailClosed,
+      metadataObj: {
+        ...delayedMeta,
+        idempotency_key: keyGraceFailClosed,
+      },
+      photoBytes: jpeg,
+    }),
+    VALID_ENV,
+    {
+      resolveSession: activeSession(ACTOR_A),
+      repository: repo.repository,
+      storage: r2.storage,
+      now: () => originalCapturedMs - 60_000, // server_now is 60s before captured_at (> 30s tolerance)
+    },
+  );
+  assert.equal(futureGraceRes.status, 422);
+  assert.deepEqual(await futureGraceRes.json(), {
+    ok: false,
+    code: "CAPTURED_AT_FUTURE",
+  });
+
+  assert.equal(
+    r2.commands.filter((c) => c.op === "put").length,
+    putCountBeforeRejects,
+    "all rejected grace-window requests must never upload objects to R2",
+  );
+  assert.equal(repo.calls.length, repoCallsBeforeRejects);
+});
+
 test("createServiceAttendanceRepository maps SQL errors without leaking details and route handlers enforce nodejs/force-dynamic/RPC-only boundary", async () => {
   const { readFileSync } = await import("node:fs");
   const { createServiceAttendanceRepository } = await import("./attendance-repository.ts");
@@ -1215,7 +1510,17 @@ test("createServiceAttendanceRepository maps SQL errors without leaking details 
     photo_sha256: "b".repeat(64),
     photo_size_bytes: 1024,
     photo_mime_type: "image/jpeg",
+    received_at: "2026-10-23T01:25:00.000Z",
   };
+
+  const syncExpiredRepo = createServiceAttendanceRepository(async () => ({
+    data: null,
+    error: { code: "22023", message: "ATTENDANCE_SYNC_WINDOW_EXPIRED" },
+  }));
+  assert.deepEqual(await syncExpiredRepo.recordCheckIn(baseInput), {
+    ok: false,
+    code: "ATTENDANCE_SYNC_WINDOW_EXPIRED",
+  });
 
   const deniedRepo = createServiceAttendanceRepository(async () => ({
     data: null,

@@ -66,7 +66,7 @@ export const WORK_REPORTS_READER_CONTRACT_RPC_SIGNATURES = Object.freeze([
 export const ATTENDANCE_WP1_MIGRATION_NAME =
   "20261023180000_attendance_wp1_checkin_sync.sql";
 export const ATTENDANCE_WP1_RPC_SIGNATURES = Object.freeze([
-  "public.attendance_record_checkin(uuid, uuid, uuid, text, double precision, double precision, double precision, text, text, timestamp with time zone, text, timestamp with time zone, bigint, text, text, text, integer, text)",
+  "public.attendance_record_checkin(uuid, uuid, uuid, text, double precision, double precision, double precision, text, text, timestamp with time zone, text, timestamp with time zone, bigint, text, text, text, integer, text, timestamp with time zone)",
 ]);
 export const F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES = Object.freeze([
   "public.work_report_list_templates(uuid, uuid)",
