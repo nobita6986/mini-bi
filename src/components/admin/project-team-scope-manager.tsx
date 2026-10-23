@@ -7,6 +7,7 @@ import { Alert } from "@/components/ui/alert";
 import { StatusBadge, scopeMappingStateBadgeProps } from "@/components/ui/badge";
 import { Card, CardHeader } from "@/components/ui/card";
 import { FormDialog } from "@/components/ui/form-dialog";
+import { useNotify } from "@/components/ui/notify-provider";
 import { OffsetPager } from "@/components/ui/offset-pager";
 import { EmptyState } from "@/components/reporting/empty-state";
 import { ErrorState } from "@/components/reporting/error-state";
@@ -22,7 +23,6 @@ import {
   paginateProjects,
   PROJECT_PICKER_PAGE_SIZE,
   toggleProjectSelection,
-  type MappingUiOutcome,
 } from "@/lib/admin/project-team-scope-ui-model";
 import type {
   ProjectTeamScopeMapping,
@@ -51,6 +51,7 @@ type PickerState<T> =
   | { kind: "error" };
 
 export function ProjectTeamScopeManager() {
+  const notify = useNotify();
   const [list, setList] = useState<ProjectTeamScopeList | null>(null);
   const [state, setState] = useState<"loading" | "ready" | "denied" | "error">("loading");
   const [projectIdFilter, setProjectIdFilter] = useState("");
@@ -61,7 +62,6 @@ export function ProjectTeamScopeManager() {
   const [dialog, setDialog] = useState<DialogState>(null);
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<MappingUiOutcome | null>(null);
   const [projectPicker, setProjectPicker] = useState<PickerState<ProjectView[]>>({ kind: "loading" });
   const [projectReloadToken, setProjectReloadToken] = useState(0);
   const [projectSearch, setProjectSearch] = useState("");
@@ -179,7 +179,6 @@ export function ProjectTeamScopeManager() {
 
   async function submitDialog() {
     setFormError(null);
-    setNotice(null);
     if (!dialog) return;
     const signature = JSON.stringify(dialog.kind === "grant"
       ? { kind: dialog.kind, projectIds: selectedProjectIds, teamId: selectedTeam?.team_id, reason: reason.trim() }
@@ -225,18 +224,25 @@ export function ProjectTeamScopeManager() {
           )
         : classifyRevokeResponse(response.status, payload, dialog.mapping.mapping_id);
       setBusy(false);
-      setNotice(outcome);
       if (outcome.kind === "applied") {
+        notify.success({ title: outcome.message });
         pendingIntent.current = null;
         setDialog(null);
         setSelectedProjectIds([]);
         setSelectedTeam(null);
         reloadList();
+      } else if (outcome.kind === "conflict") {
+        notify.warning({ title: outcome.message });
+        setFormError(outcome.message);
+      } else {
+        notify.error({ title: outcome.message });
+        setFormError(outcome.message);
       }
-      else setFormError(outcome.message);
     } catch {
       setBusy(false);
-      setFormError("Không nhận được phản hồi. Có thể thử lại.");
+      const errMsg = "Không nhận được phản hồi. Có thể thử lại.";
+      notify.error({ title: errMsg });
+      setFormError(errMsg);
     }
   }
 
@@ -256,8 +262,6 @@ export function ProjectTeamScopeManager() {
         <h1 className="text-2xl font-bold text-foreground">Mapping Dự án ↔ Nhóm</h1>
         <p className="mt-1 text-sm text-muted">Cấp và thu hồi mapping Project↔Team. Chỉ Full Admin.</p>
       </header>
-
-      {notice ? <Alert tone={notice.kind === "applied" ? "info" : "warning"} title="Trạng thái thao tác">{notice.message}</Alert> : null}
 
       <Card>
         <CardHeader title="Danh sách mapping" description={list ? `${list.total} mapping` : "Lọc theo project ID hoặc xem lịch sử."} />

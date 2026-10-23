@@ -63,6 +63,8 @@ test("OCC and applied writes stay locked until strict authoritative reload succe
   assert.match(source, /vendorListConfirmsId\(list, vendorId\)/);
   assert.match(source, /setConflictIntent\(null\)[\s\S]{0,100}setConflictError\(null\)/);
   assert.match(source, /Thao tác vẫn đang bị khóa/);
+  assert.match(source, /useNotify\(\)/);
+  assert.doesNotMatch(source, /title="Trạng thái thao tác"/);
 });
 
 test("canonical pnpm test invokes the W04-C lane exactly once", () => {

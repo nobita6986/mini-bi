@@ -55,4 +55,6 @@ test("mapping page/nav stay Full Admin restricted and existing history/filter/er
   assert.match(component, /state === "denied"/);
   assert.match(component, /state === "error"/);
   assert.match(component, /Thu hồi/);
+  assert.match(component, /useNotify\(\)/);
+  assert.doesNotMatch(component, /title="Trạng thái thao tác"/);
 });
