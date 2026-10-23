@@ -70,9 +70,33 @@ export const catalogOperatorNavPredicate: NavCapabilityPredicate = (actor) =>
 /** Security administration remains limited to the canonical Full Admin triple. */
 export const adminSecurityNavPredicate = adminAuthorityNavPredicate;
 
-/** Admin area is available to catalog operators or Full Admin. */
+/** Admin area catalog tabs remain available to catalog operators or Full Admin. */
 export const adminAreaNavPredicate: NavCapabilityPredicate = (actor) =>
   catalogOperatorNavPredicate(actor) || adminSecurityNavPredicate(actor);
+
+/** Canonical BoD executive report reader capabilities (all require effective `all` scope). */
+export const BOD_ATTENDANCE_REPORT_CAPABILITIES: readonly Capability[] = [
+  "entry_privileged_edit",
+  "report_analytics_view",
+  "report_view",
+];
+
+/**
+ * Attendance Report reader authority: Full Admin OR canonical BoD at effective `all` scope.
+ * Team Leader (`@ team`), Accounting (`catalog_master_manage`), Project Admin (`entry_admin`
+ * without Full Admin triple), Reviewer (`change_review`), and Staff (`@ own`) are denied.
+ */
+export const attendanceReportNavPredicate: NavCapabilityPredicate = (actor) => {
+  if (adminSecurityNavPredicate(actor)) return true;
+  if (!actor.scopes.some((scope) => scope.kind === "all")) return false;
+  return BOD_ATTENDANCE_REPORT_CAPABILITIES.some((capability) =>
+    actor.capabilities.includes(capability)
+  );
+};
+
+/** Top-level Admin panel shell admits catalog operators, Full Admin, or Attendance Report readers (BoD). */
+export const adminPanelNavPredicate: NavCapabilityPredicate = (actor) =>
+  adminAreaNavPredicate(actor) || attendanceReportNavPredicate(actor);
 
 /**
  * P2.5-W06A-R1: Project Operations authority chinh xac theo DB W02
@@ -197,7 +221,7 @@ export const workReportsNavPredicate: NavCapabilityPredicate = (actor) =>
 export const NAV_CAPABILITY_PREDICATES: Readonly<Record<string, NavCapabilityPredicate>> = {
   any: () => true,
   owner: adminAuthorityNavPredicate,
-  admin_area: adminAreaNavPredicate,
+  admin_area: adminPanelNavPredicate,
   finance: () => false, // P3 chưa có entry finance; fail-closed.
   hrp: directEntryNavPredicate,
   entry_own: directEntryNavPredicate,

@@ -64,6 +64,7 @@ test("Admin internal navigation exposes mapping only to Full Admin", () => {
     { id: "labor-types", href: "/admin/catalog/labor-types" },
     { id: "accounts", href: "/admin/access/accounts" },
     { id: "project-team-scopes", href: "/admin/catalog/project-team-scopes" },
+    { id: "attendance", href: "/admin/attendance" },
   ]);
   assert.deepEqual(ADMIN_SECTIONS.map(({ id, label }) => ({ id, label })), [
     { id: "personnel", label: "Nhân sự tuyển dụng" },
@@ -72,9 +73,10 @@ test("Admin internal navigation exposes mapping only to Full Admin", () => {
     { id: "labor-types", label: "Loại hình lao động" },
     { id: "accounts", label: "Tài khoản truy cập" },
     { id: "project-team-scopes", label: "Mapping Dự án ↔ Nhóm" },
+    { id: "attendance", label: "Báo cáo chấm công" },
   ]);
   const serializableSections = ADMIN_SECTIONS.map(({ id, label, href }) => ({ id, label, href }));
-  const catalogOnly = serializableSections.filter(({ id }) => !["accounts", "project-team-scopes"].includes(id));
+  const catalogOnly = serializableSections.filter(({ id }) => !["accounts", "project-team-scopes", "attendance"].includes(id));
   // Accounting (catalog operator) sees catalog sections, never accounts or project mappings.
   assert.deepEqual(visibleAdminSections(accountingCatalog), catalogOnly);
   // The canonical Full Admin triple sees every section, including restricted sections.
