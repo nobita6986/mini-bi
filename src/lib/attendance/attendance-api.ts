@@ -514,32 +514,57 @@ export async function postAttendanceCheckIn(
   };
 
   const recoverOrCleanupAfterAmbiguousWriteError = async (reason: string): Promise<Response> => {
+    let postFailureLookup: Awaited<
+      ReturnType<AttendanceRepository["lookupCheckInIdempotency"]>
+    >;
     try {
-      const postFailureLookup = await dependencies.repository.lookupCheckInIdempotency({
+      postFailureLookup = await dependencies.repository.lookupCheckInIdempotency({
         auth_subject: actorResult.actor.auth_subject,
         app_user_id: actorResult.actor.app_user_id,
         idempotency_key: meta.idempotency_key,
         request_fingerprint: requestFingerprint,
       });
-      if (postFailureLookup.ok && postFailureLookup.found) {
-        // DB actually committed before transport failed; preserve the committed photo!
-        return noStoreJson(
-          {
-            ok: true,
-            checkin: postFailureLookup.checkin,
-          },
-          200,
-        );
-      }
-      if (!postFailureLookup.ok && postFailureLookup.code === "IDEMPOTENCY_CONFLICT") {
-        await cleanupUncommittedPhoto(`${reason}-conflict`);
-        return attendanceError("IDEMPOTENCY_CONFLICT");
-      }
     } catch {
-      // Fall through to safe cleanup of this uncommitted attempt's object.
+      // Commit outcome is unknown because both write and lookup failed over transport:
+      // preserve the uploaded R2 photo so a potentially committed row never loses its object,
+      // and return retryable 503.
+      return attendanceError("ATTENDANCE_UNAVAILABLE");
     }
 
-    await cleanupUncommittedPhoto(reason);
+    if (postFailureLookup.ok) {
+      if (!postFailureLookup.found) {
+        // Lookup authoritatively confirmed no row exists in DB: safe to clean up temp photo.
+        await cleanupUncommittedPhoto(`${reason}-confirmed-absent`);
+        return attendanceError("ATTENDANCE_UNAVAILABLE");
+      }
+
+      // Lookup found a committed row with matching fingerprint:
+      // - Keep the photo if it is the exact object referenced by the committed row.
+      // - Clean up ONLY when `photo_storage_key` proves a different concurrent identical
+      //   request won the DB insert, making this request's object a surplus duplicate.
+      if (postFailureLookup.photo_storage_key !== ensuredPhoto.storage_key) {
+        await cleanupUncommittedPhoto(`${reason}-surplus-duplicate`);
+      }
+
+      return noStoreJson(
+        {
+          ok: true,
+          checkin: postFailureLookup.checkin,
+        },
+        200,
+      );
+    }
+
+    if (postFailureLookup.code === "IDEMPOTENCY_CONFLICT") {
+      // Lookup authoritatively confirmed a different fingerprint won DB: safe to clean up
+      // this losing attempt's unreferenced object without touching the winner's photo.
+      await cleanupUncommittedPhoto(`${reason}-confirmed-conflict`);
+      return attendanceError("IDEMPOTENCY_CONFLICT");
+    }
+
+    // Lookup returned `ATTENDANCE_UNAVAILABLE` or another non-proving error: keep the uploaded
+    // R2 photo rather than risking deletion of an object belonging to a committed DB row,
+    // and return a retryable 503 error.
     return attendanceError("ATTENDANCE_UNAVAILABLE");
   };
 

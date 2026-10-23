@@ -507,6 +507,7 @@ test("SERVER_ANCHORED, DEVICE_CLOCK_UNVERIFIED, Asia/Ho_Chi_Minh business_date b
     const post7dLookup = await callLookupAsServiceRole(db, exact7dSavedArgs);
     assert.deepEqual(post7dLookup, {
       found: true,
+      photo_storage_key: exact7dSavedArgs.photo_storage_key,
       checkin: {
         ...exact7dRow,
         replayed: true,

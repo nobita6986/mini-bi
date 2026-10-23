@@ -342,6 +342,7 @@ test("concurrent check-ins allocate distinct sequence_in_day and concurrent same
     await worker2.query("commit");
     assert.deepEqual(lookupRes.rows[0].data, {
       found: true,
+      photo_storage_key: boundaryParams[14],
       checkin: {
         ...boundaryCheckin,
         replayed: true,

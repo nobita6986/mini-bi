@@ -24,7 +24,12 @@ export type LookupAttendanceCheckInInput = {
 
 export type LookupAttendanceCheckInResult =
   | { ok: true; found: false }
-  | { ok: true; found: true; checkin: AttendanceCheckInProjection }
+  | {
+      ok: true;
+      found: true;
+      photo_storage_key: string;
+      checkin: AttendanceCheckInProjection;
+    }
   | { ok: false; code: AttendanceErrorCode };
 
 export type RecordAttendanceCheckInInput = {
@@ -139,13 +144,24 @@ export function createServiceAttendanceRepository(
           return { ok: true, found: false };
         }
 
-        if (record.found === true && Object.getOwnPropertyNames(record).length === 2) {
+        if (
+          record.found === true &&
+          Object.getOwnPropertyNames(record).length === 3 &&
+          typeof record.photo_storage_key === "string" &&
+          record.photo_storage_key.trim().length >= 1 &&
+          record.photo_storage_key.trim().length <= 512
+        ) {
           const projected = projectCheckInRecord(record.checkin);
           if (!projected || projected.replayed !== true) {
             console.error("[attendance] idempotency lookup RPC returned non-canonical projection");
             return { ok: false, code: "ATTENDANCE_UNAVAILABLE" };
           }
-          return { ok: true, found: true, checkin: projected };
+          return {
+            ok: true,
+            found: true,
+            photo_storage_key: record.photo_storage_key.trim(),
+            checkin: projected,
+          };
         }
 
         console.error("[attendance] idempotency lookup RPC returned unexpected shape");

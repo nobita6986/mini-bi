@@ -520,6 +520,7 @@ begin
 
   return pg_catalog.jsonb_build_object(
     'found', true,
+    'photo_storage_key', v_existing.photo_storage_key,
     'checkin', pg_catalog.jsonb_build_object(
       'checkin_id', v_existing.checkin_id,
       'business_date', v_existing.business_date::text,
