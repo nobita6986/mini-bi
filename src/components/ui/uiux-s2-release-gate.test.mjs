@@ -102,9 +102,11 @@ const {
 } = await import("@/components/dashboard/chart-motion");
 
 const {
+  KPI_RAPID_BURST_MS,
   KPI_TRANSITION_DURATION_MS,
   formatKpiIntegerValue,
   resolveKpiTransitionPlan,
+  resolveRenderedKpiNumeric,
   sampleKpiTransitionFrames,
 } = await import("@/components/dashboard/kpi-motion");
 
@@ -133,10 +135,17 @@ const { executeSessionLogout } = await import(
 );
 
 const {
+  buildAiJobRecheckRetryAction,
   settleTrackedJobToast,
+  shouldShowAiJobProgress,
+  startOrRetrackAiJobToast,
   validateDownloadableExportBlob,
   validateHtmlExportDocument,
 } = await import("@/lib/ui/long-running-feedback");
+
+const { isUsableWorkerExportBlob } = await import(
+  "@/lib/direct-entry/worker-export-ui-model"
+);
 
 const {
   WORKER_STATUS_FROZEN_LABELS,
@@ -347,6 +356,38 @@ describe("UIUX S2-08 — Chặng 2 Release Gate, Performance & Motion Governance
     }
     assert.equal(formatKpiIntegerValue(frames[frames.length - 1]), "1.248");
 
+    // Pre-effect render hold: 100 -> 200 holds 100 until RAF starts (no 200 -> 100 -> 200 flash)
+    assert.equal(
+      resolveRenderedKpiNumeric({
+        value: 200,
+        displayedNumeric: 100,
+        animateNumeric: true,
+        reducedMotion: false,
+      }),
+      100,
+    );
+    // Mid-flight update resumes from displayed frame (145) and rapid bursts (< 120ms) snap cleanly
+    assert.equal(
+      resolveKpiTransitionPlan({
+        previousValue: 145,
+        nextValue: 300,
+        hasMounted: true,
+        reducedMotion: false,
+        elapsedSinceLastUpdateMs: KPI_RAPID_BURST_MS + 40,
+      }).fromValue,
+      145,
+    );
+    const rapidBurstPlan = resolveKpiTransitionPlan({
+      previousValue: 145,
+      nextValue: 300,
+      hasMounted: true,
+      reducedMotion: false,
+      elapsedSinceLastUpdateMs: KPI_RAPID_BURST_MS - 20,
+    });
+    assert.equal(rapidBurstPlan.shouldAnimate, false);
+    assert.equal(rapidBurstPlan.reason, "rapid-burst");
+    assert.equal(rapidBurstPlan.finalDisplay, "300");
+
     const cardHtml = renderToStaticMarkup(
       createElement(KpiCard, {
         label: "Tổng tuyển mới",
@@ -358,7 +399,18 @@ describe("UIUX S2-08 — Chặng 2 Release Gate, Performance & Motion Governance
     assert.doesNotMatch(cardHtml, /cursor-pointer/);
   });
 
-  it("4. Back/Forward tab sync, unauthorized panel exclusion, hidden advanced filters, and Radix dialog focus/Escape contracts remain intact", () => {
+  it("4. Back/Forward tab sync, unauthorized panel exclusion, hidden advanced filters, centered dialog transform preservation, and Radix focus/Escape contracts remain intact", () => {
+    const globalsCss = readRel("src/app/globals.css");
+    const dialogKeyframesMatch = globalsCss.match(
+      /@keyframes\s+ui-dialog-enter\s*\{[\s\S]*?\n\}/,
+    );
+    assert.ok(dialogKeyframesMatch, "Missing @keyframes ui-dialog-enter");
+    assert.doesNotMatch(
+      dialogKeyframesMatch[0],
+      /transform|translate|scale/i,
+      "ui-dialog-enter must never override centered Dialog.Content (-50%, -50%) transform",
+    );
+
     const bodTabsSrc = readRel("src/components/dashboard/bod-dashboard-tabs.tsx");
     assert.match(bodTabsSrc, /history:\s*"push"/);
     assert.match(bodTabsSrc, /activeTab === "deep" && primaryTabLabel === undefined/);
@@ -503,6 +555,47 @@ describe("UIUX S2-08 — Chặng 2 Release Gate, Performance & Motion Governance
     );
     assert.equal(retryRuns, 1);
 
+    // Link actions enforce click-time isValid(), one-flight busy lock, and synchronous preventNavigation()
+    let linkPrevented = 0;
+    let linkDismissed = 0;
+    let linkValid = true;
+    const linkAction = resolveSafeNotifyAction({
+      label: "Mở chi tiết",
+      href: "/direct-entry/workers",
+      isValid: () => linkValid,
+    });
+    assert.ok(linkAction);
+    assert.equal(
+      await executeToastActionClick({
+        action: linkAction,
+        isBusy: () => true,
+        setBusy: () => {},
+        preventNavigation: () => {
+          linkPrevented += 1;
+        },
+      }),
+      false,
+    );
+    assert.equal(linkPrevented, 1);
+
+    linkValid = false;
+    assert.equal(
+      await executeToastActionClick({
+        action: linkAction,
+        isBusy: () => false,
+        setBusy: () => {},
+        preventNavigation: () => {
+          linkPrevented += 1;
+        },
+        onDismiss: () => {
+          linkDismissed += 1;
+        },
+      }),
+      false,
+    );
+    assert.equal(linkPrevented, 2);
+    assert.equal(linkDismissed, 1);
+
     // Logout clears all Toasts and blocks stale update resurrection
     const loggedOut = await executeSessionLogout({
       fetchImpl: async () => new Response(null, { status: 204 }),
@@ -532,7 +625,7 @@ describe("UIUX S2-08 — Chặng 2 Release Gate, Performance & Motion Governance
     detach();
   });
 
-  it("7. Long-running operations reject unusable HTTP 200 exports, settle tracked job Toasts cleanly, and never render fake percentage progress", () => {
+  it("7. Long-running operations verify real XLSX ZIP signature, halt progress on AI poll error while preserving drawer-closed polling, and never render fake percentage progress", async () => {
     assert.equal(
       validateDownloadableExportBlob({
         blob: new Blob([], {
@@ -548,6 +641,32 @@ describe("UIUX S2-08 — Chặng 2 Release Gate, Performance & Motion Governance
       false,
     );
     assert.equal(validateHtmlExportDocument("<html><body>empty</body></html>"), false);
+
+    // Worker XLSX export verifies real ZIP PK\x03\x04 signature (>= 30 bytes)
+    assert.equal(
+      await isUsableWorkerExportBlob(
+        new Blob(["Internal Server Error — upstream proxy failure"], {
+          type: "application/octet-stream",
+        }),
+        "application/octet-stream",
+      ),
+      false,
+    );
+    const validXlsxBytes = new Uint8Array(64);
+    validXlsxBytes.set([0x50, 0x4b, 0x03, 0x04], 0);
+    assert.equal(
+      await isUsableWorkerExportBlob(
+        new Blob([validXlsxBytes], {
+          type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        }),
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      ),
+      true,
+    );
+
+    // Indeterminate AI progress stops immediately when polling encounters transport/projection error
+    assert.equal(shouldShowAiJobProgress("computing", "polling"), true);
+    assert.equal(shouldShowAiJobProgress("computing", "error"), false);
 
     const updates = [];
     const tracked = { jobId: "job-99", toastId: "t-99" };
@@ -570,6 +689,92 @@ describe("UIUX S2-08 — Chặng 2 Release Gate, Performance & Motion Governance
     assert.equal(updates[0].id, "t-99");
     assert.equal(updates[0].patch.tone, "success");
     assert.equal(updates[0].patch.pending, false);
+
+    // Full round-trip: pending -> transport error -> click retry -> pending survives -> terminal draft updates same toastId
+    const retryClock = createFakeClock();
+    retryClock.prefersReducedMotion = () => false;
+    const retryStore = createNotifyStore(retryClock);
+    const detachRetry = bindNotifyTimerScheduler(retryStore, retryClock);
+
+    let liveTracker = startOrRetrackAiJobToast({
+      currentTracker: null,
+      jobId: "job-roundtrip-1",
+      title: "Đang tổng hợp báo cáo AI…",
+      notify: retryStore.api,
+    });
+    const roundtripToastId = liveTracker.toastId;
+    retryClock.advanceBy(250);
+    assert.equal(retryStore.getSnapshot().visible.length, 1);
+    assert.equal(retryStore.getSnapshot().visible[0].id, roundtripToastId);
+    assert.equal(retryStore.getSnapshot().visible[0].pending, true);
+
+    const errStep = settleTrackedJobToast({
+      tracker: liveTracker,
+      incomingJobId: "job-roundtrip-1",
+      status: null,
+      errorCode: null,
+      transportError: "Không kết nối được tới server.",
+      retryAction: buildAiJobRecheckRetryAction({
+        jobId: "job-roundtrip-1",
+        isMounted: () => true,
+        onRecheck: (nextId) => {
+          liveTracker = startOrRetrackAiJobToast({
+            currentTracker: liveTracker,
+            jobId: nextId,
+            title: "Đang kiểm tra lại tiến trình báo cáo AI…",
+            notify: retryStore.api,
+          });
+        },
+      }),
+      codeToText: (code) => `ERR:${code}`,
+      notify: retryStore.api,
+    });
+    liveTracker = errStep.nextTracker;
+    assert.equal(liveTracker, null);
+    const errToast = retryStore.getSnapshot().visible[0];
+    assert.equal(errToast.id, roundtripToastId);
+    assert.equal(errToast.tone, "error");
+    assert.equal(errToast.pending, false);
+    assert.ok(errToast.action);
+
+    let retryBusy = false;
+    assert.equal(
+      await executeToastActionClick({
+        action: errToast.action,
+        isBusy: () => retryBusy,
+        setBusy: (next) => {
+          retryBusy = next;
+        },
+        onDismiss: () => retryStore.dismiss(errToast.id),
+      }),
+      true,
+    );
+    retryClock.advanceBy(500);
+    assert.equal(retryStore.getSnapshot().visible.length, 1);
+    assert.equal(retryStore.getSnapshot().visible[0].id, roundtripToastId);
+    assert.equal(retryStore.getSnapshot().visible[0].pending, true);
+    assert.equal(retryStore.getSnapshot().visible[0].action, undefined);
+
+    const finalStep = settleTrackedJobToast({
+      tracker: liveTracker,
+      incomingJobId: "job-roundtrip-1",
+      status: "draft",
+      errorCode: null,
+      codeToText: (code) => `ERR:${code}`,
+      notify: retryStore.api,
+    });
+    assert.equal(finalStep.settled, true);
+    assert.equal(retryStore.getSnapshot().visible.length, 1);
+    assert.equal(retryStore.getSnapshot().visible[0].id, roundtripToastId);
+    assert.equal(retryStore.getSnapshot().visible[0].tone, "success");
+    assert.equal(retryStore.getSnapshot().visible[0].pending, false);
+    detachRetry();
+
+    const aiPanelSrc = readRel("src/components/ai-report/ai-report-panel.tsx");
+    assert.doesNotMatch(aiPanelSrc, /if\s*\(\s*!open\s*\)\s*\{?\s*getController\(\)\.stopPolling\(\)/);
+    assert.doesNotMatch(aiPanelSrc, /dismissOnAction\s*:\s*true/);
+    assert.match(aiPanelSrc, /controllerRef\.current\?\.stopPolling\(\)/);
+    assert.match(aiPanelSrc, /Kiểm tra lại trạng thái/);
 
     for (const rel of [
       "src/components/direct-entry/worker-operations.tsx",

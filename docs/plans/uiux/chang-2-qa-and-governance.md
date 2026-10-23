@@ -12,11 +12,11 @@
 | Thứ tự | Task ID | Nhánh (`codex/*`) | PR | Nội dung cốt lõi |
 |---|---|---|---|---|
 | 1 | `S2-01` | `codex/uiux-s2-01-chart-animation` | `#135` | Animation dữ liệu biểu đồ có điều kiện (`340ms`, chỉ chạy khi dataset server mới hợp lệ; tắt khi mount/remount/theme/resize/filter liên tiếp `<420ms`/dataset lớn/`prefers-reduced-motion`). |
-| 2 | `S2-02` | `codex/uiux-s2-02-kpi-transition` | `#136` | Chuyển tiếp số nguyên `KpiCard` (`220ms`, định dạng `vi-VN`, không đếm từ `0` khi mount/chuyển tab, bỏ qua `—`/`N/A`/tỷ lệ `%`). |
-| 3 | `S2-03` | `codex/uiux-s2-03-panel-dialog-motion` | `#137` | Motion nhẹ (`<= 6px`, `200ms`) cho tab panel, Radix `FormDialog`, `WorkerDetailDialog`, `MobileNav`, `RowOverflowMenu`, và bộ lọc nâng cao (`hidden={!advancedOpen}`), giữ nguyên focus trap/return & quyền server. |
+| 2 | `S2-02` | `codex/uiux-s2-02-kpi-transition` | `#136` | Chuyển tiếp số nguyên `KpiCard` (`220ms`, định dạng `vi-VN`, giữ nguyên frame hiển thị trước `useEffect`, nối tiếp từ frame hiện tại hoặc hiện ngay khi đổi lọc nhanh `<120ms`, không đếm từ `0` khi mount/chuyển tab, bỏ qua `—`/`N/A`/tỷ lệ `%`). |
+| 3 | `S2-03` | `codex/uiux-s2-03-panel-dialog-motion` | `#137` | Motion nhẹ (`<= 6px`, `200ms`) cho tab panel, drawer `WorkerDetailDialog`/`MobileNav`, popover `RowOverflowMenu`, bộ lọc nâng cao (`hidden={!advancedOpen}`), và fade-only trên `Dialog.Content` căn giữa (`FormDialog`, hộp thoại `WorkerOperations`) để bảo toàn `translate(-50%, -50%)`. |
 | 4 | `S2-04` | `codex/uiux-s2-04-bi-interaction` | `#138` | Cross-highlight hai chiều (`BiHighlightScope`) giữa biểu đồ và bảng/danh sách dùng chung dataset (hover, bàn phím `Enter`/`Space`/`Escape`, ghim trên cảm ứng, ánh xạ nhóm `Khác` `__other__`), không tự lọc URL/toàn trang. |
-| 5 | `S2-05` | `codex/uiux-s2-05-advanced-toast` | `#139` | Mở rộng `NotifyProvider` Chặng 1: `notify.pending()`, cập nhật tại chỗ `notify.update()`, gom burst theo `dedupeKey` (`×2`/`×3`), guard retry an toàn (`safeToRetry` + `isValid()`), chặn Undo giả, không dùng Web Storage, xóa sạch khi logout (`204`). |
-| 6 | `S2-06` | `codex/uiux-s2-06-long-running-feedback` | `#140` | Phản hồi tác vụ dài bằng `<progress>` bất định (không phần trăm giả), kiểm tra Blob/HTML tải xuống thực sự sử dụng được trước khi báo thành công, kết nối polling job báo cáo AI vào một Toast lifecycle duy nhất. |
+| 5 | `S2-05` | `codex/uiux-s2-05-advanced-toast` | `#139` | Mở rộng `NotifyProvider` Chặng 1: `notify.pending()`, cập nhật tại chỗ `notify.update()`, gom burst theo `dedupeKey` (`×2`/`×3`), guard one-flight + `isValid()` cho cả nút và `<Link>` action, chặn Undo giả, không dùng Web Storage, xóa sạch khi logout (`204`). |
+| 6 | `S2-06` | `codex/uiux-s2-06-long-running-feedback` | `#140` | Phản hồi tác vụ dài bằng `<progress>` bất định (không phần trăm giả), kiểm tra chữ ký ZIP `.xlsx` (`PK\x03\x04`) & HTML hợp lệ trước khi tải xuống, giữ polling/Toast nền khi đóng drawer AI và dừng `<progress>` kèm nút `Kiểm tra lại trạng thái` khi poll lỗi mạng. |
 | 7 | `S2-07` | `codex/uiux-s2-07-selected-micro-motion` | `#141` | Mở rộng micro-motion có chọn lọc cho `StatusBadge`, `Alert`, `StatusBanner`, `AdminSubnav`, subnav Work Reports, form renderer, disclosure `[data-ui-disclosure="true"]`, queue tabs và các drawer AI/duyệt yêu cầu. |
 | 8 | `S2-08` | `codex/uiux-s2-08-release-gate` | `#142` | Release Gate Chặng 2 (`uiux-s2-release-gate.test.mjs`), đo đạc bundle thực tế trước/sau, khóa quy tắc quản trị bảo trì và lập checklist Manual UAT. |
 
@@ -31,7 +31,7 @@
 | Thanh tiến độ phần trăm `0% → 100%` (`S2-06`) | `N/A (No Streaming Progress API)` | `POST /api/direct-entry/workers/export` trả một phản hồi nhị phân `.xlsx` hoàn chỉnh và `GET /api/ai/reports/[jobId]` trả trạng thái bước rời rạc (`queued`, `computing`, `ai_generating`, `validating`, `draft`), không có phần trăm thực. UI dùng `<progress>` không gắn `value` (indeterminate) theo đúng §9. |
 | Spreadsheet/Grid, hộp thoại dán Excel & upload chân dung `/direct-entry` (`S2-06`, `S2-07`) | `N/A (Locked by §0.3 & R2.2 Checksum Guard)` | 21 file nhập liệu bảng tính/paste/portrait cùng lát cắt `direct-entry-live.tsx` và các khối CSS `.grid*`/`.page` trong `direct-entry-shell.module.css` được khóa SHA-256 bởi `scripts/r2-2-grid-no-touch-guard.test.mjs`. Luồng staging ảnh đã có trạng thái từng ô thực tế nên giữ nguyên 100%. |
 | KPI tỷ lệ `%`, chuỗi `—` / `N/A` (`S2-02`) & `TeamBucketChart` CSS (`S2-01`) | `Skipped / Static by Design` | `resolveKpiTransitionPlan` chỉ cho phép số nguyên không âm hợp lệ để tránh nhảy số thập phân sai trên KPI tỷ lệ; `team-bucket-chart.tsx` là thanh CSS thuần không dùng Recharts và được khóa tĩnh theo guard Chặng 1. |
-| `.confirmDialog` trong `DirectEntryChangeRequestReviewer` (`S2-07`) | `Overlay-Only Motion` | `.confirmDialog` trong `direct-entry-shell.module.css` căn giữa bằng `transform: translate(-50%, -50%)`; chỉ gắn `data-ui-overlay-motion="true"` trên lớp nền để không ghi đè thuộc tính `transform` căn giữa hộp thoại. |
+| `Dialog.Content` căn giữa (`FormDialog`, hộp thoại `WorkerOperations`, `.confirmDialog`) (`S2-03`, `S2-07`) | `Opacity / Overlay-Only Motion` | Các modal căn giữa desktop bằng `-translate-x-1/2 -translate-y-1/2` / `translate(-50%, -50%)`; `@keyframes ui-dialog-enter` chỉ animate `opacity` (không đụng `transform`) và `.confirmDialog` chỉ animate lớp overlay để không làm lệch tâm hộp thoại. |
 
 ---
 
@@ -43,11 +43,11 @@
 |---|---:|---:|---:|---|
 | Số lượng dependency mới trong `package.json` | `0` | `0` | `+0` | **PASS** (không thêm Framer Motion / Sonner / thư viện ngoài) |
 | Số lượng JS chunks (`.next/static/**/*.js`) | `45` files | `45` files | `+0` chunks | **PASS** |
-| Tổng dung lượng JS tĩnh (uncompressed) | `3,368,650 B` (`3,289.70 KiB`) | `3,398,996 B` (`3,319.33 KiB`) | `+30,346 B` (`+29.63 KiB` / **`+0.90%`**) | **PASS** (`~1%`, rất nhỏ cho toàn bộ 7 module tương tác) |
+| Tổng dung lượng JS tĩnh (uncompressed) | `3,368,650 B` (`3,289.70 KiB`) | `3,400,549 B` (`3,320.85 KiB`) | `+31,899 B` (`+31.15 KiB` / **`+0.95%`**) | **PASS** (`<1%`, rất nhỏ cho toàn bộ 7 module tương tác) |
 | Chunk JS lớn nhất (`1ubgb8e8qhuuh.js`) | `930,904 B` | `930,904 B` | `+0 B` (`0.00%`) | **PASS** |
 | Số lượng file CSS tĩnh (`.next/static/**/*.css`) | `3` files | `3` files | `+0` files | **PASS** |
-| Tổng dung lượng CSS tĩnh (uncompressed) | `138,582 B` (`135.33 KiB`) | `143,645 B` (`140.28 KiB`) | `+5,063 B` (`+4.94 KiB` / **`+3.65%`**) | **PASS** (keyframes & reduced-motion rules gọn nhẹ) |
-| Tổng `.next/static` (JS + CSS) | `3,507,232 B` (`3,425.03 KiB`) | `3,542,641 B` (`3,459.61 KiB`) | `+35,409 B` (`+34.58 KiB` / **`+1.01%`**) | **PASS** |
+| Tổng dung lượng CSS tĩnh (uncompressed) | `138,582 B` (`135.33 KiB`) | `143,834 B` (`140.46 KiB`) | `+5,252 B` (`+5.13 KiB` / **`+3.79%`**) | **PASS** (keyframes & reduced-motion rules gọn nhẹ) |
+| Tổng `.next/static` (JS + CSS) | `3,507,232 B` (`3,425.03 KiB`) | `3,544,383 B` (`3,461.31 KiB`) | `+37,151 B` (`+36.28 KiB` / **`+1.06%`**) | **PASS** |
 | Chỉ số Web Vitals thực địa (`INP`, `CLS`, FPS trình duyệt thật) | `NOT VERIFIED` | `NOT VERIFIED` | `NOT VERIFIED` | Môi trường CLI/CI không có phiên đăng nhập staging để đo Chrome DevTools Performance thực tế; đã khóa compositor-only (`transform`, `opacity`, màu sắc) và cần xác nhận bổ sung ở bước Manual UAT bên dưới. |
 
 ---
