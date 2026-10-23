@@ -25,6 +25,8 @@ import {
   F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES,
   F2_WORK_REPORTS_REVIEW_AND_DELEGATION_MIGRATION_NAME,
   F2_WORK_REPORTS_REVIEW_AND_DELEGATION_RPC_SIGNATURES,
+  PROJECT_TEAM_SCOPE_SEARCH_MIGRATION_NAME,
+  PROJECT_TEAM_SCOPE_SEARCH_RPC_SIGNATURE,
   WF01_WORKFORCE_SNAPSHOT_MIGRATION_NAME,
   WF01_WORKFORCE_SNAPSHOT_RPC_SIGNATURE,
   WF02_WORKFORCE_BALANCE_WAITING_MIGRATION_NAME,
@@ -528,12 +530,24 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
         "WF-02 workforce reporting RPC is explicitly granted only to service_role");
       assert.ok(wf02Normalized.includes(wf01Revoke),
         "WF-02 workforce reporting RPC revokes client and inherited EXECUTE before granting service_role");
+      const searchMigration = await readFile(
+        path.join(MIGRATION_DIR, PROJECT_TEAM_SCOPE_SEARCH_MIGRATION_NAME), "utf8",
+      );
+      const searchNormalized = searchMigration.replace(/\s+/g, " ")
+        .replace(/\(\s+/g, "(").replace(/\s+\)/g, ")").toLowerCase();
+      const searchGrant = `grant execute on function ${PROJECT_TEAM_SCOPE_SEARCH_RPC_SIGNATURE.toLowerCase()} to service_role;`;
+      const searchRevoke = `revoke all on function ${PROJECT_TEAM_SCOPE_SEARCH_RPC_SIGNATURE.toLowerCase()} from public, anon, authenticated, service_role;`;
+      assert.ok(searchNormalized.includes(searchGrant),
+        "Project<->Team mapping search RPC is explicitly granted only to service_role");
+      assert.ok(searchNormalized.includes(searchRevoke),
+        "Project<->Team mapping search RPC revokes client and inherited EXECUTE before granting service_role");
       expectedSignatures.push(R1_2_SERVICE_RPC, ...F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES,
         F1_WORK_REPORTS_ASSIGNMENT_OPTIONS_RPC_SIGNATURE,
         F1_WORK_REPORTS_ASSIGNMENT_TRACKING_RPC_SIGNATURE,
         ...F1_5_WORK_REPORTS_ANALYTICS_RPC_SIGNATURES,
         ...F2_WORK_REPORTS_REVIEW_AND_DELEGATION_RPC_SIGNATURES,
-        WF01_WORKFORCE_SNAPSHOT_RPC_SIGNATURE);
+        WF01_WORKFORCE_SNAPSHOT_RPC_SIGNATURE,
+        PROJECT_TEAM_SCOPE_SEARCH_RPC_SIGNATURE);
       assert.ok(expectedSignatures.length > 0, "the explicit server/invoker allowlist is not empty");
       assert.equal(new Set(expectedSignatures).size, expectedSignatures.length, "the allowlist has no duplicates");
       const { rows: resolvedExpected } = await client.query(
@@ -554,7 +568,8 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
           F1_WORK_REPORTS_ASSIGNMENT_TRACKING_RPC_SIGNATURE,
           ...F1_5_WORK_REPORTS_ANALYTICS_RPC_SIGNATURES,
           ...F2_WORK_REPORTS_REVIEW_AND_DELEGATION_RPC_SIGNATURES,
-          WF01_WORKFORCE_SNAPSHOT_RPC_SIGNATURE].sort(),
+          WF01_WORKFORCE_SNAPSHOT_RPC_SIGNATURE,
+          PROJECT_TEAM_SCOPE_SEARCH_RPC_SIGNATURE].sort(),
         "only explicitly reviewed post-S0 RPCs add service_role grants after the S0 baseline",
       );
       const removedSourceService = sourceService

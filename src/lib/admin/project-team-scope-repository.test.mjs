@@ -28,7 +28,7 @@ test("repository calls only mapping RPCs with session actor and server-owned pai
   };
   const repo = createProjectTeamScopeRepository(rpc);
   assert.equal((await repo.listScopes({ ...ACTOR, project_id: "project-1", team_id: null,
-    include_history: true, page: 2, page_size: 50 })).ok, true);
+    search: "compal", include_history: true, page: 2, page_size: 50 })).ok, true);
   assert.equal((await repo.grantScope({ ...ACTOR, project_ids: ["project-1"], team_id: TEAM,
     reason: "grant", idempotency_key: KEY })).ok, true);
   assert.equal((await repo.revokeScope({ ...ACTOR, mapping_id: MAPPING,
@@ -38,6 +38,11 @@ test("repository calls only mapping RPCs with session actor and server-owned pai
     "direct_entry_grant_project_team_scopes_batch",
     "direct_entry_revoke_project_team_scope",
   ]);
+  assert.deepEqual(calls[0][1], {
+    p_auth_subject: ACTOR.auth_subject, p_app_user_id: ACTOR.app_user_id,
+    p_project_id: "project-1", p_team_id: null, p_search: "compal",
+    p_include_history: true, p_page: 2, p_page_size: 50,
+  });
   assert.deepEqual(calls[1][1], {
     p_auth_subject: ACTOR.auth_subject, p_app_user_id: ACTOR.app_user_id,
     p_team_id: TEAM, p_project_ids: ["project-1"],
@@ -53,7 +58,7 @@ test("repository calls only mapping RPCs with session actor and server-owned pai
 test("repository fail-closes malformed envelopes, SQL authority/conflict, and thrown errors", async () => {
   const malformed = createProjectTeamScopeRepository(async () => ({ data: { ok: true }, error: null }));
   assert.deepEqual(await malformed.listScopes({ ...ACTOR, project_id: null, team_id: null,
-    include_history: false, page: 1, page_size: 25 }), { ok: false, kind: "unavailable" });
+    search: null, include_history: false, page: 1, page_size: 25 }), { ok: false, kind: "unavailable" });
 
   for (const [sqlstate, expected] of [["42501", "denied"], ["40001", "conflict"],
     ["P0002", "not-found"], ["22023", "invalid"], ["XX000", "unavailable"]]) {

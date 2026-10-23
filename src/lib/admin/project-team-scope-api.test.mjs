@@ -83,9 +83,54 @@ test("list requires resolved active actor, forwards bounded filters, and is priv
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("cache-control"), "private, no-store");
   assert.deepEqual(d.calls.repository[0], ["list", {
-    ...ACTOR, project_id: "project-1", team_id: null, include_history: true, page: 2, page_size: 50,
+    ...ACTOR, project_id: "project-1", team_id: null, search: null,
+    include_history: true, page: 2, page_size: 50,
   }]);
   assert.deepEqual((await response.json()).list, LIST);
+});
+
+test("list forwards the trimmed fuzzy search and still accepts the exact legacy filters", async () => {
+  const d = dependencies({ ok: true, data: LIST });
+  const response = await listProjectTeamScopes(
+    new Request("https://app.test/api?search=%20Compal%20&include_history=false"),
+    "true", d.value,
+  );
+  assert.equal(response.status, 200);
+  assert.deepEqual(d.calls.repository[0], ["list", {
+    ...ACTOR, project_id: null, team_id: null, search: "Compal",
+    include_history: false, page: 1, page_size: 25,
+  }]);
+
+  // Whitespace-only search collapses to "no filter" instead of a 400.
+  const blank = dependencies({ ok: true, data: LIST });
+  assert.equal((await listProjectTeamScopes(
+    new Request("https://app.test/api?search=%20%20%20"), "true", blank.value)).status, 200);
+  assert.equal(blank.calls.repository[0][1].search, null);
+
+  // Exact project_id/team_id callers keep working alongside the search parameter.
+  const exact = dependencies({ ok: true, data: LIST });
+  assert.equal((await listProjectTeamScopes(
+    new Request(`https://app.test/api?project_id=project-1&team_id=${TEAM}&search=compal`),
+    "true", exact.value)).status, 200);
+  assert.deepEqual(exact.calls.repository[0][1], {
+    ...ACTOR, project_id: "project-1", team_id: TEAM, search: "compal",
+    include_history: false, page: 1, page_size: 25,
+  });
+});
+
+test("search rejects oversized or control-character input before session", async () => {
+  for (const query of [
+    "?search=" + encodeURIComponent("x".repeat(257)),
+    "?search=" + encodeURIComponent("compal\u0007"),
+    "?search=a&search=b",
+  ]) {
+    const d = dependencies({ ok: true, data: LIST });
+    const response = await listProjectTeamScopes(new Request(`https://app.test/api${query}`), "true", d.value);
+    assert.equal(response.status, 400, query);
+    assert.equal(d.calls.session, 0, query);
+    assert.equal(d.calls.repository.length, 0, query);
+  }
+  assert.equal(parseListScopesQuery(new URL("https://app.test/api?search=" + encodeURIComponent("y".repeat(256)))).ok, true);
 });
 
 test("query rejects unknown, duplicate, malformed, and out-of-range pagination before session", async () => {

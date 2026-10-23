@@ -95,24 +95,32 @@ async function readMutationBody(request: Request, allowTeamId = false): Promise<
 export type ListScopesQuery = {
   project_id: string | null;
   team_id: string | null;
+  search: string | null;
   include_history: boolean;
   page: number;
   page_size: number;
 };
 
+const LIST_SCOPE_QUERY_KEYS = ["project_id", "team_id", "search", "include_history", "page", "page_size"];
+const SEARCH_MAX_LENGTH = 256;
+
 export function parseListScopesQuery(url: URL): Parsed<ListScopesQuery> {
   for (const key of url.searchParams.keys()) {
-    if (!["project_id", "team_id", "include_history", "page", "page_size"].includes(key)) {
+    if (!LIST_SCOPE_QUERY_KEYS.includes(key)) {
       return { ok: false, response: fail("PROJECT_TEAM_SCOPE_INVALID", 400) };
     }
   }
-  for (const key of ["project_id", "team_id", "include_history", "page", "page_size"]) {
+  for (const key of LIST_SCOPE_QUERY_KEYS) {
     if (url.searchParams.getAll(key).length > 1) return { ok: false, response: fail("PROJECT_TEAM_SCOPE_INVALID", 400) };
   }
   const rawProject = url.searchParams.get("project_id");
   if (rawProject !== null && !PROJECT_ID.test(rawProject)) return { ok: false, response: fail("PROJECT_TEAM_SCOPE_INVALID", 400) };
   const rawTeam = url.searchParams.get("team_id");
   if (rawTeam !== null && !UUID.test(rawTeam)) return { ok: false, response: fail("PROJECT_TEAM_SCOPE_INVALID", 400) };
+  const rawSearch = url.searchParams.get("search");
+  if (rawSearch !== null && (rawSearch.length > SEARCH_MAX_LENGTH || /[\u0000-\u001f\u007f]/.test(rawSearch))) {
+    return { ok: false, response: fail("PROJECT_TEAM_SCOPE_INVALID", 400) };
+  }
   const rawHistory = url.searchParams.get("include_history");
   if (rawHistory !== null && rawHistory !== "true" && rawHistory !== "false") return { ok: false, response: fail("PROJECT_TEAM_SCOPE_INVALID", 400) };
   const rawPage = url.searchParams.get("page") ?? "1";
@@ -121,8 +129,9 @@ export function parseListScopesQuery(url: URL): Parsed<ListScopesQuery> {
   const page = Number(rawPage);
   const page_size = Number(rawPageSize);
   if (page < 1 || page > 1000 || page_size < 1 || page_size > 100) return { ok: false, response: fail("PROJECT_TEAM_SCOPE_INVALID", 400) };
+  const search = rawSearch === null ? null : (rawSearch.trim() === "" ? null : rawSearch.trim());
   return { ok: true, value: {
-    project_id: rawProject, team_id: rawTeam, include_history: rawHistory === "true",
+    project_id: rawProject, team_id: rawTeam, search, include_history: rawHistory === "true",
     page, page_size,
   } };
 }

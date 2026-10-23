@@ -44,6 +44,10 @@ export const WF01_WORKFORCE_SNAPSHOT_MIGRATION_NAME =
   "20261022090000_wf01_workforce_snapshot_and_transitions.sql";
 export const WF01_WORKFORCE_SNAPSHOT_RPC_SIGNATURE =
   "public.direct_entry_workforce_reporting_scoped(uuid, uuid, jsonb)";
+export const PROJECT_TEAM_SCOPE_SEARCH_MIGRATION_NAME =
+  "20261023100000_hf_project_team_scope_fuzzy_search.sql";
+export const PROJECT_TEAM_SCOPE_SEARCH_RPC_SIGNATURE =
+  "public.direct_entry_list_project_team_scopes_admin(uuid, uuid, text, uuid, boolean, integer, integer, text)";
 export const WF02_WORKFORCE_BALANCE_WAITING_MIGRATION_NAME =
   "20261022110000_wf02_workforce_balance_and_waiting_metrics.sql";
 export const WF03_WORKFORCE_TENURE_RETENTION_MIGRATION_NAME =
@@ -260,7 +264,8 @@ export async function verifyS0T1CHistoricalCompatibility(
   migrationSql,
   { r1_2Applied = false, f1WorkReportsApplied = false, f1AssignmentOptionsApplied = false,
     f1AssignmentTrackingApplied = false, f1_5AnalyticsApplied = false,
-    f2ReviewAndDelegationApplied = false, wf01WorkforceSnapshotApplied = false } = {},
+    f2ReviewAndDelegationApplied = false, wf01WorkforceSnapshotApplied = false,
+    projectTeamScopeSearchApplied = false } = {},
 ) {
   const baseAllowlist = extractS0T1CAllowlistSignatures(migrationSql);
   if (baseAllowlist.length === 0) {
@@ -278,6 +283,7 @@ export async function verifyS0T1CHistoricalCompatibility(
     ...(f1_5AnalyticsApplied ? F1_5_WORK_REPORTS_ANALYTICS_RPC_SIGNATURES : []),
     ...(f2ReviewAndDelegationApplied ? F2_WORK_REPORTS_REVIEW_AND_DELEGATION_RPC_SIGNATURES : []),
     ...(wf01WorkforceSnapshotApplied ? [WF01_WORKFORCE_SNAPSHOT_RPC_SIGNATURE] : []),
+    ...(projectTeamScopeSearchApplied ? [PROJECT_TEAM_SCOPE_SEARCH_RPC_SIGNATURE] : []),
   ];
 
   const { rows } = await client.query(
@@ -474,6 +480,8 @@ export async function verifyAppliedMigrationChecksum(
           appliedMap.has(WF01_WORKFORCE_SNAPSHOT_MIGRATION_NAME) ||
           appliedMap.has(WF02_WORKFORCE_BALANCE_WAITING_MIGRATION_NAME) ||
           appliedMap.has(WF03_WORKFORCE_TENURE_RETENTION_MIGRATION_NAME),
+        projectTeamScopeSearchApplied:
+          appliedMap.has(PROJECT_TEAM_SCOPE_SEARCH_MIGRATION_NAME),
       },
     );
     if (postconditions.ok) {

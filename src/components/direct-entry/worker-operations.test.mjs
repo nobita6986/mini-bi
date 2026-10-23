@@ -105,6 +105,37 @@ test("R1.2-B: search is bounded, server-filtered, resets paging and remains visi
   assert.match(source, /không áp dụng từ khóa tìm kiếm/);
 });
 
+test("R1.2-HF: Dự án and Người tuyển filters are searchable comboboxes over stable ids", () => {
+  assert.match(source, /function CatalogFilterCombobox\(/);
+  // Reuses the existing pure helpers; no new search library.
+  assert.match(source, /filterCatalogSearchOptions\(/);
+  assert.match(source, /moveTypeaheadIndex\(/);
+  assert.match(source, /typeaheadKeyAction\(/);
+  assert.match(source, /from "@\/lib\/direct-entry\/catalog-search"/);
+  assert.match(source, /from "@\/lib\/direct-entry\/typeahead"/);
+  // Proper combobox/listbox ARIA plus an explicit no-results state.
+  assert.match(source, /role="combobox"/);
+  assert.match(source, /aria-autocomplete="list"/);
+  assert.match(source, /role="listbox"/);
+  assert.match(source, /role="option"/);
+  assert.match(source, /aria-activedescendant=/);
+  assert.match(source, /aria-expanded=\{open\}/);
+  assert.match(source, /Không có kết quả phù hợp/);
+  // "Tất cả" clears the filter and the committed value is always a stable catalog id.
+  assert.match(source, /allLabel="Tất cả dự án"/);
+  assert.match(source, /allLabel="Tất cả người tuyển"/);
+  assert.match(source, /onChange=\{\(nextValue\) => changeFilter\("projectId", nextValue\)\}/);
+  assert.match(source, /onChange=\{\(nextValue\) => changeFilter\("recruiterId", nextValue\)\}/);
+  // The typed text is a local query only; it never becomes a filter id.
+  assert.doesNotMatch(source, /changeFilter\("projectId", (query|event\.target\.value)\)/);
+  assert.doesNotMatch(source, /changeFilter\("recruiterId", (query|event\.target\.value)\)/);
+  // Recruiter matching also covers the personnel/login code.
+  assert.ok(source.includes("personnel_code"), "recruiter search includes the personnel code");
+  // The old free-text-project selects are gone.
+  assert.doesNotMatch(source, /<select id=\{projectFilterId\}/);
+  assert.doesNotMatch(source, /<select id=\{recruiterFilterId\}/);
+});
+
 test("W06-R3: quan he khong ton tai hien 0; loi that cuc bo va co mau do", () => {
   // Khong con nhanh return <AccessDenied /> trong component (chi con o page boundary).
   assert.equal(/return <AccessDenied \/>/.test(source), false);

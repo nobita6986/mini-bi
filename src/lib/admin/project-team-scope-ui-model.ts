@@ -15,13 +15,15 @@ export const MAPPING_PAGE_SIZE = 25;
 export const PROJECT_PICKER_PAGE_SIZE = 25;
 export const MAX_BATCH_PROJECTS = 100;
 
-export type MappingFilter = { projectId: string; teamId?: string; includeHistory: boolean; page: number };
+export const MAPPING_SEARCH_MAX_LENGTH = 256;
+
+export type MappingFilter = { search: string; includeHistory: boolean; page: number };
 
 export function buildMappingListQuery(input: MappingFilter): URLSearchParams | null {
   if (!Number.isSafeInteger(input.page) || input.page < 1 || input.page > 1000) return null;
   const params = new URLSearchParams({ page: String(input.page), page_size: String(MAPPING_PAGE_SIZE) });
-  if (input.projectId.trim()) params.set("project_id", input.projectId.trim());
-  if (input.teamId?.trim()) params.set("team_id", input.teamId.trim());
+  const search = input.search.trim();
+  if (search) params.set("search", search.slice(0, MAPPING_SEARCH_MAX_LENGTH));
   if (input.includeHistory) params.set("include_history", "true");
   return params;
 }

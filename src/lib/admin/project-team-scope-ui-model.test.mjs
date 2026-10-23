@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  MAPPING_SEARCH_MAX_LENGTH,
   buildGrantRequest,
   buildMappingListQuery,
   buildRevokeRequest,
@@ -17,12 +18,21 @@ const MAPPING = "77777777-7777-4777-8777-777777777777";
 const KEY = "55555555-5555-4555-8555-555555555555";
 const IDS = ["project-1", "project-2"];
 
-test("mapping query is bounded and preserves filters", () => {
-  assert.equal(buildMappingListQuery({ projectId: "x", includeHistory: false, page: 0 }), null);
-  assert.equal(buildMappingListQuery({ projectId: "x", includeHistory: false, page: 1001 }), null);
-  assert.deepEqual([...buildMappingListQuery({ projectId: " project-1 ", teamId: ` ${TEAM} `, includeHistory: true, page: 2 }).entries()], [
-    ["page", "2"], ["page_size", "25"], ["project_id", "project-1"], ["team_id", TEAM], ["include_history", "true"],
+test("mapping query is bounded and sends only the trimmed fuzzy search", () => {
+  assert.equal(buildMappingListQuery({ search: "x", includeHistory: false, page: 0 }), null);
+  assert.equal(buildMappingListQuery({ search: "x", includeHistory: false, page: 1001 }), null);
+  assert.deepEqual([...buildMappingListQuery({ search: "  Compal  ", includeHistory: true, page: 2 }).entries()], [
+    ["page", "2"], ["page_size", "25"], ["search", "Compal"], ["include_history", "true"],
   ]);
+  // A blank/whitespace-only box is "no filter", never a stray search parameter.
+  assert.deepEqual([...buildMappingListQuery({ search: "   ", includeHistory: false, page: 1 }).entries()], [
+    ["page", "1"], ["page_size", "25"],
+  ]);
+  // Oversized input is capped so the API boundary never rejects a resent value.
+  assert.equal(
+    buildMappingListQuery({ search: "x".repeat(300), includeHistory: false, page: 1 }).get("search").length,
+    MAPPING_SEARCH_MAX_LENGTH,
+  );
 });
 
 test("project selection survives filtering and paging and is limited to one hundred unique projects", () => {
