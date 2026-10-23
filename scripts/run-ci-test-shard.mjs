@@ -75,6 +75,7 @@ const TEST_WEIGHTS = {
   "test:f1-work-reports": 6.0,
   "test:f1-5-work-reports-wp1": 6.0,
   "test:f2-work-reports-wp3": 8.0,
+  "test:work-reports-reader-contract": 7.0,
 };
 
 const target = process.argv[2];

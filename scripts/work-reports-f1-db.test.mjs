@@ -36,6 +36,7 @@ import {
   F1_5_WORK_REPORTS_ANALYTICS_RPC_SIGNATURES,
   F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES,
   F2_WORK_REPORTS_REVIEW_AND_DELEGATION_RPC_SIGNATURES,
+  WORK_REPORTS_READER_CONTRACT_RPC_SIGNATURES,
 } from "./lib/migration-validation.mjs";
 import { AUTH_PROLOGUE } from "./lib/s04c-read-fixture.mjs";
 
@@ -222,7 +223,8 @@ test("F1 schema, forced RLS, table privilege revocation and RPC allowlist match 
     "select to_regprocedure(sig)::regprocedure::text as signature from unnest($1::text[]) as u(sig) order by 1",
     [[...F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES, F1_WORK_REPORTS_ASSIGNMENT_OPTIONS_RPC_SIGNATURE,
       F1_WORK_REPORTS_ASSIGNMENT_TRACKING_RPC_SIGNATURE, ...F1_5_WORK_REPORTS_ANALYTICS_RPC_SIGNATURES,
-      ...F2_WORK_REPORTS_REVIEW_AND_DELEGATION_RPC_SIGNATURES]],
+      ...F2_WORK_REPORTS_REVIEW_AND_DELEGATION_RPC_SIGNATURES,
+      ...WORK_REPORTS_READER_CONTRACT_RPC_SIGNATURES]],
   );
   const serviceExec = fnRows.filter((r) => r.service_exec).map((r) => r.signature).sort();
   assert.deepEqual(serviceExec, expectedFnRows.map((r) => r.signature).sort());

@@ -58,6 +58,11 @@ export const DUPLICATE_CCCD_SELF_SERVICE_RPC_SIGNATURES = Object.freeze([
   "public.direct_entry_duplicate_cccd_report(uuid, uuid, integer, integer, boolean)",
   "public.direct_entry_self_withdraw_duplicate_cccd(uuid, uuid, uuid, integer, text, text)",
 ]);
+export const WORK_REPORTS_READER_CONTRACT_MIGRATION_NAME =
+  "20261023120000_work_reports_reader_contract.sql";
+export const WORK_REPORTS_READER_CONTRACT_RPC_SIGNATURES = Object.freeze([
+  "public.work_report_list_readable_submissions(uuid, uuid, uuid, uuid, date, date, uuid, uuid, text, text, integer)",
+]);
 export const F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES = Object.freeze([
   "public.work_report_list_templates(uuid, uuid)",
   "public.work_report_get_template(uuid, uuid, uuid)",
@@ -272,7 +277,8 @@ export async function verifyS0T1CHistoricalCompatibility(
     f1AssignmentTrackingApplied = false, f1_5AnalyticsApplied = false,
     f2ReviewAndDelegationApplied = false, wf01WorkforceSnapshotApplied = false,
     projectTeamScopeSearchApplied = false,
-    duplicateCccdSelfServiceApplied = false } = {},
+    duplicateCccdSelfServiceApplied = false,
+    workReportsReaderContractApplied = false } = {},
 ) {
   const baseAllowlist = extractS0T1CAllowlistSignatures(migrationSql);
   if (baseAllowlist.length === 0) {
@@ -292,6 +298,7 @@ export async function verifyS0T1CHistoricalCompatibility(
     ...(wf01WorkforceSnapshotApplied ? [WF01_WORKFORCE_SNAPSHOT_RPC_SIGNATURE] : []),
     ...(projectTeamScopeSearchApplied ? [PROJECT_TEAM_SCOPE_SEARCH_RPC_SIGNATURE] : []),
     ...(duplicateCccdSelfServiceApplied ? DUPLICATE_CCCD_SELF_SERVICE_RPC_SIGNATURES : []),
+    ...(workReportsReaderContractApplied ? WORK_REPORTS_READER_CONTRACT_RPC_SIGNATURES : []),
   ];
 
   const { rows } = await client.query(
@@ -492,6 +499,8 @@ export async function verifyAppliedMigrationChecksum(
           appliedMap.has(PROJECT_TEAM_SCOPE_SEARCH_MIGRATION_NAME),
         duplicateCccdSelfServiceApplied:
           appliedMap.has(DUPLICATE_CCCD_SELF_SERVICE_MIGRATION_NAME),
+        workReportsReaderContractApplied:
+          appliedMap.has(WORK_REPORTS_READER_CONTRACT_MIGRATION_NAME),
       },
     );
     if (postconditions.ok) {
