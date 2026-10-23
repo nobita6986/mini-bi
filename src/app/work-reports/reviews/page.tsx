@@ -1,9 +1,8 @@
-import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { AccessDenied, AccountUnavailable } from "@/components/auth/access-denied";
 import { TemporaryUnavailable } from "@/components/auth/temporary-unavailable";
-import { PageHeader, PageShell } from "@/components/ui/page-shell";
 import { ReviewInbox } from "@/components/work-reports/renderer/review-inbox";
+import { WorkReportsShell } from "@/components/work-reports/work-reports-shell";
 import { resolveActorForRequest } from "@/lib/navigation/resolve-nav-actor";
 import { workReportReviewPredicate } from "@/lib/navigation/registry-capability";
 
@@ -20,9 +19,13 @@ export default async function WorkReportReviewsPage() {
     return <TemporaryUnavailable />;
   }
 
-  return workReportReviewPredicate(resolution.actor) ? <PageShell>
-    <PageHeader eyebrow="Báo cáo công việc" title="Duyệt báo cáo" description="Hàng đợi và nội dung do máy chủ giới hạn theo phạm vi duyệt hiện hành." />
-    <Link className="text-sm text-primary underline-offset-4 hover:underline" href="/work-reports">Quay lại báo cáo công việc</Link>
-    <ReviewInbox />
-  </PageShell> : <AccessDenied />;
+  return workReportReviewPredicate(resolution.actor) ? (
+    <WorkReportsShell
+      actor={resolution.actor}
+      title="Duyệt báo cáo"
+      description="Hàng đợi và nội dung do máy chủ giới hạn theo phạm vi duyệt hiện hành."
+    >
+      <ReviewInbox />
+    </WorkReportsShell>
+  ) : <AccessDenied />;
 }

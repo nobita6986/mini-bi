@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 
 import { StatusBadge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -50,7 +50,7 @@ function keyFromLabel(value: string, fallback: string): string {
   return /^[a-z][a-z0-9_]{1,63}$/.test(key) ? key : fallback;
 }
 
-export function FormBuilder() {
+export function FormBuilder({ moduleNav }: { moduleNav?: ReactNode }) {
   const notify = useNotify();
   const [items, setItems] = useState<TemplateListItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -168,6 +168,7 @@ export function FormBuilder() {
   return <PageShell>
     <PageHeader title="Quản lý mẫu báo cáo" description="Tạo biểu mẫu, xem trước và quản lý các phiên bản phát hành."
       actions={<Button variant="primary" onClick={newTemplate}>Tạo mẫu</Button>} />
+    {moduleNav}
     {error ? <StatusBanner tone="error">{error}</StatusBanner> : null}
     {loading ? <p role="status" className="text-sm text-muted">Đang tải mẫu báo cáo…</p> : null}
     {!loading && !items.length ? <StatusBanner tone="info">Chưa có mẫu báo cáo.</StatusBanner> : null}

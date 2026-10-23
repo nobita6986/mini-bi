@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
+import { parseReaderDetail, renderWorkReportFieldValue } from "../../../lib/work-reports/reader-ui-model.ts";
+import { RECRUITMENT_DAILY_TEMPLATE_SCHEMA } from "../../../lib/work-reports/contracts.ts";
+
 const rendererPath = new URL("./work-report-form-renderer.tsx", import.meta.url);
 const inboxPath = new URL("./my-obligations.tsx", import.meta.url);
 const assignmentManagerPath = new URL("./assignment-manager.tsx", import.meta.url);
@@ -49,4 +52,64 @@ test("assignment form loads scoped templates and targets without accepting clien
   assert.match(source, /Danh sách nhân viên được xác định từ liên kết tài khoản và thành viên nhóm hiện hành/);
   assert.doesNotMatch(source, /nhập mã định danh|UUID, cách nhau/i);
   assert.match(source, /disabled=\{busy \|\| !templates\.length \|\| !teamId \|\| !templatesLoaded\}/);
+});
+
+test("read-only value renderer covers all eight field types without raw JSON or option keys", () => {
+  const selectField = { field_type: "single_select", options: [{ option_key: "opt_a", label: "Lựa chọn A" }] };
+  const multiField = { field_type: "multi_select", options: [{ option_key: "opt_a", label: "A" }, { option_key: "opt_b", label: "B" }] };
+  assert.equal(renderWorkReportFieldValue({ field_type: "text" }, "  giữ nguyên  "), "  giữ nguyên  ");
+  assert.equal(renderWorkReportFieldValue({ field_type: "textarea" }, "dòng 1\ndòng 2"), "dòng 1\ndòng 2");
+  assert.equal(renderWorkReportFieldValue({ field_type: "integer" }, 42), "42");
+  assert.equal(renderWorkReportFieldValue({ field_type: "decimal" }, 3.5), "3.5");
+  assert.equal(renderWorkReportFieldValue({ field_type: "date" }, "2026-10-01"), "2026-10-01");
+  assert.equal(renderWorkReportFieldValue({ field_type: "boolean" }, true), "Có");
+  assert.equal(renderWorkReportFieldValue({ field_type: "boolean" }, false), "Không");
+  assert.equal(renderWorkReportFieldValue(selectField, "opt_a"), "Lựa chọn A");
+  assert.equal(renderWorkReportFieldValue(multiField, ["opt_a", "opt_b"]), "A, B");
+  assert.equal(renderWorkReportFieldValue({ field_type: "text" }, null), "—");
+  assert.equal(renderWorkReportFieldValue({ field_type: "integer" }, undefined), "—");
+  // Never echo a technical option key when a label exists.
+  assert.equal(renderWorkReportFieldValue(selectField, "opt_a").includes("opt_a"), false);
+});
+
+test("reader detail parser fails closed on malformed schema and revisions", () => {
+  const base = {
+    obligation: {
+      period_key: "2026-10", period_start_date: "2026-10-01", period_end_date: "2026-10-31",
+      due_at: "2026-10-31T00:00:00Z", snapshot_team_display_name: null, snapshot_team_code: null,
+      obligation_status: "ACTIVE",
+    },
+    template: { template_code: "T1", display_name: "Tên mẫu", schema_json: {} },
+    submission: null,
+    latest_review_event: null,
+    revisions: [],
+  };
+  assert.equal(parseReaderDetail({ ok: true, data: base }), null, "schema_json:{} must be rejected");
+
+  const badRevision = {
+    ...base,
+    template: { ...base.template, schema_json: RECRUITMENT_DAILY_TEMPLATE_SCHEMA },
+    revisions: [{ revision_id: "not-a-uuid", revision_no: 1, payload_json: {}, created_at: "2026-10-01T00:00:00Z" }],
+  };
+  assert.equal(parseReaderDetail({ ok: true, data: badRevision }), null, "invalid revision must be rejected");
+
+  const valid = {
+    ...badRevision,
+    revisions: [{ revision_id: "11111111-1111-4111-8111-111111111111", revision_no: 1, payload_json: {}, created_at: "2026-10-01T00:00:00Z" }],
+  };
+  assert.ok(parseReaderDetail({ ok: true, data: valid }), "valid detail projects");
+});
+
+test("shared read-only renderer reuses the model and never renders raw JSON", async () => {
+  const source = await readFile(new URL("../reader/report-readonly-content.tsx", import.meta.url), "utf8");
+  assert.match(source, /renderWorkReportFieldValue\(field, payload\[field\.field_key\]\)/);
+  assert.match(source, /whitespace-pre-wrap break-words/);
+  assert.match(source, /ReportRevisionList/);
+  assert.match(source, /ReportReviewHistory/);
+  assert.match(source, /Lịch sử các lần nộp/);
+  assert.doesNotMatch(source, /JSON\.stringify|payload_json/);
+  // The review inbox must share this single read-only path, not a second renderer.
+  const inbox = await readFile(new URL("./review-inbox.tsx", import.meta.url), "utf8");
+  assert.match(inbox, /ReportReadonlyContent/);
+  assert.doesNotMatch(inbox, /function renderValue/);
 });

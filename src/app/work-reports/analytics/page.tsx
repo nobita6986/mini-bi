@@ -1,10 +1,10 @@
-import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { AccessDenied, AccountUnavailable } from "@/components/auth/access-denied";
 import { TemporaryUnavailable } from "@/components/auth/temporary-unavailable";
-import { WorkReportAnalytics } from "@/components/work-reports/analytics/work-report-analytics";
-import { PageHeader, PageShell } from "@/components/ui/page-shell";
+import { WorkReportAnalyticsTabs } from "@/components/work-reports/analytics/work-report-analytics-tabs";
+import { WorkReportsShell } from "@/components/work-reports/work-reports-shell";
 import { decideWorkReportAnalyticsPageAccess } from "@/lib/auth/direct-entry-page-access";
+import { workReportViewPredicate } from "@/lib/navigation/registry-capability";
 import { resolveActorForRequest } from "@/lib/navigation/resolve-nav-actor";
 
 export const dynamic = "force-dynamic";
@@ -19,11 +19,17 @@ export default async function WorkReportAnalyticsPage() {
     case "ACCOUNT_UNAVAILABLE": return <AccountUnavailable />;
     case "TEMPORARY_UNAVAILABLE": return <TemporaryUnavailable />;
     case "ACCESS_DENIED": return <AccessDenied />;
-    case "ALLOW":
-      return <PageShell>
-        <PageHeader eyebrow="Báo cáo công việc" title="Tổng hợp báo cáo" description="KPI, chỉ tiêu và bài nộp nguồn trong phạm vi quyền hiện hành." />
-        <Link className="text-sm text-primary underline-offset-4 hover:underline" href="/work-reports">Quay lại báo cáo của tôi</Link>
-        <WorkReportAnalytics />
-      </PageShell>;
+    case "ALLOW": {
+      const canViewSubmissions = actor?.ok === true && workReportViewPredicate(actor.actor);
+      return (
+        <WorkReportsShell
+          actor={actor?.ok ? actor.actor : null}
+          title="Tổng hợp & Bài nộp"
+          description="Bài nộp trong phạm vi được cấp và dashboard KPI, chỉ tiêu đã chốt."
+        >
+          <WorkReportAnalyticsTabs canViewSubmissions={canViewSubmissions} />
+        </WorkReportsShell>
+      );
+    }
   }
 }
