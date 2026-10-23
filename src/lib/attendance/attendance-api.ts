@@ -502,6 +502,47 @@ export async function postAttendanceCheckIn(
     return attendanceError("IDEMPOTENCY_CONFLICT");
   }
 
+  const cleanupUncommittedPhoto = async (reason: string) => {
+    if (!ensuredPhoto.ok || !ensuredPhoto.created_now) {
+      return;
+    }
+    try {
+      await dependencies.storage.deleteNewlyCreatedCheckInPhoto(ensuredPhoto.storage_key);
+    } catch {
+      console.error(`[attendance] failed to clean up uncommitted photo (${reason})`);
+    }
+  };
+
+  const recoverOrCleanupAfterAmbiguousWriteError = async (reason: string): Promise<Response> => {
+    try {
+      const postFailureLookup = await dependencies.repository.lookupCheckInIdempotency({
+        auth_subject: actorResult.actor.auth_subject,
+        app_user_id: actorResult.actor.app_user_id,
+        idempotency_key: meta.idempotency_key,
+        request_fingerprint: requestFingerprint,
+      });
+      if (postFailureLookup.ok && postFailureLookup.found) {
+        // DB actually committed before transport failed; preserve the committed photo!
+        return noStoreJson(
+          {
+            ok: true,
+            checkin: postFailureLookup.checkin,
+          },
+          200,
+        );
+      }
+      if (!postFailureLookup.ok && postFailureLookup.code === "IDEMPOTENCY_CONFLICT") {
+        await cleanupUncommittedPhoto(`${reason}-conflict`);
+        return attendanceError("IDEMPOTENCY_CONFLICT");
+      }
+    } catch {
+      // Fall through to safe cleanup of this uncommitted attempt's object.
+    }
+
+    await cleanupUncommittedPhoto(reason);
+    return attendanceError("ATTENDANCE_UNAVAILABLE");
+  };
+
   let recorded: Awaited<ReturnType<AttendanceRepository["recordCheckIn"]>>;
   try {
     recorded = await dependencies.repository.recordCheckIn({
@@ -526,27 +567,25 @@ export async function postAttendanceCheckIn(
       received_at: new Date(nowMs).toISOString(),
     });
   } catch {
-    if (ensuredPhoto.created_now) {
-      try {
-        await dependencies.storage.deleteNewlyCreatedCheckInPhoto(ensuredPhoto.storage_key);
-      } catch {
-        console.error("[attendance] failed to clean up newly uploaded photo after RPC exception");
-      }
-    }
-    return attendanceError("ATTENDANCE_UNAVAILABLE");
+    return recoverOrCleanupAfterAmbiguousWriteError("rpc-exception");
   }
 
   if (!recorded.ok) {
-    // Delete R2 object ONLY when this request newly created it AND the failure is NOT an
-    // IDEMPOTENCY_CONFLICT (which implies a committed DB record already owns the deterministic key).
-    if (ensuredPhoto.created_now && recorded.code !== "IDEMPOTENCY_CONFLICT") {
-      try {
-        await dependencies.storage.deleteNewlyCreatedCheckInPhoto(ensuredPhoto.storage_key);
-      } catch {
-        console.error("[attendance] failed to clean up newly uploaded photo after DB failure");
-      }
+    if (recorded.code === "ATTENDANCE_UNAVAILABLE") {
+      return recoverOrCleanupAfterAmbiguousWriteError("db-unavailable");
     }
+    // Each upload attempt writes to an isolated per-attempt R2 object key with
+    // conditional `If-None-Match: *`, so deleting `ensuredPhoto.storage_key` on DB
+    // conflict/rejection removes ONLY this losing attempt's unreferenced object and
+    // never deletes or alters the winning check-in's committed photo.
+    await cleanupUncommittedPhoto(`db-${recorded.code}`);
     return attendanceError(recorded.code);
+  }
+
+  if (recorded.checkin.replayed) {
+    // A concurrent identical request won the DB insert first with its own object key;
+    // remove this follower's duplicate unreferenced object while preserving the winner's.
+    await cleanupUncommittedPhoto("concurrent-replay");
   }
 
   return noStoreJson(

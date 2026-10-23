@@ -19,6 +19,7 @@ import {
 import {
   attendancePhotoObjectKey,
   createR2AttendanceStorage,
+  isAttendancePhotoObjectKey,
 } from "./r2-attendance-storage.ts";
 import {
   ATTENDANCE_TIME_TOKEN_TTL_MS,
@@ -87,7 +88,7 @@ async function realJpegB() {
   return cachedJpegB;
 }
 
-function createFakeR2Harness(env = VALID_ENV) {
+function createFakeR2Harness(env = VALID_ENV, { onBeforePut, createObjectId } = {}) {
   const objects = new Map();
   const commands = [];
 
@@ -109,8 +110,23 @@ function createFakeR2Harness(env = VALID_ENV) {
         };
       }
       if (command instanceof PutObjectCommand) {
+        if (onBeforePut) {
+          await onBeforePut(command);
+        }
         const bytes = new Uint8Array(command.input.Body);
-        commands.push({ op: "put", key: command.input.Key, size: bytes.byteLength });
+        commands.push({
+          op: "put",
+          key: command.input.Key,
+          size: bytes.byteLength,
+          ifNoneMatch: command.input.IfNoneMatch ?? null,
+        });
+        if (command.input.IfNoneMatch === "*" && objects.has(command.input.Key)) {
+          const err = new Error("PreconditionFailed");
+          err.name = "PreconditionFailed";
+          err.Code = "PreconditionFailed";
+          err.$metadata = { httpStatusCode: 412 };
+          throw err;
+        }
         objects.set(command.input.Key, {
           bytes,
           contentType: command.input.ContentType,
@@ -149,11 +165,11 @@ function createFakeR2Harness(env = VALID_ENV) {
   return {
     objects,
     commands,
-    storage: createR2AttendanceStorage(env, { client }),
+    storage: createR2AttendanceStorage(env, { client, createObjectId }),
   };
 }
 
-function createInMemoryCheckInRepo() {
+function createInMemoryCheckInRepo({ onAfterLookup, onBeforeRecord } = {}) {
   const byActorKey = new Map();
   const byActorDay = new Map();
   const lookups = [];
@@ -169,24 +185,30 @@ function createInMemoryCheckInRepo() {
         lookups.push(input);
         const compositeKey = `${input.app_user_id}:${input.idempotency_key}`;
         const existing = byActorKey.get(compositeKey);
-        if (!existing) {
-          return { ok: true, found: false };
+        const result = !existing
+          ? { ok: true, found: false }
+          : existing.request_fingerprint !== input.request_fingerprint
+            ? { ok: false, code: "IDEMPOTENCY_CONFLICT" }
+            : {
+                ok: true,
+                found: true,
+                checkin: {
+                  ...existing.projection,
+                  daily_count: (
+                    byActorDay.get(`${input.app_user_id}:${existing.business_date}`) ?? []
+                  ).length,
+                  replayed: true,
+                },
+              };
+        if (onAfterLookup) {
+          await onAfterLookup(input, result);
         }
-        if (existing.request_fingerprint !== input.request_fingerprint) {
-          return { ok: false, code: "IDEMPOTENCY_CONFLICT" };
-        }
-        const dayRows = byActorDay.get(`${input.app_user_id}:${existing.business_date}`) ?? [];
-        return {
-          ok: true,
-          found: true,
-          checkin: {
-            ...existing.projection,
-            daily_count: dayRows.length,
-            replayed: true,
-          },
-        };
+        return result;
       },
       async recordCheckIn(input) {
+        if (onBeforeRecord) {
+          await onBeforeRecord(input);
+        }
         calls.push(input);
         const compositeKey = `${input.app_user_id}:${input.idempotency_key}`;
         const existing = byActorKey.get(compositeKey);
@@ -246,6 +268,9 @@ function createInMemoryCheckInRepo() {
         byActorDay.set(dayKey, dayRows);
         byActorKey.set(compositeKey, {
           request_fingerprint: input.request_fingerprint,
+          photo_storage_key: input.photo_storage_key,
+          photo_sha256: input.photo_sha256,
+          photo_size_bytes: input.photo_size_bytes,
           business_date: hcmDate,
           projection,
         });
@@ -1071,18 +1096,14 @@ test("SERVER_ANCHORED and DEVICE_CLOCK_UNVERIFIED succeed with deterministic R2 
   );
 
   // Stored R2 bytes are byte-for-byte identical to uploaded JPEG (no re-encoding altering SHA-256)
-  const expectedStorageKey = attendancePhotoObjectKey(
-    "preview",
-    ACTOR_A.app_user_id,
-    KEY_1,
-  );
+  const committedKey1 = repo.byActorKey.get(`${ACTOR_A.app_user_id}:${KEY_1}`);
+  const expectedStorageKey = committedKey1.photo_storage_key;
+  assert.equal(isAttendancePhotoObjectKey(expectedStorageKey), true);
   assert.equal(r2.objects.size, 1);
   assert.deepEqual(r2.objects.get(expectedStorageKey).bytes, jpegA);
-  assert.equal(
-    r2.commands.filter((c) => c.op === "put").length,
-    1,
-    "initial check-in uploads photo once",
-  );
+  const initialPutCommands = r2.commands.filter((c) => c.op === "put");
+  assert.equal(initialPutCommands.length, 1, "initial check-in uploads photo once");
+  assert.equal(initialPutCommands[0].ifNoneMatch, "*", "R2 PutObject uses conditional If-None-Match: *");
 
   // 2. Idempotent retry with exact same key & payload returns 200, same checkin_id, NO second PutObject!
   const replayRes = await postAttendanceCheckIn(
@@ -1101,11 +1122,11 @@ test("SERVER_ANCHORED and DEVICE_CLOCK_UNVERIFIED succeed with deterministic R2 
   assert.equal(
     r2.commands.filter((c) => c.op === "put").length,
     1,
-    "retry reuses deterministic R2 object without re-uploading",
+    "retry reuses committed record without re-uploading",
   );
   assert.equal(r2.objects.size, 1);
 
-  // 3. Same key with DIFFERENT photo SHA/bytes conflicts at R2 check without overwriting or deleting original photo!
+  // 3. Same key with DIFFERENT photo SHA/bytes conflicts without overwriting or deleting original photo!
   const photoConflictRes = await postAttendanceCheckIn(
     buildMultipartCheckInRequest({
       idempotencyHeader: KEY_1,
@@ -1126,7 +1147,7 @@ test("SERVER_ANCHORED and DEVICE_CLOCK_UNVERIFIED succeed with deterministic R2 
     "conflicting retry must never overwrite or delete the original object",
   );
 
-  // 4. Same key + same photo (`created_now = false`) + different metadata (`note`) conflicts at DB and MUST NOT delete pre-existing R2 object!
+  // 4. Same key + same photo + different metadata (`note`) conflicts at DB and MUST NOT delete pre-existing R2 object!
   const metaConflictRes = await postAttendanceCheckIn(
     buildMultipartCheckInRequest({
       idempotencyHeader: KEY_1,
@@ -1148,11 +1169,8 @@ test("SERVER_ANCHORED and DEVICE_CLOCK_UNVERIFIED succeed with deterministic R2 
   );
 
   // 5. DB failure AFTER uploading a NEW object (`KEY_2`, `created_now = true`) deletes the newly created object so zero orphan remains!
-  const key2StorageKey = attendancePhotoObjectKey(
-    "preview",
-    ACTOR_A.app_user_id,
-    KEY_2,
-  );
+  const putsBeforeFail = r2.commands.filter((c) => c.op === "put").length;
+  const deletesBeforeFail = r2.commands.filter((c) => c.op === "delete").length;
   const failingRepo = {
     async lookupCheckInIdempotency() {
       return { ok: true, found: false };
@@ -1182,10 +1200,12 @@ test("SERVER_ANCHORED and DEVICE_CLOCK_UNVERIFIED succeed with deterministic R2 
     ok: false,
     code: "ATTENDANCE_UNAVAILABLE",
   });
+  assert.equal(r2.commands.filter((c) => c.op === "put").length, putsBeforeFail + 1);
+  assert.equal(r2.commands.filter((c) => c.op === "delete").length, deletesBeforeFail + 1);
   assert.equal(
-    r2.objects.has(key2StorageKey),
-    false,
-    "newly uploaded object must be deleted when DB write fails",
+    r2.objects.size,
+    1,
+    "newly uploaded object must be deleted when DB write fails so zero orphan remains",
   );
 
   // 6. Subsequent retry of `KEY_2` (`DEVICE_CLOCK_UNVERIFIED` offline outbox item from 2 days ago) succeeds cleanly!
@@ -1211,7 +1231,9 @@ test("SERVER_ANCHORED and DEVICE_CLOCK_UNVERIFIED succeed with deterministic R2 
   assert.equal(offlineBody.checkin.sequence_in_day, 1);
   assert.equal(offlineBody.checkin.time_source, "DEVICE_CLOCK_UNVERIFIED");
   assert.equal(offlineBody.checkin.replayed, false);
-  assert.equal(r2.objects.has(key2StorageKey), true);
+  const committedKey2 = repo.byActorKey.get(`${ACTOR_A.app_user_id}:${KEY_2}`);
+  assert.equal(r2.objects.has(committedKey2.photo_storage_key), true);
+  assert.equal(r2.objects.size, 2);
 });
 
 test("SERVER_ANCHORED offline sync grace enforces 24h capture ceiling, deterministic 7-day sync window, original captured_at preservation, and idempotent multi-retry", async () => {
@@ -1667,7 +1689,9 @@ test("post-168h idempotency precedes sync-window rejection: replays saved SERVER
     code: "PHOTO_HASH_MISMATCH",
   });
 
-  const savedStorageKey = attendancePhotoObjectKey("preview", ACTOR_A.app_user_id, keySaved);
+  const savedStorageKey = repo.byActorKey.get(
+    `${ACTOR_A.app_user_id}:${keySaved}`,
+  ).photo_storage_key;
   assert.deepEqual(r2.objects.get(savedStorageKey).bytes, jpegA);
   assert.equal(r2.commands.length, r2CommandsAfterInitial);
   assert.equal(repo.calls.length, repoWriteCallsAfterInitial);
@@ -1743,68 +1767,436 @@ test("post-168h idempotency precedes sync-window rejection: replays saved SERVER
   );
   assert.equal(repo.byActorKey.size, 1);
 
-  // 4. Pre-DB-commit interrupted R2 object safety (within 168h window):
-  //    If an earlier attempt uploaded to R2 (`keyInterrupted`) and crashed before DB commit,
-  //    matching photo SHA reuses R2 object (`created_now = false`), while mismatched SHA returns 409!
+  // 4. Direct R2 conditional write (`If-None-Match: *`) protection on identical `object_id`:
+  //    Even if two storage calls target the exact same `object_id`, `If-None-Match: *` prevents
+  //    overwriting: mismatched SHA returns `{ ok: false, kind: "conflict" }` without mutating
+  //    stored bytes, while matching SHA returns `{ ok: true, created_now: false }`.
   const keyInterrupted = "d3000000-0000-4000-8000-000000000003";
+  const explicitObjectId = "d4000000-0000-4000-8000-000000000001";
   const preStaged = await r2.storage.ensureCheckInPhoto({
     app_user_id: ACTOR_A.app_user_id,
     idempotency_key: keyInterrupted,
+    object_id: explicitObjectId,
     photo_sha256: shaA,
     bytes: jpegA,
   });
   assert.equal(preStaged.ok, true);
   assert.equal(preStaged.created_now, true);
-
-  const preStagedConflictRes = await postAttendanceCheckIn(
-    buildMultipartCheckInRequest({
-      idempotencyHeader: keyInterrupted,
-      metadataObj: {
-        ...savedMeta,
-        idempotency_key: keyInterrupted,
-        photo_sha256: shaB,
-      },
-      photoBytes: jpegB,
-    }),
-    VALID_ENV,
-    {
-      resolveSession: activeSession(ACTOR_A),
-      repository: repo.repository,
-      storage: r2.storage,
-      now: () => initialReceivedAtMs,
-    },
-  );
-  assert.equal(preStagedConflictRes.status, 409);
-  assert.deepEqual(await preStagedConflictRes.json(), {
-    ok: false,
-    code: "IDEMPOTENCY_CONFLICT",
-  });
-
-  const putCountBeforeResume = r2.commands.filter((c) => c.op === "put").length;
-  const preStagedResumeRes = await postAttendanceCheckIn(
-    buildMultipartCheckInRequest({
-      idempotencyHeader: keyInterrupted,
-      metadataObj: {
-        ...savedMeta,
-        idempotency_key: keyInterrupted,
-        photo_sha256: shaA,
-      },
-      photoBytes: jpegA,
-    }),
-    VALID_ENV,
-    {
-      resolveSession: activeSession(ACTOR_A),
-      repository: repo.repository,
-      storage: r2.storage,
-      now: () => initialReceivedAtMs,
-    },
-  );
-  assert.equal(preStagedResumeRes.status, 201);
   assert.equal(
-    r2.commands.filter((c) => c.op === "put").length,
-    putCountBeforeResume,
-    "resuming an interrupted upload with matching SHA reuses pre-existing R2 object without PutObject",
+    preStaged.storage_key,
+    attendancePhotoObjectKey("preview", ACTOR_A.app_user_id, keyInterrupted, explicitObjectId),
   );
+
+  const sameObjectConflict = await r2.storage.ensureCheckInPhoto({
+    app_user_id: ACTOR_A.app_user_id,
+    idempotency_key: keyInterrupted,
+    object_id: explicitObjectId,
+    photo_sha256: shaB,
+    bytes: jpegB,
+  });
+  assert.deepEqual(sameObjectConflict, { ok: false, kind: "conflict" });
+  assert.deepEqual(
+    r2.objects.get(preStaged.storage_key).bytes,
+    jpegA,
+    "If-None-Match: * must block overwriting an existing R2 object on conflicting SHA",
+  );
+
+  const sameObjectReuse = await r2.storage.ensureCheckInPhoto({
+    app_user_id: ACTOR_A.app_user_id,
+    idempotency_key: keyInterrupted,
+    object_id: explicitObjectId,
+    photo_sha256: shaA,
+    bytes: jpegA,
+  });
+  assert.deepEqual(sameObjectReuse, {
+    ok: true,
+    storage_key: preStaged.storage_key,
+    created_now: false,
+  });
+});
+
+test("concurrent check-in race with same actor + idempotency_key and different photos preserves winning photo bytes/hash, returns 409 IDEMPOTENCY_CONFLICT to loser, and leaves zero R2 orphans", async () => {
+  const jpegA = await realJpegA();
+  const shaA = sha256Hex(jpegA);
+  const jpegB = await realJpegB();
+  const shaB = sha256Hex(jpegB);
+  assert.notEqual(shaA, shaB);
+
+  function createCountBarrier(partyCount) {
+    let arrived = 0;
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    return async () => {
+      arrived += 1;
+      if (arrived >= partyCount) {
+        release();
+      }
+      await gate;
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Race 1 (Adversarial overwrite window):
+  //   - Req A (`jpegA`) and Req B (`jpegB`) both pass `lookupCheckInIdempotency`
+  //     seeing `{ found: false }`.
+  //   - Req A uploads `jpegA` to R2 FIRST, then Req B uploads `jpegB` to R2 SECOND
+  //     (in the old shared-key design, Req B would overwrite Req A's R2 bytes!).
+  //   - Req A enters `recordCheckIn` FIRST and wins DB commit (`201`, `shaA`).
+  //   - Req B enters `recordCheckIn` SECOND, loses with `409 IDEMPOTENCY_CONFLICT`,
+  //     and cleans up ONLY its own unreferenced R2 object.
+  // ---------------------------------------------------------------------------
+  {
+    const keyRace = "e9000000-0000-4000-8000-000000000001";
+    const bothLookedUp = createCountBarrier(2);
+    const bothUploadedToR2 = createCountBarrier(2);
+    let r2PutOrder = [];
+    let releasePutB;
+    const putADone = new Promise((resolve) => {
+      releasePutB = resolve;
+    });
+    let releaseRecordB;
+    const recordADone = new Promise((resolve) => {
+      releaseRecordB = resolve;
+    });
+
+    const r2 = createFakeR2Harness(VALID_ENV, {
+      async onBeforePut(command) {
+        const metaSha = command.input.Metadata?.sha256;
+        if (metaSha === shaB) {
+          // Force losing request B to write to R2 AFTER winning request A!
+          await putADone;
+        }
+        r2PutOrder.push(metaSha);
+        if (metaSha === shaA) {
+          releasePutB();
+        }
+      },
+    });
+
+    const repo = createInMemoryCheckInRepo({
+      async onAfterLookup() {
+        await bothLookedUp();
+      },
+      async onBeforeRecord(input) {
+        // Ensure BOTH R2 uploads completed before either request enters DB!
+        await bothUploadedToR2();
+        if (input.photo_sha256 === shaB) {
+          await recordADone;
+        }
+      },
+    });
+
+    const originalRecordCheckIn = repo.repository.recordCheckIn;
+    repo.repository.recordCheckIn = async (input) => {
+      try {
+        return await originalRecordCheckIn(input);
+      } finally {
+        if (input.photo_sha256 === shaA) {
+          releaseRecordB();
+        }
+      }
+    };
+
+    // Coordinate the post-Put barrier via storage wrapper so both PutObjects finish before DB
+    const rawEnsure = r2.storage.ensureCheckInPhoto.bind(r2.storage);
+    r2.storage.ensureCheckInPhoto = async (input) => {
+      const res = await rawEnsure(input);
+      await bothUploadedToR2();
+      return res;
+    };
+
+    const deps = {
+      resolveSession: activeSession(ACTOR_A),
+      repository: repo.repository,
+      storage: r2.storage,
+      now: () => FIXED_NOW_MS,
+    };
+
+    const [resA, resB] = await Promise.all([
+      postAttendanceCheckIn(
+        buildMultipartCheckInRequest({
+          idempotencyHeader: keyRace,
+          metadataObj: buildMetadata({ idempotency_key: keyRace, photo_sha256: shaA }),
+          photoBytes: jpegA,
+        }),
+        VALID_ENV,
+        deps,
+      ),
+      postAttendanceCheckIn(
+        buildMultipartCheckInRequest({
+          idempotencyHeader: keyRace,
+          metadataObj: buildMetadata({ idempotency_key: keyRace, photo_sha256: shaB }),
+          photoBytes: jpegB,
+        }),
+        VALID_ENV,
+        deps,
+      ),
+    ]);
+
+    assert.deepEqual(r2PutOrder, [shaA, shaB], "loser B uploaded after winner A");
+    assert.equal(resA.status, 201);
+    const bodyA = await resA.json();
+    assert.equal(bodyA.ok, true);
+    assert.equal(bodyA.checkin.replayed, false);
+
+    assert.equal(resB.status, 409);
+    assert.deepEqual(await resB.json(), {
+      ok: false,
+      code: "IDEMPOTENCY_CONFLICT",
+    });
+
+    const committed = repo.byActorKey.get(`${ACTOR_A.app_user_id}:${keyRace}`);
+    assert.ok(committed, "winner record must be committed in DB");
+    assert.equal(committed.photo_sha256, shaA);
+    assert.equal(isAttendancePhotoObjectKey(committed.photo_storage_key), true);
+
+    assert.equal(
+      r2.objects.size,
+      1,
+      "losing concurrent upload must be cleaned up leaving zero orphan objects in R2",
+    );
+    assert.equal(
+      r2.objects.has(committed.photo_storage_key),
+      true,
+      "winning check-in's R2 object must never be deleted",
+    );
+    const winnerStoredBytes = r2.objects.get(committed.photo_storage_key).bytes;
+    assert.equal(
+      sha256Hex(winnerStoredBytes),
+      committed.photo_sha256,
+      "stored R2 photo SHA-256 must match committed DB photo_sha256",
+    );
+    assert.deepEqual(winnerStoredBytes, jpegA);
+
+    const putCmds = r2.commands.filter((c) => c.op === "put");
+    const delCmds = r2.commands.filter((c) => c.op === "delete");
+    assert.equal(putCmds.length, 2);
+    assert.ok(putCmds.every((c) => c.ifNoneMatch === "*"));
+    assert.notEqual(putCmds[0].key, putCmds[1].key);
+    assert.equal(delCmds.length, 1);
+    assert.notEqual(delCmds[0].key, committed.photo_storage_key);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Race 2 (Reverse DB winner):
+  //   - Req A uploads `jpegA` to R2 FIRST, Req B uploads `jpegB` to R2 SECOND,
+  //     then Req B wins DB FIRST (`201`, `shaB`) and Req A loses DB SECOND (`409`).
+  //   - Winner B's `jpegB` stays intact in R2 matching DB `shaB`, while Req A's
+  //     unreferenced `jpegA` object is deleted with zero orphans!
+  // ---------------------------------------------------------------------------
+  {
+    const keyRaceReverse = "e9000000-0000-4000-8000-000000000002";
+    const bothLookedUp = createCountBarrier(2);
+    const bothUploadedToR2 = createCountBarrier(2);
+    let releasePutB;
+    const putADone = new Promise((resolve) => {
+      releasePutB = resolve;
+    });
+    let releaseRecordA;
+    const recordBDone = new Promise((resolve) => {
+      releaseRecordA = resolve;
+    });
+
+    const r2 = createFakeR2Harness(VALID_ENV, {
+      async onBeforePut(command) {
+        if (command.input.Metadata?.sha256 === shaB) {
+          await putADone;
+        }
+        if (command.input.Metadata?.sha256 === shaA) {
+          releasePutB();
+        }
+      },
+    });
+
+    const repo = createInMemoryCheckInRepo({
+      async onAfterLookup() {
+        await bothLookedUp();
+      },
+      async onBeforeRecord(input) {
+        await bothUploadedToR2();
+        if (input.photo_sha256 === shaA) {
+          await recordBDone;
+        }
+      },
+    });
+
+    const originalRecordCheckIn = repo.repository.recordCheckIn;
+    repo.repository.recordCheckIn = async (input) => {
+      try {
+        return await originalRecordCheckIn(input);
+      } finally {
+        if (input.photo_sha256 === shaB) {
+          releaseRecordA();
+        }
+      }
+    };
+
+    const rawEnsure = r2.storage.ensureCheckInPhoto.bind(r2.storage);
+    r2.storage.ensureCheckInPhoto = async (input) => {
+      const res = await rawEnsure(input);
+      await bothUploadedToR2();
+      return res;
+    };
+
+    const deps = {
+      resolveSession: activeSession(ACTOR_A),
+      repository: repo.repository,
+      storage: r2.storage,
+      now: () => FIXED_NOW_MS,
+    };
+
+    const [resA, resB] = await Promise.all([
+      postAttendanceCheckIn(
+        buildMultipartCheckInRequest({
+          idempotencyHeader: keyRaceReverse,
+          metadataObj: buildMetadata({ idempotency_key: keyRaceReverse, photo_sha256: shaA }),
+          photoBytes: jpegA,
+        }),
+        VALID_ENV,
+        deps,
+      ),
+      postAttendanceCheckIn(
+        buildMultipartCheckInRequest({
+          idempotencyHeader: keyRaceReverse,
+          metadataObj: buildMetadata({ idempotency_key: keyRaceReverse, photo_sha256: shaB }),
+          photoBytes: jpegB,
+        }),
+        VALID_ENV,
+        deps,
+      ),
+    ]);
+
+    assert.equal(resA.status, 409);
+    assert.deepEqual(await resA.json(), {
+      ok: false,
+      code: "IDEMPOTENCY_CONFLICT",
+    });
+    assert.equal(resB.status, 201);
+
+    const committed = repo.byActorKey.get(`${ACTOR_A.app_user_id}:${keyRaceReverse}`);
+    assert.equal(committed.photo_sha256, shaB);
+    assert.equal(r2.objects.size, 1);
+    assert.equal(r2.objects.has(committed.photo_storage_key), true);
+    assert.equal(sha256Hex(r2.objects.get(committed.photo_storage_key).bytes), shaB);
+    assert.deepEqual(r2.objects.get(committed.photo_storage_key).bytes, jpegB);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Race 3 (Concurrent identical retries):
+  //   - Two identical requests (`same actor + idempotency_key + photo + metadata`)
+  //     both pass `lookupCheckInIdempotency` and upload before DB commit.
+  //   - Winner returns `201` (`replayed: false`), follower returns `200` (`replayed: true`)
+  //     and cleans up its duplicate unreferenced R2 object so only 1 object remains.
+  // ---------------------------------------------------------------------------
+  {
+    const keySameRace = "e9000000-0000-4000-8000-000000000003";
+    const bothLookedUp = createCountBarrier(2);
+    const bothUploadedToR2 = createCountBarrier(2);
+
+    const r2 = createFakeR2Harness();
+    const repo = createInMemoryCheckInRepo({
+      async onAfterLookup() {
+        await bothLookedUp();
+      },
+      async onBeforeRecord() {
+        await bothUploadedToR2();
+      },
+    });
+
+    const rawEnsure = r2.storage.ensureCheckInPhoto.bind(r2.storage);
+    r2.storage.ensureCheckInPhoto = async (input) => {
+      const res = await rawEnsure(input);
+      await bothUploadedToR2();
+      return res;
+    };
+
+    const deps = {
+      resolveSession: activeSession(ACTOR_A),
+      repository: repo.repository,
+      storage: r2.storage,
+      now: () => FIXED_NOW_MS,
+    };
+
+    const sameMeta = buildMetadata({ idempotency_key: keySameRace, photo_sha256: shaA });
+    const [res1, res2] = await Promise.all([
+      postAttendanceCheckIn(
+        buildMultipartCheckInRequest({
+          idempotencyHeader: keySameRace,
+          metadataObj: sameMeta,
+          photoBytes: jpegA,
+        }),
+        VALID_ENV,
+        deps,
+      ),
+      postAttendanceCheckIn(
+        buildMultipartCheckInRequest({
+          idempotencyHeader: keySameRace,
+          metadataObj: sameMeta,
+          photoBytes: jpegA,
+        }),
+        VALID_ENV,
+        deps,
+      ),
+    ]);
+
+    const statuses = [res1.status, res2.status].sort();
+    assert.deepEqual(statuses, [200, 201]);
+    const body1 = await res1.json();
+    const body2 = await res2.json();
+    assert.equal(body1.checkin.checkin_id, body2.checkin.checkin_id);
+
+    const committed = repo.byActorKey.get(`${ACTOR_A.app_user_id}:${keySameRace}`);
+    assert.equal(r2.objects.size, 1, "follower duplicate R2 object must be cleaned up");
+    assert.equal(r2.objects.has(committed.photo_storage_key), true);
+    assert.equal(sha256Hex(r2.objects.get(committed.photo_storage_key).bytes), shaA);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Race 4 (Ambiguous transport failure AFTER DB commit):
+  //   - `recordCheckIn` commits the row in DB, then throws a network reset.
+  //   - Post-failure idempotency probe sees the committed record, preserves the
+  //     committed R2 photo (no DeleteObject!), and returns `200` (`replayed: true`).
+  // ---------------------------------------------------------------------------
+  {
+    const keyTransportDrop = "e9000000-0000-4000-8000-000000000004";
+    const r2 = createFakeR2Harness();
+    const repo = createInMemoryCheckInRepo();
+    const rawRecord = repo.repository.recordCheckIn;
+    repo.repository.recordCheckIn = async (input) => {
+      await rawRecord(input);
+      throw new Error("socket hang up after PostgreSQL COMMIT");
+    };
+
+    const res = await postAttendanceCheckIn(
+      buildMultipartCheckInRequest({
+        idempotencyHeader: keyTransportDrop,
+        metadataObj: buildMetadata({ idempotency_key: keyTransportDrop, photo_sha256: shaA }),
+        photoBytes: jpegA,
+      }),
+      VALID_ENV,
+      {
+        resolveSession: activeSession(ACTOR_A),
+        repository: repo.repository,
+        storage: r2.storage,
+        now: () => FIXED_NOW_MS,
+      },
+    );
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.checkin.replayed, true);
+
+    const committed = repo.byActorKey.get(`${ACTOR_A.app_user_id}:${keyTransportDrop}`);
+    assert.equal(r2.objects.size, 1);
+    assert.equal(
+      r2.objects.has(committed.photo_storage_key),
+      true,
+      "committed R2 object must never be deleted when PostgREST socket drops after COMMIT",
+    );
+    assert.equal(r2.commands.filter((c) => c.op === "delete").length, 0);
+  }
 });
 
 test("createServiceAttendanceRepository maps SQL errors without leaking details and route handlers enforce nodejs/force-dynamic/RPC-only boundary", async () => {

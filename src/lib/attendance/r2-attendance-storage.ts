@@ -1,6 +1,7 @@
 import "server-only";
 
 import { Buffer } from "node:buffer";
+import { randomUUID } from "node:crypto";
 import {
   DeleteObjectCommand,
   GetObjectCommand,
@@ -17,8 +18,11 @@ import { loadR2Config } from "../direct-entry/r2-document-storage.ts";
 import { isUuid } from "../http/direct-entry-api-guard.ts";
 
 const SHA256_LOWER_HEX = /^[0-9a-f]{64}$/;
-const ATTENDANCE_STORAGE_KEY_REGEX =
-  /^(?:preview|production)\/attendance-checkins\/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.jpg$/;
+const UUID_LOWER_SEGMENT =
+  "[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
+const ATTENDANCE_STORAGE_KEY_REGEX = new RegExp(
+  `^(?:preview|production)/attendance-checkins/${UUID_LOWER_SEGMENT}/${UUID_LOWER_SEGMENT}/${UUID_LOWER_SEGMENT}\\.jpg$`,
+);
 
 export type EnsureAttendancePhotoResult =
   | {
@@ -36,6 +40,7 @@ export type AttendanceObjectStorage = {
   ensureCheckInPhoto(input: {
     app_user_id: string;
     idempotency_key: string;
+    object_id?: string;
     photo_sha256: string;
     bytes: Uint8Array;
   }): Promise<EnsureAttendancePhotoResult>;
@@ -46,19 +51,22 @@ type S3CommandSender = { send(command: unknown): Promise<unknown> };
 
 export type R2AttendanceStorageDependencies = {
   client?: S3CommandSender;
+  createObjectId?: () => string;
 };
 
 export function attendancePhotoObjectKey(
   environment: DocumentEnvironment,
   appUserId: string,
   idempotencyKey: string,
+  objectId: string,
 ): string {
   const actor = appUserId.trim().toLowerCase();
   const key = idempotencyKey.trim().toLowerCase();
-  if (!isUuid(actor) || !isUuid(key)) {
+  const objectUuid = objectId.trim().toLowerCase();
+  if (!isUuid(actor) || !isUuid(key) || !isUuid(objectUuid)) {
     throw new Error("ATTENDANCE_STORAGE_KEY_INVALID");
   }
-  return `${environment}/attendance-checkins/${actor}/${key}.jpg`;
+  return `${environment}/attendance-checkins/${actor}/${key}/${objectUuid}.jpg`;
 }
 
 export function isAttendancePhotoObjectKey(value: unknown): value is string {
@@ -72,6 +80,23 @@ function isNotFound(error: unknown): boolean {
     value.name === "NotFound" ||
     value.name === "NoSuchKey" ||
     value.$metadata?.httpStatusCode === 404
+  );
+}
+
+function isConditionalWriteConflict(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const value = error as {
+    name?: unknown;
+    Code?: unknown;
+    $metadata?: { httpStatusCode?: unknown };
+  };
+  return (
+    value.name === "PreconditionFailed" ||
+    value.Code === "PreconditionFailed" ||
+    value.name === "ConditionalRequestConflict" ||
+    value.Code === "ConditionalRequestConflict" ||
+    value.$metadata?.httpStatusCode === 412 ||
+    value.$metadata?.httpStatusCode === 409
   );
 }
 
@@ -120,83 +145,76 @@ export function createR2AttendanceStorage(
         throw new Error("ATTENDANCE_PHOTO_STORAGE_INPUT_INVALID");
       }
 
+      const objectId =
+        input.object_id ??
+        (dependencies.createObjectId ? dependencies.createObjectId() : randomUUID());
       const storageKey = attendancePhotoObjectKey(
         config.environment,
         input.app_user_id,
         input.idempotency_key,
+        objectId,
       );
 
-      let existingHead: {
-        ContentLength?: number;
-        ContentType?: string;
-        Metadata?: Record<string, string | undefined>;
-      } | null = null;
-
+      // Write-once conditional upload (`If-None-Match: *`) onto a per-attempt object key:
+      // 1. Distinct concurrent requests for the same `(actor, idempotency_key)` never share
+      //    or overwrite each other's R2 key while racing toward PostgreSQL arbitration.
+      // 2. Even if an explicit `object_id` already exists in R2, `If-None-Match: *` prevents
+      //    overwriting the stored bytes (`412 PreconditionFailed` / `409`), falling back to
+      //    read-only SHA-256 verification below.
       try {
-        existingHead = (await getClient().send(
-          new HeadObjectCommand({
+        await getClient().send(
+          new PutObjectCommand({
             Bucket: config.bucket,
             Key: storageKey,
+            Body: Buffer.from(input.bytes),
+            ContentType: "image/jpeg",
+            ContentLength: input.bytes.byteLength,
+            ContentDisposition: "attachment",
+            IfNoneMatch: "*",
+            Metadata: {
+              sha256: input.photo_sha256,
+            },
           }),
-        )) as {
-          ContentLength?: number;
-          ContentType?: string;
-          Metadata?: Record<string, string | undefined>;
+        );
+
+        return {
+          ok: true,
+          storage_key: storageKey,
+          created_now: true,
         };
       } catch (error) {
-        if (!isNotFound(error)) {
+        if (!isConditionalWriteConflict(error)) {
           throw error;
         }
       }
 
-      if (existingHead !== null) {
-        if (
-          typeof existingHead.ContentLength !== "number" ||
-          !Number.isSafeInteger(existingHead.ContentLength) ||
-          existingHead.ContentLength < 1 ||
-          existingHead.ContentLength > DOCUMENT_MAX_UPLOAD_BYTES
-        ) {
-          throw new Error("ATTENDANCE_STORAGE_UNAVAILABLE");
-        }
+      const existingHead = (await getClient().send(
+        new HeadObjectCommand({
+          Bucket: config.bucket,
+          Key: storageKey,
+        }),
+      )) as {
+        ContentLength?: number;
+        ContentType?: string;
+        Metadata?: Record<string, string | undefined>;
+      };
 
-        if (existingHead.ContentLength !== input.bytes.byteLength) {
-          return { ok: false, kind: "conflict" };
-        }
+      if (
+        typeof existingHead.ContentLength !== "number" ||
+        !Number.isSafeInteger(existingHead.ContentLength) ||
+        existingHead.ContentLength < 1 ||
+        existingHead.ContentLength > DOCUMENT_MAX_UPLOAD_BYTES
+      ) {
+        throw new Error("ATTENDANCE_STORAGE_UNAVAILABLE");
+      }
 
-        const rawMetaSha = existingHead.Metadata?.sha256?.trim().toLowerCase();
-        if (rawMetaSha && SHA256_LOWER_HEX.test(rawMetaSha)) {
-          if (rawMetaSha !== input.photo_sha256) {
-            return { ok: false, kind: "conflict" };
-          }
-          return {
-            ok: true,
-            storage_key: storageKey,
-            created_now: false,
-          };
-        }
+      if (existingHead.ContentLength !== input.bytes.byteLength) {
+        return { ok: false, kind: "conflict" };
+      }
 
-        // Fallback when custom metadata was omitted: verify actual stored object bytes.
-        const objectResponse = (await getClient().send(
-          new GetObjectCommand({
-            Bucket: config.bucket,
-            Key: storageKey,
-          }),
-        )) as {
-          ContentLength?: number;
-          Body?: { transformToByteArray(): Promise<Uint8Array> };
-        };
-        if (
-          !objectResponse.Body ||
-          typeof objectResponse.ContentLength !== "number" ||
-          objectResponse.ContentLength !== input.bytes.byteLength
-        ) {
-          throw new Error("ATTENDANCE_STORAGE_UNAVAILABLE");
-        }
-        const storedBytes = await objectResponse.Body.transformToByteArray();
-        if (storedBytes.byteLength !== input.bytes.byteLength) {
-          return { ok: false, kind: "conflict" };
-        }
-        if (sha256Hex(storedBytes) !== input.photo_sha256) {
+      const rawMetaSha = existingHead.Metadata?.sha256?.trim().toLowerCase();
+      if (rawMetaSha && SHA256_LOWER_HEX.test(rawMetaSha)) {
+        if (rawMetaSha !== input.photo_sha256) {
           return { ok: false, kind: "conflict" };
         }
         return {
@@ -206,24 +224,34 @@ export function createR2AttendanceStorage(
         };
       }
 
-      await getClient().send(
-        new PutObjectCommand({
+      // Fallback when custom metadata was omitted: verify actual stored object bytes.
+      const objectResponse = (await getClient().send(
+        new GetObjectCommand({
           Bucket: config.bucket,
           Key: storageKey,
-          Body: Buffer.from(input.bytes),
-          ContentType: "image/jpeg",
-          ContentLength: input.bytes.byteLength,
-          ContentDisposition: "attachment",
-          Metadata: {
-            sha256: input.photo_sha256,
-          },
         }),
-      );
-
+      )) as {
+        ContentLength?: number;
+        Body?: { transformToByteArray(): Promise<Uint8Array> };
+      };
+      if (
+        !objectResponse.Body ||
+        typeof objectResponse.ContentLength !== "number" ||
+        objectResponse.ContentLength !== input.bytes.byteLength
+      ) {
+        throw new Error("ATTENDANCE_STORAGE_UNAVAILABLE");
+      }
+      const storedBytes = await objectResponse.Body.transformToByteArray();
+      if (storedBytes.byteLength !== input.bytes.byteLength) {
+        return { ok: false, kind: "conflict" };
+      }
+      if (sha256Hex(storedBytes) !== input.photo_sha256) {
+        return { ok: false, kind: "conflict" };
+      }
       return {
         ok: true,
         storage_key: storageKey,
-        created_now: true,
+        created_now: false,
       };
     },
 
