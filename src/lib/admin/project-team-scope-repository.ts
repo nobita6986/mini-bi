@@ -29,7 +29,7 @@ export type ProjectTeamScopeErrorKind =
 
 export type ProjectTeamScopeRepository = {
   listScopes(input: ActorRef & {
-    project_id: string | null; team_id: string | null;
+    project_id: string | null; team_id: string | null; search: string | null;
     include_history: boolean; page: number; page_size: number;
   }): Promise<ProjectTeamScopeOutcome<ProjectTeamScopeList>>;
   grantScope(input: ActorRef & {
@@ -83,7 +83,7 @@ export function createProjectTeamScopeRepository(rpc?: Rpc): ProjectTeamScopeRep
     listScopes(input) {
       return call("direct_entry_list_project_team_scopes_admin", {
         p_auth_subject: input.auth_subject, p_app_user_id: input.app_user_id,
-        p_project_id: input.project_id, p_team_id: input.team_id,
+        p_project_id: input.project_id, p_team_id: input.team_id, p_search: input.search ?? null,
         p_include_history: input.include_history, p_page: input.page, p_page_size: input.page_size,
       }, projectProjectTeamScopeList);
     },

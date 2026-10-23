@@ -299,6 +299,7 @@ test("PRE-W2-HF Project<->Team: ledger position, source boundary and ACL posture
     // RPC boundary: service_role only, SECURITY DEFINER, pinned search_path.
     for (const signature of [
       "public.direct_entry_list_project_team_scopes_admin(uuid,uuid,text,uuid,boolean,integer,integer)",
+      "public.direct_entry_list_project_team_scopes_admin(uuid,uuid,text,uuid,boolean,integer,integer,text)",
       "public.direct_entry_grant_project_team_scopes_batch(uuid,uuid,uuid,text[],text,text)",
       "public.direct_entry_revoke_project_team_scope(uuid,uuid,uuid,date,text,text)",
     ]) {
@@ -398,6 +399,74 @@ test("PRE-W2-HF Project<->Team: only the canonical Full Admin may read/grant/rev
 
     await expectDenied(async () => listScopes(db, admin, null, null, true, 0, 25), "22023");
     await expectDenied(async () => listScopes(db, admin, null, null, true, 1, 101), "22023");
+  } finally {
+    await db.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 3. Searchable mapping read (HF): fuzzy search over code and display name.
+// ---------------------------------------------------------------------------
+const TEAM_SEARCH = uuid(21);
+const PROJECT_COMPAL = "pt-hf-compal";
+const PROJECT_OTHER = "pt-hf-other";
+
+test("PRE-W2-HF Project<->Team: search filters by project/team code or name before paging", async () => {
+  const db = await buildDb();
+  try {
+    await seed(db);
+    await db.query(
+      "insert into public.teams (team_id,code,display_name,active) values ($1,'PT_XZ','Nhóm XenZin',true)",
+      [TEAM_SEARCH]);
+    await db.query(
+      "insert into public.direct_entry_projects (project_id,display_name,active,version) values"
+        + " ($1,'Compal Electronics',true,1),($2,'Other Plant',true,1)",
+      [PROJECT_COMPAL, PROJECT_OTHER]);
+    await grantScope(db, admin,
+      [PROJECT_COMPAL, TEAM_SEARCH, 0, null, "grant compal", idemKey("search-1")]);
+    await grantScope(db, admin,
+      [PROJECT_OTHER, TEAM_SEARCH, 0, null, "grant other", idemKey("search-2")]);
+
+    const search = (project, team, history, page, size, term) =>
+      rpc(db, "direct_entry_list_project_team_scopes_admin",
+        [admin.auth, admin.app, project, team, history, page, size, term]);
+
+    // Exactly one mapping matches the (case-insensitive) project display-name substring.
+    const byName = await search(null, null, true, 1, 25, "compal");
+    assert.equal(byName.total, 1);
+    assert.deepEqual(byName.mappings.map((row) => row.project_id), [PROJECT_COMPAL]);
+    assert.equal(byName.mappings[0].team_code, "PT_XZ");
+
+    // Case-insensitive and matching the project code substring too.
+    assert.equal((await search(null, null, true, 1, 25, "COMPAL")).total, 1);
+    assert.equal((await search(null, null, true, 1, 25, "pt-hf-comp")).total, 1);
+
+    // Matching the team code and the team display name returns both mappings.
+    assert.equal((await search(null, null, true, 1, 25, "xz")).total, 2);
+    assert.equal((await search(null, null, true, 1, 25, "xenzin")).total, 2);
+
+    // A whitespace-only term is "no filter" and returns the unfiltered set.
+    assert.equal((await search(null, null, true, 1, 25, "   ")).total, 2);
+
+    // Filtering happens before pagination: page_size 1 keeps total at the filtered count.
+    const paged = await search(null, null, true, 1, 1, "xenzin");
+    assert.equal(paged.total, 2);
+    assert.equal(paged.has_more, true);
+    assert.equal(paged.mappings.length, 1);
+
+    // A term that matches nothing yields an empty, consistent envelope.
+    const none = await search(null, null, true, 1, 25, "zzz-no-match");
+    assert.equal(none.total, 0);
+    assert.deepEqual(none.mappings, []);
+
+    // The exact project_id filter still composes with search.
+    const exact = await search(PROJECT_COMPAL, null, true, 1, 25, "compal");
+    assert.equal(exact.total, 1);
+    const exactMiss = await search(PROJECT_OTHER, null, true, 1, 25, "compal");
+    assert.equal(exactMiss.total, 0);
+
+    // Oversized search is rejected before any read.
+    await expectDenied(async () => search(null, null, true, 1, 25, "x".repeat(257)), "22023");
   } finally {
     await db.close();
   }

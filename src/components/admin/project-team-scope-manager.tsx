@@ -54,8 +54,8 @@ export function ProjectTeamScopeManager() {
   const notify = useNotify();
   const [list, setList] = useState<ProjectTeamScopeList | null>(null);
   const [state, setState] = useState<"loading" | "ready" | "denied" | "error">("loading");
-  const [projectIdFilter, setProjectIdFilter] = useState("");
-  const [teamIdFilter, setTeamIdFilter] = useState("");
+  const [searchInput, setSearchInput] = useState("");
+  const [searchFilter, setSearchFilter] = useState("");
   const [includeHistory, setIncludeHistory] = useState(false);
   const [page, setPage] = useState(1);
   const [reloadToken, setReloadToken] = useState(0);
@@ -76,8 +76,15 @@ export function ProjectTeamScopeManager() {
   const [reason, setReason] = useState("");
   const pendingIntent = useRef<{ signature: string; key: string } | null>(null);
 
+  // Debounce the free-text search (250-350 ms) so typing does not fire one request per
+  // keystroke, and apply exactly one filtered query once the operator pauses.
   useEffect(() => {
-    const query = buildMappingListQuery({ projectId: projectIdFilter, teamId: teamIdFilter, includeHistory, page });
+    const handle = setTimeout(() => { setSearchFilter(searchInput); setPage(1); }, 300);
+    return () => clearTimeout(handle);
+  }, [searchInput]);
+
+  useEffect(() => {
+    const query = buildMappingListQuery({ search: searchFilter, includeHistory, page });
     if (!query) return;
     const controller = new AbortController();
     void (async () => {
@@ -99,7 +106,7 @@ export function ProjectTeamScopeManager() {
       }
     })();
     return () => controller.abort();
-  }, [includeHistory, page, projectIdFilter, reloadToken, teamIdFilter]);
+  }, [includeHistory, page, searchFilter, reloadToken]);
 
   useEffect(() => {
     if (dialog?.kind !== "grant") return;
@@ -264,13 +271,12 @@ export function ProjectTeamScopeManager() {
       </header>
 
       <Card>
-        <CardHeader title="Danh sách mapping" description={list ? `${list.total} mapping` : "Lọc theo project ID hoặc xem lịch sử."} />
-        <form className="mb-4 flex flex-wrap gap-3 items-end" onSubmit={(e) => { e.preventDefault(); setPage(1); reloadList(); }}>
-          <label className="flex flex-col gap-1 text-sm font-medium flex-1">Project ID
-            <input value={projectIdFilter} maxLength={128} onChange={(e) => setProjectIdFilter(e.target.value)} className={input} />
-          </label>
-          <label className="flex flex-col gap-1 text-sm font-medium">Team ID
-            <input value={teamIdFilter} maxLength={36} onChange={(e) => setTeamIdFilter(e.target.value)} className={input} />
+        <CardHeader title="Danh sách mapping" description={list ? `${list.total} mapping` : "Tìm theo mã hoặc tên dự án / nhóm, hoặc xem lịch sử."} />
+        <form className="mb-4 flex flex-wrap gap-3 items-end" onSubmit={(e) => { e.preventDefault(); setSearchFilter(searchInput); setPage(1); reloadList(); }}>
+          <label className="flex flex-col gap-1 text-sm font-medium flex-1">Tìm dự án hoặc nhóm
+            <input type="search" value={searchInput} maxLength={256}
+              placeholder="Nhập một phần mã hoặc tên dự án / nhóm"
+              onChange={(e) => setSearchInput(e.target.value)} className={input} />
           </label>
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" checked={includeHistory} onChange={(e) => { setIncludeHistory(e.target.checked); setPage(1); reloadList(); }} className="size-4 accent-primary" />

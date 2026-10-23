@@ -48,7 +48,8 @@ test("mapping page/nav stay Full Admin restricted and existing history/filter/er
   assert.doesNotMatch(page, /decideAdminAreaAccess/);
   assert.match(navigation, /project-team-scopes[^\n]*visible:\s*adminSecurityNavPredicate/);
   assert.match(component, /Chỉ Full Admin/);
-  assert.match(component, /projectIdFilter/);
+  assert.match(component, /searchInput/);
+  assert.match(component, /searchFilter/);
   assert.match(component, /includeHistory/);
   assert.match(component, /setPage\(/);
   assert.match(component, /Chưa có mapping nào/);
@@ -57,4 +58,20 @@ test("mapping page/nav stay Full Admin restricted and existing history/filter/er
   assert.match(component, /Thu hồi/);
   assert.match(component, /useNotify\(\)/);
   assert.doesNotMatch(component, /title="Trạng thái thao tác"/);
+});
+
+test("mapping search is one fuzzy box that debounces instead of firing per keystroke", () => {
+  // One search box replaces the exact Project ID / Team ID inputs.
+  assert.match(component, /Tìm dự án hoặc nhóm/);
+  assert.match(component, /buildMappingListQuery\(\{ search: searchFilter, includeHistory, page \}\)/);
+  assert.doesNotMatch(component, /projectIdFilter/);
+  assert.doesNotMatch(component, /teamIdFilter/);
+  // Debounced (250-350 ms) so typing never fires one request per character.
+  assert.match(component, /setTimeout\(\(\) => \{ setSearchFilter\(searchInput\); setPage\(1\); \}, 300\)/);
+  assert.match(component, /clearTimeout\(handle\)/);
+  assert.match(component, /\}, \[searchInput\]\)/);
+  // The list effect reacts to the committed filter, not the raw input.
+  assert.match(component, /\}, \[includeHistory, page, searchFilter, reloadToken\]\)/);
+  // Submitting the form applies immediately.
+  assert.match(component, /onSubmit=\{\(e\) => \{ e\.preventDefault\(\); setSearchFilter\(searchInput\); setPage\(1\); reloadList\(\); \}\}/);
 });
