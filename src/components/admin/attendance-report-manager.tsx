@@ -7,7 +7,7 @@ import { EmptyState } from "@/components/reporting/empty-state";
 import { ErrorState } from "@/components/reporting/error-state";
 import { Alert } from "@/components/ui/alert";
 import { StatusBadge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, buttonClasses } from "@/components/ui/button";
 import { Card, CardHeader } from "@/components/ui/card";
 import {
   DATA_TABLE_CLASS,
@@ -995,6 +995,9 @@ export function AttendanceReportManager() {
                     <th scope="col" className={DATA_TABLE_TH_CLASS}>
                       Khoảng cách tới trụ sở
                     </th>
+                    <th scope="col" className={DATA_TABLE_TH_CLASS}>
+                      Ảnh chấm công
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1044,6 +1047,17 @@ export function AttendanceReportManager() {
                         className={DATA_TABLE_TD_CLASS}
                       >
                         <DistanceCell item={item} />
+                      </td>
+                      <td data-label="Ảnh chấm công" className={DATA_TABLE_TD_CLASS}>
+                        <a
+                          href={`/api/admin/attendance/checkins/${item.checkin_id}/photo`}
+                          target="_blank"
+                          rel="noreferrer"
+                          aria-label={`Xem ảnh chấm công của ${item.employee_display_name}`}
+                          className={buttonClasses({ variant: "secondary", size: "sm" })}
+                        >
+                          Xem ảnh
+                        </a>
                       </td>
                     </tr>
                   ))}

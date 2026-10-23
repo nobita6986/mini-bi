@@ -50,8 +50,8 @@ function isItem(value: unknown): value is OffboardingReportItem {
 }
 
 export function parseOffboardingReportList(body: unknown): OffboardingReportList | null {
-  if (!isRecord(body) || body.ok !== true || !isRecord(body.data)) return null;
-  const d = body.data;
+  if (!isRecord(body)) return null;
+  const d = body;
   if (
     (d.scope !== "all" && d.scope !== "team") ||
     typeof d.authority !== "string" ||
@@ -77,8 +77,8 @@ export function parseOffboardingReportList(body: unknown): OffboardingReportList
 }
 
 export function parseOffboardingReportExport(body: unknown): OffboardingReportExport | null {
-  if (!isRecord(body) || body.ok !== true || !isRecord(body.data)) return null;
-  const d = body.data;
+  if (!isRecord(body)) return null;
+  const d = body;
   if (typeof d.authorization_date !== "string" || !Array.isArray(d.items) || !d.items.every(isItem)) {
     return null;
   }

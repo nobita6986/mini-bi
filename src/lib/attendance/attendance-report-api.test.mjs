@@ -15,6 +15,7 @@ import {
 } from "../navigation/registry-capability.ts";
 import {
   computeHqLocationRequestFingerprint,
+  getAttendanceCheckInPhoto,
   getAttendanceAdminReport,
   putAttendanceHqLocation,
 } from "./attendance-report-api.ts";
@@ -940,6 +941,89 @@ test("Strict projection & repository error mapping fail closed on leaked fields 
     search: null,
   });
   assert.deepEqual(failed, { ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" });
+});
+
+test("Attendance photo endpoint resolves a private R2 key only for Admin/BoD and never exposes it", async () => {
+  const storageKey = `preview/attendance-checkins/${APP_USER_ID}/${IDEMPOTENCY_KEY}/${CHECKIN_ID}.jpg`;
+  const bytes = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);
+  const rpcCalls = [];
+  const reads = [];
+  const repository = createServiceAttendanceAdminReportRepository(async (name, args) => {
+    rpcCalls.push({ name, args });
+    return { data: { found: true, photo_storage_key: storageKey }, error: null };
+  });
+  const storage = {
+    available: () => true,
+    async readCheckInPhoto(key) {
+      reads.push(key);
+      return bytes;
+    },
+  };
+
+  const response = await getAttendanceCheckInPhoto(
+    new Request(`https://bi.example.com/api/admin/attendance/checkins/${CHECKIN_ID}/photo`),
+    CHECKIN_ID.toUpperCase(),
+    {
+      resolveSession: async () => makeSessionOk(BOD_WORK_REPORTS_CAPS, ALL_SCOPE),
+      repository,
+      storage,
+    },
+  );
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("content-type"), "image/jpeg");
+  assert.equal(response.headers.get("cache-control"), "private, no-store, max-age=0");
+  assert.equal(response.headers.get("x-content-type-options"), "nosniff");
+  assert.deepEqual(new Uint8Array(await response.arrayBuffer()), bytes);
+  assert.deepEqual(reads, [storageKey]);
+  assert.deepEqual(rpcCalls, [{
+    name: "attendance_admin_checkin_photo",
+    args: {
+      p_auth_subject: AUTH_SUBJECT,
+      p_app_user_id: APP_USER_ID,
+      p_checkin_id: CHECKIN_ID,
+    },
+  }]);
+  assert.equal(response.headers.get("photo-storage-key"), null);
+
+  let deniedRepoCalled = false;
+  const denied = await getAttendanceCheckInPhoto(
+    new Request(`https://bi.example.com/api/admin/attendance/checkins/${CHECKIN_ID}/photo`),
+    CHECKIN_ID,
+    {
+      resolveSession: async () => makeSessionOk(TEAM_LEADER_CAPS, TEAM_SCOPE),
+      repository: {
+        async getCheckInPhotoStorageKey() {
+          deniedRepoCalled = true;
+          return { ok: true, storage_key: storageKey };
+        },
+      },
+      storage,
+    },
+  );
+  assert.equal(denied.status, 403);
+  assert.equal(deniedRepoCalled, false);
+
+  const notFound = await getAttendanceCheckInPhoto(
+    new Request(`https://bi.example.com/api/admin/attendance/checkins/${CHECKIN_ID}/photo`),
+    CHECKIN_ID,
+    {
+      resolveSession: async () => makeSessionOk(FULL_ADMIN_CAPS, ALL_SCOPE),
+      repository: { async getCheckInPhotoStorageKey() { return { ok: true, storage_key: null }; } },
+      storage,
+    },
+  );
+  assert.equal(notFound.status, 404);
+  assert.deepEqual(await notFound.json(), { ok: false, code: "ATTENDANCE_PHOTO_NOT_FOUND" });
+
+  const malformed = await createServiceAttendanceAdminReportRepository(async () => ({
+    data: { found: true, photo_storage_key: "../not-an-r2-key" },
+    error: null,
+  })).getCheckInPhotoStorageKey({
+    auth_subject: AUTH_SUBJECT,
+    app_user_id: APP_USER_ID,
+    checkin_id: CHECKIN_ID,
+  });
+  assert.deepEqual(malformed, { ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" });
 });
 
 test("Contract date, coordinate, and distance formatting helpers respect Asia/Ho_Chi_Minh business calendar", () => {

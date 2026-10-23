@@ -8,6 +8,7 @@ import {
   type SetAttendanceHqLocationProjection,
 } from "./attendance-report-contract.ts";
 import type { AttendanceRpcCaller } from "./attendance-repository.ts";
+import { isAttendancePhotoObjectKey } from "./r2-attendance-storage.ts";
 
 export type GetAttendanceAdminReportInput = {
   auth_subject: string;
@@ -37,6 +38,12 @@ export type SetAttendanceHqLocationResult =
   | { ok: true; result: SetAttendanceHqLocationProjection }
   | { ok: false; code: AttendanceReportErrorCode };
 
+export type GetAttendancePhotoStorageKeyResult =
+  | { ok: true; storage_key: string | null }
+  | { ok: false; code: AttendanceReportErrorCode };
+
+type AttendanceActorRef = { auth_subject: string; app_user_id: string };
+
 export type AttendanceAdminReportRepository = {
   getAdminReport(
     input: GetAttendanceAdminReportInput,
@@ -44,7 +51,24 @@ export type AttendanceAdminReportRepository = {
   setHqLocation(
     input: SetAttendanceHqLocationInput,
   ): Promise<SetAttendanceHqLocationResult>;
+  getCheckInPhotoStorageKey(
+    input: AttendanceActorRef & { checkin_id: string },
+  ): Promise<GetAttendancePhotoStorageKeyResult>;
 };
+
+function projectPhotoStorageKey(value: unknown): string | null | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  if (record.found === false && Object.keys(record).length === 1) return null;
+  if (
+    record.found === true &&
+    Object.keys(record).length === 2 &&
+    isAttendancePhotoObjectKey(record.photo_storage_key)
+  ) {
+    return record.photo_storage_key;
+  }
+  return undefined;
+}
 
 const KNOWN_REPORT_RPC_TOKENS: ReadonlyMap<string, AttendanceReportErrorCode> = new Map([
   ["ATTENDANCE_ACTOR_DENIED", "ACTOR_NOT_AVAILABLE"],
@@ -162,6 +186,29 @@ export function createServiceAttendanceAdminReportRepository(
         return { ok: true, result: projected };
       } catch {
         console.error("[attendance-admin] set HQ RPC call failed");
+        return { ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" };
+      }
+    },
+
+    async getCheckInPhotoStorageKey(input) {
+      try {
+        resolvedRpc ??= serviceRoleRpc();
+        const result = await resolvedRpc("attendance_admin_checkin_photo", {
+          p_auth_subject: input.auth_subject,
+          p_app_user_id: input.app_user_id,
+          p_checkin_id: input.checkin_id,
+        });
+        if (result.error) {
+          return { ok: false, code: classifyReportRpcError(result.error, "report") };
+        }
+        const storageKey = projectPhotoStorageKey(result.data);
+        if (storageKey === undefined) {
+          console.error("[attendance-admin] photo RPC returned non-canonical projection");
+          return { ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" };
+        }
+        return { ok: true, storage_key: storageKey };
+      } catch {
+        console.error("[attendance-admin] photo RPC call failed");
         return { ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" };
       }
     },

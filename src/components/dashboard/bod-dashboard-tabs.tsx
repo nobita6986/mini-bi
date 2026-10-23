@@ -6,6 +6,7 @@ import { parseAsString, useQueryStates } from "nuqs";
 import type { ReportingData } from "@/lib/reporting/p1-reporting";
 import type { ReportingOptionsResult } from "@/lib/reporting/p1-options-server";
 import { DuplicateCccdReportPanel } from "@/components/reporting/duplicate-cccd-report-panel";
+import { OffboardingReportPanel } from "@/components/workforce/offboarding-report-panel";
 import { WorkforceDeepReportPanel } from "./dashboard-shared";
 import { TeamReportView, type TeamReportViewConfig } from "./team-report-view";
 
@@ -43,7 +44,7 @@ const queryParsers = {
   source: parseAsString,
 };
 
-type TabKey = "general" | "deep" | "team" | "duplicate-cccd";
+type TabKey = "general" | "deep" | "team" | "duplicate-cccd" | "offboarding";
 
 type TabDef = { key: TabKey; label: string; panelId: string };
 
@@ -53,12 +54,14 @@ type TabDef = { key: TabKey; label: string; panelId: string };
  * 2. "Báo cáo chuyên sâu" (chỉ hiển thị cho actor có scope = "all", tức primaryTabLabel === undefined)
  * 3. "Báo cáo theo nhóm" (chỉ hiển thị cho actor có scope = "all")
  * 4. "Báo cáo CCCD trùng" (hiển thị khi canViewDuplicateCccd === true)
+ * 5. "NLĐ nghỉ việc" (hiển thị khi canViewOffboarding === true)
  */
 const tabs: readonly TabDef[] = [
   { key: "general", label: "Báo cáo tổng quát", panelId: "bod-panel-general" },
   { key: "deep", label: "Báo cáo chuyên sâu", panelId: "bod-panel-deep" },
   { key: "team", label: "Báo cáo theo nhóm", panelId: "bod-panel-team" },
   { key: "duplicate-cccd", label: "Báo cáo CCCD trùng", panelId: "bod-panel-duplicate-cccd" },
+  { key: "offboarding", label: "NLĐ nghỉ việc", panelId: "bod-panel-offboarding" },
 ];
 
 export function BodDashboardTabs({
@@ -68,6 +71,7 @@ export function BodDashboardTabs({
   generatedAt,
   optionsResult,
   canViewDuplicateCccd,
+  canViewOffboarding,
 }: {
   general: ReactNode;
   /** Scoped dashboards get their own first tab, never the all-scope deep or team report. */
@@ -76,6 +80,7 @@ export function BodDashboardTabs({
   generatedAt?: string;
   optionsResult: ReportingOptionsResult;
   canViewDuplicateCccd: boolean;
+  canViewOffboarding: boolean;
 }) {
   const [{ tab: rawTab, source }, setQuery] = useQueryStates(queryParsers, {
     history: "push",
@@ -87,6 +92,8 @@ export function BodDashboardTabs({
   const visibleTabs = tabs.filter((tab) =>
     tab.key === "duplicate-cccd"
       ? canViewDuplicateCccd
+      : tab.key === "offboarding"
+        ? canViewOffboarding
       : tab.key === "deep"
         ? primaryTabLabel === undefined
         : tab.key === "team"
@@ -102,6 +109,8 @@ export function BodDashboardTabs({
         ? "team"
         : rawTab === "duplicate-cccd" && canViewDuplicateCccd
           ? "duplicate-cccd"
+          : rawTab === "offboarding" && canViewOffboarding
+            ? "offboarding"
           : "general";
 
   function selectTab(next: TabKey): void {
@@ -171,9 +180,13 @@ export function BodDashboardTabs({
             view={bodTeamReportConfig}
           />
         </div>
-      ) : (
+      ) : activeTab === "duplicate-cccd" ? (
         <div id="bod-panel-duplicate-cccd" role="tabpanel" aria-labelledby="bod-tab-duplicate-cccd" tabIndex={0} data-ui-panel-motion="true" className="pt-4">
           <DuplicateCccdReportPanel />
+        </div>
+      ) : (
+        <div id="bod-panel-offboarding" role="tabpanel" aria-labelledby="bod-tab-offboarding" tabIndex={0} data-ui-panel-motion="true" className="pt-4">
+          <OffboardingReportPanel />
         </div>
       )}
     </div>

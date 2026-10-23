@@ -81,6 +81,10 @@ export const ATTENDANCE_ADMIN_REPORT_RPC_SIGNATURES = Object.freeze([
   "public.attendance_admin_report(uuid, uuid, date, date, integer, integer, text)",
   "public.attendance_set_hq_location(uuid, uuid, double precision, double precision, integer, uuid, text)",
 ]);
+export const ASYNC_DOCUMENTS_ATTENDANCE_PHOTO_MIGRATION_NAME =
+  "20261024120000_hf_async_documents_and_attendance_photo_viewer.sql";
+export const ASYNC_DOCUMENTS_ATTENDANCE_PHOTO_RPC_SIGNATURE =
+  "public.attendance_admin_checkin_photo(uuid, uuid, uuid)";
 export const F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES = Object.freeze([
   "public.work_report_list_templates(uuid, uuid)",
   "public.work_report_get_template(uuid, uuid, uuid)",
@@ -299,7 +303,8 @@ export async function verifyS0T1CHistoricalCompatibility(
     workReportsReaderContractApplied = false,
     attendanceWp1Applied = false,
     attendanceAdminReportApplied = false,
-    offboardingReportApplied = false } = {},
+    offboardingReportApplied = false,
+    asyncDocumentsAttendancePhotoApplied = false } = {},
 ) {
   const baseAllowlist = extractS0T1CAllowlistSignatures(migrationSql);
   if (baseAllowlist.length === 0) {
@@ -323,6 +328,9 @@ export async function verifyS0T1CHistoricalCompatibility(
     ...(attendanceWp1Applied ? ATTENDANCE_WP1_RPC_SIGNATURES : []),
     ...(attendanceAdminReportApplied ? ATTENDANCE_ADMIN_REPORT_RPC_SIGNATURES : []),
     ...(offboardingReportApplied ? OFFBOARDING_REPORT_RPC_SIGNATURES : []),
+    ...(asyncDocumentsAttendancePhotoApplied
+      ? [ASYNC_DOCUMENTS_ATTENDANCE_PHOTO_RPC_SIGNATURE]
+      : []),
   ];
 
   const { rows } = await client.query(
@@ -531,6 +539,8 @@ export async function verifyAppliedMigrationChecksum(
           appliedMap.has(ATTENDANCE_ADMIN_REPORT_MIGRATION_NAME),
         offboardingReportApplied:
           appliedMap.has(OFFBOARDING_REPORT_MIGRATION_NAME),
+        asyncDocumentsAttendancePhotoApplied:
+          appliedMap.has(ASYNC_DOCUMENTS_ATTENDANCE_PHOTO_MIGRATION_NAME),
       },
     );
     if (postconditions.ok) {

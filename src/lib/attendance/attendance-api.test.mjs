@@ -1787,6 +1787,15 @@ test("post-168h idempotency precedes sync-window rejection: replays saved SERVER
     preStaged.storage_key,
     attendancePhotoObjectKey("preview", ACTOR_A.app_user_id, keyInterrupted, explicitObjectId),
   );
+  assert.deepEqual(
+    await r2.storage.readCheckInPhoto(preStaged.storage_key),
+    jpegA,
+    "private attendance-photo reads return the exact immutable JPEG bytes",
+  );
+  await assert.rejects(
+    () => r2.storage.readCheckInPhoto(`production/${preStaged.storage_key.slice("preview/".length)}`),
+    /ATTENDANCE_STORAGE_KEY_INVALID/,
+  );
 
   const sameObjectConflict = await r2.storage.ensureCheckInPhoto({
     app_user_id: ACTOR_A.app_user_id,

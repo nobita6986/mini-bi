@@ -45,6 +45,8 @@ test("the report is Dashboard-only: no standalone nav entry or page", () => {
     "no nav entry should deep-link to a dashboard tab");
   assert.equal(findEntryByPath("/dashboard")?.id, "dashboard");
   assert.equal(NAV_ENTRIES.some((candidate) => candidate.path.startsWith("/reports")), false);
+  assert.equal(NAV_ENTRIES.some((candidate) => candidate.id === "workforce-offboarding"), false,
+    "offboarding moved beside duplicate CCCD inside Dashboard");
   assert.equal(findEntryByPath("/reports/duplicate-cccd"), undefined);
   assert.throws(
     () => readFileSync(new URL("../../app/reports/duplicate-cccd/page.tsx", import.meta.url), "utf8"),
@@ -52,14 +54,17 @@ test("the report is Dashboard-only: no standalone nav entry or page", () => {
   );
 });
 
-test("the CCCD report is the Dashboard tab right after the team tab", () => {
+test("the CCCD report follows team and the offboarding report follows CCCD", () => {
   const tabs = readFileSync(
     new URL("../../components/dashboard/bod-dashboard-tabs.tsx", import.meta.url), "utf8");
   assert.match(tabs, /key: "general", label: "Báo cáo tổng quát"/);
   assert.match(tabs, /key: "team", label: "Báo cáo theo nhóm"/);
   assert.match(tabs, /key: "duplicate-cccd", label: "Báo cáo CCCD trùng"/);
+  assert.match(tabs, /key: "offboarding", label: "NLĐ nghỉ việc"/);
   assert.ok(tabs.indexOf('key: "team"') < tabs.indexOf('key: "duplicate-cccd"'),
     "the CCCD tab must come right after the team tab");
+  assert.ok(tabs.indexOf('key: "duplicate-cccd"') < tabs.indexOf('key: "offboarding"'),
+    "the offboarding tab must come after duplicate CCCD");
   assert.match(tabs, /DuplicateCccdReportPanel/);
   assert.match(tabs, /canViewDuplicateCccd/);
   assert.match(tabs, /tab\.key === "duplicate-cccd"\s*\?\s*canViewDuplicateCccd/);
@@ -71,9 +76,9 @@ test("the CCCD report is the Dashboard tab right after the team tab", () => {
 test("the Dashboard page + view server-gate the CCCD tab for every audience", () => {
   const page = readFileSync(new URL("../../app/dashboard/page.tsx", import.meta.url), "utf8");
   assert.match(page, /canViewDuplicateCccdReport\(actor\)/);
-  assert.match(page, /type DashboardTab = "general" \| "deep" \| "team" \| "duplicate-cccd"/);
+  assert.match(page, /type DashboardTab = "general" \| "deep" \| "team" \| "duplicate-cccd" \| "offboarding"/);
   assert.match(page, /tab === "duplicate-cccd" && !canViewDuplicateCccd/);
-  assert.match(page, /\(tab === "deep" \|\| tab === "team" \|\| tab === "duplicate-cccd"\) && sourcePresent/);
+  assert.match(page, /tab === "duplicate-cccd" \|\| tab === "offboarding"\) && sourcePresent/);
   assert.match(page, /normalizedDashboardPath\(params, tab, true\)/);
   assert.match(page, /canViewDuplicateCccd=\{canViewDuplicateCccd\}/);
 
