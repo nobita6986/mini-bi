@@ -1,10 +1,6 @@
 /**
- * PRE-W2-HF-D1 - Duplicate-CCCD report is Dashboard-only (navigation + tab).
- *
- * Bao cao CCCD trung chi con nam trong tab Dashboard `/dashboard?tab=duplicate-cccd` (tab thu ba
- * sau "Bao cao theo nhom"); KHONG con muc navigation doc lap. `canViewDuplicateCccdReport` van mo
- * cho moi account nghiep vu hop le (actor resolve ok) va general/team khong bi mo rong. Quyen that
- * do API/RPC (#87) quyet dinh.
+ * PRE-W2-HF-D1 + HF Duplicate CCCD Self-Service Actions - Duplicate-CCCD report Dashboard tab,
+ * controlled actions, and route gates.
  */
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -47,9 +43,7 @@ test("the report is Dashboard-only: no standalone nav entry or page", () => {
     "the standalone menu entry must be removed");
   assert.equal(NAV_ENTRIES.some((candidate) => candidate.path.startsWith("/dashboard?tab=")), false,
     "no nav entry should deep-link to a dashboard tab");
-  // The only way to open the report is the Dashboard entry itself.
   assert.equal(findEntryByPath("/dashboard")?.id, "dashboard");
-  // No standalone report page was recreated.
   assert.equal(NAV_ENTRIES.some((candidate) => candidate.path.startsWith("/reports")), false);
   assert.equal(findEntryByPath("/reports/duplicate-cccd"), undefined);
   assert.throws(
@@ -68,7 +62,8 @@ test("the CCCD report is the Dashboard tab right after the team tab", () => {
     "the CCCD tab must come right after the team tab");
   assert.match(tabs, /DuplicateCccdReportPanel/);
   assert.match(tabs, /canViewDuplicateCccd/);
-  assert.match(tabs, /tab\.key === "duplicate-cccd"[\s\S]*canViewDuplicateCccd/);
+  assert.match(tabs, /tab\.key === "duplicate-cccd"\s*\?\s*canViewDuplicateCccd/);
+  assert.match(tabs, /rawTab === "duplicate-cccd" && canViewDuplicateCccd/);
   assert.match(tabs, /primaryTabLabel === undefined/);
   assert.match(tabs, /id="bod-panel-duplicate-cccd"/);
 });
@@ -78,15 +73,12 @@ test("the Dashboard page + view server-gate the CCCD tab for every audience", ()
   assert.match(page, /canViewDuplicateCccdReport\(actor\)/);
   assert.match(page, /type DashboardTab = "general" \| "deep" \| "team" \| "duplicate-cccd"/);
   assert.match(page, /tab === "duplicate-cccd" && !canViewDuplicateCccd/);
-  // `source` (a general-only filter) is stripped before the deep/CCCD/team tab renders.
   assert.match(page, /\(tab === "deep" \|\| tab === "team" \|\| tab === "duplicate-cccd"\) && sourcePresent/);
   assert.match(page, /normalizedDashboardPath\(params, tab, true\)/);
   assert.match(page, /canViewDuplicateCccd=\{canViewDuplicateCccd\}/);
 
   const view = readFileSync(
     new URL("../../components/dashboard/dashboard-view.tsx", import.meta.url), "utf8");
-  // Every dashboard audience gets the shared tab shell while scoped audiences
-  // keep their own report as the primary tab.
   assert.match(view, /primaryTabLabel="Báo cáo theo nhóm"/);
   assert.match(view, /primaryTabLabel="Tổng quan cá nhân"/);
   assert.match(view, /mode\.kind === "team"/);
@@ -95,7 +87,7 @@ test("the Dashboard page + view server-gate the CCCD tab for every audience", ()
     "team-scoped branch uses the tab shell");
 });
 
-test("the panel keeps masked CCCD + states and never consumes dashboard filters", () => {
+test("the panel keeps masked CCCD + states, controlled actions, managed_only filter, and never consumes dashboard filters", () => {
   const panel = readFileSync(
     new URL("../../components/reporting/duplicate-cccd-report-panel.tsx", import.meta.url), "utf8");
   assert.match(panel, /maskedCccd/);
@@ -105,17 +97,37 @@ test("the panel keeps masked CCCD + states and never consumes dashboard filters"
   assert.match(panel, /Thử tải lại/);
   assert.match(panel, /EmptyState/);
   assert.match(panel, /nextDuplicateCccdReportPage/);
+  assert.match(panel, /clampDuplicateCccdReportPage/);
   assert.match(panel, /\/api\/direct-entry\/duplicate-cccd-report/);
-  assert.match(panel, /buildDuplicateCccdReportQuery\(\{ page, page_size: pageSize \}\)/);
+  assert.match(panel, /buildDuplicateCccdReportQuery\(\{ page, page_size: pageSize, managed_only: managedOnly \}\)/);
+  assert.match(panel, /Chỉ dự án tôi quản lý/);
+  assert.match(panel, /key=\{episode\.entry_id\}/);
+  assert.match(panel, /episode\.can_mark_off/);
+  assert.match(panel, /episode\.can_self_withdraw/);
+  assert.match(panel, /Rút trùng/);
+  assert.match(panel, /FormDialog/);
+  assert.match(panel, /Lý do nghỉ việc/);
+  assert.match(panel, /\/privileged-edit/);
+  assert.match(panel, /\/api\/direct-entry\/duplicate-cccd-report\/self-withdraw/);
+  assert.match(panel, /không xóa hồ sơ gốc/);
   assert.match(panel, /useNotify\(\)/);
-  // The panel is independent of dashboard URL filters: it never reads them.
+  // The panel is independent of dashboard URL filters and never mentions internal authority/project_id.
   assert.doesNotMatch(panel, /useQueryStates|useSearchParams|nuqs|bucket_key/);
   assert.doesNotMatch(panel, /project_id|authority/);
+  assert.doesNotMatch(panel, /animate-bounce|animate-ping|animate-spin/);
 });
 
-test("the API route keeps the existing server-side gate", () => {
+test("both GET report and POST self-withdraw routes keep the server-side DIRECT_ENTRY_API_ENABLED gate", () => {
   const route = readFileSync(
     new URL("../../app/api/direct-entry/duplicate-cccd-report/route.ts", import.meta.url), "utf8");
   assert.match(route, /DIRECT_ENTRY_API_ENABLED/);
   assert.match(route, /createDuplicateCccdReportRepository/);
+
+  const selfWithdrawRoute = readFileSync(
+    new URL("../../app/api/direct-entry/duplicate-cccd-report/self-withdraw/route.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(selfWithdrawRoute, /DIRECT_ENTRY_API_ENABLED/);
+  assert.match(selfWithdrawRoute, /createDuplicateCccdSelfWithdrawRepository/);
+  assert.match(selfWithdrawRoute, /duplicateCccdSelfWithdraw/);
 });

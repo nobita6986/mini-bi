@@ -24,9 +24,10 @@ import { promisify } from "node:util";
 
 const run = promisify(execFile);
 const ROOT = path.resolve(".");
-const CAPABILITY = path.resolve("src/lib/navigation/registry-capability.ts");
+const ACCESS = path.resolve("src/lib/auth/direct-entry-page-access.ts");
 const CONTRACT = path.resolve("src/lib/direct-entry/duplicate-cccd-report-contract.ts");
 const TABS = path.resolve("src/components/dashboard/bod-dashboard-tabs.tsx");
+const PANEL = path.resolve("src/components/reporting/duplicate-cccd-report-panel.tsx");
 
 const LANE_COMMANDS = [
   ["--conditions=react-server", "--test",
@@ -38,13 +39,12 @@ const LANE_COMMANDS = [
 
 const MUTATIONS = [
   {
-    label: "1. bo all-scope gate tren predicate doc bao cao",
-    file: CAPABILITY,
-    find: "export const duplicateCccdReportNavPredicate: NavCapabilityPredicate = (actor) => {\n" +
-      "  if (!actor.scopes.some((scope) => scope.kind === \"all\")) return false;\n" +
-      "  if (ADMIN_AUTHORITY_CAPABILITIES.every((required) => actor.capabilities.includes(required))) {",
-    replace: "export const duplicateCccdReportNavPredicate: NavCapabilityPredicate = (actor) => {\n" +
-      "  if (ADMIN_AUTHORITY_CAPABILITIES.every((required) => actor.capabilities.includes(required))) {",
+    label: "1. bo fail-closed actor gate tren canViewDuplicateCccdReport",
+    file: ACCESS,
+    find: "export function canViewDuplicateCccdReport(actor: ActorResolution | null): boolean {\n" +
+      "  return actor !== null && actor.ok;",
+    replace: "export function canViewDuplicateCccdReport(_actor: ActorResolution | null): boolean {\n" +
+      "  return true;",
   },
   {
     label: "2. tra authority/project_id (dinh danh noi bo) ra client",
@@ -72,10 +72,35 @@ const MUTATIONS = [
   {
     label: "5. bo gate tab CCCD tren Dashboard (luon hien tab)",
     file: TABS,
-    find: "  const visibleTabs = tabs.filter(\n" +
-      "    (tab) => tab.key !== \"duplicate-cccd\" || canViewDuplicateCccd,\n" +
-      "  );",
-    replace: "  const visibleTabs = tabs.filter(() => true);",
+    find: "    tab.key === \"duplicate-cccd\"\n" +
+      "      ? canViewDuplicateCccd",
+    replace: "    tab.key === \"duplicate-cccd\"\n" +
+      "      ? true",
+  },
+  {
+    label: "6. cho phep client truyen project_id hoac query key tuy y",
+    file: CONTRACT,
+    find: "  for (const key of searchParams.keys()) {\n" +
+      "    if (!(DUPLICATE_CCCD_REPORT_QUERY_KEYS as readonly string[]).includes(key)) return QUERY_INVALID;\n" +
+      "  }",
+    replace: "  for (const _key of searchParams.keys()) {\n" +
+      "    void _key;\n" +
+      "  }",
+  },
+  {
+    label: "7. lam lo created_by_user_id trong episode projection",
+    file: CONTRACT,
+    find: "    can_mark_off: value.can_mark_off,\n" +
+      "    can_self_withdraw: value.can_self_withdraw,",
+    replace: "    can_mark_off: value.can_mark_off,\n" +
+      "    can_self_withdraw: value.can_self_withdraw,\n" +
+      "    created_by_user_id: \"leaked-user\",",
+  },
+  {
+    label: "8. bo server action flag gate tren nut Rut trung trong UI",
+    file: PANEL,
+    find: "                  {episode.can_self_withdraw ? (",
+    replace: "                  {true ? (",
   },
 ];
 
@@ -106,7 +131,7 @@ async function runLane() {
 
 const originals = new Map();
 const originalHashes = new Map();
-const touchedFiles = [CAPABILITY, CONTRACT, TABS];
+const touchedFiles = [ACCESS, CONTRACT, TABS, PANEL];
 for (const file of touchedFiles) {
   const text = await readFile(file, "utf8");
   originals.set(file, text);

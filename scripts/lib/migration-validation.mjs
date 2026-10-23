@@ -52,6 +52,12 @@ export const WF02_WORKFORCE_BALANCE_WAITING_MIGRATION_NAME =
   "20261022110000_wf02_workforce_balance_and_waiting_metrics.sql";
 export const WF03_WORKFORCE_TENURE_RETENTION_MIGRATION_NAME =
   "20261022130000_wf03_workforce_tenure_presence_and_retention.sql";
+export const DUPLICATE_CCCD_SELF_SERVICE_MIGRATION_NAME =
+  "20261023110000_hf_duplicate_cccd_self_service_actions.sql";
+export const DUPLICATE_CCCD_SELF_SERVICE_RPC_SIGNATURES = Object.freeze([
+  "public.direct_entry_duplicate_cccd_report(uuid, uuid, integer, integer, boolean)",
+  "public.direct_entry_self_withdraw_duplicate_cccd(uuid, uuid, uuid, integer, text, text)",
+]);
 export const F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES = Object.freeze([
   "public.work_report_list_templates(uuid, uuid)",
   "public.work_report_get_template(uuid, uuid, uuid)",
@@ -265,7 +271,8 @@ export async function verifyS0T1CHistoricalCompatibility(
   { r1_2Applied = false, f1WorkReportsApplied = false, f1AssignmentOptionsApplied = false,
     f1AssignmentTrackingApplied = false, f1_5AnalyticsApplied = false,
     f2ReviewAndDelegationApplied = false, wf01WorkforceSnapshotApplied = false,
-    projectTeamScopeSearchApplied = false } = {},
+    projectTeamScopeSearchApplied = false,
+    duplicateCccdSelfServiceApplied = false } = {},
 ) {
   const baseAllowlist = extractS0T1CAllowlistSignatures(migrationSql);
   if (baseAllowlist.length === 0) {
@@ -284,6 +291,7 @@ export async function verifyS0T1CHistoricalCompatibility(
     ...(f2ReviewAndDelegationApplied ? F2_WORK_REPORTS_REVIEW_AND_DELEGATION_RPC_SIGNATURES : []),
     ...(wf01WorkforceSnapshotApplied ? [WF01_WORKFORCE_SNAPSHOT_RPC_SIGNATURE] : []),
     ...(projectTeamScopeSearchApplied ? [PROJECT_TEAM_SCOPE_SEARCH_RPC_SIGNATURE] : []),
+    ...(duplicateCccdSelfServiceApplied ? DUPLICATE_CCCD_SELF_SERVICE_RPC_SIGNATURES : []),
   ];
 
   const { rows } = await client.query(
@@ -482,6 +490,8 @@ export async function verifyAppliedMigrationChecksum(
           appliedMap.has(WF03_WORKFORCE_TENURE_RETENTION_MIGRATION_NAME),
         projectTeamScopeSearchApplied:
           appliedMap.has(PROJECT_TEAM_SCOPE_SEARCH_MIGRATION_NAME),
+        duplicateCccdSelfServiceApplied:
+          appliedMap.has(DUPLICATE_CCCD_SELF_SERVICE_MIGRATION_NAME),
       },
     );
     if (postconditions.ok) {
