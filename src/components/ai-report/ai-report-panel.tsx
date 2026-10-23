@@ -28,6 +28,17 @@ import {
 import { formatTimestamp, todayDateIso } from "@/lib/format";
 import { resolveTabTarget } from "@/components/dashboard/ai-settings-panel-logic";
 import { useNotify } from "@/components/ui/notify-provider";
+import {
+  buildAiJobRecheckRetryAction,
+  isIndeterminateAiJobRunning,
+  settleTrackedJobToast,
+  shouldShowAiJobProgress,
+  startOrRetrackAiJobToast,
+  validateDownloadableExportBlob,
+  validateHtmlExportDocument,
+  type AiJobPollState,
+  type TrackedJobToast,
+} from "@/lib/ui/long-running-feedback";
 import { ReportView } from "./report-view";
 
 const POLL_INTERVAL_MS = 2000;
@@ -99,6 +110,7 @@ export function AiReportPanel() {
   const [focus, setFocus] = useState("");
   const [jobId, setJobId] = useState<string | null>(null);
   const [jobStatus, setJobStatus] = useState<JobStatusView | null>(null);
+  const [pollState, setPollState] = useState<AiJobPollState>("idle");
   const [analysis, setAnalysis] = useState<AnalysisView | null>(null);
   const [lifecycle, setLifecycle] = useState<string | null>(null);
   const [revisionNumber, setRevisionNumber] = useState<number | null>(null);
@@ -118,6 +130,29 @@ export function AiReportPanel() {
   const firstFieldRef = useRef<HTMLInputElement>(null);
   const drawerRef = useRef<HTMLElement>(null);
   const controllerRef = useRef<ReturnType<typeof createReportController> | null>(null);
+  const activeJobToastRef = useRef<TrackedJobToast | null>(null);
+  const mountedRef = useRef(true);
+  const notifyRef = useRef(notify);
+
+  useEffect(() => {
+    notifyRef.current = notify;
+  });
+
+  function recheckJobStatus(targetJobId: string, retrackToast = false) {
+    if (!mountedRef.current || !targetJobId) return;
+    setErrorText("");
+    setStatusText("Đang kiểm tra lại trạng thái báo cáo…");
+    setPollState("polling");
+    if (retrackToast) {
+      activeJobToastRef.current = startOrRetrackAiJobToast({
+        currentTracker: activeJobToastRef.current,
+        jobId: targetJobId,
+        title: "Đang kiểm tra lại tiến trình báo cáo AI…",
+        notify: notifyRef.current,
+      });
+    }
+    getController().startPolling(targetJobId);
+  }
 
   function getController() {
     if (!controllerRef.current) {
@@ -128,13 +163,48 @@ export function AiReportPanel() {
           onCapability: (cap, err) => { setCapability(cap); setErrorText(err ?? ""); },
           onJob: (id, view, err) => {
             if (err) {
+              setPollState("error");
               setErrorText(err);
               setStatusText("Không đọc được trạng thái báo cáo.");
               setJobStatus((cur) => cur ?? { status: "failed_internal", error_code: "AI_INTERNAL", attempts: 0, max_attempts: 1 });
+              const outcome = settleTrackedJobToast({
+                tracker: activeJobToastRef.current,
+                incomingJobId: id,
+                status: null,
+                errorCode: null,
+                transportError: err,
+                retryAction: buildAiJobRecheckRetryAction({
+                  jobId: id,
+                  isMounted: () => mountedRef.current,
+                  onRecheck: (nextId) => {
+                    recheckJobStatus(nextId, true);
+                  },
+                }),
+                codeToText: (code) => codeToMessage(code).text,
+                notify: notifyRef.current,
+              });
+              activeJobToastRef.current = outcome.nextTracker;
               return;
             }
             if (view) {
+              setErrorText("");
               setJobStatus({ status: view.status, error_code: view.error_code, attempts: view.attempts, max_attempts: view.max_attempts });
+              const stillRunning = view.status !== "draft" && isIndeterminateAiJobRunning(view.status);
+              setPollState(stillRunning ? "polling" : "idle");
+              if (view.status === "draft" || view.status === "completed") {
+                setStatusText("Báo cáo AI đã sẵn sàng.");
+              } else if (isFailedJobStatus(view.status)) {
+                setStatusText(codeToMessage(view.error_code ?? "AI_INTERNAL").text);
+              }
+              const outcome = settleTrackedJobToast({
+                tracker: activeJobToastRef.current,
+                incomingJobId: id,
+                status: view.status,
+                errorCode: view.error_code,
+                codeToText: (code) => codeToMessage(code).text,
+                notify: notifyRef.current,
+              });
+              activeJobToastRef.current = outcome.nextTracker;
               if (view.revision) {
                 setAnalysis(view.revision.analysis);
                 setLifecycle(view.revision.lifecycle_status);
@@ -189,8 +259,18 @@ export function AiReportPanel() {
     }
   }, [open, capability, loadHistory]);
 
-  useEffect(() => { if (!open) getController().stopPolling(); }, [open]);
-  useEffect(() => () => getController().stopPolling(), []);
+  // Giữ nguyên polling và pending Toast khi chỉ đóng drawer; chỉ dừng khi terminal hoặc unmount route/logout.
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      controllerRef.current?.stopPolling();
+      if (activeJobToastRef.current) {
+        notifyRef.current.dismiss(activeJobToastRef.current.toastId);
+        activeJobToastRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -246,9 +326,19 @@ export function AiReportPanel() {
     const result = await getController().enqueue(body);
     setBusy(false);
     if (!result.ok) { setErrorText(result.message); setStatusText("Không tạo được báo cáo AI."); notify.error({ title: result.message }); return; }
-    setJobId(result.jobId); setAnalysis(null); setLifecycle(null); setRevisionNumber(null); setRevisionCreatedAt(null); setExportData(null);
+    setJobId(result.jobId);
+    setJobStatus({ status: result.status, error_code: null, attempts: 0, max_attempts: 1 });
+    setPollState("polling");
+    setAnalysis(null); setLifecycle(null); setRevisionNumber(null); setRevisionCreatedAt(null); setExportData(null);
     setStatusText("Đã gửi yêu cầu. Đang theo dõi trạng thái…");
-    notify.info({ title: "Đã gửi yêu cầu tạo báo cáo AI." });
+    if (activeJobToastRef.current) {
+      notify.dismiss(activeJobToastRef.current.toastId);
+    }
+    const toastId = notify.pending({
+      title: "Đang tổng hợp báo cáo AI…",
+      dedupeKey: "ai-report-job:" + result.jobId,
+    });
+    activeJobToastRef.current = { jobId: result.jobId, toastId };
     void loadHistory(null);
   }
 
@@ -261,9 +351,20 @@ export function AiReportPanel() {
     const result = await getController().enqueue({ regenerate_of: jobId, reason: regenerateReason.trim(), period, scope: { dimensions } });
     setBusy(false);
     if (!result.ok) { setErrorText(result.message); setStatusText("Không tạo lại được báo cáo."); notify.error({ title: result.message }); return; }
-    setRegenerateOpen(false); setRegenerateReason(""); setJobId(result.jobId); setAnalysis(null); setLifecycle(null); setRevisionNumber(null); setRevisionCreatedAt(null); setExportData(null);
+    setRegenerateOpen(false); setRegenerateReason("");
+    setJobId(result.jobId);
+    setJobStatus({ status: result.status, error_code: null, attempts: 0, max_attempts: 1 });
+    setPollState("polling");
+    setAnalysis(null); setLifecycle(null); setRevisionNumber(null); setRevisionCreatedAt(null); setExportData(null);
     setStatusText("Đã gửi yêu cầu tạo lại. Đang theo dõi…");
-    notify.info({ title: "Đã gửi yêu cầu tạo lại báo cáo AI." });
+    if (activeJobToastRef.current) {
+      notify.dismiss(activeJobToastRef.current.toastId);
+    }
+    const toastId = notify.pending({
+      title: "Đang tạo lại báo cáo AI…",
+      dedupeKey: "ai-report-job:" + result.jobId,
+    });
+    activeJobToastRef.current = { jobId: result.jobId, toastId };
     void loadHistory(null);
   }
 
@@ -280,6 +381,7 @@ export function AiReportPanel() {
       setReviewOpen(null);
       if (result.code === "AI_VERSION_CONFLICT" || result.code === "AI_REVIEW_CONFLICT") {
         notify.warning({ title: result.message });
+        setPollState("polling");
         getController().startPolling(jobId);
         void loadHistory(null);
       } else {
@@ -298,7 +400,14 @@ export function AiReportPanel() {
   }
 
   function openHistoryItem(id: string) {
-    setJobId(id); setAnalysis(null); setLifecycle(null); setRevisionNumber(null); setRevisionCreatedAt(null); setExportData(null); setStatusText("Đang tải lại báo cáo…");
+    if (activeJobToastRef.current && activeJobToastRef.current.jobId !== id) {
+      notify.dismiss(activeJobToastRef.current.toastId);
+      activeJobToastRef.current = null;
+    }
+    setErrorText("");
+    setJobId(id);
+    setPollState("polling");
+    setAnalysis(null); setLifecycle(null); setRevisionNumber(null); setRevisionCreatedAt(null); setExportData(null); setStatusText("Đang tải lại báo cáo…");
     getController().startPolling(id);
   }
 
@@ -309,23 +418,39 @@ export function AiReportPanel() {
 
   function handleExport() {
     if (!analysis || !exportData || !jobId || !revisionCreatedAt) return;
-    const title = currentHistoryItem ? reportTitleForPeriod(currentHistoryItem.period) : `Báo cáo AI ${analysis.period_ref}`;
-    const html = buildReportExportHtml({
-      title,
-      reportCode: jobId.slice(0, 8),
-      lifecycleLabel: lifecycleLabel(lifecycle),
-      revisionCreatedAt,
-      analysis,
-      exportData,
-    });
-    const url = URL.createObjectURL(new Blob([html], { type: "text/html;charset=utf-8" }));
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = reportExportFileName(title, revisionCreatedAt);
-    anchor.click();
-    setTimeout(() => URL.revokeObjectURL(url), 0);
-    setStatusText("Đã xuất báo cáo HTML kèm biểu đồ. Có thể mở ngoại tuyến hoặc in thành PDF.");
-    notify.success({ title: "Đã xuất báo cáo HTML kèm biểu đồ." });
+    try {
+      const title = currentHistoryItem ? reportTitleForPeriod(currentHistoryItem.period) : `Báo cáo AI ${analysis.period_ref}`;
+      const html = buildReportExportHtml({
+        title,
+        reportCode: jobId.slice(0, 8),
+        lifecycleLabel: lifecycleLabel(lifecycle),
+        revisionCreatedAt,
+        analysis,
+        exportData,
+      });
+      if (!validateHtmlExportDocument(html)) {
+        setErrorText("Không tạo được nội dung xuất HTML hợp lệ.");
+        notify.error({ title: "Không tạo được tệp HTML báo cáo hợp lệ. Vui lòng thử lại." });
+        return;
+      }
+      const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+      if (!validateDownloadableExportBlob({ blob, allowedMimeTypes: ["text/html"] }).ok) {
+        setErrorText("Tệp báo cáo xuất ra bị rỗng.");
+        notify.error({ title: "Không tạo được tệp HTML báo cáo hợp lệ. Vui lòng thử lại." });
+        return;
+      }
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = reportExportFileName(title, revisionCreatedAt);
+      anchor.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setStatusText("Đã xuất báo cáo HTML kèm biểu đồ. Có thể mở ngoại tuyến hoặc in thành PDF.");
+      notify.success({ title: "Đã xuất báo cáo HTML kèm biểu đồ." });
+    } catch {
+      setErrorText("Không thể tải tệp HTML xuống thiết bị.");
+      notify.error({ title: "Không thể tải tệp HTML xuống thiết bị. Vui lòng thử lại." });
+    }
   }
 
   return (
@@ -393,6 +518,22 @@ export function AiReportPanel() {
                   <DetailRow label="Tạo lúc" value={formatTimestamp(currentHistoryItem?.created_at)} />
                   <DetailRow label="Mã" value={jobId.slice(0, 8)} />
                 </dl>
+                {shouldShowAiJobProgress(jobStatus?.status, pollState) ? (
+                  <progress aria-label="Đang tổng hợp báo cáo AI" className="mt-2 h-2 w-full" />
+                ) : null}
+                {pollState === "error" ? (
+                  <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-surface p-2.5 text-xs text-foreground">
+                    <span>Đã dừng tự động kiểm tra do lỗi đọc trạng thái.</span>
+                    <button
+                      type="button"
+                      onClick={() => recheckJobStatus(jobId, isIndeterminateAiJobRunning(jobStatus?.status))}
+                      disabled={busy}
+                      className={secondaryButtonClass}
+                    >
+                      Kiểm tra lại trạng thái
+                    </button>
+                  </div>
+                ) : null}
               </section>
             ) : null}
             {analysis ? (<ReportView analysis={analysis} lifecycle={lifecycle} />) : null}

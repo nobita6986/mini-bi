@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  MIN_XLSX_ZIP_BYTES,
   WORKER_EXPORT_FALLBACK_LIMIT,
   WORKER_EXPORT_REASON_MAX,
   WORKER_EXPORT_SCOPES,
@@ -15,7 +16,9 @@ import {
   canExportAllWorkers,
   canExportWorkers,
   exportScopeForTab,
+  hasXlsxZipSignature,
   isExportableScope,
+  isUsableWorkerExportBlob,
   isWorkerExportScope,
   workerExportErrorMessage,
   workerExportFilename,
@@ -189,4 +192,36 @@ test("T1A: filename uu tien server, fallback co dinh, chan path traversal", () =
     "danh-sach-nguoi-lao-dong-2026-10-13.xlsx");
   // fallbackDate sai => dung ngay hom nay (khong lo gia tri la).
   assert.match(workerExportFilename(null, "not-a-date"), /^danh-sach-nguoi-lao-dong-[0-9]{4}-[0-9]{2}-[0-9]{2}\.xlsx$/);
+});
+
+test("UIUX-S2-06: isUsableWorkerExportBlob verifies PK\\x03\\x04 ZIP header and rejects HTTP 200 corrupt binary or error octet-stream", async () => {
+  const errOctetBlob = new Blob(
+    ['{"ok":false,"code":"INTERNAL_ERROR","detail":"unexpected stream failure"}'],
+    { type: "application/octet-stream" },
+  );
+  assert.equal(await isUsableWorkerExportBlob(errOctetBlob, "application/octet-stream"), false);
+
+  const corruptXlsxBlob = new Blob([new Uint8Array(64).fill(0xab)], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
+  assert.equal(
+    await isUsableWorkerExportBlob(
+      corruptXlsxBlob,
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ),
+    false,
+  );
+
+  const zipBytes = new Uint8Array(Math.max(48, MIN_XLSX_ZIP_BYTES));
+  zipBytes.set([0x50, 0x4b, 0x03, 0x04], 0);
+  assert.equal(hasXlsxZipSignature(zipBytes), true);
+  assert.equal(
+    await isUsableWorkerExportBlob(
+      new Blob([zipBytes], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      }),
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ),
+    true,
+  );
 });

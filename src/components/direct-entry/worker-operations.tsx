@@ -74,9 +74,11 @@ import {
 import {
   buildWorkerExportRequest,
   exportScopeForTab,
+  isUsableWorkerExportBlob,
   workerExportErrorMessage,
   workerExportFilename,
   workerExportRequestMessage,
+  WORKER_EXPORT_EMPTY_FILE_MESSAGE,
   WORKER_EXPORT_REASON_MAX,
   type WorkerExportScope,
 } from "@/lib/direct-entry/worker-export-ui-model";
@@ -1572,7 +1574,7 @@ function downloadFile(blob: Blob, filename: string): void {
   anchor.href = url;
   anchor.download = filename;
   anchor.click();
-  URL.revokeObjectURL(url);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 /**
@@ -1614,6 +1616,14 @@ function WorkerExportDialog({
       });
       if (response.status === 200) {
         const blob = await response.blob();
+        if (!(await isUsableWorkerExportBlob(blob, response.headers.get("content-type")))) {
+          setBusy(false);
+          notify.error({
+            title: WORKER_EXPORT_EMPTY_FILE_MESSAGE,
+            dedupeKey: "worker-export-err",
+          });
+          return;
+        }
         downloadFile(blob, workerExportFilename(
           response.headers.get("content-disposition"), hcmTodayDate()));
         setBusy(false);
@@ -1675,10 +1685,17 @@ function WorkerExportDialog({
                 </label>
                 <textarea id={reasonId}
                   maxLength={WORKER_EXPORT_REASON_MAX}
+                  disabled={busy}
                   className="min-h-24 w-full rounded-md border border-border bg-surface p-3 text-sm
-                    text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                    text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:opacity-60"
                   value={reason} onChange={(event) => setReason(event.target.value)} />
               </div>
+              {busy ? (
+                <div role="status" aria-live="polite" data-testid="worker-export-pending" className={infoClass}>
+                  <p>Đang tổng hợp dữ liệu và tạo tệp Excel trên máy chủ…</p>
+                  <progress aria-label="Đang xuất danh sách người lao động" className="mt-2 h-2 w-full" />
+                </div>
+              ) : null}
               {message ? <p role="alert" className={errorClass}>{message}</p> : null}
             </div>
 

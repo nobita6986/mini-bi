@@ -26,6 +26,8 @@ export const WORKER_EXPORT_REASON_MAX = 4000;
 export const WORKER_EXPORT_FALLBACK_LIMIT = 10000;
 
 export const WORKER_EXPORT_LIMIT_MESSAGE_PREFIX = "Danh sách vượt giới hạn";
+export const WORKER_EXPORT_EMPTY_FILE_MESSAGE =
+  "Tệp xuất trả về không hợp lệ hoặc rỗng. Không có tệp nào được tải xuống; vui lòng thử lại.";
 
 export type WorkerExportEmploymentStatus = (typeof WORKER_EMPLOYMENT_STATUSES)[number];
 
@@ -150,15 +152,87 @@ export function workerExportRowLimit(payload: unknown): number {
  * huong dan thu hep bo loc — khong bao gio tai file thieu dong.
  */
 export function workerExportErrorMessage(status: number, payload: unknown): string {
+  if (status === 0) return "Không kết nối được tới máy chủ. Vui lòng kiểm tra kết nối mạng rồi thử lại.";
   if (status === 401) return "Phiên làm việc đã hết hiệu lực. Vui lòng đăng nhập lại.";
   if (status === 403) return "Bạn không có quyền xuất danh sách người lao động.";
   if (status === 404) return "Chức năng xuất Excel chưa được bật.";
+  if (status === 429) return "Thao tác quá nhanh. Vui lòng chờ giây lát rồi thử lại.";
   if (status === 422) {
     return WORKER_EXPORT_LIMIT_MESSAGE_PREFIX + " " + String(workerExportRowLimit(payload)) +
       " dòng. Vui lòng thu hẹp bộ lọc (dự án, người tuyển, trạng thái làm việc) rồi thử lại.";
   }
   if (status === 400) return "Yêu cầu xuất không hợp lệ. Vui lòng kiểm tra lại bộ lọc và lý do.";
   return "Không xuất được danh sách. Vui lòng thử lại.";
+}
+
+const NON_XLSX_MIME_TYPES = new Set([
+  "application/json",
+  "application/problem+json",
+  "text/plain",
+  "text/html",
+  "application/xhtml+xml",
+  "application/xml",
+  "text/xml",
+]);
+
+const ALLOWED_XLSX_MIME_TYPES = new Set([
+  "",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/octet-stream",
+]);
+
+/** Kich thuoc toi thieu cua mot ZIP Local File Header (`PK\x03\x04` = 30 bytes). */
+export const MIN_XLSX_ZIP_BYTES = 30;
+
+/**
+ * Kiem tra 4 byte dau cua goi OpenXML/ZIP `.xlsx` (`0x50 0x4B 0x03 0x04` = `"PK\x03\x04"`).
+ * Tu choi binary loi, text/JSON ngụy trang `application/octet-stream`, hoac ZIP rong (`PK\x05\x06`).
+ */
+export function hasXlsxZipSignature(headerBytes: ArrayBuffer | Uint8Array): boolean {
+  const bytes = headerBytes instanceof Uint8Array ? headerBytes : new Uint8Array(headerBytes);
+  return (
+    bytes.byteLength >= 4 &&
+    bytes[0] === 0x50 &&
+    bytes[1] === 0x4b &&
+    bytes[2] === 0x03 &&
+    bytes[3] === 0x04
+  );
+}
+
+/**
+ * Xac minh Blob xuat Excel thuc su la tep ZIP/XLSX hop le truoc khi kich hoat tai tep va bao thanh cong.
+ */
+export async function isUsableWorkerExportBlob(
+  blob: Pick<Blob, "size" | "type" | "slice"> | null | undefined,
+  contentTypeHeader?: string | null,
+): Promise<boolean> {
+  if (
+    !blob ||
+    typeof blob.size !== "number" ||
+    !Number.isFinite(blob.size) ||
+    blob.size < MIN_XLSX_ZIP_BYTES ||
+    typeof blob.slice !== "function"
+  ) {
+    return false;
+  }
+  const headerMime = (contentTypeHeader ?? "").toLowerCase().split(";")[0]?.trim() ?? "";
+  const blobMime = (blob.type ?? "").toLowerCase().split(";")[0]?.trim() ?? "";
+  if (headerMime && (NON_XLSX_MIME_TYPES.has(headerMime) || !ALLOWED_XLSX_MIME_TYPES.has(headerMime))) {
+    return false;
+  }
+  if (blobMime && (NON_XLSX_MIME_TYPES.has(blobMime) || !ALLOWED_XLSX_MIME_TYPES.has(blobMime))) {
+    return false;
+  }
+  try {
+    const headerSlice = blob.slice(0, 4);
+    if (!headerSlice || typeof headerSlice.arrayBuffer !== "function") {
+      return false;
+    }
+    const headerBuffer = await headerSlice.arrayBuffer();
+    return hasXlsxZipSignature(headerBuffer);
+  } catch {
+    return false;
+  }
 }
 
 const XLSX_FILENAME = /^[A-Za-z0-9._-]+\.xlsx$/;

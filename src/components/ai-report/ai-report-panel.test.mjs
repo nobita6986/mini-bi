@@ -119,14 +119,15 @@ test("S01-R1-P2: focus trap + restore focus + ngăn focus thoát modal", () => {
   assert.ok(source.includes("triggerRef.current?.focus()"), "đóng phải trả focus về trigger");
 });
 
-test("S01-R1-P3: polling recursive setTimeout — không setInterval, không chồng request, dừng khi đóng", () => {
+test("S01-R1-P3: polling recursive setTimeout — không setInterval, không chồng request, giữ nền khi đóng drawer và dừng khi unmount", () => {
   const controller = readFileSync(new URL("../../lib/ai-report/report-controller.ts", import.meta.url), "utf8");
   assert.ok(!/setInterval\(/.test(controller), "không dùng setInterval() (dùng recursive setTimeout)");
   assert.ok(controller.includes("schedule.set(() => { void loop(); }, intervalMs)"), "lịch request kế tiếp chỉ sau khi request trước xong");
   assert.ok(controller.includes("if (gen !== generation) return;"), "stale response bị bỏ theo generation");
   assert.ok(controller.includes("controller.signal.aborted"), "request đang bay bị abort");
   assert.ok(controller.includes("activeController.abort()"), "stopPolling abort request đang bay");
-  assert.ok(source.includes("if (!open) getController().stopPolling()"), "đóng drawer phải dừng poll");
+  assert.ok(!source.includes("if (!open) getController().stopPolling()"), "đóng drawer không được cắt ngang job đang chạy trên server");
+  assert.ok(source.includes("controllerRef.current?.stopPolling()"), "unmount route/panel phải dừng poll và abort request đang bay");
 });
 
 test("S01-R1-P4: durable history từ server (không còn session-only)", () => {
