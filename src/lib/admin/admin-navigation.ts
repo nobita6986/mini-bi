@@ -1,6 +1,7 @@
 import {
   adminAreaNavPredicate,
   adminSecurityNavPredicate,
+  attendanceReportNavPredicate,
   type NavActorProjection,
   type NavCapabilityPredicate,
 } from "../navigation/registry-capability.ts";
@@ -22,6 +23,7 @@ export const ADMIN_SECTIONS: readonly AdminSectionConfig[] = [
   { id: "labor-types", label: "Loại hình lao động", href: "/admin/catalog/labor-types", visible: adminAreaNavPredicate },
   { id: "accounts", label: "Tài khoản truy cập", href: "/admin/access/accounts", visible: adminSecurityNavPredicate },
   { id: "project-team-scopes", label: "Mapping Dự án ↔ Nhóm", href: "/admin/catalog/project-team-scopes", visible: adminSecurityNavPredicate },
+  { id: "attendance", label: "Báo cáo chấm công", href: "/admin/attendance", visible: attendanceReportNavPredicate },
 ];
 
 export function isAdminSectionActive(pathname: string, href: string): boolean {
