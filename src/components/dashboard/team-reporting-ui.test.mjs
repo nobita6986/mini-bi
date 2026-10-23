@@ -240,7 +240,7 @@ test("W06D-R3: the Team Leader keeps the audience-scoped report (no selection ga
 
 test("W06D-R3: the offboarding tab follows CCCD and both panels stay server-gated", () => {
   assert.match(tabs, /\{ key: "duplicate-cccd", label: "Báo cáo CCCD trùng", panelId: "bod-panel-duplicate-cccd" \}/);
-  assert.match(tabs, /\{ key: "offboarding", label: "NLĐ nghỉ việc", panelId: "bod-panel-offboarding" \}/);
+  assert.match(tabs, /\{ key: "offboarding", label: "Báo cáo NLĐ nghỉ việc", panelId: "bod-panel-offboarding" \}/);
   assert.ok(tabs.indexOf('key: "duplicate-cccd"') < tabs.indexOf('key: "offboarding"'));
   assert.match(tabs, /<DuplicateCccdReportPanel \/>/);
   assert.match(tabs, /<OffboardingReportPanel \/>/);

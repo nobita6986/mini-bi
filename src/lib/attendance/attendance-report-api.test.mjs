@@ -93,8 +93,16 @@ function buildValidReportRpcPayload(overrides = {}) {
       from_date: "2026-10-17",
       to_date: "2026-10-23",
       search: null,
+      employee_id: null,
       timezone: ATTENDANCE_BUSINESS_TIMEZONE,
     },
+    employee_options: [
+      {
+        app_user_id: APP_USER_ID,
+        display_name: "Nguyễn Văn A",
+        personnel_code: "NV001",
+      },
+    ],
     current_hq: {
       version: 2,
       latitude: 21.028511,
@@ -428,6 +436,7 @@ test("GET /api/admin/attendance/report allows Full Admin & canonical BoD and den
         p_page: 1,
         p_page_size: 25,
         p_search: "NV001",
+        p_employee_id: null,
       },
     });
   }
@@ -556,6 +565,9 @@ test("GET /api/admin/attendance/report validates session failures, client author
     ["?page=1e2", "ATTENDANCE_REPORT_PAGINATION_INVALID"],
     [`?search=${"a".repeat(121)}`, "ATTENDANCE_REPORT_SEARCH_INVALID"],
     ["?search=abc%00def", "ATTENDANCE_REPORT_SEARCH_INVALID"],
+    ["?employee_id=not-a-uuid", "ATTENDANCE_REPORT_EMPLOYEE_INVALID"],
+    [`?employee_id=${APP_USER_ID}&employee_id=${APP_USER_ID}`, "ATTENDANCE_REPORT_QUERY_INVALID"],
+    [`?employee_id=${APP_USER_ID}&search=NV001`, "ATTENDANCE_REPORT_FILTER_CONFLICT"],
   ];
 
   for (const [qs, expectedCode] of queryErrorCases) {
@@ -568,6 +580,60 @@ test("GET /api/admin/attendance/report validates session failures, client author
     );
     assert.equal(response.status, 400, qs);
     assert.deepEqual(await response.json(), { ok: false, code: expectedCode }, qs);
+  }
+
+  // Exact employee_id filter with blank/omitted search normalizes UUID lowercase and forwards p_employee_id
+  {
+    const rpcCalls = [];
+    const repoWithEmployee = createServiceAttendanceAdminReportRepository(async (name, args) => {
+      rpcCalls.push({ name, args });
+      return {
+        data: buildValidReportRpcPayload({
+          filters: {
+            from_date: "2026-10-17",
+            to_date: "2026-10-23",
+            search: null,
+            employee_id: APP_USER_ID,
+            timezone: ATTENDANCE_BUSINESS_TIMEZONE,
+          },
+        }),
+        error: null,
+      };
+    });
+
+    const filteredRes = await getAttendanceAdminReport(
+      new Request(
+        `https://bi.example.com/api/admin/attendance/report?from_date=2026-10-17&to_date=2026-10-23&employee_id=%20${APP_USER_ID.toUpperCase()}%20&search=%20%20`,
+      ),
+      {
+        resolveSession: async () => makeSessionOk(FULL_ADMIN_CAPS, ALL_SCOPE),
+        repository: repoWithEmployee,
+      },
+    );
+    assert.equal(filteredRes.status, 200);
+    const filteredBody = await filteredRes.json();
+    assert.equal(filteredBody.ok, true);
+    assert.equal(filteredBody.report.filters.employee_id, APP_USER_ID);
+    assert.deepEqual(filteredBody.report.employee_options, [
+      {
+        app_user_id: APP_USER_ID,
+        display_name: "Nguyễn Văn A",
+        personnel_code: "NV001",
+      },
+    ]);
+    assert.deepEqual(rpcCalls[0], {
+      name: "attendance_admin_report",
+      args: {
+        p_auth_subject: AUTH_SUBJECT,
+        p_app_user_id: APP_USER_ID,
+        p_from_date: "2026-10-17",
+        p_to_date: "2026-10-23",
+        p_page: 1,
+        p_page_size: 25,
+        p_search: null,
+        p_employee_id: APP_USER_ID,
+      },
+    });
   }
 
   // Exact 366-day range passes query parsing
@@ -924,6 +990,61 @@ test("Strict projection & repository error mapping fail closed on leaked fields 
       configured_by_user_id: APP_USER_ID,
     }),
     null,
+  );
+
+  // Employee options & filter conflict projector guards
+  assert.equal(
+    projectAttendanceAdminReport({
+      ...buildValidReportRpcPayload(),
+      employee_options: [
+        {
+          app_user_id: APP_USER_ID,
+          display_name: "Nguyễn Văn A",
+          personnel_code: "NV001",
+          auth_subject: AUTH_SUBJECT,
+        },
+      ],
+    }),
+    null,
+  );
+  assert.equal(
+    projectAttendanceAdminReport({
+      ...buildValidReportRpcPayload(),
+      employee_options: [
+        { app_user_id: APP_USER_ID, display_name: "Nguyễn Văn A", personnel_code: "NV001" },
+        { app_user_id: APP_USER_ID.toUpperCase(), display_name: "Nguyễn Văn A", personnel_code: null },
+      ],
+    }),
+    null,
+  );
+  assert.equal(
+    projectAttendanceAdminReport({
+      ...buildValidReportRpcPayload(),
+      filters: {
+        ...buildValidReportRpcPayload().filters,
+        search: "NV001",
+        employee_id: APP_USER_ID,
+      },
+    }),
+    null,
+  );
+
+  const conflictRepo = createServiceAttendanceAdminReportRepository(async () => ({
+    data: null,
+    error: { code: "22023", message: "ATTENDANCE_REPORT_FILTER_CONFLICT" },
+  }));
+  assert.deepEqual(
+    await conflictRepo.getAdminReport({
+      auth_subject: AUTH_SUBJECT,
+      app_user_id: APP_USER_ID,
+      from_date: "2026-10-23",
+      to_date: "2026-10-23",
+      page: 1,
+      page_size: 25,
+      search: "NV001",
+      employee_id: APP_USER_ID,
+    }),
+    { ok: false, code: "ATTENDANCE_REPORT_FILTER_CONFLICT" },
   );
 
   // Repository never leaks raw Postgres error text

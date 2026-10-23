@@ -54,14 +54,14 @@ type TabDef = { key: TabKey; label: string; panelId: string };
  * 2. "Báo cáo chuyên sâu" (chỉ hiển thị cho actor có scope = "all", tức primaryTabLabel === undefined)
  * 3. "Báo cáo theo nhóm" (chỉ hiển thị cho actor có scope = "all")
  * 4. "Báo cáo CCCD trùng" (hiển thị khi canViewDuplicateCccd === true)
- * 5. "NLĐ nghỉ việc" (hiển thị khi canViewOffboarding === true)
+ * 5. "Báo cáo NLĐ nghỉ việc" (hiển thị khi canViewOffboarding === true)
  */
 const tabs: readonly TabDef[] = [
   { key: "general", label: "Báo cáo tổng quát", panelId: "bod-panel-general" },
   { key: "deep", label: "Báo cáo chuyên sâu", panelId: "bod-panel-deep" },
   { key: "team", label: "Báo cáo theo nhóm", panelId: "bod-panel-team" },
   { key: "duplicate-cccd", label: "Báo cáo CCCD trùng", panelId: "bod-panel-duplicate-cccd" },
-  { key: "offboarding", label: "NLĐ nghỉ việc", panelId: "bod-panel-offboarding" },
+  { key: "offboarding", label: "Báo cáo NLĐ nghỉ việc", panelId: "bod-panel-offboarding" },
 ];
 
 export function BodDashboardTabs({

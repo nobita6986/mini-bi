@@ -37,6 +37,8 @@ export const ATTENDANCE_REPORT_ERROR_CODES = [
   "ATTENDANCE_REPORT_RANGE_INVALID",
   "ATTENDANCE_REPORT_PAGINATION_INVALID",
   "ATTENDANCE_REPORT_SEARCH_INVALID",
+  "ATTENDANCE_REPORT_EMPLOYEE_INVALID",
+  "ATTENDANCE_REPORT_FILTER_CONFLICT",
   "ATTENDANCE_HQ_COORDINATES_INVALID",
   "ATTENDANCE_HQ_VERSION_CONFLICT",
   "IDEMPOTENCY_KEY_INVALID",
@@ -58,6 +60,8 @@ const ERROR_HTTP_STATUS: Readonly<Record<AttendanceReportErrorCode, number>> = {
   ATTENDANCE_REPORT_RANGE_INVALID: 400,
   ATTENDANCE_REPORT_PAGINATION_INVALID: 400,
   ATTENDANCE_REPORT_SEARCH_INVALID: 400,
+  ATTENDANCE_REPORT_EMPLOYEE_INVALID: 400,
+  ATTENDANCE_REPORT_FILTER_CONFLICT: 400,
   ATTENDANCE_HQ_COORDINATES_INVALID: 400,
   ATTENDANCE_HQ_VERSION_CONFLICT: 409,
   IDEMPOTENCY_KEY_INVALID: 400,
@@ -119,6 +123,12 @@ export type AttendanceReportItemProjection = {
   hq_version_used: number | null;
 };
 
+export type AttendanceEmployeeOptionProjection = {
+  app_user_id: string;
+  display_name: string;
+  personnel_code: string | null;
+};
+
 export type AttendanceAdminReportProjection = {
   viewer: {
     can_configure_hq: boolean;
@@ -127,8 +137,10 @@ export type AttendanceAdminReportProjection = {
     from_date: string;
     to_date: string;
     search: string | null;
+    employee_id: string | null;
     timezone: typeof ATTENDANCE_BUSINESS_TIMEZONE;
   };
+  employee_options: AttendanceEmployeeOptionProjection[];
   current_hq: AttendanceHqLocationProjection | null;
   overview: AttendanceReportOverviewProjection;
   pagination: AttendanceReportPaginationProjection;
@@ -146,6 +158,7 @@ export type ParsedAttendanceReportQuery = {
   page: number;
   page_size: number;
   search: string | null;
+  employee_id: string | null;
 };
 
 export type ParsedSetHqLocationRequest = {
@@ -206,7 +219,14 @@ export function parseAttendanceReportQuery(
 ):
   | { ok: true; value: ParsedAttendanceReportQuery }
   | { ok: false; code: AttendanceReportErrorCode } {
-  const allowedKeys = new Set(["from_date", "to_date", "page", "page_size", "search"]);
+  const allowedKeys = new Set([
+    "from_date",
+    "to_date",
+    "page",
+    "page_size",
+    "search",
+    "employee_id",
+  ]);
   for (const key of url.searchParams.keys()) {
     if (!allowedKeys.has(key)) {
       return { ok: false, code: "ATTENDANCE_REPORT_QUERY_INVALID" };
@@ -269,6 +289,22 @@ export function parseAttendanceReportQuery(
     search = trimmed.length > 0 ? trimmed : null;
   }
 
+  const rawEmployeeId = url.searchParams.get("employee_id");
+  let employeeId: string | null = null;
+  if (rawEmployeeId !== null) {
+    const trimmedEmployeeId = rawEmployeeId.trim();
+    if (trimmedEmployeeId.length > 0) {
+      if (!isUuidString(trimmedEmployeeId)) {
+        return { ok: false, code: "ATTENDANCE_REPORT_EMPLOYEE_INVALID" };
+      }
+      employeeId = trimmedEmployeeId.toLowerCase();
+    }
+  }
+
+  if (search !== null && employeeId !== null) {
+    return { ok: false, code: "ATTENDANCE_REPORT_FILTER_CONFLICT" };
+  }
+
   return {
     ok: true,
     value: {
@@ -277,6 +313,7 @@ export function parseAttendanceReportQuery(
       page,
       page_size: pageSize,
       search,
+      employee_id: employeeId,
     },
   };
 }
@@ -615,6 +652,30 @@ function projectReportItem(value: unknown): AttendanceReportItemProjection | nul
   };
 }
 
+export function projectEmployeeOption(
+  value: unknown,
+): AttendanceEmployeeOptionProjection | null {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ["app_user_id", "display_name", "personnel_code"])
+  ) {
+    return null;
+  }
+  if (
+    !isUuidString(value.app_user_id) ||
+    typeof value.display_name !== "string" ||
+    value.display_name.trim().length === 0 ||
+    (value.personnel_code !== null && typeof value.personnel_code !== "string")
+  ) {
+    return null;
+  }
+  return {
+    app_user_id: value.app_user_id.toLowerCase(),
+    display_name: value.display_name,
+    personnel_code: value.personnel_code,
+  };
+}
+
 export function projectAttendanceAdminReport(
   raw: unknown,
 ): AttendanceAdminReportProjection | null {
@@ -623,6 +684,7 @@ export function projectAttendanceAdminReport(
     !hasExactKeys(raw, [
       "viewer",
       "filters",
+      "employee_options",
       "current_hq",
       "overview",
       "pagination",
@@ -642,15 +704,31 @@ export function projectAttendanceAdminReport(
 
   if (
     !isRecord(raw.filters) ||
-    !hasExactKeys(raw.filters, ["from_date", "to_date", "search", "timezone"]) ||
+    !hasExactKeys(raw.filters, ["from_date", "to_date", "search", "employee_id", "timezone"]) ||
     typeof raw.filters.from_date !== "string" ||
     !isValidIsoCalendarDate(raw.filters.from_date) ||
     typeof raw.filters.to_date !== "string" ||
     !isValidIsoCalendarDate(raw.filters.to_date) ||
     (raw.filters.search !== null && typeof raw.filters.search !== "string") ||
+    (raw.filters.employee_id !== null && !isUuidString(raw.filters.employee_id)) ||
+    (raw.filters.search !== null && raw.filters.employee_id !== null) ||
     raw.filters.timezone !== ATTENDANCE_BUSINESS_TIMEZONE
   ) {
     return null;
+  }
+
+  if (!Array.isArray(raw.employee_options)) {
+    return null;
+  }
+  const employeeOptions: AttendanceEmployeeOptionProjection[] = [];
+  const seenEmployeeIds = new Set<string>();
+  for (const entry of raw.employee_options) {
+    const projectedOption = projectEmployeeOption(entry);
+    if (!projectedOption || seenEmployeeIds.has(projectedOption.app_user_id)) {
+      return null;
+    }
+    seenEmployeeIds.add(projectedOption.app_user_id);
+    employeeOptions.push(projectedOption);
   }
 
   const currentHq = raw.current_hq === null ? null : projectHqLocation(raw.current_hq);
@@ -677,8 +755,11 @@ export function projectAttendanceAdminReport(
       from_date: raw.filters.from_date,
       to_date: raw.filters.to_date,
       search: raw.filters.search,
+      employee_id:
+        raw.filters.employee_id === null ? null : raw.filters.employee_id.toLowerCase(),
       timezone: ATTENDANCE_BUSINESS_TIMEZONE,
     },
+    employee_options: employeeOptions,
     current_hq: currentHq,
     overview,
     pagination,

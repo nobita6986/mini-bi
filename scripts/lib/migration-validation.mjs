@@ -85,6 +85,12 @@ export const ASYNC_DOCUMENTS_ATTENDANCE_PHOTO_MIGRATION_NAME =
   "20261024120000_hf_async_documents_and_attendance_photo_viewer.sql";
 export const ASYNC_DOCUMENTS_ATTENDANCE_PHOTO_RPC_SIGNATURE =
   "public.attendance_admin_checkin_photo(uuid, uuid, uuid)";
+export const HF_OFFBOARDING_SUPPRESSION_AND_ATTENDANCE_FILTER_MIGRATION_NAME =
+  "20261024140000_hf_offboarding_suppression_and_attendance_employee_filter.sql";
+export const HF_OFFBOARDING_SUPPRESSION_AND_ATTENDANCE_FILTER_RPC_SIGNATURES = Object.freeze([
+  "public.direct_entry_offboarding_hide_snapshot(uuid, uuid, uuid, uuid, text, text)",
+  "public.attendance_admin_report(uuid, uuid, date, date, integer, integer, text, uuid)",
+]);
 export const F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES = Object.freeze([
   "public.work_report_list_templates(uuid, uuid)",
   "public.work_report_get_template(uuid, uuid, uuid)",
@@ -304,7 +310,8 @@ export async function verifyS0T1CHistoricalCompatibility(
     attendanceWp1Applied = false,
     attendanceAdminReportApplied = false,
     offboardingReportApplied = false,
-    asyncDocumentsAttendancePhotoApplied = false } = {},
+    asyncDocumentsAttendancePhotoApplied = false,
+    hfOffboardingSuppressionAndAttendanceFilterApplied = false } = {},
 ) {
   const baseAllowlist = extractS0T1CAllowlistSignatures(migrationSql);
   if (baseAllowlist.length === 0) {
@@ -330,6 +337,9 @@ export async function verifyS0T1CHistoricalCompatibility(
     ...(offboardingReportApplied ? OFFBOARDING_REPORT_RPC_SIGNATURES : []),
     ...(asyncDocumentsAttendancePhotoApplied
       ? [ASYNC_DOCUMENTS_ATTENDANCE_PHOTO_RPC_SIGNATURE]
+      : []),
+    ...(hfOffboardingSuppressionAndAttendanceFilterApplied
+      ? HF_OFFBOARDING_SUPPRESSION_AND_ATTENDANCE_FILTER_RPC_SIGNATURES
       : []),
   ];
 
@@ -541,6 +551,8 @@ export async function verifyAppliedMigrationChecksum(
           appliedMap.has(OFFBOARDING_REPORT_MIGRATION_NAME),
         asyncDocumentsAttendancePhotoApplied:
           appliedMap.has(ASYNC_DOCUMENTS_ATTENDANCE_PHOTO_MIGRATION_NAME),
+        hfOffboardingSuppressionAndAttendanceFilterApplied:
+          appliedMap.has(HF_OFFBOARDING_SUPPRESSION_AND_ATTENDANCE_FILTER_MIGRATION_NAME),
       },
     );
     if (postconditions.ok) {

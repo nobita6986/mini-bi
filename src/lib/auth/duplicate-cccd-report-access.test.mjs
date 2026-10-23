@@ -60,7 +60,7 @@ test("the CCCD report follows team and the offboarding report follows CCCD", () 
   assert.match(tabs, /key: "general", label: "Báo cáo tổng quát"/);
   assert.match(tabs, /key: "team", label: "Báo cáo theo nhóm"/);
   assert.match(tabs, /key: "duplicate-cccd", label: "Báo cáo CCCD trùng"/);
-  assert.match(tabs, /key: "offboarding", label: "NLĐ nghỉ việc"/);
+  assert.match(tabs, /key: "offboarding", label: "Báo cáo NLĐ nghỉ việc"/);
   assert.ok(tabs.indexOf('key: "team"') < tabs.indexOf('key: "duplicate-cccd"'),
     "the CCCD tab must come right after the team tab");
   assert.ok(tabs.indexOf('key: "duplicate-cccd"') < tabs.indexOf('key: "offboarding"'),

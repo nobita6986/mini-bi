@@ -1,5 +1,5 @@
 import ExcelJS from "exceljs";
-import type { OffboardingReportExport } from "./offboarding-report-contract";
+import type { OffboardingReportExport } from "./offboarding-report-contract.ts";
 
 const CONTENT_TYPE =
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -14,7 +14,7 @@ export function offboardingExportFilename(authorizationDate: string): string {
  */
 export async function buildOffboardingExcel(data: OffboardingReportExport): Promise<Response> {
   const workbook = new ExcelJS.Workbook();
-  const sheet = workbook.addWorksheet("NLĐ nghỉ việc", {
+  const sheet = workbook.addWorksheet("Báo cáo NLĐ nghỉ việc", {
     views: [{ state: "frozen", ySplit: 1 }],
   });
 
