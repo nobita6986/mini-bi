@@ -74,23 +74,23 @@ export const adminSecurityNavPredicate = adminAuthorityNavPredicate;
 export const adminAreaNavPredicate: NavCapabilityPredicate = (actor) =>
   catalogOperatorNavPredicate(actor) || adminSecurityNavPredicate(actor);
 
-/** Canonical BoD executive report reader capabilities (all require effective `all` scope). */
-export const BOD_ATTENDANCE_REPORT_CAPABILITIES: readonly Capability[] = [
-  "entry_privileged_edit",
-  "report_analytics_view",
-  "report_view",
-];
-
 /**
- * Attendance Report reader authority: Full Admin OR canonical BoD at effective `all` scope.
- * Team Leader (`@ team`), Accounting (`catalog_master_manage`), Project Admin (`entry_admin`
- * without Full Admin triple), Reviewer (`change_review`), and Staff (`@ own`) are denied.
+ * Canonical BoD executive report reader authority (requires effective `all` scope):
+ * - `entry_privileged_edit` (Direct Entry / P3.1 BoD executive capability), OR
+ * - BOTH `report_analytics_view` AND `report_view` (Work Reports F0 §2 BoD executive bundle).
+ *
+ * Aggregate-only (`report_analytics_view` without `report_view`), submission-only (`report_view`
+ * without `report_analytics_view`), Form Admin (`report_form_manage`), Accounting (`catalog_master_manage`),
+ * Project Admin (`entry_admin` without Full Admin triple), Reviewer (`change_review`), Team Leader
+ * (`@ team`), and Staff (`@ own`) are denied so raw check-in GPS & notes remain Admin/BoD-only.
  */
 export const attendanceReportNavPredicate: NavCapabilityPredicate = (actor) => {
   if (adminSecurityNavPredicate(actor)) return true;
   if (!actor.scopes.some((scope) => scope.kind === "all")) return false;
-  return BOD_ATTENDANCE_REPORT_CAPABILITIES.some((capability) =>
-    actor.capabilities.includes(capability)
+  if (actor.capabilities.includes("entry_privileged_edit")) return true;
+  return (
+    actor.capabilities.includes("report_analytics_view") &&
+    actor.capabilities.includes("report_view")
   );
 };
 

@@ -106,8 +106,10 @@ begin
 
   v_is_bod :=
     public.direct_entry_has_capability(p_app_user_id, 'entry_privileged_edit')
-    or public.direct_entry_has_capability(p_app_user_id, 'report_analytics_view')
-    or public.direct_entry_has_capability(p_app_user_id, 'report_view');
+    or (
+      public.direct_entry_has_capability(p_app_user_id, 'report_analytics_view')
+      and public.direct_entry_has_capability(p_app_user_id, 'report_view')
+    );
 
   if not v_is_full_admin and not v_is_bod then
     raise exception 'ATTENDANCE_REPORT_ACCESS_DENIED' using errcode = '42501';
@@ -118,7 +120,7 @@ end;
 $function$;
 
 comment on function public.attendance__internal_assert_report_reader(uuid, uuid) is
-  'Internal Attendance Admin Report authority guard: verifies an enabled actor with current all scope and either canonical Full Admin triple or canonical BoD executive capability; returns true iff Full Admin.';
+  'Internal Attendance Admin Report authority guard: verifies an enabled actor with current all scope and either canonical Full Admin triple or canonical BoD executive authority (entry_privileged_edit or report_analytics_view + report_view); returns true iff Full Admin.';
 
 -- -----------------------------------------------------------------------------
 -- 3. Read-only Attendance Admin Report RPC (`public.attendance_admin_report`).
@@ -293,10 +295,10 @@ begin
         else pg_catalog.round(
           (
             2.0 * 6371000.0 * pg_catalog.asin(
-              pg_catalog.least(
+              least(
                 1.0::double precision,
                 pg_catalog.sqrt(
-                  pg_catalog.greatest(
+                  greatest(
                     0.0::double precision,
                     pg_catalog.power(pg_catalog.sin(pg_catalog.radians(b.latitude - b.hq_latitude) / 2.0), 2.0)
                     + pg_catalog.cos(pg_catalog.radians(b.hq_latitude))
@@ -323,14 +325,14 @@ begin
       case
         when count(*) filter (where c.distance_status = 'COMPUTED') = 0 then null
         else pg_catalog.round(
-          avg(c.distance_meters) filter (where c.distance_status = 'COMPUTED')::numeric,
+          (avg(c.distance_meters) filter (where c.distance_status = 'COMPUTED'))::numeric,
           1
         )::double precision
       end as avg_distance_meters,
       case
         when count(*) filter (where c.distance_status = 'COMPUTED') = 0 then null
         else pg_catalog.round(
-          max(c.distance_meters) filter (where c.distance_status = 'COMPUTED')::numeric,
+          (max(c.distance_meters) filter (where c.distance_status = 'COMPUTED'))::numeric,
           1
         )::double precision
       end as max_distance_meters
@@ -339,6 +341,7 @@ begin
   paged as (
     select
       c.checkin_id,
+      c.captured_at as raw_captured_at,
       c.employee_display_name,
       c.personnel_code,
       c.business_date::text as business_date,
@@ -398,6 +401,7 @@ begin
             'distance_status', p.distance_status,
             'hq_version_used', p.hq_version_used
           )
+          order by p.raw_captured_at desc, p.checkin_id desc
         )
         from paged p
       ),
@@ -406,7 +410,7 @@ begin
     into v_overview, v_total_rows, v_items
     from agg a;
 
-  v_total_pages := pg_catalog.greatest(
+  v_total_pages := greatest(
     1,
     pg_catalog.ceil(v_total_rows::numeric / v_page_size::numeric)::integer
   );
@@ -524,7 +528,7 @@ begin
     raise exception 'ATTENDANCE_HQ_VERSION_CONFLICT' using errcode = '40001';
   end if;
 
-  v_effective_from := pg_catalog.greatest(
+  v_effective_from := greatest(
     pg_catalog.clock_timestamp(),
     coalesce(v_current.effective_from + interval '1 microsecond', '-infinity'::timestamp with time zone)
   );
