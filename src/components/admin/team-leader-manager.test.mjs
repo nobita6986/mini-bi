@@ -56,6 +56,8 @@ test("applied and conflicted writes remain entity-locked until team and all lead
   assert.match(reload, /Nhóm vẫn bị khóa/);
   assert.match(component, /onLockChange\(intent\.teamId, true\)/);
   assert.match(component, /onLockChange\(intent\.teamId, false\)/);
+  assert.match(component, /useNotify\(\)/);
+  assert.doesNotMatch(component, /title="Trạng thái thao tác"/);
   assert.match(catalog, /setTeamConflictLock\(current, teamId, locked\)/);
   assert.match(catalog, /leaderLocks\.has\(team\.team_id\)/);
 });

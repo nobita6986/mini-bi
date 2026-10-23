@@ -5,6 +5,7 @@ import * as Dialog from "radix-ui/dialog";
 
 import { Alert } from "@/components/ui/alert";
 import { Card } from "@/components/ui/card";
+import { useNotify } from "@/components/ui/notify-provider";
 import {
   buildTeamLeaderCandidateQuery,
   buildTeamLeaderDesignation,
@@ -138,6 +139,7 @@ export function TeamLeaderManager({
   const [formError, setFormError] = useState<string | null>(null);
   const [workflows, setWorkflows] = useState<ReadonlyMap<string, Workflow>>(new Map());
   const [busyTeam, setBusyTeam] = useState<string | null>(null);
+  const notify = useNotify();
   const generation = useRef(0);
   const visibleLists = listTeamId === teamId ? lists : INITIAL_LISTS;
   const workflow = teamId ? workflows.get(teamId) ?? INITIAL_WORKFLOW : INITIAL_WORKFLOW;
@@ -238,6 +240,7 @@ export function TeamLeaderManager({
         onLockChange(id, false);
         onTeamUnavailable(id);
         onClose();
+        notify.warning({ title: "Nhóm không còn tồn tại hoặc không còn khả dụng." });
         return;
       }
       if (teamResponse.status !== 200) throw new Error("reload");
@@ -255,20 +258,29 @@ export function TeamLeaderManager({
         HISTORY: { kind: "loaded", value: snapshot.lists.HISTORY },
       });
       setPages({ CURRENT: 1, SCHEDULED: 1, HISTORY: 1 });
-      updateWorkflow(id, { phase: "idle", intent: null, message: successMessage });
+      updateWorkflow(id, { phase: "idle", intent: null, message: null });
+      if (successMessage === "Đã lưu thay đổi và xác nhận dữ liệu mới nhất.") {
+        notify.success({ title: successMessage });
+      } else if (successMessage.includes("Dữ liệu có thẩm quyền đã được tải lại.")) {
+        notify.warning({ title: successMessage });
+      } else {
+        notify.info({ title: successMessage });
+      }
       onLockChange(id, false);
       setForm(null);
       setFormError(null);
     } catch {
+      const reloadErr = "Không tải được dữ liệu có thẩm quyền. Nhóm vẫn bị khóa; hãy thử tải lại.";
       updateWorkflow(id, {
         phase: "reload-error",
         intent,
-        message: "Không tải được dữ liệu có thẩm quyền. Nhóm vẫn bị khóa; hãy thử tải lại.",
+        message: reloadErr,
       });
+      notify.error({ title: reloadErr });
     } finally {
       setBusyTeam(null);
     }
-  }, [onClose, onLockChange, onTeamReloaded, onTeamUnavailable, updateWorkflow]);
+  }, [notify, onClose, onLockChange, onTeamReloaded, onTeamUnavailable, updateWorkflow]);
 
   const sendIntent = useCallback(async (intent: TeamLeaderIntent) => {
     setBusyTeam(intent.teamId);
@@ -289,10 +301,12 @@ export function TeamLeaderManager({
         body: JSON.stringify(intent.body),
       });
     } catch {
+      const noReplyMsg = "Không nhận được phản hồi. Có thể thử lại đúng thao tác này bằng cùng khóa.";
       updateWorkflow(intent.teamId, {
         phase: "retry", intent,
-        message: "Không nhận được phản hồi. Có thể thử lại đúng thao tác này bằng cùng khóa.",
+        message: noReplyMsg,
       });
+      notify.warning({ title: noReplyMsg });
       setBusyTeam(null);
       return;
     }
@@ -312,14 +326,16 @@ export function TeamLeaderManager({
     }
     if (outcome.kind === "unavailable") {
       updateWorkflow(intent.teamId, { phase: "retry", intent, message: outcome.message });
+      notify.warning({ title: outcome.message });
       setBusyTeam(null);
       return;
     }
     updateWorkflow(intent.teamId, { phase: "idle", intent: null, message: null });
     setFormError(outcome.message);
+    notify.error({ title: outcome.message });
     onLockChange(intent.teamId, false);
     setBusyTeam(null);
-  }, [onLockChange, reloadAuthoritative, updateWorkflow]);
+  }, [notify, onLockChange, reloadAuthoritative, updateWorkflow]);
 
   const startDesignation = () => {
     if (!team?.active || workflow.phase !== "idle" || teamOperationLocked) return;
@@ -433,9 +449,6 @@ export function TeamLeaderManager({
                 </button>
               ) : null}
             </Alert>
-          ) : null}
-          {team && workflow.phase === "idle" && workflow.message ? (
-            <Alert tone="info" title="Trạng thái thao tác">{workflow.message}</Alert>
           ) : null}
 
           {team ? (

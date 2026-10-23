@@ -6,6 +6,7 @@ import * as Dialog from "radix-ui/dialog";
 import { Alert } from "@/components/ui/alert";
 import { StatusBadge } from "@/components/ui/badge";
 import { Card, CardHeader } from "@/components/ui/card";
+import { useNotify } from "@/components/ui/notify-provider";
 import { EmptyState } from "@/components/reporting/empty-state";
 import { ErrorState } from "@/components/reporting/error-state";
 import { PersonnelTeamMembershipManager } from "@/components/admin/personnel-team-membership-manager";
@@ -123,11 +124,11 @@ export function PersonnelCatalogManager() {
   const membershipTrigger = useRef<HTMLButtonElement | null>(null);
   const [form, setForm] = useState<PersonnelForm>(EMPTY_FORM);
   const [formError, setFormError] = useState<string | null>(null);
-  const [mutationMessage, setMutationMessage] = useState<string | null>(null);
   const [pendingIntent, setPendingIntent] = useState<MutationIntent | null>(null);
   const [conflictIntents, setConflictIntents] = useState<ReadonlyMap<string, ConflictEntry>>(new Map());
   const [busy, setBusy] = useState(false);
   const [conflictLocks, setConflictLocks] = useState<ReadonlySet<string>>(new Set());
+  const notify = useNotify();
   const [eligibleAccounts, setEligibleAccounts] = useState<EligibleAccount[]>([]);
   const [eligibleState, setEligibleState] = useState<"idle" | "loading" | "ready" | "empty" | "error">("idle");
   const [eligiblePage, setEligiblePage] = useState(1);
@@ -249,7 +250,6 @@ export function PersonnelCatalogManager() {
   const changeForm = useCallback(<K extends keyof PersonnelForm>(field: K, value: PersonnelForm[K]) => {
     setForm((current) => ({ ...current, [field]: value }));
     setFormError(null);
-    setMutationMessage(null);
   }, []);
 
   const startCreate = () => {
@@ -305,7 +305,7 @@ export function PersonnelCatalogManager() {
             next.delete(intent.lockId);
             return next;
           });
-          setMutationMessage("Hồ sơ nhân sự không còn tồn tại hoặc không còn khả dụng. Danh sách đang được cập nhật.");
+          notify.warning({ title: "Hồ sơ nhân sự không còn tồn tại hoặc không còn khả dụng. Danh sách đang được cập nhật." });
           setPendingIntent(null);
           setDialog(null);
           setListState({ kind: "loading" });
@@ -352,31 +352,32 @@ export function PersonnelCatalogManager() {
         next.delete(intent.lockId);
         return next;
       });
-      setMutationMessage("Đã tải dữ liệu mới nhất. Bạn có thể bắt đầu thao tác mới.");
+      notify.info({ title: "Đã tải dữ liệu mới nhất. Bạn có thể bắt đầu thao tác mới." });
       setPendingIntent(null);
       setDialog(null);
       setListState({ kind: "loading" });
       setReloadToken((value) => value + 1);
     } catch {
+      const reloadError = "Không tải được dữ liệu có thẩm quyền. Thao tác vẫn đang bị khóa; hãy thử tải lại.";
       setConflictIntents((current) => {
         const next = new Map(current);
         const entry = next.get(intent.lockId);
         if (entry) {
           next.set(intent.lockId, {
             ...entry,
-            error: "Không tải được dữ liệu có thẩm quyền. Thao tác vẫn đang bị khóa; hãy thử tải lại.",
+            error: reloadError,
           });
         }
         return next;
       });
+      notify.error({ title: reloadError });
     } finally {
       setBusy(false);
     }
-  }, []);
+  }, [notify]);
 
   const sendIntent = useCallback(async (intent: MutationIntent) => {
     setBusy(true);
-    setMutationMessage(null);
     try {
       let response: Response;
       try {
@@ -391,7 +392,7 @@ export function PersonnelCatalogManager() {
         });
       } catch {
         setPendingIntent({ ...intent, retryState: "retry" });
-        setMutationMessage("Không nhận được phản hồi. Có thể thử lại đúng thao tác này.");
+        notify.warning({ title: "Không nhận được phản hồi. Có thể thử lại đúng thao tác này." });
         return;
       }
       let payload: unknown = null;
@@ -405,29 +406,30 @@ export function PersonnelCatalogManager() {
         setPendingIntent(null);
         setDialog(null);
         setForm(EMPTY_FORM);
-        setMutationMessage("Đã lưu thay đổi. Danh sách đang được cập nhật.");
-          setListState({ kind: "loading" });
-          setReloadToken((value) => value + 1);
+        notify.success({ title: "Đã lưu thay đổi. Danh sách đang được cập nhật." });
+        setListState({ kind: "loading" });
+        setReloadToken((value) => value + 1);
         return;
       }
       if (outcome.kind === "conflict") {
         setPendingIntent(null);
         setConflictIntents((current) => new Map(current).set(intent.lockId, { intent, error: null }));
         setConflictLocks((current) => setPersonnelConflictLock(current, intent.lockId, true));
-        setMutationMessage(messageForOutcome(outcome));
+        notify.warning({ title: messageForOutcome(outcome) });
         return;
       }
       if (outcome.kind === "unavailable") {
         setPendingIntent({ ...intent, retryState: "retry" });
+        notify.warning({ title: messageForOutcome(outcome) });
       } else {
         setPendingIntent(null);
         setFormError(messageForOutcome(outcome));
+        notify.error({ title: messageForOutcome(outcome) });
       }
-      setMutationMessage(outcome.kind === "unavailable" ? messageForOutcome(outcome) : null);
     } finally {
       setBusy(false);
     }
-  }, []);
+  }, [notify]);
 
   const submitMutation = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -821,8 +823,6 @@ export function PersonnelCatalogManager() {
           />
         ))
       ) : null}
-
-      {mutationMessage ? <Alert tone="info" title="Trạng thái thao tác">{mutationMessage}</Alert> : null}
 
       <Card>
         <CardHeader

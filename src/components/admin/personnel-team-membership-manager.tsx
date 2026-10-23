@@ -5,6 +5,7 @@ import * as Dialog from "radix-ui/dialog";
 
 import { Alert } from "@/components/ui/alert";
 import { Card, CardHeader } from "@/components/ui/card";
+import { useNotify } from "@/components/ui/notify-provider";
 import { EmptyState } from "@/components/reporting/empty-state";
 import { ErrorState } from "@/components/reporting/error-state";
 import {
@@ -144,6 +145,7 @@ export function PersonnelTeamMembershipManager({
   const [formState, setFormState] = useState<ScopedForm | null>(null);
   const [busy, setBusy] = useState(false);
   const [workflow, setWorkflow] = useState<MembershipWorkflow>(new Map());
+  const notify = useNotify();
   const generation = useRef(0);
   const recruiterId = personnel?.recruiter_id;
   const visibleLists = listsRecruiterId === recruiterId ? lists : INITIAL_LISTS;
@@ -319,15 +321,19 @@ export function PersonnelTeamMembershipManager({
       if (result.detail === "not-found") {
         lockEntity(recruiterId, false);
         onPersonnelUnavailable(recruiterId);
+        notify.warning({ title: "Hồ sơ nhân sự không còn tồn tại hoặc không còn khả dụng." });
         return;
       }
       if (result.detail === "loaded" && result.listsLoaded) {
         lockEntity(recruiterId, false);
+        notify.info({ title: "Đã tải lại hồ sơ và các phân công." });
+      } else {
+        notify.error({ title: "Chưa tải đủ hồ sơ và các phân công. Hãy tải lại trước khi tiếp tục." });
       }
     } finally {
       setBusy(false);
     }
-  }, [lockEntity, onPersonnelUnavailable, refreshAuthoritative, workflow]);
+  }, [lockEntity, notify, onPersonnelUnavailable, refreshAuthoritative, workflow]);
 
   const sendIntent = useCallback(async (intent: MembershipIntent) => {
     setBusy(true);
@@ -349,10 +355,12 @@ export function PersonnelTeamMembershipManager({
         body: JSON.stringify(intent.body),
       });
     } catch {
+      const unavailableMsg = "Không nhận được phản hồi. Có thể thử lại cùng thao tác và khóa.";
       setWorkflow((current) => recordMembershipOutcome(current, intent, {
         kind: "unavailable",
-        message: "Không nhận được phản hồi. Có thể thử lại cùng thao tác và khóa.",
+        message: unavailableMsg,
       }));
+      notify.warning({ title: unavailableMsg });
       setBusy(false);
       return;
     }
@@ -373,11 +381,17 @@ export function PersonnelTeamMembershipManager({
       lockEntity(intent.recruiterId, true);
       setOperationState((current) => current?.recruiterId === intent.recruiterId ? null : current);
       setFormState((current) => current?.recruiterId === intent.recruiterId ? null : current);
+      notify.warning({ title: outcome.message });
       setBusy(false);
       return;
     }
     if (outcome.kind !== "applied") {
       if (outcome.kind !== "unavailable") lockEntity(intent.recruiterId, false);
+      if (outcome.kind === "unavailable") {
+        notify.warning({ title: outcome.message });
+      } else {
+        notify.error({ title: outcome.message });
+      }
       setBusy(false);
       return;
     }
@@ -392,12 +406,16 @@ export function PersonnelTeamMembershipManager({
       if (refresh.detail === "not-found") {
         lockEntity(intent.recruiterId, false);
         onPersonnelUnavailable(intent.recruiterId);
+        notify.warning({ title: "Hồ sơ nhân sự không còn tồn tại hoặc không còn khả dụng." });
       } else if (refresh.detail === "loaded" && refresh.listsLoaded) {
         lockEntity(intent.recruiterId, false);
+        notify.success({ title: "Đã lưu thay đổi và cập nhật danh sách phân công." });
+      } else {
+        notify.error({ title: "Chưa tải đủ hồ sơ và các phân công. Hãy tải lại trước khi tiếp tục." });
       }
     }
     setBusy(false);
-  }, [lockEntity, onPersonnelUnavailable, refreshAuthoritative]);
+  }, [lockEntity, notify, onPersonnelUnavailable, refreshAuthoritative]);
 
   const startAssign = () => {
     if (!personnel || !canAssignMembership(visibleLists.CURRENT, visibleLists.SCHEDULED) || locked) return;
@@ -543,7 +561,6 @@ export function PersonnelTeamMembershipManager({
                   </Alert>
                 </div>
               ) : null}
-              {message && !activeConflict ? <div className="mt-4" role="status"><Alert tone="info" title="Trạng thái">{message}</Alert></div> : null}
               {pendingIntent?.retry ? (
                 <div className="mt-4">
                   <Alert tone="warning" title="Thao tác chưa có kết quả xác nhận">
