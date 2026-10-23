@@ -895,6 +895,7 @@ test("WF-04 Hotfix (6): Tab navigation order, content split (Báo cáo tổng qu
   assert.ok(deepSectionCode.includes("/api/reporting/workforce-deep"));
   assert.ok(deepSectionCode.includes("AbortController"));
   assert.ok(deepSectionCode.includes("requestSeqRef"));
+  assert.ok(deepSectionCode.includes("useNotify()"));
 
   // 4. Font unification: no font-mono inside dashboard-shared.tsx
   assert.ok(!sharedSrc.includes("font-mono"), "dashboard-shared.tsx must not use font-mono");

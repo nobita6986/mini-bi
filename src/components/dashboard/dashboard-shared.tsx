@@ -6,6 +6,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Alert } from "@/components/ui/alert";
 import { StatusBadge } from "@/components/ui/badge";
 import { Card, CardHeader } from "@/components/ui/card";
+import { useNotify } from "@/components/ui/notify-provider";
 import { formatTimestamp } from "@/lib/format";
 import { sortBuckets } from "@/lib/reporting/p1-dashboard";
 import {
@@ -2112,6 +2113,8 @@ export function WorkforceDeepReportPanel({
   const cacheRef = useRef<Map<string, CachedDeepFilterState>>(new Map());
   const requestSeqRef = useRef(0);
   const pageAbortRef = useRef<AbortController | null>(null);
+  const userRetryRef = useRef(false);
+  const notify = useNotify();
 
   const [state, setState] = useState<{
     signature: string;
@@ -2137,6 +2140,7 @@ export function WorkforceDeepReportPanel({
 
     const cached = reloadToken === 0 ? cacheRef.current.get(filterSignature) : undefined;
     if (cached) {
+      userRetryRef.current = false;
       setState({
         signature: filterSignature,
         status: "ready",
@@ -2147,6 +2151,7 @@ export function WorkforceDeepReportPanel({
 
     const seq = ++requestSeqRef.current;
     const controller = new AbortController();
+    const isUserRetry = userRetryRef.current;
     setState({ signature: filterSignature, status: "loading", payload: null });
 
     fetch(buildWorkforceDeepUrl(data, { mode: "deep" }), {
@@ -2159,7 +2164,13 @@ export function WorkforceDeepReportPanel({
         const json: unknown = await response.json().catch(() => null);
         if (controller.signal.aborted || seq !== requestSeqRef.current) return;
         if (!response.ok || !isReadyWorkforceDeepEnvelope(json)) {
+          userRetryRef.current = false;
           setState({ signature: filterSignature, status: "error", payload: null });
+          if (isUserRetry) {
+            notify.error({
+              title: "Không tải được dữ liệu báo cáo chuyên sâu cho bộ lọc hiện tại. Vui lòng thử lại.",
+            });
+          }
           return;
         }
         const wf = json.workforce;
@@ -2179,19 +2190,27 @@ export function WorkforceDeepReportPanel({
             nextCursor: pageMeta.nextCursor,
           },
         };
+        userRetryRef.current = false;
         cacheRef.current.set(filterSignature, entry);
         setState({ signature: filterSignature, status: "ready", payload: entry });
       })
       .catch(() => {
         if (!controller.signal.aborted && seq === requestSeqRef.current) {
+          userRetryRef.current = false;
           setState({ signature: filterSignature, status: "error", payload: null });
+          if (isUserRetry) {
+            notify.error({
+              title: "Không tải được dữ liệu báo cáo chuyên sâu cho bộ lọc hiện tại. Vui lòng thử lại.",
+            });
+          }
         }
       });
 
     return () => controller.abort();
-  }, [data, filterSignature, reloadToken]);
+  }, [data, filterSignature, notify, reloadToken]);
 
   function handleRetry(): void {
+    userRetryRef.current = true;
     cacheRef.current.delete(filterSignature);
     setReloadToken((n) => n + 1);
   }
@@ -2224,6 +2243,9 @@ export function WorkforceDeepReportPanel({
         if (controller.signal.aborted) return;
         if (!response.ok || !isReadyWorkforceProjectPageEnvelope(json)) {
           setLoadingMoreState({ signature: activeSignature, loading: false, error: true });
+          notify.error({
+            title: "Không tải được trang dự án tiếp theo, vui lòng thử lại.",
+          });
           return;
         }
         const page = json.projectPage;
@@ -2263,6 +2285,9 @@ export function WorkforceDeepReportPanel({
       .catch(() => {
         if (!controller.signal.aborted) {
           setLoadingMoreState({ signature: activeSignature, loading: false, error: true });
+          notify.error({
+            title: "Không tải được trang dự án tiếp theo, vui lòng thử lại.",
+          });
         }
       });
   }

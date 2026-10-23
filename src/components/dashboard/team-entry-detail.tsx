@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 
 import { Alert } from "@/components/ui/alert";
 import { Card, CardHeader } from "@/components/ui/card";
+import { useNotify } from "@/components/ui/notify-provider";
 import { UNKNOWN_TEAM_BUCKET_KEY, type ReportingData } from "@/lib/reporting/p1-reporting";
 import type { TeamReportDetail, TeamReportRow } from "@/lib/reporting/p3-w06d-team-report-server";
 
@@ -90,6 +91,7 @@ export function TeamEntryDetail({
   const [error, setError] = useState<string | null>(null);
   const requestId = useRef(0);
   const controller = useRef<AbortController | null>(null);
+  const notify = useNotify();
 
   async function loadMore(): Promise<void> {
     if (nextCursor === null || loadingMore) return;
@@ -109,7 +111,9 @@ export function TeamEntryDetail({
       const payload: unknown = await response.json().catch(() => null);
       if (currentRequest !== requestId.current) return;
       if (!response.ok || !isDetailEnvelope(payload)) {
-        setError(failureMessage(response.status, payload));
+        const msg = failureMessage(response.status, payload);
+        setError(msg);
+        notify.error({ title: msg });
         setLoadingMore(false);
         return;
       }
@@ -119,7 +123,9 @@ export function TeamEntryDetail({
       setLoadingMore(false);
     } catch {
       if (currentRequest !== requestId.current || currentController.signal.aborted) return;
-      setError("Không tải được chi tiết nhóm. Hãy thử lại.");
+      const msg = "Không tải được chi tiết nhóm. Hãy thử lại.";
+      setError(msg);
+      notify.error({ title: msg });
       setLoadingMore(false);
     }
   }
@@ -177,14 +183,26 @@ function DetailBody({
   caption: string;
   onRetry(): void;
 }) {
-  if (error !== null) {
-    return (
-      <Alert tone="error" role="alert" title="Không tải được chi tiết nhóm">
-        <p>{error}</p>
-        <button type="button" onClick={onRetry} className="mt-2 min-h-10 rounded-md border border-current px-3 font-medium">Thử tải lại</button>
-      </Alert>
-    );
+  if (rows.length === 0) {
+    if (error !== null) {
+      return (
+        <Alert tone="error" role="alert" title="Không tải được chi tiết nhóm">
+          <p>{error}</p>
+          <button type="button" onClick={onRetry} className="mt-2 min-h-10 rounded-md border border-current px-3 font-medium">Thử tải lại</button>
+        </Alert>
+      );
+    }
+    return <p role="status">Chưa có dòng chi tiết trong bộ lọc hiện tại.</p>;
   }
-  if (rows.length === 0) return <p role="status">Chưa có dòng chi tiết trong bộ lọc hiện tại.</p>;
-  return <DetailTable rows={rows} caption={caption} />;
+  return (
+    <div className="space-y-3">
+      <DetailTable rows={rows} caption={caption} />
+      {error !== null ? (
+        <Alert tone="error" role="alert" title="Không tải được chi tiết nhóm">
+          <p>{error}</p>
+          <button type="button" onClick={onRetry} className="mt-2 min-h-10 rounded-md border border-current px-3 font-medium">Thử tải lại</button>
+        </Alert>
+      ) : null}
+    </div>
+  );
 }
