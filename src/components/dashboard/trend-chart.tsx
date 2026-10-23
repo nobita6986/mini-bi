@@ -11,6 +11,11 @@ import {
   TREND_RESOLUTION_OPTIONS,
   type TrendResolution,
 } from "@/lib/reporting/p1-dashboard-period";
+import {
+  buildTrendDatasetSignature,
+  CHART_MAX_ANIMATED_TREND_POINTS,
+  useChartDataAnimation,
+} from "./chart-motion";
 import { ChartTooltip } from "./chart-tooltip";
 
 function renderDot(props: { cx?: number; cy?: number; payload?: { date?: string; count?: number } }, color: string) {
@@ -42,6 +47,18 @@ export function TrendChart({
     () => aggregateDailyTrendPoints(data, resolution, { from, to }),
     [data, resolution, from, to],
   );
+  const dataset = useMemo(
+    () => buildTrendDatasetSignature(data, { from, to }, bucketedData.length),
+    [data, from, to, bucketedData.length],
+  );
+  const chartMotion = useChartDataAnimation({
+    chartId: "trend-chart",
+    mounted,
+    signature: dataset.signature,
+    valid: dataset.valid,
+    itemCount: dataset.itemCount,
+    maxItems: CHART_MAX_ANIMATED_TREND_POINTS,
+  });
 
   function handleKeyDown(event: KeyboardEvent<HTMLButtonElement>, index: number): void {
     let nextIndex = -1;
@@ -113,7 +130,11 @@ export function TrendChart({
               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={tokens.border} />
               <XAxis dataKey="date" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: tokens.muted }} minTickGap={24} />
               <YAxis allowDecimals={false} tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: tokens.muted }} width={40} />
-              <Tooltip content={<ChartTooltip valueFormatter={(v) => v + " lượt"} />} cursor={{ stroke: tokens.border, strokeDasharray: "3 3" }} />
+              <Tooltip
+                key={chartMotion.signature}
+                content={<ChartTooltip valueFormatter={(v) => v + " lượt"} />}
+                cursor={{ stroke: tokens.border, strokeDasharray: "3 3" }}
+              />
               <Area
                 type="monotone"
                 dataKey="count"
@@ -123,7 +144,9 @@ export function TrendChart({
                 strokeWidth={2.5}
                 dot={(p) => renderDot(p as { cx?: number; cy?: number; payload?: { date?: string; count?: number } }, primary)}
                 activeDot={{ r: 5, fill: primary }}
-                isAnimationActive={false}
+                isAnimationActive={chartMotion.isAnimationActive}
+                animationDuration={chartMotion.animationDuration}
+                animationEasing={chartMotion.animationEasing}
               />
             </AreaChart>
           </ResponsiveContainer>
