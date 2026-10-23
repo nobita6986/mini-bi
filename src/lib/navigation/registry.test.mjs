@@ -93,7 +93,7 @@ test("Desktop viewport theo feature flag, luôn giữ Dashboard và không có P
   assert.ok(!desktop.some((e) => e.id === "pipeline-check"));
   assert.ok(desktop.some((e) => e.id === "dashboard"));
   assert.ok(desktop.some((e) => e.id === "direct-entry"));
-  assert.deepEqual(entriesForViewport("desktop", false).map((entry) => entry.id), ["dashboard", "work-reports", "work-report-reviews", "admin"]);
+  assert.deepEqual(entriesForViewport("desktop", false).map((entry) => entry.id), ["dashboard", "work-reports", "work-report-reviews", "workforce-offboarding", "admin"]);
 });
 
 test("Mobile viewport theo feature flag, luôn giữ Dashboard và không có Pipeline Check", () => {
@@ -101,15 +101,15 @@ test("Mobile viewport theo feature flag, luôn giữ Dashboard và không có Pi
   assert.ok(!mobile.some((e) => e.id === "pipeline-check"));
   assert.ok(mobile.some((e) => e.id === "dashboard"));
   assert.ok(mobile.some((e) => e.id === "direct-entry"));
-  assert.deepEqual(entriesForViewport("mobile", false).map((entry) => entry.id), ["dashboard", "work-reports", "work-report-reviews", "admin"]);
+  assert.deepEqual(entriesForViewport("mobile", false).map((entry) => entry.id), ["dashboard", "work-reports", "work-report-reviews", "workforce-offboarding", "admin"]);
 });
 
 test("feature flag Direct Entry chỉ mở với giá trị chính xác true", () => {
   assert.equal(isDirectEntryUiEnabled("true"), true);
   for (const flag of [undefined, "", "false", "TRUE", "1", " true "]) {
     assert.equal(isDirectEntryUiEnabled(flag), false, String(flag));
-    assert.deepEqual(entriesForViewport("desktop", isDirectEntryUiEnabled(flag)).map((entry) => entry.id), ["dashboard", "work-reports", "work-report-reviews", "admin"]);
-    assert.deepEqual(entriesForViewport("mobile", isDirectEntryUiEnabled(flag)).map((entry) => entry.id), ["dashboard", "work-reports", "work-report-reviews", "admin"]);
+    assert.deepEqual(entriesForViewport("desktop", isDirectEntryUiEnabled(flag)).map((entry) => entry.id), ["dashboard", "work-reports", "work-report-reviews", "workforce-offboarding", "admin"]);
+    assert.deepEqual(entriesForViewport("mobile", isDirectEntryUiEnabled(flag)).map((entry) => entry.id), ["dashboard", "work-reports", "work-report-reviews", "workforce-offboarding", "admin"]);
   }
 });
 
