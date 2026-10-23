@@ -857,7 +857,11 @@ test("WF-04 Hotfix (6): Tab navigation order, content split (Báo cáo tổng qu
   const idxDeep = tabsSrc.indexOf('key: "deep", label: "Báo cáo chuyên sâu"');
   const idxTeam = tabsSrc.indexOf('key: "team", label: "Báo cáo theo nhóm"');
   const idxCccd = tabsSrc.indexOf('key: "duplicate-cccd", label: "Báo cáo CCCD trùng"');
-  assert.ok(idxGeneral >= 0 && idxDeep > idxGeneral && idxTeam > idxDeep && idxCccd > idxTeam);
+  const idxOffboarding = tabsSrc.indexOf('key: "offboarding", label: "NLĐ nghỉ việc"');
+  assert.ok(
+    idxGeneral >= 0 && idxDeep > idxGeneral && idxTeam > idxDeep &&
+      idxCccd > idxTeam && idxOffboarding > idxCccd,
+  );
 
   // 2. WorkforceSnapshotSection on Báo cáo tổng quát only renders Trạng thái lao động tại ngày chốt + Biến động trạng thái trong kỳ
   const snapshotFnStart = sharedSrc.indexOf("export function WorkforceSnapshotSection");

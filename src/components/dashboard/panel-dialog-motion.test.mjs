@@ -119,6 +119,7 @@ describe("UIUX S2-03 — Tab Panel, Drawer, Dialog & Sheet Motion", () => {
       "bod-panel-deep",
       "bod-panel-team",
       "bod-panel-duplicate-cccd",
+      "bod-panel-offboarding",
     ]) {
       assert.match(
         tabsSrc,
@@ -131,6 +132,7 @@ describe("UIUX S2-03 — Tab Panel, Drawer, Dialog & Sheet Motion", () => {
     assert.match(tabsSrc, /activeTab === "deep" && primaryTabLabel === undefined/);
     assert.match(tabsSrc, /activeTab === "team" && primaryTabLabel === undefined/);
     assert.match(tabsSrc, /rawTab === "duplicate-cccd" && canViewDuplicateCccd/);
+    assert.match(tabsSrc, /rawTab === "offboarding" && canViewOffboarding/);
   });
 
   it("wires dialog, drawer, sheet, and filter disclosure motion while preserving Escape, focus return, and hidden semantics", () => {

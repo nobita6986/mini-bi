@@ -53,6 +53,7 @@ export function DashboardView({
   optionsResult,
   audience,
   canViewDuplicateCccd,
+  canViewOffboarding,
 }: {
   report: ReportingFetchResult;
   optionsResult: ReportingOptionsResult;
@@ -60,6 +61,8 @@ export function DashboardView({
   audience: ReportingAudience | null;
   /** PRE-W2-HF-C: server-derived visibility for the "Báo cáo CCCD trùng" tab. */
   canViewDuplicateCccd: boolean;
+  /** Server-derived visibility for the offboarding report tab. */
+  canViewOffboarding: boolean;
 }) {
   // P3-W06C: the audience is DB-authoritative (W05A scoped payload); it is never
   // inferred from a UI role. A failed read, or a successful read without a usable
@@ -104,6 +107,7 @@ export function DashboardView({
         generatedAt={report.generatedAt}
         optionsResult={optionsResult}
         canViewDuplicateCccd={canViewDuplicateCccd}
+        canViewOffboarding={canViewOffboarding}
       />
     );
   }
@@ -125,6 +129,7 @@ export function DashboardView({
         generatedAt={report.generatedAt}
         optionsResult={optionsResult}
         canViewDuplicateCccd={canViewDuplicateCccd}
+        canViewOffboarding={canViewOffboarding}
       />
     );
   }
@@ -140,6 +145,7 @@ export function DashboardView({
       generatedAt={generatedAt}
       optionsResult={optionsResult}
       canViewDuplicateCccd={canViewDuplicateCccd}
+      canViewOffboarding={canViewOffboarding}
       general={
         <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-4 sm:px-6">
           <header className="rounded-2xl border border-border bg-gradient-to-r from-primary/10 via-surface to-secondary/10 px-5 py-4">

@@ -37,6 +37,8 @@ import {
   ATTENDANCE_WP1_MIGRATION_NAME,
   ATTENDANCE_WP1_RPC_SIGNATURES,
   ATTENDANCE_ADMIN_REPORT_RPC_SIGNATURES,
+  ASYNC_DOCUMENTS_ATTENDANCE_PHOTO_MIGRATION_NAME,
+  ASYNC_DOCUMENTS_ATTENDANCE_PHOTO_RPC_SIGNATURE,
   OFFBOARDING_REPORT_MIGRATION_NAME,
   OFFBOARDING_REPORT_RPC_SIGNATURES,
   migrationChecksum,
@@ -612,6 +614,23 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
         assert.ok(offboardingNormalized.includes(sigRevoke),
           `Offboarding RPC ${sig} revokes client and inherited EXECUTE before granting service_role`);
       }
+      const asyncPhotoMigration = await readFile(
+        path.join(MIGRATION_DIR, ASYNC_DOCUMENTS_ATTENDANCE_PHOTO_MIGRATION_NAME), "utf8",
+      );
+      const asyncPhotoNormalized = asyncPhotoMigration.replace(/\s+/g, " ")
+        .replace(/\(\s+/g, "(").replace(/\s+\)/g, ")").toLowerCase();
+      assert.ok(
+        asyncPhotoNormalized.includes(
+          `grant execute on function ${ASYNC_DOCUMENTS_ATTENDANCE_PHOTO_RPC_SIGNATURE.toLowerCase()} to service_role;`,
+        ),
+        "Attendance private-photo RPC is explicitly granted only to service_role",
+      );
+      assert.ok(
+        asyncPhotoNormalized.includes(
+          `revoke all on function ${ASYNC_DOCUMENTS_ATTENDANCE_PHOTO_RPC_SIGNATURE.toLowerCase()} from public, anon, authenticated, service_role;`,
+        ),
+        "Attendance private-photo RPC revokes client and inherited EXECUTE before granting service_role",
+      );
 
       expectedSignatures.push(R1_2_SERVICE_RPC, ...F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES,
         F1_WORK_REPORTS_ASSIGNMENT_OPTIONS_RPC_SIGNATURE,
@@ -624,7 +643,8 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
         ...WORK_REPORTS_READER_CONTRACT_RPC_SIGNATURES,
         ...ATTENDANCE_WP1_RPC_SIGNATURES,
         ...ATTENDANCE_ADMIN_REPORT_RPC_SIGNATURES,
-        ...OFFBOARDING_REPORT_RPC_SIGNATURES);
+        ...OFFBOARDING_REPORT_RPC_SIGNATURES,
+        ASYNC_DOCUMENTS_ATTENDANCE_PHOTO_RPC_SIGNATURE);
       assert.ok(expectedSignatures.length > 0, "the explicit server/invoker allowlist is not empty");
       assert.equal(new Set(expectedSignatures).size, expectedSignatures.length, "the allowlist has no duplicates");
       const { rows: resolvedExpected } = await client.query(
@@ -651,7 +671,8 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
           ...WORK_REPORTS_READER_CONTRACT_RPC_SIGNATURES,
           ...ATTENDANCE_WP1_RPC_SIGNATURES,
           ...ATTENDANCE_ADMIN_REPORT_RPC_SIGNATURES,
-          ...OFFBOARDING_REPORT_RPC_SIGNATURES].sort(),
+          ...OFFBOARDING_REPORT_RPC_SIGNATURES,
+          ASYNC_DOCUMENTS_ATTENDANCE_PHOTO_RPC_SIGNATURE].sort(),
         "only explicitly reviewed post-S0 RPCs add service_role grants after the S0 baseline",
       );
       const removedSourceService = sourceService

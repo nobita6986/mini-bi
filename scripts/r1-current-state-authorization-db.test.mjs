@@ -1509,6 +1509,96 @@ test("R1.1 Team Leader request review uses the same current team for WORK_STATUS
   }
 });
 
+test("Android background attachments may finish after SUBMITTED only for the record creator", async () => {
+  const { db } = await buildDb();
+  try {
+    await seedActorsAndResources(db);
+    await addCurrentCapability(db, APP, "document_upload");
+    await addCurrentCapability(db, FUTURE_APP, "document_upload");
+    await db.query(
+      `insert into public.recruiter_provider_memberships
+         (recruiter_id, provider_type, valid_from, is_current)
+       values ($1, 'hrp', '2020-01-01', true)`,
+      [REC_A],
+    );
+    await db.query(
+      `insert into public.recruiter_team_memberships
+         (recruiter_id, team_id, valid_from, is_current)
+       values ($1, $2, '2020-01-01', true)`,
+      [REC_A, TEAM_A],
+    );
+    await db.query(
+      `insert into public.direct_entry_scope_grants
+         (app_user_id, scope_kind, team_id, valid_from, is_current)
+       values ($1, 'all', null, '2020-01-01', true)`,
+      [FUTURE_APP],
+    );
+
+    const { entryId } = await insertSyntheticProjectEntry(db, "SUBMITTED", {
+      entryId: uuid(1601),
+      candidateId: uuid(1602),
+      submissionId: uuid(1603),
+      ownerApp: APP,
+      projectId: PROJECT,
+      employeeSuffix: "001601",
+      displayName: "Android Background Upload",
+    });
+
+    const reserved = (await db.query(
+      `select public.direct_entry_reserve_document_direct_upload(
+        $1::uuid, $2::uuid, $3::uuid, 1, 'WORKER_PORTRAIT',
+        'android-background-reserve-1601', 4, 'image/jpeg', null
+      ) as data`,
+      [AUTH, APP, entryId],
+    )).rows[0].data;
+    assert.equal(reserved.reused, false);
+    assert.equal(reserved.entry_version, 2);
+
+    const context = (await db.query(
+      `select public.direct_entry_document_direct_context(
+        $1::uuid, $2::uuid, $3::uuid, $4::uuid, 'finalize'
+      ) as data`,
+      [AUTH, APP, entryId, reserved.document_id],
+    )).rows[0].data;
+    assert.equal(context.document_type, "WORKER_PORTRAIT");
+    assert.equal(context.entry_version, 2);
+
+    const finalized = (await db.query(
+      `select public.direct_entry_finalize_document_direct_upload(
+        $1::uuid, $2::uuid, $3::uuid, $4::uuid, 2,
+        'android-background-finalize-1601', 'validated', $5::text, 4, 'image/jpeg'
+      ) as data`,
+      [AUTH, APP, entryId, reserved.document_id, "a".repeat(64)],
+    )).rows[0].data;
+    assert.equal(finalized.validation_status, "VALIDATED");
+    assert.equal(finalized.entry_version, 3);
+
+    const auditReason = (await db.query(
+      `select r.reason_text
+         from public.direct_entry_audit_events a
+         join public.direct_entry_restricted_reasons r on r.reason_id = a.reason_id
+        where a.action = 'document_direct_reserve' and a.resource_ref = $1
+        order by a.created_at desc limit 1`,
+      [entryId],
+    )).rows[0].reason_text;
+    assert.equal(auditReason, "Android background attachment upload");
+
+    await assert.rejects(
+      db.query(
+        `select public.direct_entry_reserve_document_direct_upload(
+          $1::uuid, $2::uuid, $3::uuid, 3, 'CCCD_FRONT',
+          'cross-user-background-reserve-1601', 4, 'image/jpeg', null
+        )`,
+        [FUTURE_AUTH, FUTURE_APP, entryId],
+      ),
+      (error) => error.code === "42501",
+      "document_upload alone never permits background mutation of another creator's submitted entry",
+    );
+  } finally {
+    await db.close();
+  }
+});
+
 test("actor binding and S0 service-role ACLs remain enforced", async () => {
   const { db } = await buildDb();
   try {

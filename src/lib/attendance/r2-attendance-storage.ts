@@ -44,6 +44,7 @@ export type AttendanceObjectStorage = {
     photo_sha256: string;
     bytes: Uint8Array;
   }): Promise<EnsureAttendancePhotoResult>;
+  readCheckInPhoto(storageKey: string): Promise<Uint8Array>;
   deleteNewlyCreatedCheckInPhoto(storageKey: string): Promise<void>;
 };
 
@@ -103,6 +104,9 @@ function isConditionalWriteConflict(error: unknown): boolean {
 export const unavailableAttendanceStorage: AttendanceObjectStorage = {
   available: () => false,
   async ensureCheckInPhoto() {
+    throw new Error("ATTENDANCE_STORAGE_UNAVAILABLE");
+  },
+  async readCheckInPhoto() {
     throw new Error("ATTENDANCE_STORAGE_UNAVAILABLE");
   },
   async deleteNewlyCreatedCheckInPhoto() {
@@ -253,6 +257,39 @@ export function createR2AttendanceStorage(
         storage_key: storageKey,
         created_now: false,
       };
+    },
+
+    async readCheckInPhoto(storageKey) {
+      if (
+        !isAttendancePhotoObjectKey(storageKey) ||
+        !storageKey.startsWith(`${config.environment}/attendance-checkins/`)
+      ) {
+        throw new Error("ATTENDANCE_STORAGE_KEY_INVALID");
+      }
+
+      const object = (await getClient().send(
+        new GetObjectCommand({ Bucket: config.bucket, Key: storageKey }),
+      )) as {
+        ContentLength?: number;
+        ContentType?: string;
+        Body?: { transformToByteArray(): Promise<Uint8Array> };
+      };
+      if (
+        !object.Body ||
+        object.ContentType?.toLowerCase() !== "image/jpeg" ||
+        typeof object.ContentLength !== "number" ||
+        !Number.isSafeInteger(object.ContentLength) ||
+        object.ContentLength < 1 ||
+        object.ContentLength > DOCUMENT_MAX_UPLOAD_BYTES
+      ) {
+        throw new Error("ATTENDANCE_STORAGE_UNAVAILABLE");
+      }
+
+      const bytes = await object.Body.transformToByteArray();
+      if (bytes.byteLength !== object.ContentLength) {
+        throw new Error("ATTENDANCE_STORAGE_UNAVAILABLE");
+      }
+      return bytes;
     },
 
     async deleteNewlyCreatedCheckInPhoto(storageKey) {

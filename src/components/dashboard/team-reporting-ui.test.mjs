@@ -64,8 +64,8 @@ test("W06D: tab URL/history and source normalization use the locked contract", (
 });
 
 test("W06D: missing tab defaults general; repeated or malformed tab normalizes general", () => {
-  assert.match(page, /type DashboardTab = "general" \| "deep" \| "team" \| "duplicate-cccd"/);
-  assert.match(page, /typeof value === "string" &&[\s\S]*\(value === "general" \|\| value === "deep" \|\| value === "team" \|\| value === "duplicate-cccd"\)/);
+  assert.match(page, /type DashboardTab = "general" \| "deep" \| "team" \| "duplicate-cccd" \| "offboarding"/);
+  assert.match(page, /typeof value === "string" &&[\s\S]*value === "duplicate-cccd" \|\| value === "offboarding"/);
   assert.match(page, /rawTab !== undefined && tab === null/);
   assert.match(page, /normalizedDashboardPath\(params, "general", false\)/);
   assert.match(page, /query\.set\("tab", tab\)/);
@@ -238,12 +238,17 @@ test("W06D-R3: the Team Leader keeps the audience-scoped report (no selection ga
   assert.doesNotMatch(leader, /requireTeamSelection: true/);
 });
 
-test("W06D-R3: the CCCD tab and its panel are unchanged", () => {
+test("W06D-R3: the offboarding tab follows CCCD and both panels stay server-gated", () => {
   assert.match(tabs, /\{ key: "duplicate-cccd", label: "Báo cáo CCCD trùng", panelId: "bod-panel-duplicate-cccd" \}/);
+  assert.match(tabs, /\{ key: "offboarding", label: "NLĐ nghỉ việc", panelId: "bod-panel-offboarding" \}/);
+  assert.ok(tabs.indexOf('key: "duplicate-cccd"') < tabs.indexOf('key: "offboarding"'));
   assert.match(tabs, /<DuplicateCccdReportPanel \/>/);
+  assert.match(tabs, /<OffboardingReportPanel \/>/);
   assert.match(tabs, /canViewDuplicateCccd/);
+  assert.match(tabs, /canViewOffboarding/);
   assert.match(tabs, /tab\.key === "duplicate-cccd"[\s\S]*canViewDuplicateCccd/);
   assert.match(tabs, /id="bod-panel-duplicate-cccd"/);
+  assert.match(tabs, /id="bod-panel-offboarding"/);
 });
 
 test("W06D: unknown split, load-more/end and retry are explicit", () => {

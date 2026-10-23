@@ -233,18 +233,6 @@ export const NAV_ENTRIES: ReadonlyArray<NavEntry> = [
     visibility: { desktop: true, mobile: true },
   },
   {
-    id: "workforce-offboarding",
-    label: "NLĐ nghỉ việc",
-    path: "/workforce/offboarding",
-    description:
-      "Báo cáo người lao động đã nghỉ việc và chưa có việc mới từ 3 ngày trở lên.",
-    icon: Users,
-    status: "current",
-    capability: "workforce_offboarding",
-    group: "daily-reports",
-    visibility: { desktop: true, mobile: true },
-  },
-  {
     id: "admin",
     label: "Quản trị",
     path: "/admin",

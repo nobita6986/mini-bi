@@ -7,6 +7,7 @@ import { DashboardView } from "@/components/dashboard/dashboard-view";
 import {
   canViewDeepWorkforceReport,
   canViewDuplicateCccdReport,
+  canViewOffboardingReport,
 } from "@/lib/auth/direct-entry-page-access";
 import { decideSessionPageAccess } from "@/lib/auth/session-page-access";
 import { resolveActorForRequest } from "@/lib/navigation/resolve-nav-actor";
@@ -17,11 +18,11 @@ export const dynamic = "force-dynamic";
 export const metadata = { title: "Tổng quan tuyển dụng — Hệ thống báo cáo HRP" };
 
 type SearchParams = Record<string, string | string[] | undefined>;
-type DashboardTab = "general" | "deep" | "team" | "duplicate-cccd";
+type DashboardTab = "general" | "deep" | "team" | "duplicate-cccd" | "offboarding";
 
 function normalizedDashboardTab(value: string | string[] | undefined): DashboardTab | null {
   return typeof value === "string" &&
-    (value === "general" || value === "deep" || value === "team" || value === "duplicate-cccd") ? value : null;
+    (value === "general" || value === "deep" || value === "team" || value === "duplicate-cccd" || value === "offboarding") ? value : null;
 }
 
 function normalizedDashboardPath(params: SearchParams, tab: DashboardTab, removeSource: boolean): string {
@@ -76,12 +77,16 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   if (tab === "duplicate-cccd" && !canViewDuplicateCccd) {
     redirect(normalizedDashboardPath(params, "general", false));
   }
+  const canViewOffboarding = canViewOffboardingReport(actor.actor);
+  if (tab === "offboarding" && !canViewOffboarding) {
+    redirect(normalizedDashboardPath(params, "general", false));
+  }
   const canViewDeep = canViewDeepWorkforceReport(actor);
   if (tab === "deep" && !canViewDeep) {
     redirect(normalizedDashboardPath(params, "general", false));
   }
   // `source` is a general-dashboard filter; the deep, team and CCCD tabs never consume it.
-  if ((tab === "deep" || tab === "team" || tab === "duplicate-cccd") && sourcePresent) {
+  if ((tab === "deep" || tab === "team" || tab === "duplicate-cccd" || tab === "offboarding") && sourcePresent) {
     redirect(normalizedDashboardPath(params, tab, true));
   }
   const [report, options] = await Promise.all([
@@ -97,6 +102,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
       optionsResult={options}
       audience={report.ok ? report.audience : null}
       canViewDuplicateCccd={canViewDuplicateCccd}
+      canViewOffboarding={canViewOffboarding}
     />
   );
 }

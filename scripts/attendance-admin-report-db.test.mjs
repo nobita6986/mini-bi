@@ -316,6 +316,23 @@ async function callReportAsServiceRole(db, args) {
   }
 }
 
+async function callPhotoAsServiceRole(db, args) {
+  await db.exec("begin; set local role service_role;");
+  try {
+    const res = await db.query(
+      `select public.attendance_admin_checkin_photo(
+        $1::uuid, $2::uuid, $3::uuid
+      ) as data`,
+      [args.auth_subject, args.app_user_id, args.checkin_id],
+    );
+    await db.exec("commit;");
+    return res.rows[0].data;
+  } catch (err) {
+    await db.exec("rollback;");
+    throw err;
+  }
+}
+
 async function callSetHqAsServiceRole(db, args) {
   const idempotencyKey = args.idempotency_key ?? nextUuid();
   const fingerprint =
@@ -569,6 +586,23 @@ test("Attendance Admin Report SQL enforces ACL/immutability, role matrix, HQ rev
           await db.exec(`begin; set local role ${role};`);
           try {
             await db.query(
+              "select public.attendance_admin_checkin_photo($1::uuid, $2::uuid, $3::uuid)",
+              [ACTORS.FULL_ADMIN.auth, ACTORS.FULL_ADMIN.app, nextUuid()],
+            );
+            await db.exec("commit;");
+          } catch (err) {
+            await db.exec("rollback;");
+            throw err;
+          }
+        },
+        (err) => err.code === "42501",
+      );
+
+      await assert.rejects(
+        async () => {
+          await db.exec(`begin; set local role ${role};`);
+          try {
+            await db.query(
               "select public.attendance_set_hq_location($1::uuid, $2::uuid, 21.0, 105.8, 0, $3::uuid, $4::text)",
               [ACTORS.FULL_ADMIN.auth, ACTORS.FULL_ADMIN.app, nextUuid(), "a".repeat(64)],
             );
@@ -597,6 +631,15 @@ test("Attendance Admin Report SQL enforces ACL/immutability, role matrix, HQ rev
       assert.equal(report.viewer.can_configure_hq, expectedCanConfigure, label);
       assert.equal(report.current_hq, null, label);
       assert.ok(projectAttendanceAdminReport(report), `strict projection passes for ${label}`);
+      assert.deepEqual(
+        await callPhotoAsServiceRole(db, {
+          auth_subject: actor.auth,
+          app_user_id: actor.app,
+          checkin_id: nextUuid(),
+        }),
+        { found: false },
+        `${label} may resolve a private photo only through the guarded RPC`,
+      );
     }
 
     for (const [label, authSubject, appUserId, expectedToken] of [
@@ -623,6 +666,15 @@ test("Attendance Admin Report SQL enforces ACL/immutability, role matrix, HQ rev
           }),
         (err) => err.code === "42501" && String(err.message).includes(expectedToken),
         `report read must deny ${label}`,
+      );
+      await assert.rejects(
+        () => callPhotoAsServiceRole(db, {
+          auth_subject: authSubject,
+          app_user_id: appUserId,
+          checkin_id: nextUuid(),
+        }),
+        (err) => err.code === "42501" && String(err.message).includes(expectedToken),
+        `private photo read must deny ${label}`,
       );
     }
 
@@ -916,6 +968,19 @@ test("Attendance Admin Report SQL enforces ACL/immutability, role matrix, HQ rev
     assert.equal(byId.get(c0PreHq.checkin_id).distance_meters, null);
     assert.equal(byId.get(c0PreHq.checkin_id).hq_version_used, null);
     assert.equal(byId.get(c0PreHq.checkin_id).personnel_code, ACTORS.STAFF_A.code);
+    const c0StoredPhoto = (await db.query(
+      "select photo_storage_key from public.attendance_checkins where checkin_id=$1::uuid",
+      [c0PreHq.checkin_id],
+    )).rows[0].photo_storage_key;
+    assert.deepEqual(
+      await callPhotoAsServiceRole(db, {
+        auth_subject: ACTORS.BOD_PRIVILEGED.auth,
+        app_user_id: ACTORS.BOD_PRIVILEGED.app,
+        checkin_id: c0PreHq.checkin_id,
+      }),
+      { found: true, photo_storage_key: c0StoredPhoto },
+      "guarded RPC resolves the exact private key without adding it to report rows",
+    );
 
     // Verify C1 & C2 (during v1): preserved exact v1 distances, NOT recomputed against HCMC v2!
     assert.equal(byId.get(c1ExactV1.checkin_id).distance_status, "COMPUTED");
