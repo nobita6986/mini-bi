@@ -73,7 +73,7 @@ export function DashboardFilters({
 
   const chip = (active: boolean) =>
     cn(
-      "inline-flex h-11 shrink-0 items-center rounded-full border px-3 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
+      "inline-flex h-11 shrink-0 items-center rounded-full border px-3 text-xs font-medium transition-colors duration-[180ms] ease-[var(--ui-motion-ease,cubic-bezier(0.22,1,0.36,1))] motion-reduce:transition-none focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
       active
         ? "border-primary bg-primary text-on-primary"
         : "border-border bg-surface text-foreground hover:bg-muted/10"
@@ -88,12 +88,12 @@ export function DashboardFilters({
             <span className="inline-flex items-center rounded-full bg-primary/15 px-2 py-0.5 text-xs font-medium text-primary">{countLabel}</span>
           </div>
           <div className="flex items-center gap-2">
-            <button type="button" aria-expanded={advancedOpen} aria-controls="advanced-filters" onClick={() => setAdvancedOpen((o) => !o)} className="inline-flex h-11 items-center rounded-lg border border-border px-3 text-sm font-medium text-foreground hover:bg-muted/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40">
+            <button type="button" aria-expanded={advancedOpen} aria-controls="advanced-filters" onClick={() => setAdvancedOpen((o) => !o)} className="inline-flex h-11 items-center rounded-lg border border-border px-3 text-sm font-medium text-foreground transition-colors duration-[var(--ui-motion-hover,160ms)] ease-[var(--ui-motion-ease,cubic-bezier(0.22,1,0.36,1))] motion-reduce:transition-none hover:bg-muted/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40">
               <span aria-hidden className="mr-1">{advancedOpen ? "▾" : "▸"}</span>
               Bộ lọc nâng cao
             </button>
             {activeCount > 0 || allTime ? (
-              <button type="button" onClick={() => setFilters(null)} className="inline-flex h-11 items-center rounded-lg bg-primary px-3 text-sm font-medium text-on-primary hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-ring/40">
+              <button type="button" onClick={() => setFilters(null)} className="inline-flex h-11 items-center rounded-lg bg-primary px-3 text-sm font-medium text-on-primary transition-colors duration-[var(--ui-motion-hover,160ms)] ease-[var(--ui-motion-ease,cubic-bezier(0.22,1,0.36,1))] motion-reduce:transition-none hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-ring/40">
                 Xóa bộ lọc
               </button>
             ) : null}
