@@ -5,7 +5,7 @@
  * Khong nhan actor/capability/scope tu client; API/DB van la authority.
  */
 import type { ActorResolution } from "./direct-entry-v2";
-import type { NavCapabilityPredicate } from "../navigation/registry-capability.ts";
+import type { NavActorProjection, NavCapabilityPredicate } from "../navigation/registry-capability.ts";
 import {
   adminAreaNavPredicate,
   adminSecurityNavPredicate,
@@ -193,6 +193,25 @@ export function decideWorkReportAnalyticsPageAccess(input: {
   actor: ActorResolution | null;
 }): DirectEntryPageDecision {
   return decideCapabilityPageAccess({ actor: input.actor, allowed: workReportAnalyticsPredicate });
+}
+
+/**
+ * Offboarding / unemployed worker report visibility hint. The RPC still enforces the
+ * exact authority (Full Admin triple, BoD entry_privileged_edit@all, or current Team
+ * Leader); this predicate only decides whether the page/nav link is shown.
+ */
+export function canViewOffboardingReport(actor: NavActorProjection | null): boolean {
+  if (!actor) return false;
+  if (adminSecurityNavPredicate(actor)) return true;
+  if (actor.capabilities.includes("entry_privileged_edit") && actor.scopes.some((scope) => scope.kind === "all")) return true;
+  if (actor.capabilities.includes("team_manager_assign") && actor.scopes.some((scope) => scope.kind === "team")) return true;
+  return false;
+}
+
+export function decideWorkforceOffboardingPageAccess(input: {
+  actor: ActorResolution | null;
+}): DirectEntryPageDecision {
+  return decideCapabilityPageAccess({ actor: input.actor, allowed: canViewOffboardingReport });
 }
 
 export const HISTORICAL_CHANGE_REQUEST_QUEUES = [

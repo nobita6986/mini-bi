@@ -69,6 +69,12 @@ export const ATTENDANCE_WP1_RPC_SIGNATURES = Object.freeze([
   "public.attendance_lookup_checkin_idempotency(uuid, uuid, uuid, text)",
   "public.attendance_record_checkin(uuid, uuid, uuid, text, double precision, double precision, double precision, text, text, timestamp with time zone, text, timestamp with time zone, bigint, text, text, text, integer, text, timestamp with time zone)",
 ]);
+export const OFFBOARDING_REPORT_MIGRATION_NAME =
+  "20261024100000_offboarding_report.sql";
+export const OFFBOARDING_REPORT_RPC_SIGNATURES = Object.freeze([
+  "public.direct_entry_offboarding_report(uuid, uuid, integer, integer)",
+  "public.direct_entry_offboarding_report_export(uuid, uuid)",
+]);
 export const F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES = Object.freeze([
   "public.work_report_list_templates(uuid, uuid)",
   "public.work_report_get_template(uuid, uuid, uuid)",
@@ -285,7 +291,8 @@ export async function verifyS0T1CHistoricalCompatibility(
     projectTeamScopeSearchApplied = false,
     duplicateCccdSelfServiceApplied = false,
     workReportsReaderContractApplied = false,
-    attendanceWp1Applied = false } = {},
+    attendanceWp1Applied = false,
+    offboardingReportApplied = false } = {},
 ) {
   const baseAllowlist = extractS0T1CAllowlistSignatures(migrationSql);
   if (baseAllowlist.length === 0) {
@@ -307,6 +314,7 @@ export async function verifyS0T1CHistoricalCompatibility(
     ...(duplicateCccdSelfServiceApplied ? DUPLICATE_CCCD_SELF_SERVICE_RPC_SIGNATURES : []),
     ...(workReportsReaderContractApplied ? WORK_REPORTS_READER_CONTRACT_RPC_SIGNATURES : []),
     ...(attendanceWp1Applied ? ATTENDANCE_WP1_RPC_SIGNATURES : []),
+    ...(offboardingReportApplied ? OFFBOARDING_REPORT_RPC_SIGNATURES : []),
   ];
 
   const { rows } = await client.query(
@@ -511,6 +519,8 @@ export async function verifyAppliedMigrationChecksum(
           appliedMap.has(WORK_REPORTS_READER_CONTRACT_MIGRATION_NAME),
         attendanceWp1Applied:
           appliedMap.has(ATTENDANCE_WP1_MIGRATION_NAME),
+        offboardingReportApplied:
+          appliedMap.has(OFFBOARDING_REPORT_MIGRATION_NAME),
       },
     );
     if (postconditions.ok) {
