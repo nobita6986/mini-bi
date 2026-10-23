@@ -488,9 +488,9 @@ export function AiSettingsPanel() {
             <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
               {loading ? (
                 <div className="flex flex-col gap-3">
-                  <div className="h-20 animate-pulse rounded-2xl bg-muted/40" />
-                  <div className="h-10 animate-pulse rounded-lg bg-muted/40" />
-                  <div className="h-10 animate-pulse rounded-lg bg-muted/40" />
+                  <div className="h-20 animate-pulse motion-reduce:animate-none rounded-2xl bg-muted/40" />
+                  <div className="h-10 animate-pulse motion-reduce:animate-none rounded-lg bg-muted/40" />
+                  <div className="h-10 animate-pulse motion-reduce:animate-none rounded-lg bg-muted/40" />
                 </div>
               ) : (
                 <div className="flex flex-col gap-4">

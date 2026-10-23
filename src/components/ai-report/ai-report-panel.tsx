@@ -67,7 +67,7 @@ const triggerButtonClass = "inline-flex h-11 items-center rounded-lg border bord
 
 function Skeleton() {
   return (
-    <div aria-hidden className="flex animate-pulse flex-col gap-3">
+    <div aria-hidden className="flex animate-pulse motion-reduce:animate-none flex-col gap-3">
       <div className="h-9 rounded-lg bg-muted/40" />
       <div className="h-24 rounded-2xl bg-muted/40" />
       <div className="h-40 rounded-2xl bg-muted/40" />
