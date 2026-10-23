@@ -6,7 +6,7 @@
 **Mốc mã nguồn đã kiểm tra:** `main` tại commit `9eb7228e0cbe815983d6705345e4b0c09cdc7c4b` (21/10/2026).
 **Đường dẫn đề xuất trong repo:** `docs/plans/mini-bi-ui-ux-agent-ready-masterplan.md`
 **Loại tài liệu:** Product specification + technical work order + acceptance criteria + regression checklist.
-**Trạng thái:** Đặc tả triển khai, **chưa** đồng nghĩa mã nguồn đã được sửa.
+**Trạng thái:** Chặng 1 đã hoàn tất & merge tại `cc48b11185e3be3649cbf5bad96b06c27f8dfeb5` (`PR #122`–`#134`); Chặng 2 (`S2-01`–`S2-08`) đã triển khai qua chuỗi stacked PR `#135`–`#142` (xem báo cáo QA, bundle & checklist Manual UAT `NOT VERIFIED` tại [`docs/plans/uiux/chang-2-qa-and-governance.md`](./uiux/chang-2-qa-and-governance.md)).
 
 > **LỆNH GIAO VIỆC:** Coding Agent phải triển khai theo **chính file này**, dùng repo làm nguồn xác minh kỹ thuật. **Không cần, không được yêu cầu lại clip, hình ảnh, ảnh chụp màn hình hoặc truy cập Vessa demo** để hiểu yêu cầu. Các đặc điểm thị giác và hiệu ứng cần triển khai đã được mô tả bằng văn bản và thông số trong file. Nếu repo thay đổi sau commit tham chiếu, kiểm tra đường dẫn mới và ghi lại sai khác; không tự ý đổi yêu cầu sản phẩm.
 
