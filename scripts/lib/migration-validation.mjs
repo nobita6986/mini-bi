@@ -91,6 +91,17 @@ export const HF_OFFBOARDING_SUPPRESSION_AND_ATTENDANCE_FILTER_RPC_SIGNATURES = O
   "public.direct_entry_offboarding_hide_snapshot(uuid, uuid, uuid, uuid, text, text)",
   "public.attendance_admin_report(uuid, uuid, date, date, integer, integer, text, uuid)",
 ]);
+export const ORG_SHELL_01_DEPARTMENTS_MIGRATION_NAME =
+  "20261025090000_org_shell_01_departments.sql";
+export const ORG_SHELL_01_DEPARTMENTS_RPC_SIGNATURES = Object.freeze([
+  "public.org_department_list_departments_admin(uuid, uuid)",
+  "public.org_department_get_department_admin(uuid, uuid, uuid)",
+  "public.org_department_list_accounting_memberships_admin(uuid, uuid, text, boolean, integer, integer)",
+  "public.org_department_list_accounting_candidates_admin(uuid, uuid, text, integer, integer)",
+  "public.org_department_assign_accounting_member(uuid, uuid, uuid, integer, date, text, uuid, text)",
+  "public.org_department_end_accounting_member(uuid, uuid, uuid, integer, date, text, uuid, text)",
+  "public.org_department_list_recruitment_teams_admin(uuid, uuid, text, boolean, integer, integer)",
+]);
 export const F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES = Object.freeze([
   "public.work_report_list_templates(uuid, uuid)",
   "public.work_report_get_template(uuid, uuid, uuid)",
@@ -109,7 +120,7 @@ export const F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES = Object.freeze([
   "public.work_report_submit(uuid, uuid, uuid, jsonb, integer, text)",
 ]);
 export const S0_T1_C_TARGET_ROUTINE_PATTERN =
-  "^(direct_entry_|work_report_|attendance_|ai_report_|ai_provider_config_|recruitment_|(expand|replace|reject|upsert)_daily_recruitment|record_recruitment_source_failure_|set_updated_at$)";
+  "^(direct_entry_|work_report_|attendance_|org_department_|ai_report_|ai_provider_config_|recruitment_|(expand|replace|reject|upsert)_daily_recruitment|record_recruitment_source_failure_|set_updated_at$)";
 
 export function migrationChecksum(text) {
   // Git may materialize SQL files as CRLF on Windows even though the same
@@ -311,7 +322,8 @@ export async function verifyS0T1CHistoricalCompatibility(
     attendanceAdminReportApplied = false,
     offboardingReportApplied = false,
     asyncDocumentsAttendancePhotoApplied = false,
-    hfOffboardingSuppressionAndAttendanceFilterApplied = false } = {},
+    hfOffboardingSuppressionAndAttendanceFilterApplied = false,
+    orgShell01DepartmentsApplied = false } = {},
 ) {
   const baseAllowlist = extractS0T1CAllowlistSignatures(migrationSql);
   if (baseAllowlist.length === 0) {
@@ -341,6 +353,7 @@ export async function verifyS0T1CHistoricalCompatibility(
     ...(hfOffboardingSuppressionAndAttendanceFilterApplied
       ? HF_OFFBOARDING_SUPPRESSION_AND_ATTENDANCE_FILTER_RPC_SIGNATURES
       : []),
+    ...(orgShell01DepartmentsApplied ? ORG_SHELL_01_DEPARTMENTS_RPC_SIGNATURES : []),
   ];
 
   const { rows } = await client.query(
@@ -399,7 +412,7 @@ export async function verifyS0T1CHistoricalCompatibility(
           join pg_catalog.pg_namespace n on n.oid = p.pronamespace
          where n.nspname = 'public'
            and p.prokind in ('f', 'p')
-           and p.proname ~ '^(direct_entry_|attendance_)'
+           and p.proname ~ '^(direct_entry_|attendance_|org_department_)'
            and p.prosecdef
            and not coalesce(
              'search_path=pg_catalog, public' = any(p.proconfig)
@@ -553,6 +566,8 @@ export async function verifyAppliedMigrationChecksum(
           appliedMap.has(ASYNC_DOCUMENTS_ATTENDANCE_PHOTO_MIGRATION_NAME),
         hfOffboardingSuppressionAndAttendanceFilterApplied:
           appliedMap.has(HF_OFFBOARDING_SUPPRESSION_AND_ATTENDANCE_FILTER_MIGRATION_NAME),
+        orgShell01DepartmentsApplied:
+          appliedMap.has(ORG_SHELL_01_DEPARTMENTS_MIGRATION_NAME),
       },
     );
     if (postconditions.ok) {
