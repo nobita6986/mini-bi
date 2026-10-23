@@ -2402,7 +2402,7 @@ export function BucketList({ buckets, label = "Xem danh sách đầy đủ" }: {
                   }`}
                 >
                   <td className="px-3 py-1.5">{b.display}</td>
-                  <td className="px-3 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">{b.recruitedCount}</td>
+                  <td className="px-3 py-1.5 text-right tabular-nums whitespace-nowrap">{b.recruitedCount}</td>
                 </tr>
               );
             })}
