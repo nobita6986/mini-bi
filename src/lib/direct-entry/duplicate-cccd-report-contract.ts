@@ -1,17 +1,19 @@
 /**
- * P3.1-HF-R3 - Hop dong bao cao CCCD trung (read-only, phan trang).
+ * P3.1-HF-R3 + HF Duplicate CCCD Self-Service Actions - Hop dong bao cao CCCD trung.
  *
  * Pure projection: khong I/O, khong doc session, khong goi DB. Nguon su that la RPC
- * public.direct_entry_duplicate_cccd_report (#74) - server tu resolve actor; client khong
- * bao gio gui auth_subject/app_user_id/capability/scope.
+ * public.direct_entry_duplicate_cccd_report va public.direct_entry_self_withdraw_duplicate_cccd -
+ * server tu resolve actor; client khong bao gio gui auth_subject/app_user_id/capability/scope.
  *
  * Module nay:
- *   * parse/validate query dung hai key `page` + `page_size` theo bien cua RPC
- *     (page 1..1000, page_size 1..100, mac dinh 25) va fail-closed voi moi key khac;
+ *   * parse/validate query dung ba key `page` + `page_size` + `managed_only` (tuy chon, boolean)
+ *     theo bien cua RPC (page 1..1000, page_size 1..100, mac dinh 25, managed_only mac dinh false)
+ *     va fail-closed voi moi key khac;
  *   * xac nhan projection cua RPC theo dung key cua no roi thu ve projection hien thi:
  *     loai bo `authority` (capability) va `project_id` (dinh danh routing noi bo) truoc khi
- *     bat ky byte nao roi khoi server. Khong bao gio tra CCCD day du, UUID, entry_id/worker
- *     ID, auth subject, email, capability/scope hay raw DB error.
+ *     bat ky byte nao roi khoi server; chi giu `entry_id`, `entry_version`, `can_mark_off` va
+ *     `can_self_withdraw` de thuc hien thao tac co kiem soat. Khong bao gio tra CCCD day du,
+ *     created_by_user_id, auth subject, email, capability/scope hay raw DB error.
  *   * map trang thai canonical ON / UNCONFIRMED / OFF sang nhan tieng Viet cho UI (SQL chi
  *     phat ra enum, khong bao gio so sanh chuoi tieng Viet).
  */
@@ -23,10 +25,10 @@ export const DUPLICATE_CCCD_REPORT_MAX_PAGE = 1000;
 /** Lua chon kich thuoc trang cho UI - tat ca deu trong bien cua RPC. */
 export const DUPLICATE_CCCD_REPORT_PAGE_SIZE_OPTIONS: readonly number[] = [25, 50, 100];
 
-export const DUPLICATE_CCCD_REPORT_QUERY_KEYS = ["page", "page_size"] as const;
+export const DUPLICATE_CCCD_REPORT_QUERY_KEYS = ["page", "page_size", "managed_only"] as const;
 
 /**
- * Key cua jsonb ma RPC #74 thuc su phat ra. `authority` va `project_id` phai co trong payload
+ * Key cua jsonb ma RPC phat ra. `authority` va `project_id` phai co trong payload
  * de xac nhan dung contract, nhung chung KHONG duoc tra ra client.
  */
 export const DUPLICATE_CCCD_REPORT_RPC_KEYS = [
@@ -34,11 +36,11 @@ export const DUPLICATE_CCCD_REPORT_RPC_KEYS = [
   "has_more", "groups",
 ] as const;
 export const DUPLICATE_CCCD_REPORT_RPC_EPISODE_KEYS = [
-  "employee_code", "display_name", "project_id", "project_display", "first_work_date",
-  "latest_status", "active",
+  "entry_id", "entry_version", "employee_code", "display_name", "project_id", "project_display",
+  "first_work_date", "latest_status", "active", "can_mark_off", "can_self_withdraw",
 ] as const;
 
-/** Projection hien thi tra ra client: dung cac truong display RPC cho phep. */
+/** Projection hien thi tra ra client: dung cac truong display + action flags RPC cho phep. */
 export const DUPLICATE_CCCD_REPORT_PAGE_KEYS = [
   "page", "page_size", "total_groups", "total_entries", "has_more", "authorization_date",
   "groups",
@@ -48,8 +50,12 @@ export const DUPLICATE_CCCD_REPORT_GROUP_KEYS = [
   "first_work_date", "latest_first_work_date", "episodes",
 ] as const;
 export const DUPLICATE_CCCD_REPORT_EPISODE_KEYS = [
-  "employee_code", "display_name", "project_display", "first_work_date", "latest_status",
-  "active",
+  "entry_id", "entry_version", "employee_code", "display_name", "project_display",
+  "first_work_date", "latest_status", "active", "can_mark_off", "can_self_withdraw",
+] as const;
+
+export const DUPLICATE_CCCD_SELF_WITHDRAW_BODY_KEYS = [
+  "entry_id", "expected_entry_version", "idempotency_key", "reason",
 ] as const;
 
 export const DUPLICATE_CCCD_REPORT_AUTHORITIES = ["business_actor"] as const;
@@ -69,6 +75,7 @@ const ISO_DATE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
 const LAST4 = /^[0-9]{4}$/;
 const PAGE_TEXT = /^[1-9][0-9]{0,3}$/;
 const PAGE_SIZE_TEXT = /^[1-9][0-9]{0,2}$/;
+const UUID_TEXT = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -95,18 +102,32 @@ function isCount(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
-export type DuplicateCccdReportQuery = { page: number; page_size: number };
+function isPositiveSafeInt(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 1;
+}
+
+export type DuplicateCccdReportQuery = {
+  page: number;
+  page_size: number;
+  managed_only?: boolean;
+};
+
+export type ProjectedDuplicateCccdReportQuery = {
+  page: number;
+  page_size: number;
+  managed_only: boolean;
+};
 
 export type DuplicateCccdReportQueryProjection =
-  | { ok: true; value: DuplicateCccdReportQuery }
+  | { ok: true; value: ProjectedDuplicateCccdReportQuery }
   | { ok: false; code: "DUPLICATE_CCCD_REPORT_QUERY_INVALID" };
 
 const QUERY_INVALID = { ok: false, code: "DUPLICATE_CCCD_REPORT_QUERY_INVALID" } as const;
 
 /**
- * Query chi nhan dung `page` | `page_size`. Tham so khac (order, offset, limit, scope,
- * auth_subject, app_user_id...) bi tu choi: client khong dieu khien duoc paging ngoai bien
- * cua RPC va khong tu khai identity/authority.
+ * Query chi nhan dung `page` | `page_size` | `managed_only`. Tham so khac (order, offset, limit,
+ * scope, project_id, auth_subject, app_user_id...) bi tu choi: client khong dieu khien duoc paging
+ * ngoai bien cua RPC va khong tu khai identity/authority/project list.
  */
 export function projectDuplicateCccdReportQuery(
   searchParams: URLSearchParams,
@@ -132,7 +153,19 @@ export function projectDuplicateCccdReportQuery(
     if (pageSize < 1 || pageSize > DUPLICATE_CCCD_REPORT_MAX_PAGE_SIZE) return QUERY_INVALID;
   }
 
-  return { ok: true, value: { page, page_size: pageSize } };
+  const rawManagedOnly = searchParams.get("managed_only");
+  let managedOnly = false;
+  if (rawManagedOnly !== null) {
+    if (rawManagedOnly === "true") {
+      managedOnly = true;
+    } else if (rawManagedOnly === "false") {
+      managedOnly = false;
+    } else {
+      return QUERY_INVALID;
+    }
+  }
+
+  return { ok: true, value: { page, page_size: pageSize, managed_only: managedOnly } };
 }
 
 /** Query string do client dung de goi API. Vuot bien => null (khong gui request sai). */
@@ -147,10 +180,17 @@ export function buildDuplicateCccdReportQuery(
       input.page_size > DUPLICATE_CCCD_REPORT_MAX_PAGE_SIZE) {
     return null;
   }
-  return new URLSearchParams({
+  if (input.managed_only !== undefined && typeof input.managed_only !== "boolean") {
+    return null;
+  }
+  const params = new URLSearchParams({
     page: String(input.page),
     page_size: String(input.page_size),
   });
+  if (input.managed_only !== undefined) {
+    params.set("managed_only", input.managed_only ? "true" : "false");
+  }
+  return params;
 }
 
 /**
@@ -164,13 +204,38 @@ export function nextDuplicateCccdReportPage(page: number, hasMore: boolean): num
   return page + 1;
 }
 
+/**
+ * Clamp trang hien tai ve trang hop le gan nhat khi nhom trung tren trang cuoi bien mat sau
+ * thao tac Đã nghỉ / Rút trùng hoac sau khi bat bo loc managed_only.
+ */
+export function clampDuplicateCccdReportPage(
+  page: number,
+  totalGroups: number,
+  pageSize: number,
+): number {
+  const safePage = Number.isSafeInteger(page) && page >= 1
+    ? Math.min(page, DUPLICATE_CCCD_REPORT_MAX_PAGE)
+    : 1;
+  const safeSize = Number.isSafeInteger(pageSize) && pageSize >= 1 ? pageSize : 1;
+  const safeTotal = Number.isSafeInteger(totalGroups) && totalGroups >= 0 ? totalGroups : 0;
+  const pageCount = Math.min(
+    DUPLICATE_CCCD_REPORT_MAX_PAGE,
+    Math.max(1, Math.ceil(safeTotal / safeSize)),
+  );
+  return Math.min(safePage, pageCount);
+}
+
 export type DuplicateCccdReportEpisode = {
+  entry_id: string;
+  entry_version: number;
   employee_code: string | null;
   display_name: string | null;
   project_display: string | null;
   first_work_date: string | null;
   latest_status: DuplicateCccdEmploymentStatus;
   active: boolean;
+  can_mark_off: boolean;
+  can_self_withdraw: boolean;
 };
 
 export type DuplicateCccdReportGroup = {
@@ -199,6 +264,8 @@ function isEmploymentStatus(value: unknown): value is DuplicateCccdEmploymentSta
 }
 
 function projectEpisodeFields(value: Record<string, unknown>): DuplicateCccdReportEpisode | null {
+  if (typeof value.entry_id !== "string" || !UUID_TEXT.test(value.entry_id)) return null;
+  if (!isPositiveSafeInt(value.entry_version)) return null;
   if (!isNullableText(value.employee_code, 64)) return null;
   if (!isNullableText(value.display_name, 256)) return null;
   if (!isNullableText(value.project_display, 256)) return null;
@@ -206,13 +273,19 @@ function projectEpisodeFields(value: Record<string, unknown>): DuplicateCccdRepo
   if (!isEmploymentStatus(value.latest_status)) return null;
   if (typeof value.active !== "boolean") return null;
   if (value.latest_status !== "ON" || value.active !== true) return null;
+  if (typeof value.can_mark_off !== "boolean") return null;
+  if (typeof value.can_self_withdraw !== "boolean") return null;
   return {
+    entry_id: value.entry_id,
+    entry_version: value.entry_version,
     employee_code: value.employee_code,
     display_name: value.display_name,
     project_display: value.project_display,
     first_work_date: value.first_work_date,
     latest_status: value.latest_status,
     active: value.active,
+    can_mark_off: value.can_mark_off,
+    can_self_withdraw: value.can_self_withdraw,
   };
 }
 
@@ -297,7 +370,7 @@ function projectPageBody(
 }
 
 /**
- * Xac nhan payload RPC #74 (dung key RPC) roi tra ve projection hien thi: bo `authority`
+ * Xac nhan payload RPC (dung key RPC) roi tra ve projection hien thi: bo `authority`
  * (capability) va `project_id` (dinh danh noi bo). Bat ky sai khac nao => null de caller
  * fail-closed (khong bao gio render mot trang voi du lieu khong ro nguon).
  */
@@ -332,6 +405,104 @@ export function projectDuplicateCccdReportResponse(
     return null;
   }
   return projectPageBody(payload, expected, (raw) => projectGroup(raw, projectEpisodeView));
+}
+
+export type DuplicateCccdSelfWithdrawRequest = {
+  entry_id: string;
+  expected_entry_version: number;
+  idempotency_key: string;
+  reason: string | null;
+};
+
+export type DuplicateCccdSelfWithdrawResult = {
+  entry_id: string;
+  version: number;
+};
+
+/**
+ * Strict body projection cho POST /api/direct-entry/duplicate-cccd-report/self-withdraw.
+ * Chi nhan entry_id, expected_entry_version, idempotency_key va reason tuy chon.
+ */
+export function projectDuplicateCccdSelfWithdrawRequest(
+  body: unknown,
+): DuplicateCccdSelfWithdrawRequest | null {
+  if (!isRecord(body)) return null;
+  const keys = Object.keys(body);
+  if (!keys.includes("entry_id") ||
+      !keys.includes("expected_entry_version") ||
+      !keys.includes("idempotency_key") ||
+      !keys.every((key) => (DUPLICATE_CCCD_SELF_WITHDRAW_BODY_KEYS as readonly string[]).includes(key))) {
+    return null;
+  }
+  if (typeof body.entry_id !== "string" || !UUID_TEXT.test(body.entry_id)) return null;
+  if (!isPositiveSafeInt(body.expected_entry_version)) return null;
+  if (typeof body.idempotency_key !== "string" ||
+      body.idempotency_key.trim().length === 0 ||
+      body.idempotency_key.length > 128) {
+    return null;
+  }
+  const rawReason = body.reason;
+  if (rawReason !== undefined && rawReason !== null &&
+      (typeof rawReason !== "string" || rawReason.length > 1000)) {
+    return null;
+  }
+  const reason = typeof rawReason === "string" ? rawReason.trim() || null : null;
+  return {
+    entry_id: body.entry_id,
+    expected_entry_version: body.expected_entry_version,
+    idempotency_key: body.idempotency_key.trim(),
+    reason,
+  };
+}
+
+/** Strict result projection cho RPC direct_entry_self_withdraw_duplicate_cccd. */
+export function projectDuplicateCccdSelfWithdrawRpcResult(
+  value: unknown,
+  expectedEntryId: string,
+): DuplicateCccdSelfWithdrawResult | null {
+  if (!isRecord(value) || !hasExactKeys(value, ["entry_id", "version"])) return null;
+  if (typeof value.entry_id !== "string" || value.entry_id !== expectedEntryId) return null;
+  if (!isPositiveSafeInt(value.version)) return null;
+  return { entry_id: value.entry_id, version: value.version };
+}
+
+/**
+ * Anh xa ma loi sanitized tu POST /api/direct-entry/duplicate-cccd-report/self-withdraw
+ * sang thong bao tieng Viet ro rang, khong bao gio lo raw PostgreSQL error.
+ */
+export function duplicateCccdSelfWithdrawErrorMessage(
+  status: number,
+  code?: string | null,
+): string {
+  if (code === "ENTRY_ALREADY_VOIDED") {
+    return "Hồ sơ này đã được rút trùng trước đó. Vui lòng tải lại báo cáo.";
+  }
+  if (code === "DUPLICATE_NO_LONGER_ACTIVE") {
+    return "Hồ sơ không còn nằm trong nhóm CCCD trùng đang làm việc. Vui lòng tải lại báo cáo.";
+  }
+  if (code === "VERSION_CONFLICT" || code === "IDEMPOTENCY_CONFLICT" || status === 409) {
+    return "Hồ sơ đã thay đổi ở nơi khác. Vui lòng tải lại báo cáo trước khi thử lại.";
+  }
+  if (code === "SELF_WITHDRAW_DENIED" || code === "ACTOR_NOT_AVAILABLE" || status === 403) {
+    return "Chỉ đúng người đã tạo hồ sơ mới được tự rút trùng dòng này.";
+  }
+  if (code === "UNAUTHENTICATED" || status === 401) {
+    return "Phiên làm việc đã hết hiệu lực. Vui lòng đăng nhập lại.";
+  }
+  if (code === "ENTRY_NOT_FOUND" || status === 404) {
+    return "Không tìm thấy hồ sơ cần rút trùng. Vui lòng tải lại báo cáo.";
+  }
+  if (
+    code === "SELF_WITHDRAW_INVALID" ||
+    code === "CLIENT_AUTHORITY_FIELD_FORBIDDEN" ||
+    code === "BODY_INVALID" ||
+    code === "CONTENT_TYPE_INVALID" ||
+    status === 400 ||
+    status === 422
+  ) {
+    return "Yêu cầu rút trùng không hợp lệ. Vui lòng kiểm tra lại ghi chú và thử lại.";
+  }
+  return "Không thực hiện được thao tác rút trùng. Vui lòng thử lại.";
 }
 
 /** CCCD da che: chi 4 chu so cuoi hien ra, phan con lai la placeholder. */

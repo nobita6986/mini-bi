@@ -260,3 +260,72 @@ test("R4: repository authorization denial remains an HTTP 403", async () => {
   assert.equal(response.status, 403);
   assert.deepEqual(await response.json(), { ok: false, code: "PRIVILEGED_EDIT_DENIED" });
 });
+
+test("HF-Duplicate-CCCD: quick ON -> OFF payload requires non-empty leave_reason and preserves OCC/authority boundaries", async () => {
+  const deps = dependencies();
+  const markOffBody = {
+    expected_entry_version: 5,
+    patch: {
+      employment_status: {
+        status: "OFF",
+        effective_date: "2026-10-23",
+        leave_reason: "Nghỉ việc theo nguyện vọng cá nhân",
+      },
+    },
+    reason: "   ",
+  };
+  const okResponse = await privilegedEditEntry(request(markOffBody), entryId, "true", deps);
+  assert.equal(okResponse.status, 200);
+  assert.deepEqual(deps.calls[0], {
+    auth_subject: actor.auth_subject,
+    app_user_id: actor.app_user_id,
+    entry_id: entryId,
+    expected_version: 5,
+    patch: {
+      employment_status: {
+        status: "OFF",
+        effective_date: "2026-10-23",
+        leave_reason: "Nghỉ việc theo nguyện vọng cá nhân",
+      },
+    },
+    reason: null,
+    idempotency_key: "00000000-0000-4000-8000-000000000900",
+  });
+
+  for (const [label, invalidBody, expectedCode] of [
+    [
+      "missing leave_reason",
+      {
+        expected_entry_version: 5,
+        patch: { employment_status: { status: "OFF", effective_date: "2026-10-23" } },
+      },
+      "PRIVILEGED_EDIT_INVALID",
+    ],
+    [
+      "blank leave_reason",
+      {
+        expected_entry_version: 5,
+        patch: { employment_status: { status: "OFF", effective_date: "2026-10-23", leave_reason: " \t " } },
+      },
+      "PRIVILEGED_EDIT_INVALID",
+    ],
+    [
+      "client authority injection alongside mark-off",
+      {
+        expected_entry_version: 5,
+        patch: {
+          employment_status: { status: "OFF", effective_date: "2026-10-23", leave_reason: "Nghỉ việc" },
+          app_user_id: actor.app_user_id,
+        },
+      },
+      "CLIENT_AUTHORITY_FIELD_FORBIDDEN",
+    ],
+  ]) {
+    const rejectedDeps = dependencies();
+    const res = await privilegedEditEntry(request(invalidBody), entryId, "true", rejectedDeps);
+    assert.equal(res.status, 400, label);
+    assert.equal((await res.json()).code, expectedCode, label);
+    assert.equal(rejectedDeps.sessionCount(), 0, label);
+    assert.equal(rejectedDeps.calls.length, 0, label);
+  }
+});

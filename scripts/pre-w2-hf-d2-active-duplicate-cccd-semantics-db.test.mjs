@@ -333,20 +333,24 @@ test("PRE-W2-HF-D2: the report never leaks the raw CCCD or internal identifiers"
   const db = await buildDb();
   try {
     await seed(db);
-    await seedProfile(db, { cccd: "012345678901", name: "HFD2 Active A", project: PROJ_A });
-    await seedProfile(db, { cccd: "012345678901", name: "HFD2 Active B", project: PROJ_B });
+    const a = await seedProfile(db, { cccd: "012345678901", name: "HFD2 Active A", project: PROJ_A });
+    const b = await seedProfile(db, { cccd: "012345678901", name: "HFD2 Active B", project: PROJ_B });
 
     const payload = await report(db, { auth: PM_AUTH, app: PM_APP });
     assert.equal(payload.authority, "business_actor");
     const serialized = JSON.stringify(payload);
     assert.ok(!serialized.includes("012345678901"), "the raw canonical CCCD must not leave the DB");
-    assert.doesNotMatch(serialized,
-      /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i,
-      "no entry/submission/candidate/actor/reason UUID is projected");
+    for (const secret of [PM_AUTH, PM_APP, ADMIN_AUTH, ADMIN_APP, REC_A, TEAM]) {
+      assert.ok(!serialized.includes(secret), `internal actor/catalog UUID leaked: ${secret}`);
+    }
+    assert.deepEqual(
+      payload.groups[0].episodes.map((ep) => ep.entry_id).sort(),
+      [a.entryId, b.entryId].sort(),
+    );
     const episode = payload.groups[0].episodes[0];
     assert.deepEqual(Object.keys(episode).sort(), [
-      "active", "display_name", "employee_code", "first_work_date", "latest_status",
-      "project_display", "project_id",
+      "active", "can_mark_off", "can_self_withdraw", "display_name", "employee_code", "entry_id",
+      "entry_version", "first_work_date", "latest_status", "project_display", "project_id",
     ]);
   } finally {
     await db.close();
@@ -360,21 +364,28 @@ test("PRE-W2-HF-D2: the report never leaks the raw CCCD or internal identifiers"
 test("PRE-W2-HF-D2: the report boundary and reader guard are unchanged", async () => {
   const db = await buildDb();
   try {
-    const report = (await db.query(
-      "select prosrc, provolatile, prosecdef, p.proconfig::text as config" +
-      " from pg_proc p where p.oid = $1::regprocedure", [REPORT_SIGNATURE])).rows[0];
-    assert.equal(report.provolatile, "s");
-    assert.equal(report.prosecdef, true);
-    assert.ok(String(report.config).includes("search_path=pg_catalog, public"));
-    assert.ok(report.prosrc.includes("l.latest_status = 'ON'"), "the ON working predicate is present");
-    assert.equal(report.prosrc.includes("l.latest_status <> 'OFF'"), false, "the old OFF-based active predicate is gone");
+    const report5ArgSig =
+      "public.direct_entry_duplicate_cccd_report(uuid,uuid,integer,integer,boolean)";
+    for (const sig of [REPORT_SIGNATURE, report5ArgSig]) {
+      const reportFn = (await db.query(
+        "select prosrc, provolatile, prosecdef, p.proconfig::text as config" +
+        " from pg_proc p where p.oid = $1::regprocedure", [sig])).rows[0];
+      assert.equal(reportFn.provolatile, "s", sig);
+      assert.equal(reportFn.prosecdef, true, sig);
+      assert.ok(String(reportFn.config).includes("search_path=pg_catalog, public"), sig);
 
-    const acl = (await db.query(
-      "select has_function_privilege('service_role', p.oid, 'EXECUTE') as service_exec," +
-      " has_function_privilege('anon', p.oid, 'EXECUTE') as anon_exec," +
-      " has_function_privilege('authenticated', p.oid, 'EXECUTE') as auth_exec" +
-      " from pg_proc p where p.oid = $1::regprocedure", [REPORT_SIGNATURE])).rows[0];
-    assert.deepEqual(acl, { service_exec: true, anon_exec: false, auth_exec: false });
+      const acl = (await db.query(
+        "select has_function_privilege('service_role', p.oid, 'EXECUTE') as service_exec," +
+        " has_function_privilege('anon', p.oid, 'EXECUTE') as anon_exec," +
+        " has_function_privilege('authenticated', p.oid, 'EXECUTE') as auth_exec" +
+        " from pg_proc p where p.oid = $1::regprocedure", [sig])).rows[0];
+      assert.deepEqual(acl, { service_exec: true, anon_exec: false, auth_exec: false }, sig);
+    }
+
+    const report5Arg = (await db.query(
+      "select prosrc from pg_proc p where p.oid = $1::regprocedure", [report5ArgSig])).rows[0];
+    assert.ok(report5Arg.prosrc.includes("l.latest_status = 'ON'"), "the ON working predicate is present");
+    assert.equal(report5Arg.prosrc.includes("l.latest_status <> 'OFF'"), false, "the old OFF-based active predicate is gone");
 
     const reader = (await db.query(
       "select replace(p.prosrc, chr(13), '') as source from pg_proc p" +

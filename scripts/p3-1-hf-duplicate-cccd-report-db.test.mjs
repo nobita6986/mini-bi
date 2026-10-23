@@ -56,6 +56,11 @@ const UNMAPPED_AUTH = uuid(39), UNMAPPED_APP = uuid(49);
 
 const REPORT_FUNCTION = "public.direct_entry_duplicate_cccd_report";
 const REPORT_SIGNATURE = REPORT_FUNCTION + "(uuid,uuid,integer,integer)";
+const REPORT_SIGNATURE_5ARG = REPORT_FUNCTION + "(uuid,uuid,integer,integer,boolean)";
+const SELF_WITHDRAW_SIGNATURE =
+  "public.direct_entry_self_withdraw_duplicate_cccd(uuid,uuid,uuid,integer,text,text)";
+const INTERNAL_VOID_SIGNATURE =
+  "public.direct_entry__internal_apply_entry_void(uuid,uuid,uuid,integer,uuid,text,text,text,uuid)";
 const READER_SIGNATURE = "public.direct_entry_assert_duplicate_cccd_reader(uuid,uuid)";
 
 // The P3.1-W01B legacy "Full Admin" triple plus the capabilities the P2.5-HF per-row
@@ -162,6 +167,7 @@ async function count(db, sql, params = []) {
 let episodeSeq = 0;
 async function seedEpisode(db, {
   cccd, name, project = PROJ_A, date = "2026-01-05", status = "ON", deleted = false,
+  createdBy = ADMIN_APP, recruiter = REC_A, team = TEAM, submissionState = "SUBMITTED",
 }) {
   episodeSeq += 1;
   const candidate = uuid(2000 + episodeSeq);
@@ -173,18 +179,22 @@ async function seedEpisode(db, {
     await db.query("insert into public.direct_entry_candidates (candidate_id) values ($1)", [candidate]);
     await db.query(
       "insert into public.direct_entry_submissions (submission_id, created_by_user_id, state)" +
-      " values ($1,$2,'DRAFT')", [submission, ADMIN_APP]);
+      " values ($1,$2,'DRAFT')", [submission, createdBy]);
     await db.query(
       "insert into public.direct_entries (entry_id, submission_id, candidate_id, created_by_user_id," +
       " project_id, first_work_date, employee_code, worker_details, recruiter_id, team_id," +
       " provider_type, labor_type, deleted_at)" +
       " values ($1,$2,$3,$4,$5,$6::date,$7,$8,$9,$10,'hrp','TEMPORARY',null)",
-      [entry, submission, candidate, ADMIN_APP, project, date, code,
-        JSON.stringify({ display_name: name, ...workerDetails(cccd) }), REC_A, TEAM]);
-    await seedLegacyReviewSubmission(db, submission);
-    await db.query(
-      "update public.direct_entry_submissions set state='SUBMITTED', version=3 where submission_id=$1",
-      [submission]);
+      [entry, submission, candidate, createdBy, project, date, code,
+        JSON.stringify({ display_name: name, ...workerDetails(cccd) }), recruiter, team]);
+    if (submissionState === "REVIEW") {
+      await seedLegacyReviewSubmission(db, submission);
+    } else if (submissionState === "SUBMITTED") {
+      await seedLegacyReviewSubmission(db, submission);
+      await db.query(
+        "update public.direct_entry_submissions set state='SUBMITTED', version=3 where submission_id=$1",
+        [submission]);
+    }
     if (status !== null) {
       await appendStatus(db, entry, status, date, 1, null);
     }
@@ -198,7 +208,7 @@ async function seedEpisode(db, {
     // commit, va khong con update state nao duoc xep hang lai.
     await softDeleteEntry(db, entry);
   }
-  return { entryId: entry, employeeCode: code };
+  return { entryId: entry, submissionId: submission, candidateId: candidate, employeeCode: code };
 }
 
 /** Xoa mem mot episode da commit - the version guard doi version tang dung 1. */
@@ -255,10 +265,17 @@ async function createLegacyBatch(db, { cccd, name, date = "2026-10-03", code = "
     }]), idemKey("hf-legacy")]);
 }
 
-async function report(db, { auth = ADMIN_AUTH, app = ADMIN_APP, page = 1, pageSize = 25 } = {}) {
+async function report(db, {
+  auth = ADMIN_AUTH, app = ADMIN_APP, page = 1, pageSize = 25, managedOnly,
+} = {}) {
+  if (managedOnly === undefined) {
+    return (await db.query(
+      `select ${REPORT_FUNCTION}($1::uuid,$2::uuid,$3::int,$4::int) as data`,
+      [auth, app, page, pageSize])).rows[0].data;
+  }
   return (await db.query(
-    `select ${REPORT_FUNCTION}($1::uuid,$2::uuid,$3::int,$4::int) as data`,
-    [auth, app, page, pageSize])).rows[0].data;
+    `select ${REPORT_FUNCTION}($1::uuid,$2::uuid,$3::int,$4::int,$5::boolean) as data`,
+    [auth, app, page, pageSize, managedOnly])).rows[0].data;
 }
 
 async function reportDenied(db, options, message) {
@@ -317,7 +334,8 @@ test("P3.1-HF: the migration installs as #74 and leaves #58..#61 untouched", asy
     assert.equal(await count(db,
       "select count(*) from pg_proc where proname = 'direct_entry_guard_active_episode'"), 0);
     assert.equal(await count(db,
-      "select count(*) from pg_proc where proname = 'direct_entry_duplicate_cccd_report'"), 1);
+      "select count(*) from pg_proc where proname = 'direct_entry_duplicate_cccd_report'"), 2,
+      "4-arg retained delegate + 5-arg managed_only implementation");
     assert.equal(await count(db,
       "select count(*) from pg_proc where proname = 'direct_entry_assert_duplicate_cccd_reader'"), 1);
   } finally {
@@ -450,14 +468,14 @@ test("P3.1-HF: the report masks the CCCD, normalizes legacy formatting and emits
     await seed(db);
     await relaxWorkerDetailsCheck(db);
     // Mot cap trung: mot dong canonical + mot dong con giu dinh dang cu.
-    await seedEpisode(db, { cccd: "012345678901", name: "HF Mask Canonical", project: PROJ_A,
+    const epCanonical = await seedEpisode(db, { cccd: "012345678901", name: "HF Mask Canonical", project: PROJ_A,
       date: "2026-02-10", status: "ON" });
     // Dong dinh dang cu giu nguyen dinh dang (co khoang trang) va trang thai ON: report
     // chuan hoa CCCD, con duong ghi khong tu y sua lai gia tri.
-    await seedEpisode(db, { cccd: "0123 456 78901", name: "HF Mask Legacy",
+    const epLegacy = await seedEpisode(db, { cccd: "0123 456 78901", name: "HF Mask Legacy",
       project: PROJ_B, date: "2026-01-05", status: "ON" });
     // Cac truong hop KHONG phai trung: xuat hien mot lan, unknown, va da xoa mem.
-    await seedEpisode(db, { cccd: "111222333", name: "HF Mask Single", project: PROJ_A,
+    const epSingle = await seedEpisode(db, { cccd: "111222333", name: "HF Mask Single", project: PROJ_A,
       date: "2026-03-01", status: "ON" });
     await seedEpisode(db, { cccd: null, name: "HF Mask Unknown", project: PROJ_A,
       date: "2026-03-02", status: "ON" });
@@ -488,6 +506,7 @@ test("P3.1-HF: the report masks the CCCD, normalizes legacy formatting and emits
     assert.equal(group.latest_first_work_date, "2026-02-10");
 
     // Episode xep theo first_work_date: dong dinh dang cu (som hon) dung truoc.
+    assert.deepEqual(group.episodes.map((e) => e.entry_id), [epLegacy.entryId, epCanonical.entryId]);
     assert.deepEqual(group.episodes.map((e) => e.first_work_date), ["2026-01-05", "2026-02-10"]);
     assert.deepEqual(group.episodes.map((e) => e.latest_status), ["ON", "ON"]);
     assert.deepEqual(group.episodes.map((e) => e.active), [true, true]);
@@ -495,8 +514,8 @@ test("P3.1-HF: the report masks the CCCD, normalizes legacy formatting and emits
     assert.deepEqual(group.episodes.map((e) => e.project_display),
       ["Project HF B", "Project HF A"]);
     assert.deepEqual(Object.keys(group.episodes[0]).sort(), [
-      "active", "display_name", "employee_code", "first_work_date", "latest_status",
-      "project_display", "project_id",
+      "active", "can_mark_off", "can_self_withdraw", "display_name", "employee_code", "entry_id",
+      "entry_version", "first_work_date", "latest_status", "project_display", "project_id",
     ]);
 
     const serialized = JSON.stringify(payload);
@@ -504,14 +523,17 @@ test("P3.1-HF: the report masks the CCCD, normalizes legacy formatting and emits
       "so CCCD canonical day du khong duoc roi khoi database");
     assert.ok(!serialized.includes("0123 456 78901"),
       "dinh dang luu tru cu cung khong duoc ro ri");
-    assert.doesNotMatch(serialized,
-      /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i,
-      "khong entry/submission/candidate/actor/reason UUID nao duoc tra ve");
+    for (const secret of [
+      epLegacy.submissionId, epLegacy.candidateId, epCanonical.submissionId, epCanonical.candidateId,
+      epSingle.entryId, ADMIN_AUTH, ADMIN_APP, REC_A, TEAM,
+    ]) {
+      assert.ok(!serialized.includes(secret), `internal UUID leaked: ${secret}`);
+    }
 
     // Project bi thieu khong duoc lam mat ca nhom trung: join phai la left join.
     assert.equal(await count(db,
       "select count(*) from pg_proc where oid = $1::regprocedure" +
-      " and prosrc like '%left join public.direct_entry_projects%'", [REPORT_SIGNATURE]), 1);
+      " and prosrc like '%left join public.direct_entry_projects%'", [REPORT_SIGNATURE_5ARG]), 1);
   } finally {
     await db.close();
   }
@@ -633,18 +655,20 @@ test("P3.1-HF: reading the report never writes, locks, merges or repairs", async
     }
     assert.deepEqual(await snapshot(), before, "report khong duoc de lai bat cu dong nao");
 
-    const reportSource = (await db.query(
-      "select prosrc, provolatile, prosecdef," +
-      " p.proconfig::text as proconfig" +
-      " from pg_proc p where p.oid = $1::regprocedure", [REPORT_SIGNATURE])).rows[0];
-    assert.equal(reportSource.provolatile, "s", "report phai la STABLE (khong ghi)");
-    assert.equal(reportSource.prosecdef, true);
-    assert.ok(String(reportSource.proconfig).includes("search_path=pg_catalog, public"),
-      "search_path phai duoc ghim");
-    const body = reportSource.prosrc.toLowerCase();
-    for (const verb of ["insert into", "update ", "delete from", "pg_advisory", "for update",
-      "truncate", "commit"]) {
-      assert.equal(body.includes(verb), false, `than report khong duoc chua "${verb}"`);
+    for (const sig of [REPORT_SIGNATURE, REPORT_SIGNATURE_5ARG]) {
+      const reportSource = (await db.query(
+        "select prosrc, provolatile, prosecdef," +
+        " p.proconfig::text as proconfig" +
+        " from pg_proc p where p.oid = $1::regprocedure", [sig])).rows[0];
+      assert.equal(reportSource.provolatile, "s", `report ${sig} phai la STABLE (khong ghi)`);
+      assert.equal(reportSource.prosecdef, true, sig);
+      assert.ok(String(reportSource.proconfig).includes("search_path=pg_catalog, public"),
+        `search_path phai duoc ghim cho ${sig}`);
+      const body = reportSource.prosrc.toLowerCase();
+      for (const verb of ["insert into", "update ", "delete from", "pg_advisory", "for update",
+        "truncate", "commit"]) {
+        assert.equal(body.includes(verb), false, `than report ${sig} khong duoc chua "${verb}"`);
+      }
     }
   } finally {
     await db.close();
@@ -652,9 +676,9 @@ test("P3.1-HF: reading the report never writes, locks, merges or repairs", async
 });
 
 // ---------------------------------------------------------------------------
-// 10. Bien gioi cai dat: report chi service_role goi duoc, guard noi bo bi thu hoi.
+// 10. Bien gioi cai dat: report + self-withdraw chi service_role goi duoc, guard/internal helper bi thu hoi.
 // ---------------------------------------------------------------------------
-test("P3.1-HF: the report is service_role-only and the internal guard is revoked", async () => {
+test("P3.1-HF: the report and self-withdraw RPCs are service_role-only and internal helpers are revoked", async () => {
   const db = await buildDb();
   try {
     const acl = async (signature) => (await db.query(
@@ -666,38 +690,472 @@ test("P3.1-HF: the report is service_role-only and the internal guard is revoked
       " where a.grantee = 0 and a.privilege_type = 'EXECUTE') as public_exec" +
       " from pg_proc p where p.oid = '" + signature + "'::regprocedure")).rows[0];
 
-    const report = await acl(REPORT_SIGNATURE);
-    assert.equal(report.service_exec, true, "service_role goi report qua repository/route");
-    assert.equal(report.anon_exec, false);
-    assert.equal(report.auth_exec, false);
-    assert.equal(report.public_exec, 0, "PUBLIC khong duoc goi report");
+    for (const sig of [REPORT_SIGNATURE, REPORT_SIGNATURE_5ARG, SELF_WITHDRAW_SIGNATURE]) {
+      const granted = await acl(sig);
+      assert.equal(granted.service_exec, true, `service_role goi ${sig}`);
+      assert.equal(granted.anon_exec, false, sig);
+      assert.equal(granted.auth_exec, false, sig);
+      assert.equal(granted.public_exec, 0, `PUBLIC khong duoc goi ${sig}`);
+    }
 
-    const reader = await acl(READER_SIGNATURE);
-    assert.equal(reader.service_exec, false, "guard noi bo khong duoc goi tu service_role");
-    assert.equal(reader.anon_exec, false);
-    assert.equal(reader.auth_exec, false);
-    assert.equal(reader.public_exec, 0);
+    for (const sig of [READER_SIGNATURE, INTERNAL_VOID_SIGNATURE]) {
+      const revoked = await acl(sig);
+      assert.equal(revoked.service_exec, false, `helper noi bo ${sig} khong duoc goi tu service_role`);
+      assert.equal(revoked.anon_exec, false, sig);
+      assert.equal(revoked.auth_exec, false, sig);
+      assert.equal(revoked.public_exec, 0, sig);
+    }
 
-    // Guard tra ve quyen thuc te dang dung (de route ghi audit), khong ghi gi.
     assert.equal(await count(db,
       "select count(*) from pg_proc where oid = 'public.direct_entry_assert_duplicate_cccd_reader" +
       "(uuid,uuid)'::regprocedure and prorettype = 'text'::regtype and provolatile = 's'"), 1);
 
-    // P3.1-HF-R1: the names that carry "duplicate" are exactly the report, its internal
-    // reader guard and the three functions of the DRAFT -> REVIEW acknowledgement contract.
-    // Nothing else may claim the name: there is still no "merge" / "repair" / "fix" surface.
     const duplicateNames = (await db.query(
-      "select p.proname from pg_proc p join pg_namespace n on n.oid = p.pronamespace" +
+      "select distinct p.proname from pg_proc p join pg_namespace n on n.oid = p.pronamespace" +
       " where n.nspname = 'public' and p.prokind = 'f'" +
       " and p.proname like '%duplicate%' order by p.proname")).rows
       .map((row) => row.proname);
     assert.deepEqual(duplicateNames, [
       "direct_entry_assert_duplicate_cccd_reader",
       "direct_entry_duplicate_cccd_report",
+      "direct_entry_self_withdraw_duplicate_cccd",
       "direct_entry_submission_duplicate_cccd_preflight",
       "direct_entry_submission_duplicate_cccd_state",
       "direct_entry_transition_submission_duplicate_cccd_confirmed",
-    ], "chi report, guard va contract xac nhan duoc mang ten duplicate");
+    ], "chi report, self-withdraw, guard va contract xac nhan duoc mang ten duplicate");
+  } finally {
+    await db.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 11. HF: managed_only loc dung nhom co it nhat mot episode thuoc du an PM dang quan ly,
+//     giu nguyen counterpart episode cua nhom do, va tinh total/paging SAU khi loc.
+// ---------------------------------------------------------------------------
+test("HF: managed_only filters by effective PM assignment, retains counterpart episodes, and paginates after filtering", async () => {
+  const db = await buildDb();
+  try {
+    await seed(db);
+    const PROJ_C = "hf_dup_proj_c";
+    await db.query(
+      "insert into public.direct_entry_projects (project_id, display_name) values ($1,'Project HF C')",
+      [PROJ_C]);
+
+    const PM_AUTH = uuid(131), PM_APP = uuid(141), PM_REC = uuid(121);
+    const FUTURE_PM_AUTH = uuid(132), FUTURE_PM_APP = uuid(142), FUTURE_PM_REC = uuid(122);
+    const REVOKED_PM_AUTH = uuid(133), REVOKED_PM_APP = uuid(143), REVOKED_PM_REC = uuid(123);
+
+    for (const [recId, name] of [
+      [PM_REC, "PM Recruiter"],
+      [FUTURE_PM_REC, "Future PM Recruiter"],
+      [REVOKED_PM_REC, "Revoked PM Recruiter"],
+    ]) {
+      await db.query(
+        "insert into public.recruiters (recruiter_id, display_name, active) values ($1,$2,true)",
+        [recId, name]);
+      await db.query(
+        "insert into public.recruiter_provider_memberships (recruiter_id, provider_type, valid_from, is_current)" +
+        " values ($1,'hrp','2020-01-01',true)", [recId]);
+      await db.query(
+        "insert into public.recruiter_team_memberships (recruiter_id, team_id, valid_from, is_current)" +
+        " values ($1,$2,'2020-01-01',true)", [recId, TEAM]);
+    }
+
+    await insertActor(db, PM_AUTH, PM_APP, ["entry_own"], ["own"]);
+    await insertActor(db, FUTURE_PM_AUTH, FUTURE_PM_APP, ["entry_own"], ["own"]);
+    await insertActor(db, REVOKED_PM_AUTH, REVOKED_PM_APP, ["entry_own"], ["own"]);
+
+    for (const [appId, recId] of [
+      [PM_APP, PM_REC],
+      [FUTURE_PM_APP, FUTURE_PM_REC],
+      [REVOKED_PM_APP, REVOKED_PM_REC],
+    ]) {
+      await db.query(
+        "insert into public.direct_entry_app_user_recruiter_links" +
+        " (app_user_id, recruiter_id, verified, valid_from, is_current)" +
+        " values ($1,$2,true,'2020-01-01',true)",
+        [appId, recId]);
+    }
+
+    // PM_APP currently manages PROJ_A and PROJ_B (via real audited RPC or canonical table state):
+    await db.query(
+      "insert into public.direct_entry_project_manager_assignments" +
+      " (project_id, manager_recruiter_id, valid_from, is_current)" +
+      " values ($1,$2,'2020-01-01',true), ($3,$2,'2020-01-01',true)",
+      [PROJ_A, PM_REC, PROJ_B]);
+    // FUTURE_PM_APP has is_current = false (future/inactive interval):
+    await db.query(
+      "insert into public.direct_entry_project_manager_assignments" +
+      " (project_id, manager_recruiter_id, valid_from, is_current)" +
+      " values ($1,$2,'2030-01-01',false)",
+      [PROJ_A, FUTURE_PM_REC]);
+    // REVOKED_PM_APP has a revoked assignment:
+    await db.query(
+      "insert into public.direct_entry_project_manager_assignments" +
+      " (project_id, manager_recruiter_id, valid_from, valid_to, revoked_at, revoked_by_user_id, is_current)" +
+      " values ($1,$2,'2020-01-01','2025-01-01',now(),$3,false)",
+      [PROJ_A, REVOKED_PM_REC, ADMIN_APP]);
+
+    // Group 1 (111111111): PROJ_A + PROJ_C -> matches PM_APP (PROJ_A) and MUST retain PROJ_C counterpart!
+    await seedPair(db, { cccd: "111111111", firstProject: PROJ_A, secondProject: PROJ_C });
+    // Group 2 (222222222): PROJ_B + PROJ_C -> matches PM_APP (PROJ_B) and MUST retain PROJ_C counterpart!
+    await seedPair(db, { cccd: "222222222", firstProject: PROJ_B, secondProject: PROJ_C });
+    // Group 3 (333333333): PROJ_C + PROJ_C -> outside PM_APP's managed projects!
+    await seedPair(db, { cccd: "333333333", firstProject: PROJ_C, secondProject: PROJ_C });
+
+    // Global report (managed_only = false) returns all 3 groups:
+    const globalRes = await report(db, { auth: PM_AUTH, app: PM_APP, managedOnly: false });
+    assert.equal(globalRes.total_groups, 3);
+    assert.equal(globalRes.total_entries, 6);
+
+    // Managed-only page 1 (page_size = 1) returns Group 1 with BOTH episodes (PROJ_A + PROJ_C) and accurate post-filter totals:
+    const managedPage1 = await report(db, { auth: PM_AUTH, app: PM_APP, page: 1, pageSize: 1, managedOnly: true });
+    assert.equal(managedPage1.total_groups, 2);
+    assert.equal(managedPage1.total_entries, 4);
+    assert.equal(managedPage1.has_more, true);
+    assert.equal(managedPage1.groups.length, 1);
+    assert.equal(managedPage1.groups[0].cccd_last4, "1111");
+    assert.equal(managedPage1.groups[0].profile_count, 2);
+    assert.deepEqual(managedPage1.groups[0].episodes.map((e) => e.project_id), [PROJ_A, PROJ_C]);
+
+    // Managed-only page 2 (page_size = 1) returns Group 2 with has_more = false:
+    const managedPage2 = await report(db, { auth: PM_AUTH, app: PM_APP, page: 2, pageSize: 1, managedOnly: true });
+    assert.equal(managedPage2.total_groups, 2);
+    assert.equal(managedPage2.total_entries, 4);
+    assert.equal(managedPage2.has_more, false);
+    assert.equal(managedPage2.groups[0].cccd_last4, "2222");
+    assert.deepEqual(managedPage2.groups[0].episodes.map((e) => e.project_id), [PROJ_B, PROJ_C]);
+
+    // Actors with 0 effective managed projects (plain actor, future PM, revoked PM, or Full Admin without PM assignment)
+    // receive an empty result (never falling back to global):
+    for (const [auth, app, label] of [
+      [OUTSIDE_AUTH, OUTSIDE_APP, "actor without PM assignment"],
+      [FUTURE_PM_AUTH, FUTURE_PM_APP, "future non-current PM assignment"],
+      [REVOKED_PM_AUTH, REVOKED_PM_APP, "revoked PM assignment"],
+      [ADMIN_AUTH, ADMIN_APP, "admin with 0 direct PM assignments"],
+    ]) {
+      const empty = await report(db, { auth, app, managedOnly: true });
+      assert.equal(empty.total_groups, 0, label);
+      assert.equal(empty.total_entries, 0, label);
+      assert.equal(empty.has_more, false, label);
+      assert.deepEqual(empty.groups, [], label);
+    }
+  } finally {
+    await db.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 12. HF: can_mark_off projection va direct_entry_privileged_edit ON -> OFF.
+// ---------------------------------------------------------------------------
+test("HF: can_mark_off matches canonical direct-edit authority and ON -> OFF removes active duplicate", async () => {
+  const db = await buildDb();
+  try {
+    await seed(db);
+    const TEAM_B = uuid(211);
+    const REC_B = uuid(221);
+    const TL_REC = uuid(222);
+    const PM_REC = uuid(223);
+    const CREATOR_AUTH = uuid(231), CREATOR_APP = uuid(241);
+    const PM_AUTH = uuid(232), PM_APP = uuid(242);
+
+    await db.query(
+      "insert into public.teams (team_id, code, display_name) values ($1,'TEAM_HF_B','Team HF B')",
+      [TEAM_B]);
+    for (const [recId, name, teamId] of [
+      [REC_B, "Recruiter B", TEAM_B],
+      [TL_REC, "Leader Recruiter", TEAM],
+      [PM_REC, "PM Recruiter", TEAM_B],
+    ]) {
+      await db.query("insert into public.recruiters (recruiter_id, display_name) values ($1,$2)", [recId, name]);
+      await db.query(
+        "insert into public.recruiter_provider_memberships (recruiter_id, provider_type, valid_from, is_current)" +
+        " values ($1,'hrp','2020-01-01',true)", [recId]);
+      await db.query(
+        "insert into public.recruiter_team_memberships (recruiter_id, team_id, valid_from, is_current)" +
+        " values ($1,$2,'2020-01-01',true)", [recId, teamId]);
+    }
+
+    // Complete canonical current Team Leader setup for LEADER_APP on TEAM:
+    await db.query(
+      "insert into public.direct_entry_app_user_recruiter_links" +
+      " (app_user_id, recruiter_id, verified, valid_from, is_current)" +
+      " values ($1,$2,true,'2020-01-01',true)",
+      [LEADER_APP, TL_REC]);
+    await db.query(
+      "insert into public.direct_entry_team_leader_assignments" +
+      " (team_id, leader_app_user_id, leader_recruiter_id, valid_from, is_current)" +
+      " values ($1,$2,$3,'2020-01-01',true)",
+      [TEAM, LEADER_APP, TL_REC]);
+
+    // Assigned PM on PROJ_A only:
+    await insertActor(db, PM_AUTH, PM_APP, ["entry_own"], ["own"]);
+    await db.query(
+      "insert into public.direct_entry_app_user_recruiter_links" +
+      " (app_user_id, recruiter_id, verified, valid_from, is_current)" +
+      " values ($1,$2,true,'2020-01-01',true)",
+      [PM_APP, PM_REC]);
+    await db.query(
+      "insert into public.direct_entry_project_manager_assignments" +
+      " (project_id, manager_recruiter_id, valid_from, is_current)" +
+      " values ($1,$2,'2020-01-01',true)",
+      [PROJ_A, PM_REC]);
+
+    // Plain creator without direct-edit authority:
+    await insertActor(db, CREATOR_AUTH, CREATOR_APP, ["entry_own", "entry_create"], ["own"]);
+
+    // Duplicate group 012345678901:
+    //   epA: PROJ_A, TEAM, SUBMITTED, created by CREATOR_APP
+    //   epB: PROJ_B, TEAM_B, SUBMITTED, created by ADMIN_APP
+    //   epReview: PROJ_A, TEAM, REVIEW (locked from direct edit!)
+    const epA = await seedEpisode(db, {
+      cccd: "012345678901", name: "Worker A", project: PROJ_A, date: "2026-01-05",
+      createdBy: CREATOR_APP, recruiter: REC_A, team: TEAM, submissionState: "SUBMITTED",
+    });
+    const epB = await seedEpisode(db, {
+      cccd: "012345678901", name: "Worker B", project: PROJ_B, date: "2026-02-10",
+      createdBy: ADMIN_APP, recruiter: REC_B, team: TEAM_B, submissionState: "SUBMITTED",
+    });
+    const epReview = await seedEpisode(db, {
+      cccd: "012345678901", name: "Worker Review", project: PROJ_A, date: "2026-03-01",
+      createdBy: ADMIN_APP, recruiter: REC_A, team: TEAM, submissionState: "REVIEW",
+    });
+
+    const flagsByActor = async (auth, app) => {
+      const res = await report(db, { auth, app, managedOnly: false });
+      return Object.fromEntries(res.groups[0].episodes.map((e) => [e.entry_id, e.can_mark_off]));
+    };
+
+    // Full Admin and BoD can mark OFF SUBMITTED rows, never REVIEW rows:
+    assert.deepEqual(await flagsByActor(ADMIN_AUTH, ADMIN_APP), {
+      [epA.entryId]: true, [epB.entryId]: true, [epReview.entryId]: false,
+    });
+    assert.deepEqual(await flagsByActor(BOD_AUTH, BOD_APP), {
+      [epA.entryId]: true, [epB.entryId]: true, [epReview.entryId]: false,
+    });
+    // Team Leader of TEAM can mark OFF only TEAM's non-REVIEW row:
+    assert.deepEqual(await flagsByActor(LEADER_AUTH, LEADER_APP), {
+      [epA.entryId]: true, [epB.entryId]: false, [epReview.entryId]: false,
+    });
+    // PM of PROJ_A can mark OFF only PROJ_A's non-REVIEW row:
+    assert.deepEqual(await flagsByActor(PM_AUTH, PM_APP), {
+      [epA.entryId]: true, [epB.entryId]: false, [epReview.entryId]: false,
+    });
+    // Plain creator cannot mark OFF even their own row:
+    assert.deepEqual(await flagsByActor(CREATOR_AUTH, CREATOR_APP), {
+      [epA.entryId]: false, [epB.entryId]: false, [epReview.entryId]: false,
+    });
+
+    // Missing leave_reason on ON -> OFF is rejected:
+    await assert.rejects(
+      () => db.query(
+        "select public.direct_entry_privileged_edit($1::uuid,$2::uuid,$3::uuid,1,$4::jsonb,null,$5::text)",
+        [PM_AUTH, PM_APP, epA.entryId, JSON.stringify({
+          employment_status: { status: "OFF", effective_date: "2026-02-15", leave_reason: "   " },
+        }), idemKey()]),
+      (err) => err.code === "22023" || err.code === "23514",
+    );
+
+    // Stale expected_version is rejected with 40001:
+    await assert.rejects(
+      () => db.query(
+        "select public.direct_entry_privileged_edit($1::uuid,$2::uuid,$3::uuid,99,$4::jsonb,null,$5::text)",
+        [PM_AUTH, PM_APP, epA.entryId, JSON.stringify({
+          employment_status: { status: "OFF", effective_date: "2026-02-15", leave_reason: "Nghỉ việc tự nguyện" },
+        }), idemKey()]),
+      (err) => err.code === "40001",
+    );
+
+    // PM marks epA OFF with valid leave_reason -> epA leaves the active ON duplicate group:
+    await db.query(
+      "select public.direct_entry_privileged_edit($1::uuid,$2::uuid,$3::uuid,1,$4::jsonb,$5::text,$6::text)",
+      [PM_AUTH, PM_APP, epA.entryId, JSON.stringify({
+        employment_status: { status: "OFF", effective_date: "2026-02-15", leave_reason: "Đã nghỉ tại dự án A" },
+      }), "Cập nhật từ báo cáo CCCD trùng", idemKey()],
+    );
+
+    // Admin transitions epReview to OFF too (first move submission to SUBMITTED or mark epB OFF):
+    await db.query(
+      "select public.direct_entry_privileged_edit($1::uuid,$2::uuid,$3::uuid,1,$4::jsonb,null,$5::text)",
+      [ADMIN_AUTH, ADMIN_APP, epB.entryId, JSON.stringify({
+        employment_status: { status: "OFF", effective_date: "2026-02-20", leave_reason: "Nghỉ tại dự án B" },
+      }), idemKey()],
+    );
+
+    const afterOff = await report(db);
+    assert.equal(afterOff.total_groups, 0, "group disappears once fewer than 2 episodes remain ON");
+    assert.deepEqual(afterOff.groups, []);
+  } finally {
+    await db.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 13. HF: can_self_withdraw + direct_entry_self_withdraw_duplicate_cccd:
+//     strictly created_by_user_id = actor (never recruiter_id, no Admin/BoD/TL/PM override),
+//     preserves history/audit without fake change request, idempotent, and decrements new-hire facts by 1.
+// ---------------------------------------------------------------------------
+test("HF: self-withdraw enforces strict creator ownership, idempotency, active-duplicate guard, and decrements reporting facts by 1", async () => {
+  const db = await buildDb();
+  try {
+    await seed(db);
+    const CREATOR_AUTH = uuid(331), CREATOR_APP = uuid(341);
+    const OTHER_AUTH = uuid(332), OTHER_APP = uuid(342);
+    const REC_ATTRIBUTED = uuid(321);
+
+    await db.query("insert into public.recruiters (recruiter_id, display_name) values ($1,'Attributed Recruiter')",
+      [REC_ATTRIBUTED]);
+    await db.query(
+      "insert into public.recruiter_provider_memberships (recruiter_id, provider_type, valid_from, is_current)" +
+      " values ($1,'hrp','2020-01-01',true)", [REC_ATTRIBUTED]);
+    await db.query(
+      "insert into public.recruiter_team_memberships (recruiter_id, team_id, valid_from, is_current)" +
+      " values ($1,$2,'2020-01-01',true)", [REC_ATTRIBUTED, TEAM]);
+
+    await insertActor(db, CREATOR_AUTH, CREATOR_APP, ["entry_own"], ["own"]);
+    await insertActor(db, OTHER_AUTH, OTHER_APP, ["entry_own"], ["own"]);
+    // Link OTHER_APP to REC_ATTRIBUTED so OTHER_APP is the attributed recruiter, NOT created_by_user_id!
+    await db.query(
+      "insert into public.direct_entry_app_user_recruiter_links" +
+      " (app_user_id, recruiter_id, verified, valid_from, is_current)" +
+      " values ($1,$2,true,'2020-01-01',true)",
+      [OTHER_APP, REC_ATTRIBUTED]);
+
+    // Seed two post-cutoff SUBMITTED ON episodes sharing CCCD 079200001234:
+    //   ownEp: created_by_user_id = CREATOR_APP, recruiter_id = REC_ATTRIBUTED (linked to OTHER_APP!)
+    //   counterpartEp: created_by_user_id = OTHER_APP, recruiter_id = REC_A
+    const ownEp = await seedEpisode(db, {
+      cccd: "079200001234", name: "Creator Duplicate", project: PROJ_A, date: "2026-10-05",
+      createdBy: CREATOR_APP, recruiter: REC_ATTRIBUTED, team: TEAM, submissionState: "SUBMITTED",
+    });
+    const counterpartEp = await seedEpisode(db, {
+      cccd: "079200001234", name: "Counterpart Duplicate", project: PROJ_B, date: "2026-10-06",
+      createdBy: OTHER_APP, recruiter: REC_A, team: TEAM, submissionState: "SUBMITTED",
+    });
+
+    // Check can_self_withdraw projection for CREATOR_APP, OTHER_APP (recruiter_id != creator), ADMIN_APP, BOD_APP:
+    const creatorView = await report(db, { auth: CREATOR_AUTH, app: CREATOR_APP, managedOnly: false });
+    assert.deepEqual(
+      Object.fromEntries(creatorView.groups[0].episodes.map((e) => [e.entry_id, e.can_self_withdraw])),
+      { [ownEp.entryId]: true, [counterpartEp.entryId]: false },
+    );
+
+    const otherView = await report(db, { auth: OTHER_AUTH, app: OTHER_APP, managedOnly: false });
+    assert.deepEqual(
+      Object.fromEntries(otherView.groups[0].episodes.map((e) => [e.entry_id, e.can_self_withdraw])),
+      { [ownEp.entryId]: false, [counterpartEp.entryId]: true },
+      "attributed recruiter_id never grants can_self_withdraw on another creator's row",
+    );
+
+    for (const [auth, app, roleLabel] of [
+      [ADMIN_AUTH, ADMIN_APP, "Full Admin"],
+      [BOD_AUTH, BOD_APP, "BoD privileged editor"],
+      [LEADER_AUTH, LEADER_APP, "Team Leader"],
+    ]) {
+      const roleView = await report(db, { auth, app, managedOnly: false });
+      assert.deepEqual(
+        Object.fromEntries(roleView.groups[0].episodes.map((e) => [e.entry_id, e.can_self_withdraw])),
+        { [ownEp.entryId]: false, [counterpartEp.entryId]: false },
+        `${roleLabel} must not get can_self_withdraw on rows created by others`,
+      );
+      await assert.rejects(
+        () => db.query(
+          "select public.direct_entry_self_withdraw_duplicate_cccd($1::uuid,$2::uuid,$3::uuid,1,$4::text,$5::text)",
+          [auth, app, ownEp.entryId, "Admin override attempt", idemKey()]),
+        (err) => err.code === "42501",
+        `${roleLabel} self-withdraw on non-owned row must fail closed with 42501`,
+      );
+    }
+
+    // Attributed recruiter (OTHER_APP) trying to self-withdraw ownEp is also denied with 42501:
+    await assert.rejects(
+      () => db.query(
+        "select public.direct_entry_self_withdraw_duplicate_cccd($1::uuid,$2::uuid,$3::uuid,1,$4::text,$5::text)",
+        [OTHER_AUTH, OTHER_APP, ownEp.entryId, "Recruiter link attempt", idemKey()]),
+      (err) => err.code === "42501",
+    );
+
+    // OCC mismatch fails closed with 40001:
+    await assert.rejects(
+      () => db.query(
+        "select public.direct_entry_self_withdraw_duplicate_cccd($1::uuid,$2::uuid,$3::uuid,9,$4::text,$5::text)",
+        [CREATOR_AUTH, CREATOR_APP, ownEp.entryId, "OCC mismatch", idemKey()]),
+      (err) => err.code === "40001" && /version conflict/i.test(err.message),
+    );
+
+    // Reporting new-hire facts count BEFORE self-withdraw is 2:
+    const hiresBefore = await count(
+      db,
+      "select coalesce(sum(recruited_count), 0) from public.direct_entry_reporting_facts_v01",
+    );
+    assert.equal(hiresBefore, 2);
+
+    // Creator self-withdraws ownEp:
+    const withdrawKey = idemKey();
+    const firstWithdraw = (await db.query(
+      "select public.direct_entry_self_withdraw_duplicate_cccd($1::uuid,$2::uuid,$3::uuid,1,$4::text,$5::text) as data",
+      [CREATOR_AUTH, CREATOR_APP, ownEp.entryId, "  Tự rút hồ sơ nhập trùng  ", withdrawKey],
+    )).rows[0].data;
+    assert.deepEqual(firstWithdraw, { entry_id: ownEp.entryId, version: 2 });
+
+    // Idempotent replay with the same key returns the exact same result without a second revision/audit:
+    const replayWithdraw = (await db.query(
+      "select public.direct_entry_self_withdraw_duplicate_cccd($1::uuid,$2::uuid,$3::uuid,1,$4::text,$5::text) as data",
+      [CREATOR_AUTH, CREATOR_APP, ownEp.entryId, "Tự rút hồ sơ nhập trùng", withdrawKey],
+    )).rows[0].data;
+    assert.deepEqual(replayWithdraw, firstWithdraw);
+
+    // Verify domain & reporting & audit invariants:
+    const hiresAfter = await count(
+      db,
+      "select coalesce(sum(recruited_count), 0) from public.direct_entry_reporting_facts_v01",
+    );
+    assert.equal(hiresAfter, 1, "new-hire count decrements by exactly 1");
+
+    const entryRow = (await db.query(
+      "select deleted_at, voided_at, voided_by_user_id, void_reason_id, version from public.direct_entries where entry_id = $1",
+      [ownEp.entryId],
+    )).rows[0];
+    assert.equal(entryRow.deleted_at, null, "self-withdraw never deletes the row");
+    assert.notEqual(entryRow.voided_at, null);
+    assert.equal(entryRow.voided_by_user_id, CREATOR_APP);
+    assert.notEqual(entryRow.void_reason_id, null);
+    assert.equal(entryRow.version, 2);
+
+    assert.equal(
+      await count(db, "select count(*) from public.direct_entry_change_requests"),
+      0,
+      "self-withdraw never creates a fake change request",
+    );
+    assert.equal(
+      await count(db, "select count(*) from public.direct_entry_revisions where entry_id = $1", [ownEp.entryId]),
+      1,
+      "exactly one revision written across initial call + idempotent replay",
+    );
+    assert.equal(
+      await count(
+        db,
+        "select count(*) from public.direct_entry_audit_events" +
+        " where resource_ref = $1 and action = 'entry_self_withdraw_duplicate_cccd'" +
+        " and outcome = 'APPLIED' and changed_fields = array['ENTRY_VOID']",
+        [ownEp.entryId],
+      ),
+      1,
+      "exactly one immutable audit event recorded",
+    );
+
+    // Duplicate report is now empty (only 1 active ON episode remains):
+    const afterReport = await report(db, { auth: CREATOR_AUTH, app: CREATOR_APP, managedOnly: false });
+    assert.equal(afterReport.total_groups, 0);
+    assert.deepEqual(afterReport.groups, []);
+
+    // Counterpart's creator can NO LONGER self-withdraw counterpartEp because it is no longer an active duplicate!
+    await assert.rejects(
+      () => db.query(
+        "select public.direct_entry_self_withdraw_duplicate_cccd($1::uuid,$2::uuid,$3::uuid,1,$4::text,$5::text)",
+        [OTHER_AUTH, OTHER_APP, counterpartEp.entryId, "Late withdraw", idemKey()]),
+      (err) => err.code === "40001" && /not an active duplicate/i.test(err.message),
+    );
   } finally {
     await db.close();
   }

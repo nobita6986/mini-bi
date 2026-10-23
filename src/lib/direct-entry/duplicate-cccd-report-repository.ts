@@ -72,6 +72,7 @@ export function createDuplicateCccdReportRepository(rpc?: Rpc): DuplicateCccdRep
           p_app_user_id: input.app_user_id,
           p_page: input.page,
           p_page_size: input.page_size,
+          p_managed_only: Boolean(input.managed_only),
         });
         if (error) return { ok: false, kind: classifyDuplicateCccdReportError(error) };
         const page = projectDuplicateCccdReportRpcPage(data, {

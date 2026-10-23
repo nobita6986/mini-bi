@@ -21,6 +21,8 @@ import { seedLegacyReviewSubmission } from "./lib/seed-legacy-review-submission.
 const MIGRATION_DIR = path.resolve("supabase/migrations");
 const HF_C_MIGRATION = "20261013130000_pre_w2_hf_c_global_duplicate_cccd_read_access.sql";
 const REPORT_SIGNATURE = "public.direct_entry_duplicate_cccd_report(uuid,uuid,integer,integer)";
+const REPORT_SIGNATURE_5ARG =
+  "public.direct_entry_duplicate_cccd_report(uuid,uuid,integer,integer,boolean)";
 const READER_SIGNATURE = "public.direct_entry_assert_duplicate_cccd_reader(uuid,uuid)";
 
 const AUTH_PROLOGUE =
@@ -153,6 +155,7 @@ async function addProfile(db, { cccd, name, code, date = "2026-01-05" }) {
       "update public.direct_entry_submissions set state='SUBMITTED', version=3 where submission_id=$1",
       [submission]);
     await db.exec("commit");
+    return { entryId: entry, submissionId: submission, candidateId: candidate };
   } catch (error) {
     await db.exec("rollback");
     throw error;
@@ -237,15 +240,22 @@ test("PRE-W2-HF-C: the masked projection and pagination bounds are unchanged", a
   const db = await buildDb();
   try {
     await seed(db);
-    await addProfile(db, { cccd: "012345678901", name: "HFC First", code: "hrp-2026-300001" });
-    await addProfile(db, { cccd: "012345678901", name: "HFC Second", code: "hrp-2026-300002" });
+    const first = await addProfile(db, { cccd: "012345678901", name: "HFC First", code: "hrp-2026-300001" });
+    const second = await addProfile(db, { cccd: "012345678901", name: "HFC Second", code: "hrp-2026-300002" });
 
     const payload = await report(db, { auth: NOCAP_AUTH, app: NOCAP_APP });
     const serialized = JSON.stringify(payload);
     assert.ok(!serialized.includes("012345678901"), "the raw CCCD must never leave the database");
-    assert.doesNotMatch(serialized,
-      /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i,
-      "no internal UUID is projected");
+    for (const secret of [
+      first.submissionId, first.candidateId, second.submissionId, second.candidateId,
+      ADMIN_AUTH, ADMIN_APP, NOCAP_AUTH, NOCAP_APP, REC_A, TEAM,
+    ]) {
+      assert.ok(!serialized.includes(secret), `internal UUID leaked: ${secret}`);
+    }
+    assert.deepEqual(
+      payload.groups[0].episodes.map((ep) => ep.entry_id).sort(),
+      [first.entryId, second.entryId].sort(),
+    );
     assert.deepEqual(Object.keys(payload).sort(), [
       "authority", "authorization_date", "groups", "has_more", "page", "page_size",
       "total_entries", "total_groups",
@@ -277,6 +287,8 @@ test("PRE-W2-HF-C: the report stays service_role-only and grants no capability",
 
     const reportAcl = await acl(REPORT_SIGNATURE);
     assert.deepEqual(reportAcl, { service_exec: true, anon_exec: false, auth_exec: false });
+    const report5ArgAcl = await acl(REPORT_SIGNATURE_5ARG);
+    assert.deepEqual(report5ArgAcl, { service_exec: true, anon_exec: false, auth_exec: false });
     const readerAcl = await acl(READER_SIGNATURE);
     assert.deepEqual(readerAcl,
       { service_exec: false, anon_exec: false, auth_exec: false },
