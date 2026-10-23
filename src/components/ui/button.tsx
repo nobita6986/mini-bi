@@ -49,7 +49,7 @@ export function buttonClasses({
   className?: string;
 } = {}): string {
   return cn(
-    "inline-flex items-center justify-center font-medium whitespace-nowrap shrink-0 transition-colors",
+    "inline-flex items-center justify-center font-medium whitespace-nowrap shrink-0 transition-[color,background-color,border-color,box-shadow,opacity,transform] duration-[var(--ui-motion-hover,160ms)] active:duration-[var(--ui-motion-fast,120ms)] ease-[var(--ui-motion-ease,cubic-bezier(0.22,1,0.36,1))] active:scale-[0.99] disabled:active:scale-100 aria-busy:active:scale-100 motion-reduce:transition-none motion-reduce:transform-none",
     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-50",
     VARIANT_CLASSES[variant],
     SIZE_CLASSES[size],
@@ -61,17 +61,22 @@ export function Button({
   variant = "secondary",
   size = "md",
   type = "button",
+  loading,
+  disabled,
   className,
   children,
   ...props
 }: ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: ButtonVariant;
   size?: ButtonSize;
+  loading?: boolean;
   children: ReactNode;
 }) {
   return (
     <button
       type={type}
+      disabled={disabled ?? loading}
+      aria-busy={loading || props["aria-busy"] || undefined}
       className={buttonClasses({ variant, size, className })}
       {...props}
     >

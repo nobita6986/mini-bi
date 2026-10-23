@@ -141,7 +141,7 @@ export function BodDashboardTabs({
             tabIndex={activeTab === tab.key ? 0 : -1}
             onClick={() => selectTab(tab.key)}
             onKeyDown={(event) => onTabKeyDown(event, index)}
-            className={`min-h-11 border-b-2 px-3 text-sm font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 ${activeTab === tab.key
+            className={`min-h-11 border-b-2 px-3 text-sm font-medium transition-colors duration-[var(--ui-motion-tab,200ms)] ease-[var(--ui-motion-ease,cubic-bezier(0.22,1,0.36,1))] motion-reduce:transition-none focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 ${activeTab === tab.key
               ? "border-primary text-primary"
               : "border-transparent text-muted hover:text-foreground"}`}
           >

@@ -62,7 +62,7 @@ export function MobileNav({
         aria-current={isActive ? "page" : undefined}
         onClick={() => setOpen(false)}
         className={cn(
-          "inline-flex min-h-11 h-10 shrink-0 items-center gap-3 rounded-md px-3 text-sm font-medium",
+          "inline-flex min-h-11 h-10 shrink-0 items-center gap-3 rounded-md px-3 text-sm font-medium transition-colors duration-[var(--ui-motion-hover,160ms)] ease-[var(--ui-motion-ease,cubic-bezier(0.22,1,0.36,1))] motion-reduce:transition-none",
           "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
           isActive
             ? "bg-primary/10 text-foreground"
@@ -90,7 +90,7 @@ export function MobileNav({
           aria-label="Mở menu điều hướng"
           aria-controls="mobile-nav-sheet"
           className={cn(
-            "inline-flex min-h-11 min-w-11 h-9 w-9 items-center justify-center rounded-md text-foreground",
+            "inline-flex min-h-11 min-w-11 h-9 w-9 items-center justify-center rounded-md text-foreground transition-colors duration-[var(--ui-motion-hover,160ms)] ease-[var(--ui-motion-ease,cubic-bezier(0.22,1,0.36,1))] motion-reduce:transition-none",
             "hover:bg-surface-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
             "md:hidden"
           )}
@@ -102,7 +102,7 @@ export function MobileNav({
       <Dialog.Portal>
         <Dialog.Overlay
           className={cn(
-            "fixed inset-0 z-30 bg-black/40 backdrop-blur-sm",
+            "fixed inset-0 z-30 bg-black/40 backdrop-blur-sm motion-reduce:animate-none",
             "data-[state=open]:animate-in data-[state=closed]:animate-out",
             "data-[state=open]:fade-in-0 data-[state=closed]:fade-out-0"
           )}
@@ -115,7 +115,7 @@ export function MobileNav({
           id="mobile-nav-sheet"
           aria-describedby={undefined}
           className={cn(
-            "fixed inset-y-0 left-0 z-40 flex w-72 max-w-[85vw] flex-col gap-2 border-r border-border bg-surface p-4 shadow-xl",
+            "fixed inset-y-0 left-0 z-40 flex w-72 max-w-[85vw] flex-col gap-2 border-r border-border bg-surface p-4 shadow-xl motion-reduce:animate-none",
             "data-[state=open]:animate-in data-[state=closed]:animate-out",
             "data-[state=open]:slide-in-from-left data-[state=closed]:slide-out-to-left",
             "duration-200"
@@ -128,7 +128,7 @@ export function MobileNav({
                 type="button"
                 aria-label="Đóng menu"
                 className={cn(
-                  "inline-flex min-h-11 min-w-11 h-9 w-9 items-center justify-center rounded-md text-foreground",
+                  "inline-flex min-h-11 min-w-11 h-9 w-9 items-center justify-center rounded-md text-foreground transition-colors duration-[var(--ui-motion-hover,160ms)] ease-[var(--ui-motion-ease,cubic-bezier(0.22,1,0.36,1))] motion-reduce:transition-none",
                   "hover:bg-surface-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
                 )}
               >

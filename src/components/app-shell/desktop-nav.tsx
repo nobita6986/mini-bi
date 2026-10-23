@@ -60,7 +60,7 @@ export function DesktopNav({
               href={entry.path}
               aria-current={isActive ? "page" : undefined}
               className={cn(
-                "inline-flex h-9 items-center gap-2 rounded-md px-3 text-sm font-medium",
+                "inline-flex h-9 items-center gap-2 rounded-md px-3 text-sm font-medium transition-colors duration-[var(--ui-motion-hover,160ms)] ease-[var(--ui-motion-ease,cubic-bezier(0.22,1,0.36,1))] motion-reduce:transition-none",
                 "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
                 isActive
                   ? "bg-primary/10 text-foreground"
@@ -80,7 +80,7 @@ export function DesktopNav({
             <DropdownMenu.Trigger
               aria-label={item.label}
               className={cn(
-                "inline-flex h-9 items-center gap-2 rounded-md px-3 text-sm font-medium",
+                "inline-flex h-9 items-center gap-2 rounded-md px-3 text-sm font-medium transition-colors duration-[var(--ui-motion-hover,160ms)] ease-[var(--ui-motion-ease,cubic-bezier(0.22,1,0.36,1))] motion-reduce:transition-none",
                 "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
                 isActive
                   ? "bg-primary/10 text-foreground"
@@ -107,7 +107,7 @@ export function DesktopNav({
                         href={entry.path}
                         aria-current={entryActive ? "page" : undefined}
                         className={cn(
-                          "flex h-10 items-center gap-3 rounded px-3 text-sm outline-none",
+                          "flex h-10 items-center gap-3 rounded px-3 text-sm outline-none transition-colors duration-[var(--ui-motion-hover,160ms)] ease-[var(--ui-motion-ease,cubic-bezier(0.22,1,0.36,1))] motion-reduce:transition-none",
                           "data-[highlighted]:bg-primary/10 data-[highlighted]:text-foreground",
                           entryActive
                             ? "bg-primary/10 text-foreground"
