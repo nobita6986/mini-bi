@@ -384,6 +384,83 @@ describe("UIUX-S2-05 — Advanced Toast Lifecycle, Business-Scoped Burst Groupin
     assert.equal(staleClick, false);
     assert.equal(calls, 1);
     assert.equal(dismissedCount, 2);
+
+    // 5. Link actions (with href) go through the exact same click-time isValid + one-flight guard and prevent navigation when stale/busy
+    let linkValid = true;
+    let linkCalls = 0;
+    let releaseLinkPromise;
+    let preventedCount = 0;
+    const linkAction = resolveSafeNotifyAction({
+      kind: "link",
+      href: "/work-reports",
+      isValid: () => linkValid,
+      dismissOnAction: true,
+      label: "Mở báo cáo",
+      onClick: () =>
+        new Promise((resolve) => {
+          linkCalls += 1;
+          releaseLinkPromise = resolve;
+        }),
+    });
+    assert.ok(linkAction);
+
+    let linkBusy = false;
+    let linkDismissed = 0;
+    const firstLinkClick = executeToastActionClick({
+      action: linkAction,
+      isBusy: () => linkBusy,
+      setBusy: (next) => {
+        linkBusy = next;
+      },
+      onDismiss: () => {
+        linkDismissed += 1;
+      },
+      preventNavigation: () => {
+        preventedCount += 1;
+      },
+    });
+    // Synchronous busy lock blocks duplicate click and synchronously calls preventNavigation()
+    assert.equal(linkBusy, true);
+    const duplicateLinkClick = await executeToastActionClick({
+      action: linkAction,
+      isBusy: () => linkBusy,
+      setBusy: (next) => {
+        linkBusy = next;
+      },
+      onDismiss: () => {
+        linkDismissed += 1;
+      },
+      preventNavigation: () => {
+        preventedCount += 1;
+      },
+    });
+    assert.equal(duplicateLinkClick, false);
+    assert.equal(preventedCount, 1);
+    assert.equal(linkCalls, 1);
+
+    releaseLinkPromise();
+    assert.equal(await firstLinkClick, true);
+    assert.equal(linkDismissed, 1);
+
+    // Stale link action synchronously prevents navigation, dismisses Toast, and skips onClick
+    linkValid = false;
+    const staleLinkClick = await executeToastActionClick({
+      action: linkAction,
+      isBusy: () => linkBusy,
+      setBusy: (next) => {
+        linkBusy = next;
+      },
+      onDismiss: () => {
+        linkDismissed += 1;
+      },
+      preventNavigation: () => {
+        preventedCount += 1;
+      },
+    });
+    assert.equal(staleLinkClick, false);
+    assert.equal(preventedCount, 2);
+    assert.equal(linkCalls, 1);
+    assert.equal(linkDismissed, 2);
   });
 
   it("never persists notification history or metadata to web storage and honors reduced-motion on pending spinner", () => {

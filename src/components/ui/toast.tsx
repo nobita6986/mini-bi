@@ -28,10 +28,17 @@ export async function executeToastActionClick(options: {
   isBusy: () => boolean;
   setBusy: (busy: boolean) => void;
   onDismiss?: () => void;
+  preventNavigation?: () => void;
 }): Promise<boolean> {
-  const { action, isBusy, setBusy, onDismiss } = options;
-  if (!action || isBusy()) return false;
-  if (action.kind === "retry" && action.safeToRetry !== true) return false;
+  const { action, isBusy, setBusy, onDismiss, preventNavigation } = options;
+  if (!action || isBusy()) {
+    preventNavigation?.();
+    return false;
+  }
+  if (action.kind === "retry" && (action.safeToRetry !== true || typeof action.onClick !== "function")) {
+    preventNavigation?.();
+    return false;
+  }
   if (action.isValid) {
     let valid = false;
     try {
@@ -40,15 +47,22 @@ export async function executeToastActionClick(options: {
       valid = false;
     }
     if (!valid) {
+      preventNavigation?.();
       onDismiss?.();
       return false;
     }
   }
-  if (!action.onClick) return false;
+  const hasHref = typeof action.href === "string" && action.href.trim().length > 0;
+  if (!action.onClick && !hasHref) {
+    preventNavigation?.();
+    return false;
+  }
 
   setBusy(true);
   try {
-    await action.onClick();
+    if (action.onClick) {
+      await action.onClick();
+    }
     if (action.dismissOnAction) {
       onDismiss?.();
     }
@@ -146,13 +160,26 @@ export function ToastCard({
               {safeAction.href ? (
                 <Link
                   href={safeAction.href}
+                  aria-disabled={actionBusy || undefined}
+                  tabIndex={actionBusy ? -1 : undefined}
                   data-testid={safeAction.dataTestId}
                   data-toast-action-kind={safeAction.kind ?? "link"}
-                  onClick={() => {
-                    void safeAction.onClick?.();
-                    if (safeAction.dismissOnAction) onDismiss?.();
+                  onClick={(event) => {
+                    void executeToastActionClick({
+                      action: safeAction,
+                      isBusy: () => actionBusyRef.current,
+                      setBusy: (next) => {
+                        actionBusyRef.current = next;
+                        setActionBusy(next);
+                      },
+                      onDismiss,
+                      preventNavigation: () => event.preventDefault(),
+                    });
                   }}
-                  className="inline-flex min-h-11 sm:min-h-8 items-center rounded-md border border-border bg-surface-muted px-2.5 py-1 text-xs font-medium text-foreground whitespace-nowrap transition-colors duration-[var(--ui-motion-hover,160ms)] motion-reduce:transition-none hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                  className={cn(
+                    "inline-flex min-h-11 sm:min-h-8 items-center rounded-md border border-border bg-surface-muted px-2.5 py-1 text-xs font-medium text-foreground whitespace-nowrap transition-colors duration-[var(--ui-motion-hover,160ms)] motion-reduce:transition-none hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
+                    actionBusy && "pointer-events-none opacity-50",
+                  )}
                 >
                   {safeAction.label}
                 </Link>
