@@ -50,9 +50,29 @@ root-owned and not writable by `bi-deploy`. Install the sudoers file as
 
 Create `/etc/bi/production.env` with the exact runtime values currently used by
 Vercel, including the Supabase URL, publishable key, and server-only
-`SUPABASE_SECRET_KEY`. Preserve current feature flags. The compose file sets
-`VERCEL_ENV=production`, so R2 document storage must use the production bucket.
-Keep this file root-owned with mode `0600`.
+`SUPABASE_SECRET_KEY`. The production release guard requires these entries
+exactly once:
+
+```dotenv
+DIRECT_ENTRY_API_ENABLED=true
+DIRECT_ENTRY_UI_ENABLED=true
+WORK_REPORTS_API_ENABLED=true
+ATTENDANCE_ENABLED=true
+ATTENDANCE_TIME_TOKEN_SECRET=<dedicated-random-secret>
+DOCUMENT_STORAGE_ENVIRONMENT=production
+R2_ACCOUNT_ID=<account-id>
+R2_BUCKET_NAME=hrp-bi-product
+R2_ACCESS_KEY_ID=<access-key-id>
+R2_SECRET_ACCESS_KEY=<secret-access-key>
+```
+
+`ATTENDANCE_TIME_TOKEN_SECRET` must be a dedicated printable ASCII value of
+32–512 characters with at least eight distinct characters. It must not reuse a
+Supabase, R2, AI, or other `*_SECRET`/`*_TOKEN` value. The deploy script checks
+the environment before changing the image and verifies that the anonymous
+attendance endpoints return authentication/CSRF responses after deployment.
+It never prints secret values. Keep `/etc/bi/production.env` root-owned with
+mode `0600`; deploys reuse this file instead of recreating it.
 
 Create `/etc/bi/migration.env` with the values required by
 `scripts/lib/load-supabase-config.mjs`: `NEXT_PUBLIC_SUPABASE_URL`,
