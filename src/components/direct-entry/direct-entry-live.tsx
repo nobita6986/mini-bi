@@ -14,6 +14,7 @@ import { DirectEntrySubmittedDocumentManager } from "@/components/direct-entry/d
 import { DirectEntrySubmissionList, type SubmissionTransitionRequest,
   type TransitionOutcome } from "@/components/direct-entry/direct-entry-submission-list";
 import { DirectEntryWorkerDocuments } from "@/components/direct-entry/direct-entry-worker-documents";
+import { useNotify } from "@/components/ui/notify-provider";
 import { StatusBanner } from "@/components/ui/status-banner";
 import { isRealCalendarDate } from "@/lib/analytics/identity/identity-shared.mjs";
 import {
@@ -316,6 +317,7 @@ function Field({
 }
 
 export function DirectEntryLive() {
+  const notify = useNotify();
   const [today] = useState(hcmDate);
   const [rows, setRows] = useState<LiveDraftRow[]>([]);
   const rowsRef = useRef(rows);
@@ -645,9 +647,12 @@ export function DirectEntryLive() {
   }, [loadSubmissions]);
 
   const reloadAfterChangeRequestMutation = useCallback(async (message: string) => {
+    if (message.startsWith("Đã tạo yêu cầu thay đổi")) {
+      notify.success({ title: message, dedupeKey: "de-cr-created" });
+    }
     setChangeRequestNotice(message);
     await loadSubmissions("replace");
-  }, [loadSubmissions]);
+  }, [loadSubmissions, notify]);
 
   const blockedSubmissionIds = useMemo(() => {
     const blocked = new Set<string>();

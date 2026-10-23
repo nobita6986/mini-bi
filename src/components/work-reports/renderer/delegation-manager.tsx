@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { useNotify } from "@/components/ui/notify-provider";
 import { StatusBanner } from "@/components/ui/status-banner";
 
 type DelegatedCapability = "report_assign" | "report_review";
@@ -59,6 +60,7 @@ function isData(value: unknown): value is Data {
 }
 
 export function DelegationManager() {
+  const notify = useNotify();
   const [data, setData] = useState<Data | null>(null);
   const [delegateId, setDelegateId] = useState("");
   const [templateId, setTemplateId] = useState("");
@@ -69,7 +71,6 @@ export function DelegationManager() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
 
   async function refresh() {
     setLoading(true);
@@ -103,7 +104,7 @@ export function DelegationManager() {
       setError("Chọn quyền, người nhận, mẫu, phạm vi và thời hạn hợp lệ.");
       return;
     }
-    setBusy(true); setError(null); setNotice(null);
+    setBusy(true); setError(null);
     try {
       const idempotency_key = crypto.randomUUID();
       const response = await fetch("/api/work-reports/delegations", {
@@ -114,16 +115,18 @@ export function DelegationManager() {
           effective_from: effectiveFrom, effective_to: effectiveTo, idempotency_key }),
       });
       await readBody(response);
-      setNotice("Đã tạo ủy quyền.");
+      notify.success({ title: "Đã tạo ủy quyền." });
       await refresh();
     } catch {
-      setError("Không tạo được ủy quyền. Máy chủ có thể đã từ chối quyền hoặc phạm vi này.");
+      const msg = "Không tạo được ủy quyền. Máy chủ có thể đã từ chối quyền hoặc phạm vi này.";
+      setError(msg);
+      notify.error({ title: msg });
     } finally { setBusy(false); }
   }
 
   async function revoke(item: Delegation) {
     if (!window.confirm("Thu hồi ủy quyền này?")) return;
-    setBusy(true); setError(null); setNotice(null);
+    setBusy(true); setError(null);
     try {
       const idempotency_key = crypto.randomUUID();
       const response = await fetch(`/api/work-reports/delegations/${encodeURIComponent(item.delegation_id)}/revoke`, {
@@ -131,17 +134,18 @@ export function DelegationManager() {
         body: JSON.stringify({ expected_version: item.version, idempotency_key }),
       });
       await readBody(response);
-      setNotice("Đã thu hồi ủy quyền.");
+      notify.success({ title: "Đã thu hồi ủy quyền." });
       await refresh();
     } catch {
-      setError("Không thu hồi được ủy quyền. Hãy tải lại danh sách và thử lại.");
+      const msg = "Không thu hồi được ủy quyền. Hãy tải lại danh sách và thử lại.";
+      setError(msg);
+      notify.error({ title: msg });
     } finally { setBusy(false); }
   }
 
   return <div className="space-y-5">
     <StatusBanner tone="info" title="Ủy quyền có thời hạn">Danh sách người nhận, mẫu và phạm vi do máy chủ cung cấp. Quyền được kiểm tra lại ở mọi thao tác; ủy quyền không thể được ủy quyền tiếp từ giao diện này.</StatusBanner>
     {error ? <StatusBanner tone="error">{error}</StatusBanner> : null}
-    {notice ? <StatusBanner tone="success">{notice}</StatusBanner> : null}
     <div className="flex justify-end"><Button variant="secondary" disabled={loading || busy} onClick={() => void refresh()}>Tải lại</Button></div>
     {loading && !data ? <p role="status" className="text-sm text-muted">Đang tải danh sách ủy quyền…</p> : null}
     {data ? <>

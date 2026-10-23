@@ -15,10 +15,12 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Check, Eye, EyeOff } from "lucide-react";
 
+import { useNotify } from "@/components/ui/notify-provider";
 import { authUiErrorMessage } from "@/lib/auth/auth-ui";
 
 export function ChangePasswordForm({ destination }: { destination: string }) {
   const router = useRouter();
+  const notify = useNotify();
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -53,6 +55,7 @@ export function ChangePasswordForm({ destination }: { destination: string }) {
       });
       if (response.ok) {
         setSuccess(true);
+        notify.success({ title: "Đổi mật khẩu thành công." });
         reset();
         // Refresh so the AppShell picks up the rotated session tokens
         // and any user display that depends on `verified_at`.
@@ -68,14 +71,18 @@ export function ChangePasswordForm({ destination }: { destination: string }) {
         }
       } catch { /* ignore */ }
       reset();
-      setError(authUiErrorMessage(errorCode));
+      const errMsg = authUiErrorMessage(errorCode);
+      setError(errMsg);
+      notify.error({ title: errMsg });
       if (errorCode === "AUTH_UNAUTHENTICATED") {
         router.replace(destination);
         router.refresh();
       }
     } catch {
       reset();
-      setError(authUiErrorMessage("AUTH_UNAVAILABLE"));
+      const errMsg = authUiErrorMessage("AUTH_UNAVAILABLE");
+      setError(errMsg);
+      notify.error({ title: errMsg });
     } finally {
       setBusy(false);
     }

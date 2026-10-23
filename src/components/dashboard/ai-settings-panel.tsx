@@ -6,6 +6,7 @@ import * as Dialog from "radix-ui/dialog";
 import * as Select from "radix-ui/select";
 import { Check, ChevronDown, Eye, EyeOff, KeyRound, RefreshCw } from "lucide-react";
 
+import { useNotify } from "@/components/ui/notify-provider";
 import { decideDismiss, flowStepOf, type FlowState } from "./ai-settings-panel-logic";
 
 /**
@@ -240,6 +241,7 @@ function StepIndicator({ flow }: { flow: FlowState }) {
 }
 
 export function AiSettingsPanel() {
+  const notify = useNotify();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -363,13 +365,15 @@ export function AiSettingsPanel() {
       }
       if (result.httpStatus === 409 || result.code === VERSION_CONFLICT_CODE) {
         setStatusText(VERSION_CONFLICT_NOTICE);
+        notify.warning({ title: VERSION_CONFLICT_NOTICE });
         await loadSettings();
         return;
       }
       setErrorText(result.message);
       setStatusText("Yêu cầu không thành công.");
+      notify.error({ title: result.message });
     },
-    [loadSettings],
+    [loadSettings, notify],
   );
 
   function handleSave() {
@@ -382,7 +386,9 @@ export function AiSettingsPanel() {
         setApiKey("");
         setShowKey(false);
         applyConfig(payload.config);
-        setStatusText("Đã lưu cấu hình AI. Bước tiếp theo: Kiểm tra kết nối.");
+        const msg = "Đã lưu cấu hình AI. Bước tiếp theo: Kiểm tra kết nối.";
+        setStatusText(msg);
+        notify.success({ title: msg });
       },
     );
   }
@@ -397,7 +403,10 @@ export function AiSettingsPanel() {
     void runRequest(TEST_PATH, body, "Đang kiểm tra kết nối tới provider…", (payload) => {
       applyConfig(payload.config);
       const verified = payload.config?.status === "verified";
-      setStatusText(verified ? "Kết nối provider đã được xác minh." : "Kiểm tra kết nối thất bại, cấu hình chưa được xác minh.");
+      const msg = verified ? "Kết nối provider đã được xác minh." : "Kiểm tra kết nối thất bại, cấu hình chưa được xác minh.";
+      setStatusText(msg);
+      if (verified) notify.success({ title: msg });
+      else notify.error({ title: msg });
     });
   }
 
@@ -412,7 +421,9 @@ export function AiSettingsPanel() {
         setShowKey(false);
         setRotateOpen(false);
         applyConfig(payload.config);
-        setStatusText("Đã xoay API key, cần kiểm tra kết nối lại.");
+        const msg = "Đã xoay API key, cần kiểm tra kết nối lại.";
+        setStatusText(msg);
+        notify.success({ title: msg });
       },
     );
   }
@@ -421,7 +432,9 @@ export function AiSettingsPanel() {
     if (!canActivate || !config) return;
     void runRequest(ACTIVATE_PATH, { config_id: config.config_id, version: config.version }, "Đang kích hoạt cấu hình AI…", (payload) => {
       applyConfig(payload.config);
-      setStatusText("Đã kích hoạt cấu hình AI.");
+      const msg = "Đã kích hoạt cấu hình AI.";
+      setStatusText(msg);
+      notify.success({ title: msg });
     });
   }
 
@@ -430,7 +443,9 @@ export function AiSettingsPanel() {
     setConfirmDisable(false);
     void runRequest(DISABLE_PATH, { config_id: config.config_id, version: config.version }, "Đang tắt cấu hình AI…", (payload) => {
       applyConfig(payload.config);
-      setStatusText("Đã tắt cấu hình AI. Báo cáo AI sẽ fail-closed.");
+      const msg = "Đã tắt cấu hình AI. Báo cáo AI sẽ fail-closed.";
+      setStatusText(msg);
+      notify.success({ title: msg });
     });
   }
 

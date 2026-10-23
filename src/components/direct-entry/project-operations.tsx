@@ -29,6 +29,7 @@ import { Dialog } from "radix-ui";
 
 import { AccessDenied } from "@/components/auth/access-denied";
 import { TemporaryUnavailable } from "@/components/auth/temporary-unavailable";
+import { useNotify } from "@/components/ui/notify-provider";
 import {
   buildAssignRequest,
   buildCreateRequest,
@@ -123,6 +124,7 @@ async function fetchProjectList(): Promise<ListResult> {
 }
 
 export function ProjectOperations({ canManageProjectMasterForEmptyList }: { canManageProjectMasterForEmptyList: boolean }) {
+  const notify = useNotify();
   const [state, setState] = useState<ViewState>("loading");
   const [projects, setProjects] = useState<ProjectView[]>([]);
   const canManageProjectMaster = projects.length > 0
@@ -269,7 +271,9 @@ export function ProjectOperations({ canManageProjectMasterForEmptyList }: { canM
     const loaded = await loadDetail(project.project_id);
     setProjectActionId(null);
     if (!loaded) {
-      setNotice("Không tải được dữ liệu dự án. Vui lòng thử lại.");
+      const msg = "Không tải được dữ liệu dự án. Vui lòng thử lại.";
+      setNotice(msg);
+      notify.error({ title: msg });
       detailSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
       return;
     }
@@ -314,18 +318,27 @@ export function ProjectOperations({ canManageProjectMasterForEmptyList }: { canM
     const listReloaded = await loadList();
     setReloadBusy(false);
     if (detailReloaded && listReloaded) setConflict(null);
-  }, [detail, loadDetail, loadList, reloadBusy]);
+    if (detailReloaded && listReloaded) notify.info({ title: "Đã tải lại dữ liệu dự án." });
+  }, [detail, loadDetail, loadList, notify, reloadBusy]);
 
   const applyOutcome = useCallback((outcome: Outcome): boolean => {
     if (outcome.kind === "applied") return true;
-    if (outcome.kind === "reload-required") { setConflict(outcome.message); return false; }
+    if (outcome.kind === "reload-required") {
+      setConflict(outcome.message);
+      notify.warning({ title: outcome.message });
+      return false;
+    }
     if (outcome.kind === "denied") {
       setNotice(outcome.message);
+      notify.error({ title: outcome.message });
       return false;
     }
     setNotice(outcome.message);
+    if (outcome.kind !== "invalid") {
+      notify.error({ title: outcome.message });
+    }
     return false;
-  }, []);
+  }, [notify]);
 
   async function send(
     url: string, method: "POST" | "PATCH", request: RequestResult, key: string,
@@ -346,6 +359,7 @@ export function ProjectOperations({ canManageProjectMasterForEmptyList }: { canM
     const { outcome } = await send(API, "POST", request, key);
     setBusy(false);
     if (!applyOutcome(outcome)) return;
+    notify.success({ title: "Đã tạo dự án." });
     closeDialog();
     await afterSuccess(null);
   }
@@ -361,6 +375,7 @@ export function ProjectOperations({ canManageProjectMasterForEmptyList }: { canM
       "PATCH", request, key);
     setBusy(false);
     if (!applyOutcome(outcome)) return;
+    notify.success({ title: "Đã đổi tên dự án." });
     closeDialog();
     await afterSuccess(detail.project_id);
   }
@@ -376,6 +391,7 @@ export function ProjectOperations({ canManageProjectMasterForEmptyList }: { canM
       API + "/" + encodeURIComponent(detail.project_id) + "/active", "POST", request, key);
     setBusy(false);
     if (!applyOutcome(outcome)) return;
+    notify.success({ title: active ? "Đã kích hoạt dự án." : "Đã ngừng hoạt động dự án." });
     closeDialog();
     await afterSuccess(detail.project_id);
   }
@@ -399,7 +415,9 @@ export function ProjectOperations({ canManageProjectMasterForEmptyList }: { canM
       // OCC dung project_version (khong phai version = assignment version).
       const next = mutationProjectVersion(payload);
       if (next === null) {
-        setNotice("Phản hồi từ hệ thống không hợp lệ. Dữ liệu đã được tải lại để đối soát.");
+        const msg = "Phản hồi từ hệ thống không hợp lệ. Dữ liệu đã được tải lại để đối soát.";
+        setNotice(msg);
+        notify.error({ title: msg });
         setBusy(false);
         await afterSuccess(detail.project_id);
         return;
@@ -407,6 +425,7 @@ export function ProjectOperations({ canManageProjectMasterForEmptyList }: { canM
       version = next;
     }
     setBusy(false);
+    notify.success({ title: "Đã gán quản lý dự án." });
     closeDialog();
     await afterSuccess(detail.project_id);
   }
@@ -424,6 +443,7 @@ export function ProjectOperations({ canManageProjectMasterForEmptyList }: { canM
         encodeURIComponent(assignment.assignment_id), "POST", request, key);
     setBusy(false);
     if (!applyOutcome(outcome)) return;
+    notify.success({ title: "Đã thu hồi phân công quản lý." });
     closeDialog();
     await afterSuccess(detail.project_id);
   }
@@ -489,12 +509,6 @@ export function ProjectOperations({ canManageProjectMasterForEmptyList }: { canM
             {reloadBusy ? "Đang tải lại…" : "Tải lại dữ liệu"}
           </button>
         </div>
-      ) : null}
-
-      {notice && dialog.kind === "none" ? (
-        <p role="alert" className="rounded-xl border border-red-300 bg-red-50 p-3 text-sm font-medium text-red-800 dark:bg-red-950/30 dark:text-red-200">
-          {notice}
-        </p>
       ) : null}
 
       <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_24rem]">

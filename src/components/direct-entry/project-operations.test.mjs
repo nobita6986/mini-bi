@@ -153,7 +153,7 @@ test("hotfix action: tai detail thanh cong roi moi mo rename/active", () => {
 
 test("hotfix mutation: loi mang khong lam nut bi ket va loi hien trong modal", () => {
   assert.match(model, /catch[\s\S]{0,250}Không kết nối được/);
-  assert.match(source, /notice && dialog\.kind === "none"/);
+  assert.match(source, /useNotify\(\)/);
   assert.match(source, /Dialog\.Content[\s\S]{0,1200}\{notice \? \(/);
   assert.match(source, /busy \? "Đang xử lý…" : submitLabel/);
   assert.match(source, /disabled=\{busy \|\| locked\}/);

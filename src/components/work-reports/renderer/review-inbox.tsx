@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { useNotify } from "@/components/ui/notify-provider";
 import { StatusBanner } from "@/components/ui/status-banner";
 import type { WorkReportTemplateSchema, WorkReportField } from "@/lib/work-reports/contracts.ts";
 
@@ -61,6 +62,7 @@ function isReviewDetail(value: unknown): value is ReviewDetail {
 }
 
 export function ReviewInbox() {
+  const notify = useNotify();
   const [page, setPage] = useState<Page | null>(null);
   const [detail, setDetail] = useState<{ item: ReviewItem; value: ReviewDetail } | null>(null);
   const [templateId, setTemplateId] = useState("");
@@ -70,7 +72,6 @@ export function ReviewInbox() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
 
   const load = useCallback(async (nextCursor: string | null = null, append = false) => {
     setLoading(true); setError(null);
@@ -79,10 +80,12 @@ export function ReviewInbox() {
       setPage((current) => ({ items: append && current ? [...current.items, ...nextPage.items] : nextPage.items, next_cursor: nextPage.next_cursor, has_more: nextPage.has_more }));
       setCursor(nextPage.next_cursor);
     } catch {
+      const msg = "Không tải được hàng đợi duyệt trong phạm vi quyền hiện tại.";
       if (!append) setPage(null);
-      setError("Không tải được hàng đợi duyệt trong phạm vi quyền hiện tại.");
+      setError(msg);
+      if (append) notify.error({ title: msg });
     } finally { setLoading(false); }
-  }, [appliedTemplateId]);
+  }, [appliedTemplateId, notify]);
 
   useEffect(() => {
     let active = true;
@@ -103,7 +106,9 @@ export function ReviewInbox() {
       if (!isReviewDetail(body.detail)) throw new Error("WORK_REPORT_RESPONSE_INVALID");
       setDetail({ item, value: body.detail });
     } catch {
-      setError("Không mở được nội dung báo cáo trong phạm vi duyệt hiện tại.");
+      const msg = "Không mở được nội dung báo cáo trong phạm vi duyệt hiện tại.";
+      setError(msg);
+      notify.error({ title: msg });
     } finally { setBusy(false); }
   }
 
@@ -126,7 +131,7 @@ export function ReviewInbox() {
     if (!detail) return;
     const normalizedReason = reason.trim();
     if (decision === "REJECT" && !normalizedReason) { setError("Cần nhập lý do từ chối."); return; }
-    setBusy(true); setError(null); setNotice(null);
+    setBusy(true); setError(null);
     try {
       const idempotency_key = crypto.randomUUID();
       const response = await fetch(`/api/work-reports/reviews/${encodeURIComponent(detail.item.obligation_id)}/decision`, {
@@ -135,14 +140,17 @@ export function ReviewInbox() {
           expected_version: detail.value.submission.version, idempotency_key }),
       });
       await readBody(response);
-      setNotice(decision === "APPROVE" ? "Đã duyệt báo cáo." : "Đã từ chối báo cáo.");
+      notify.success({ title: decision === "APPROVE" ? "Đã duyệt báo cáo." : "Đã từ chối báo cáo." });
       setDetail(null);
       await load();
     } catch (cause) {
       const code = cause instanceof Error ? cause.message : "WORK_REPORT_UNAVAILABLE";
-      setError(code === "WORK_REPORT_SELF_REVIEW_FORBIDDEN" ? "Bạn không thể tự duyệt báo cáo của mình." :
+      const msg = code === "WORK_REPORT_SELF_REVIEW_FORBIDDEN" ? "Bạn không thể tự duyệt báo cáo của mình." :
         code === "WORK_REPORT_VERSION_CONFLICT" ? "Báo cáo đã được xử lý ở nơi khác. Hãy tải lại hàng đợi." :
-          "Không thể xử lý báo cáo. Vui lòng thử lại hoặc kiểm tra quyền hiện tại.");
+          "Không thể xử lý báo cáo. Vui lòng thử lại hoặc kiểm tra quyền hiện tại.";
+      setError(msg);
+      if (code === "WORK_REPORT_VERSION_CONFLICT") notify.warning({ title: msg });
+      else notify.error({ title: msg });
     } finally { setBusy(false); }
   }
 
@@ -152,7 +160,6 @@ export function ReviewInbox() {
       <Button type="submit" variant="secondary" disabled={loading}>Lọc hàng đợi</Button>
     </form>
     {error ? <StatusBanner tone="error">{error}</StatusBanner> : null}
-    {notice ? <StatusBanner tone="success">{notice}</StatusBanner> : null}
     {loading && !page ? <p role="status" className="text-sm text-muted">Đang tải hàng đợi duyệt…</p> : null}
     {page && page.items.length === 0 ? <StatusBanner>Không có báo cáo đang chờ duyệt trong phạm vi của bạn.</StatusBanner> : null}
     <ul className="space-y-3">{page?.items.map((item) => <li key={item.obligation_id} className="flex flex-col gap-3 rounded-xl border border-border p-4 sm:flex-row sm:items-center sm:justify-between">

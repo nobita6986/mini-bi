@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { useNotify } from "@/components/ui/notify-provider";
 import { StatusBanner } from "@/components/ui/status-banner";
 import { WorkReportFormRenderer, type WorkReportRendererDetail } from "./work-report-form-renderer";
 
@@ -11,6 +12,7 @@ type Obligation = {
 };
 
 export function MyObligations({ history = false }: { history?: boolean }) {
+  const notify = useNotify();
   const [items, setItems] = useState<Obligation[]>([]);
   const [selected, setSelected] = useState<{ detail: WorkReportRendererDetail; periodStart: string; periodEnd: string } | null>(null);
   const [busy, setBusy] = useState(true);
@@ -45,7 +47,11 @@ export function MyObligations({ history = false }: { history?: boolean }) {
       const result = await response.json();
       if (!response.ok || !result?.ok || !result.data) throw new Error("unavailable");
       setSelected({ detail: result.data, periodStart: item.period_start_date, periodEnd: item.period_end_date });
-    } catch { setError("Không tải được nội dung báo cáo. Hãy kiểm tra quyền truy cập hoặc thử lại."); }
+    } catch {
+      const msg = "Không tải được nội dung báo cáo. Hãy kiểm tra quyền truy cập hoặc thử lại.";
+      setError(msg);
+      notify.error({ title: msg });
+    }
   }
 
   const visibleItems = items.filter((item) => history
