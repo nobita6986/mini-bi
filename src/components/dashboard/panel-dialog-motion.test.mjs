@@ -90,7 +90,17 @@ describe("UIUX S2-03 — Tab Panel, Drawer, Dialog & Sheet Motion", () => {
     assert.match(globalsCss, /@keyframes ui-panel-enter/);
     assert.match(globalsCss, /translate3d\(0,\s*4px,\s*0\)/);
     assert.match(globalsCss, /@keyframes ui-dialog-enter/);
-    assert.match(globalsCss, /translate3d\(0,\s*6px,\s*0\)/);
+    assert.match(globalsCss, /@keyframes ui-popover-enter/);
+    // Centered dialogs (-translate-x-1/2 -translate-y-1/2) must NEVER have transform overridden by ui-dialog-enter
+    const dialogKeyframeMatch = globalsCss.match(/@keyframes\s+ui-dialog-enter\s*\{[\s\S]*?\n\}/);
+    assert.ok(dialogKeyframeMatch, "ui-dialog-enter keyframe must exist");
+    assert.doesNotMatch(
+      dialogKeyframeMatch[0],
+      /\b(?:transform|translate|scale)\b/,
+      "ui-dialog-enter must animate opacity only so centered Dialog.Content keeps its -50%/-50% transform",
+    );
+    assert.match(globalsCss, /\[data-ui-dialog-motion="true"\]\s*\{\s*animation:\s*ui-dialog-enter\b/);
+    assert.match(globalsCss, /\[data-ui-popover-motion="true"\]\s*\{\s*animation:\s*ui-popover-enter\b/);
     assert.match(globalsCss, /@keyframes ui-drawer-left-enter/);
     assert.match(globalsCss, /@keyframes ui-drawer-right-enter/);
     assert.match(globalsCss, /\[data-ui-panel-motion="true"\]:not\(\[hidden\]\)/);
