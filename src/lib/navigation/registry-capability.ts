@@ -193,6 +193,13 @@ export const workReportsNavPredicate: NavCapabilityPredicate = (actor) =>
   workReportReviewPredicate(actor) ||
   workReportDelegationPredicate(actor);
 
+export const workforceOffboardingNavPredicate: NavCapabilityPredicate = (actor) =>
+  adminAuthorityNavPredicate(actor) ||
+  (actor.capabilities.includes("entry_privileged_edit") &&
+    actor.scopes.some((scope) => scope.kind === "all")) ||
+  (actor.capabilities.includes("team_manager_assign") &&
+    actor.scopes.some((scope) => scope.kind === "team"));
+
 /** Bảng ánh xạ `entry.capability` metadata → predicate tương ứng. */
 export const NAV_CAPABILITY_PREDICATES: Readonly<Record<string, NavCapabilityPredicate>> = {
   any: () => true,
@@ -208,6 +215,7 @@ export const NAV_CAPABILITY_PREDICATES: Readonly<Record<string, NavCapabilityPre
   change_requests: changeRequestsNavPredicate,
   work_reports: workReportsNavPredicate,
   work_report_reviews: workReportReviewPredicate,
+  workforce_offboarding: workforceOffboardingNavPredicate,
 };
 
 /** Resolver trung tâm — đảm bảo mỗi entry luôn có predicate. */

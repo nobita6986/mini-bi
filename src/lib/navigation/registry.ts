@@ -58,7 +58,8 @@ export type NavCapability =
   | "worker_operations"
   | "change_requests"
   | "work_reports"
-  | "work_report_reviews";
+  | "work_report_reviews"
+  | "workforce_offboarding";
 
 /** Icon component type — accept cả LucideIcon và custom SVG component. */
 export type NavIcon = LucideIcon | ComponentType<SVGProps<SVGSVGElement>>;
@@ -228,6 +229,18 @@ export const NAV_ENTRIES: ReadonlyArray<NavEntry> = [
     icon: ClipboardList,
     status: "current",
     capability: "work_report_reviews",
+    group: "daily-reports",
+    visibility: { desktop: true, mobile: true },
+  },
+  {
+    id: "workforce-offboarding",
+    label: "NLĐ nghỉ việc",
+    path: "/workforce/offboarding",
+    description:
+      "Báo cáo người lao động đã nghỉ việc và chưa có việc mới từ 3 ngày trở lên.",
+    icon: Users,
+    status: "current",
+    capability: "workforce_offboarding",
     group: "daily-reports",
     visibility: { desktop: true, mobile: true },
   },
