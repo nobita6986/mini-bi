@@ -92,6 +92,9 @@ test("no optimistic success: applied/conflict lock the account until strict auth
   assert.doesNotMatch(source, /outcome\.account|outcome\.list|payload\.account|payload\.list/);
   // A malformed reload (null projection or ref mismatch) keeps the lock via throw.
   assert.match(source, /if \(!account \|\| account\.account_ref !== intent\.accountRef\) \{\s*throw new Error/);
+  // Action outcomes route through useNotify() without inline action-result Alert banners.
+  assert.match(source, /useNotify\(\)/);
+  assert.doesNotMatch(source, /title="Trạng thái thao tác"/);
 });
 
 test("page gate resolves actor server-side and uses the Full-Admin-only account access decision", () => {

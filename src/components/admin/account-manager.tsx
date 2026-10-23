@@ -6,6 +6,7 @@ import * as Dialog from "radix-ui/dialog";
 import { Alert } from "@/components/ui/alert";
 import { Card, CardHeader } from "@/components/ui/card";
 import { StatusBadge } from "@/components/ui/badge";
+import { useNotify } from "@/components/ui/notify-provider";
 import { EmptyState } from "@/components/reporting/empty-state";
 import { ErrorState } from "@/components/reporting/error-state";
 import type {
@@ -28,7 +29,6 @@ import {
   buildResetPasswordRequest,
   classifyAccountOperationResponse,
   newAccountOperationKey,
-  type AccountOperationUiOutcome,
 } from "@/lib/admin/account-operation-ui-model";
 
 type ListState =
@@ -66,6 +66,7 @@ function EnabledBadge({ enabled }: { enabled: boolean }) {
 }
 
 export function AccountManager() {
+  const notify = useNotify();
   const [listState, setListState] = useState<ListState>({ kind: "loading" });
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
@@ -75,7 +76,6 @@ export function AccountManager() {
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [reason, setReason] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
   const [pendingIntent, setPendingIntent] = useState<MutationIntent | null>(null);
   const [conflictIntent, setConflictIntent] = useState<MutationIntent | null>(null);
   const [conflictError, setConflictError] = useState<string | null>(null);
@@ -88,7 +88,6 @@ export function AccountManager() {
   >(null);
   const [reconcileIntent, setReconcileIntent] = useState<{ intentId: string; state: string } | null>(null);
   const [opBusy, setOpBusy] = useState(false);
-  const [opNotice, setOpNotice] = useState<AccountOperationUiOutcome | null>(null);
 
   // PRE-W2-HF-D3-B: Full Admin mở danh sách tài khoản thì chạy RPC reclassify một lần
   // (qua route có session + CSRF) để xử lý intent tồn đọng kể cả sau process crash. Không
@@ -105,12 +104,12 @@ export function AccountManager() {
           headers: { Accept: "application/json", "Content-Type": "application/json" },
           body: "{}",
         });
-        if (!response.ok) setNotice("Không phân loại lại được intent tồn đọng. Hãy thử lại sau.");
+        if (!response.ok) notify.warning({ title: "Không phân loại lại được intent tồn đọng. Hãy thử lại sau." });
       } catch {
-        setNotice("Không phân loại lại được intent tồn đọng. Hãy thử lại sau.");
+        notify.warning({ title: "Không phân loại lại được intent tồn đọng. Hãy thử lại sau." });
       }
     })();
-  }, []);
+  }, [notify]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -176,7 +175,7 @@ export function AccountManager() {
     setDialog({ account, nextEnabled });
   };
 
-  const reloadAuthoritative = async (intent: MutationIntent) => {
+  const reloadAuthoritative = async (intent: MutationIntent): Promise<boolean> => {
     setConflictError(null);
     setBusy(true);
     try {
@@ -188,9 +187,9 @@ export function AccountManager() {
         setConflictIntent(null);
         setPendingIntent(null);
         setDialog(null);
-        setNotice("Tài khoản không còn khả dụng. Danh sách đang được cập nhật.");
+        notify.warning({ title: "Tài khoản không còn khả dụng. Danh sách đang được cập nhật." });
         reloadList();
-        return;
+        return false;
       }
       const account = response.status === 200 ? projectAccountItem(await response.json()) : null;
       if (!account || account.account_ref !== intent.accountRef) {
@@ -200,10 +199,13 @@ export function AccountManager() {
       setConflictError(null);
       setPendingIntent(null);
       setDialog(null);
-      setNotice("Đã tải dữ liệu mới nhất từ máy chủ.");
       reloadList();
+      return true;
     } catch {
-      setConflictError("Không tải được dữ liệu có thẩm quyền. Thao tác vẫn đang bị khóa; hãy thử tải lại.");
+      const errMsg = "Không tải được dữ liệu có thẩm quyền. Thao tác vẫn đang bị khóa; hãy thử tải lại.";
+      setConflictError(errMsg);
+      notify.error({ title: errMsg });
+      return false;
     } finally {
       setBusy(false);
     }
@@ -211,7 +213,6 @@ export function AccountManager() {
 
   const sendIntent = async (intent: MutationIntent) => {
     setBusy(true);
-    setNotice(null);
     try {
       let response: Response;
       try {
@@ -227,7 +228,7 @@ export function AccountManager() {
         });
       } catch {
         setPendingIntent({ ...intent, retry: true });
-        setNotice("Không nhận được phản hồi. Có thể thử lại đúng thao tác với cùng khóa idempotency.");
+        notify.error({ title: "Không nhận được phản hồi. Có thể thử lại đúng thao tác với cùng khóa idempotency." });
         return;
       }
       let payload: unknown = null;
@@ -241,23 +242,29 @@ export function AccountManager() {
         setPendingIntent(null);
         setConflictIntent(intent);
         setConflictError(null);
-        setNotice(outcome.kind === "applied"
-          ? "Đã lưu thay đổi. Đang xác minh dữ liệu mới nhất."
-          : outcome.message);
-        await reloadAuthoritative(intent);
+        if (outcome.kind === "conflict") {
+          notify.warning({ title: outcome.message });
+        }
+        const reloaded = await reloadAuthoritative(intent);
+        if (outcome.kind === "applied" && reloaded) {
+          notify.success({ title: "Đã lưu thay đổi. Đã tải dữ liệu mới nhất từ máy chủ." });
+        }
         return;
       }
       if (outcome.kind === "unavailable") {
         setPendingIntent({ ...intent, retry: true });
-        setNotice(outcome.message);
+        notify.error({ title: outcome.message });
         return;
       }
       setPendingIntent(null);
-      setFormError(outcome.message);
       if (outcome.kind === "not-found") {
+        notify.warning({ title: outcome.message });
         setDialog(null);
         reloadList();
+        return;
       }
+      notify.error({ title: outcome.message });
+      setFormError(outcome.message);
     } finally {
       setBusy(false);
     }
@@ -308,7 +315,7 @@ export function AccountManager() {
         </div>
         <div className="flex gap-2">
           <button type="button" className={primaryButton}
-            onClick={() => { setOpNotice(null); setOperation("create"); }}>
+            onClick={() => { setOperation("create"); }}>
             Tạo tài khoản
           </button>
         </div>
@@ -348,7 +355,9 @@ export function AccountManager() {
               <ConflictReload
                 message={conflictError}
                 busy={busy}
-                onReload={() => void reloadAuthoritative(conflictIntent)}
+                onReload={() => void reloadAuthoritative(conflictIntent).then((ok) => {
+                  if (ok) notify.success({ title: "Đã tải dữ liệu mới nhất từ máy chủ." });
+                })}
               />
             ) : null}
             {dialog ? (
@@ -358,7 +367,7 @@ export function AccountManager() {
                   <strong>{dialog.account.display_name ?? "Chưa cập nhật tên thật"}</strong>.
                 </p>
                 <form onSubmit={submit} className="space-y-4">
-                  <ReasonField value={reason} disabled={locked} onChange={(value) => { setReason(value); setFormError(null); setNotice(null); }} />
+                  <ReasonField value={reason} disabled={locked} onChange={(value) => { setReason(value); setFormError(null); }} />
                   {formError ? <p role="alert" className="text-sm text-red-700">{formError}</p> : null}
                   <button type="submit" disabled={locked} className={primaryButton}>
                     {busy ? "Đang lưu…" : dialog.nextEnabled ? "Xác nhận kích hoạt" : "Xác nhận ngừng"}
@@ -379,9 +388,10 @@ export function AccountManager() {
       ) : null}
       {conflictIntent && dialog === null ? (
         <ConflictReload message={conflictError} busy={busy}
-          onReload={() => void reloadAuthoritative(conflictIntent)} />
+          onReload={() => void reloadAuthoritative(conflictIntent).then((ok) => {
+            if (ok) notify.success({ title: "Đã tải dữ liệu mới nhất từ máy chủ." });
+          })} />
       ) : null}
-      {notice ? <Alert tone="info" title="Trạng thái thao tác">{notice}</Alert> : null}
 
       <Card>
         <CardHeader title="Danh sách tài khoản"
@@ -457,11 +467,11 @@ export function AccountManager() {
                       <td data-card-actions="true" className="px-3 py-3">
                         <div className="flex flex-wrap justify-end gap-2 whitespace-nowrap">
                           <button type="button" className={`${button} min-h-11 md:min-h-8 whitespace-nowrap shrink-0`} disabled={locked}
-                            onClick={() => { setOpNotice(null); setOperation({ kind: "edit", account }); }}>
+                            onClick={() => { setOperation({ kind: "edit", account }); }}>
                             Sửa tên
                           </button>
                           <button type="button" className={`${button} min-h-11 md:min-h-8 whitespace-nowrap shrink-0`} disabled={locked}
-                            onClick={() => { setOpNotice(null); setOperation({ kind: "reset", account }); }}>
+                            onClick={() => { setOperation({ kind: "reset", account }); }}>
                             Đặt lại mật khẩu
                           </button>
                           <button type="button" className={`${button} min-h-11 md:min-h-8 whitespace-nowrap shrink-0`} disabled={locked}
@@ -496,14 +506,11 @@ export function AccountManager() {
         key={operation === null ? "none" : operation === "create" ? "create" : operation.kind + ":" + operation.account.account_ref}
         operation={operation}
         busy={opBusy}
-        notice={opNotice}
         onBusyChange={setOpBusy}
-        onNoticeChange={setOpNotice}
-        onClose={() => { setOperation(null); setOpNotice(null); }}
-        onApplied={() => { setOperation(null); setOpNotice(null); reloadList(); }}
+        onClose={() => { setOperation(null); }}
+        onApplied={() => { setOperation(null); reloadList(); }}
         onNeedsReconcile={(intentId, state) => {
           setOperation(null);
-          setOpNotice(null);
           setReconcileIntent({ intentId, state });
           reloadList();
         }}
@@ -511,11 +518,9 @@ export function AccountManager() {
       <AccountReconcileSurface
         intent={reconcileIntent}
         busy={opBusy}
-        notice={opNotice}
         onBusyChange={setOpBusy}
-        onNoticeChange={setOpNotice}
-        onClose={() => { setReconcileIntent(null); setOpNotice(null); }}
-        onDone={() => { setReconcileIntent(null); setOpNotice(null); reloadList(); }}
+        onClose={() => { setReconcileIntent(null); }}
+        onDone={() => { setReconcileIntent(null); reloadList(); }}
       />
     </>
   );
@@ -564,17 +569,16 @@ function PasswordField({ id, label, value, onChange }: {
 }
 
 function AccountOperationDialogs({
-  operation, busy, notice, onBusyChange, onNoticeChange, onClose, onApplied, onNeedsReconcile,
+  operation, busy, onBusyChange, onClose, onApplied, onNeedsReconcile,
 }: {
   operation: "create" | { kind: "edit"; account: ExistingAccount } | { kind: "reset"; account: ExistingAccount } | null;
   busy: boolean;
-  notice: AccountOperationUiOutcome | null;
   onBusyChange(v: boolean): void;
-  onNoticeChange(v: AccountOperationUiOutcome | null): void;
   onClose(): void;
   onApplied(): void;
   onNeedsReconcile(intentId: string, state: string): void;
 }) {
+  const notify = useNotify();
   const [loginId, setLoginId] = useState("");
   const [displayName, setDisplayName] = useState(
     operation !== null && operation !== "create" ? operation.account.display_name ?? "" : "");
@@ -590,7 +594,6 @@ function AccountOperationDialogs({
 
   async function submit() {
     setFormError(null);
-    onNoticeChange(null);
     if (operation === null) return;
     const key = newAccountOperationKey();
     const request = isCreate
@@ -616,14 +619,24 @@ function AccountOperationDialogs({
       });
       const outcome = classifyAccountOperationResponse(response.status, await response.json().catch(() => null));
       onBusyChange(false);
-      onNoticeChange(outcome);
-      if (outcome.kind === "applied") onApplied();
-      else if (outcome.kind === "needs-reconcile") onNeedsReconcile(outcome.intentId, outcome.state);
-      else setFormError(outcome.message);
+      if (outcome.kind === "applied") {
+        notify.success({ title: outcome.message });
+        onApplied();
+      } else if (outcome.kind === "needs-reconcile") {
+        notify.warning({ title: outcome.message });
+        onNeedsReconcile(outcome.intentId, outcome.state);
+      } else if (outcome.kind === "conflict") {
+        notify.warning({ title: outcome.message });
+        setFormError(outcome.message);
+      } else {
+        notify.error({ title: outcome.message });
+        setFormError(outcome.message);
+      }
     } catch {
       onBusyChange(false);
-      onNoticeChange({ kind: "unavailable", message: "Dịch vụ hiện không khả dụng." });
-      setFormError("Không nhận được phản hồi. Có thể thử lại đúng thao tác với cùng khóa idempotency.");
+      const errMsg = "Không nhận được phản hồi. Có thể thử lại đúng thao tác với cùng khóa idempotency.";
+      notify.error({ title: errMsg });
+      setFormError(errMsg);
     }
   }
 
@@ -669,11 +682,8 @@ function AccountOperationDialogs({
                 <PasswordField id="account-op-password-confirm" label="Nhập lại mật khẩu" value={passwordConfirm} onChange={setPasswordConfirm} />
               </>
             ) : null}
-            <ReasonField value={reason} disabled={busy} onChange={(value) => { setReason(value); setFormError(null); onNoticeChange(null); }} />
+            <ReasonField value={reason} disabled={busy} onChange={(value) => { setReason(value); setFormError(null); }} />
             {formError ? <p role="alert" className="text-sm text-red-700">{formError}</p> : null}
-            {notice && notice.kind !== "applied" && notice.kind !== "needs-reconcile" ? (
-              <Alert tone="info" title="Trạng thái thao tác">{notice.message}</Alert>
-            ) : null}
             <button type="submit" disabled={busy} className={opPrimary}>
               {busy ? "Đang xử lý…" : isCreate ? "Tạo tài khoản" : isReset ? "Đặt lại mật khẩu" : "Lưu tên hiển thị"}
             </button>
@@ -685,23 +695,22 @@ function AccountOperationDialogs({
 }
 
 function AccountReconcileSurface({
-  intent, busy, notice, onBusyChange, onNoticeChange, onClose, onDone,
+  intent, busy, onBusyChange, onClose, onDone,
 }: {
   intent: { intentId: string; state: string } | null;
   busy: boolean;
-  notice: AccountOperationUiOutcome | null;
   onBusyChange(v: boolean): void;
-  onNoticeChange(v: AccountOperationUiOutcome | null): void;
   onClose(): void;
   onDone(): void;
 }) {
+  const notify = useNotify();
   if (intent === null) return null;
   const intentId = intent.intentId;
 
   async function reconcile() {
     const key = newAccountOperationKey();
     const request = buildReconcileRequest(key);
-    if (!request.ok) { onNoticeChange({ kind: "invalid", message: request.message }); return; }
+    if (!request.ok) { notify.error({ title: request.message }); return; }
     onBusyChange(true);
     try {
       const response = await fetch(`/api/admin/access/accounts/intents/${encodeURIComponent(intentId)}/reconcile`, {
@@ -712,11 +721,17 @@ function AccountReconcileSurface({
       });
       const outcome = classifyAccountOperationResponse(response.status, await response.json().catch(() => null));
       onBusyChange(false);
-      onNoticeChange(outcome);
-      if (outcome.kind === "applied") onDone();
+      if (outcome.kind === "applied") {
+        notify.success({ title: outcome.message });
+        onDone();
+      } else if (outcome.kind === "needs-reconcile" || outcome.kind === "conflict") {
+        notify.warning({ title: outcome.message });
+      } else {
+        notify.error({ title: outcome.message });
+      }
     } catch {
       onBusyChange(false);
-      onNoticeChange({ kind: "unavailable", message: "Dịch vụ hiện không khả dụng." });
+      notify.error({ title: "Dịch vụ hiện không khả dụng." });
     }
   }
 
@@ -732,25 +747,24 @@ function AccountReconcileSurface({
       const payload = await response.json().catch(() => null);
       onBusyChange(false);
       if (response.ok && payload && typeof payload.reclassified === "object") {
-        onNoticeChange({
-          kind: "applied",
-          message: "Đã phân loại lại " + String(payload.reclassified.reclassified ?? 0) +
+        notify.success({
+          title:
+            "Đã phân loại lại " + String(payload.reclassified.reclassified ?? 0) +
             " intent; purged " + String(payload.reclassified.purged ?? 0) +
             "; deleted " + String(payload.reclassified.deleted ?? 0) + ".",
         });
       } else {
-        onNoticeChange({ kind: "unavailable", message: "Không phân loại lại được. Hãy thử lại." });
+        notify.error({ title: "Không phân loại lại được. Hãy thử lại." });
       }
     } catch {
       onBusyChange(false);
-      onNoticeChange({ kind: "unavailable", message: "Dịch vụ hiện không khả dụng." });
+      notify.error({ title: "Dịch vụ hiện không khả dụng." });
     }
   }
 
   return (
     <Alert tone="warning" title="Operation cần xử lý">
       <p>Intent đang ở trạng thái {intent.state}. Không tự retry Auth; chỉ Đối soát để xác minh qua Admin API.</p>
-      {notice ? <p role="status">{notice.message}</p> : null}
       <div className="mt-2 flex flex-wrap gap-2">
         <button type="button" disabled={busy} onClick={() => void reconcile()} className={opPrimary}>
           {busy ? "Đang đối soát…" : "Đối soát"}
