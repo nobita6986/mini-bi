@@ -1,26 +1,68 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { registerHooks } from "node:module";
 import path from "node:path";
 import { describe, it } from "node:test";
+import { pathToFileURL } from "node:url";
+import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import ts from "typescript";
 
-import {
+const ROOT = process.cwd();
+const readRel = (rel) => readFileSync(path.join(ROOT, rel), "utf8");
+
+registerHooks({
+  resolve(specifier, context, nextResolve) {
+    if (specifier === "next/link") {
+      return nextResolve("next/link.js", context);
+    }
+    if (specifier === "next/navigation") {
+      return nextResolve("next/navigation.js", context);
+    }
+    if (specifier.startsWith("@/")) {
+      const target = path.join(ROOT, "src", specifier.slice(2));
+      for (const ext of ["", ".ts", ".tsx", ".js"]) {
+        try {
+          return nextResolve(pathToFileURL(target + ext).href, context);
+        } catch {
+          // continue searching extensions
+        }
+      }
+    }
+    return nextResolve(specifier, context);
+  },
+  load(url, context, nextLoad) {
+    if (url.endsWith(".tsx") || url.endsWith(".ts")) {
+      const source = readFileSync(new URL(url), "utf8");
+      const { outputText } = ts.transpileModule(source, {
+        compilerOptions: {
+          module: ts.ModuleKind.ESNext,
+          target: ts.ScriptTarget.ESNext,
+          jsx: ts.JsxEmit.ReactJSX,
+        },
+        fileName: url,
+      });
+      return { format: "module", shortCircuit: true, source: outputText };
+    }
+    return nextLoad(url, context);
+  },
+});
+
+const {
   bindNotifyTimerScheduler,
   createNotifyStore,
   DEFAULT_NOTIFY_DURATIONS,
-  executeSessionLogout,
   MAX_PENDING_TOASTS,
   MAX_VISIBLE_TOASTS,
-  renderNotifyViewportElement,
   resolveNotifyDuration,
   sanitizeNotifyText,
   syncNotifyPathname,
   TOAST_ENTER_DURATION_MS,
   TOAST_EXIT_DURATION_MS,
-} from "./notify-store.ts";
+} = await import("./notify-store.ts");
 
-const ROOT = process.cwd();
-const readRel = (rel) => readFileSync(path.join(ROOT, rel), "utf8");
+const { ToastViewport } = await import("./toast.tsx");
+const { executeSessionLogout } = await import("../app-shell/user-session-control.tsx");
 
 /**
  * Deterministic fake clock for testing per-Toast deadlines, enter/exit transitions,
@@ -80,8 +122,12 @@ function createFakeClock({ reducedMotion = false } = {}) {
 }
 
 function renderViewportHtml(store) {
-  const element = renderNotifyViewportElement(store);
-  return element ? renderToStaticMarkup(element) : "";
+  return renderToStaticMarkup(
+    createElement(ToastViewport, {
+      items: store.getSnapshot().visible,
+      onDismiss: store.dismiss,
+    }),
+  );
 }
 
 describe("UIUX-S1-02 — Global NotifyProvider, Independent Timers, Enter/Exit Lifecycle, A11y & Logout Contract", () => {
@@ -502,19 +548,20 @@ describe("UIUX-S1-02 — Global NotifyProvider, Independent Timers, Enter/Exit L
     const layoutSrc = readRel("src/app/layout.tsx");
     const appShellSrc = readRel("src/components/app-shell/app-shell.tsx");
     const providerSrc = readRel("src/components/ui/notify-provider.tsx");
+    const storeSrc = readRel("src/components/ui/notify-store.ts");
     const toastSrc = readRel("src/components/ui/toast.tsx");
 
     assert.ok(!layoutSrc.includes('"use client"'), "RootLayout must remain a Server Component");
     assert.ok(!appShellSrc.includes('"use client"'), "AppShell must remain a Server Component");
     assert.match(layoutSrc, /<ThemeProvider>[\s\S]*<NotifyProvider>[\s\S]*<NuqsAdapter>/);
 
-    assert.match(providerSrc, /data-testid="app-notify-viewport"/);
+    assert.match(providerSrc, /<ToastViewport\s+items=\{snapshot\.visible\}\s+onDismiss=\{store\.dismiss\}\s*\/>/);
     assert.match(providerSrc, /bindNotifyTimerScheduler\(store\)/);
-    assert.ok(
-      !providerSrc.includes("aria-live="),
-      "NotifyProvider viewport wrapper must not declare aria-live so each ToastCard announces itself once",
-    );
+    assert.ok(!storeSrc.includes("from \"react\""), "notify-store.ts must not depend on React");
+    assert.ok(!storeSrc.includes("renderNotifyViewportElement"), "notify-store.ts must not contain a shadow UI renderer");
 
+    assert.match(toastSrc, /export function ToastViewport/);
+    assert.match(toastSrc, /data-testid="app-notify-viewport"/);
     assert.match(toastSrc, /aria-label="Đóng thông báo"/);
     assert.match(toastSrc, /min-h-11\s+min-w-11/);
     assert.match(toastSrc, /motion-reduce:transition-none/);
@@ -524,5 +571,66 @@ describe("UIUX-S1-02 — Global NotifyProvider, Independent Timers, Enter/Exit L
       !toastSrc.includes("RadixToast.Provider"),
       "Toast item must not mount nested RadixToast.Provider per instance",
     );
+  });
+
+  it("enforces Chặng 1 Release Gate (UIUX-S1-08): motion tokens, reduced-motion, static Recharts, CSS chart guard, no new animation deps, and 24/24 completed action feedback inventory", () => {
+    const globalsCss = readRel("src/app/globals.css");
+    for (const token of [
+      "--ui-motion-fast: 120ms;",
+      "--ui-motion-hover: 160ms;",
+      "--ui-motion-tab: 200ms;",
+      "--ui-motion-reveal: 200ms;",
+      "--ui-motion-toast-in: 200ms;",
+      "--ui-motion-toast-out: 160ms;",
+      "--ui-motion-ease: cubic-bezier(0.22, 1, 0.36, 1);",
+    ]) {
+      assert.ok(globalsCss.includes(token), `globals.css missing motion token ${token}`);
+    }
+    assert.match(globalsCss, /@media\s*\(prefers-reduced-motion:\s*reduce\)/);
+
+    // Button / Tab / Nav / Filter token verification (S1-05 & S1-06)
+    const buttonSrc = readRel("src/components/ui/button.tsx");
+    assert.match(buttonSrc, /duration-\[var\(--ui-motion-hover,160ms\)\]/);
+    assert.match(buttonSrc, /active:duration-\[var\(--ui-motion-fast,120ms\)\]/);
+    assert.doesNotMatch(buttonSrc, /transition-all/);
+
+    const tabsSrc = readRel("src/components/dashboard/bod-dashboard-tabs.tsx");
+    assert.match(tabsSrc, /duration-\[var\(--ui-motion-tab,200ms\)\]/);
+
+    const filtersSrc = readRel("src/components/dashboard/dashboard-filters.tsx");
+    assert.match(filtersSrc, /duration-\[180ms\]/);
+
+    // Recharts data animation must remain disabled in Chặng 1 (only on components actually rendering Recharts)
+    for (const chartRel of [
+      "src/components/dashboard/trend-chart.tsx",
+      "src/components/dashboard/recruiter-bar-chart.tsx",
+      "src/components/dashboard/project-donut.tsx",
+      "src/components/dashboard/provider-donut.tsx",
+    ]) {
+      const chartSrc = readRel(chartRel);
+      assert.match(chartSrc, /from\s+["']recharts["']/);
+      assert.match(chartSrc, /isAnimationActive=\{false\}/, `${chartRel} must keep isAnimationActive={false} in Chặng 1`);
+      assert.doesNotMatch(chartSrc, /isAnimationActive=\{true\}/);
+    }
+
+    // CSS chart (team-bucket-chart.tsx) does not use Recharts and must not add data animation in Chặng 1
+    const cssChartSrc = readRel("src/components/dashboard/team-bucket-chart.tsx");
+    assert.doesNotMatch(cssChartSrc, /from\s+["']recharts["']/);
+    assert.doesNotMatch(cssChartSrc, /transition-all|animate-/);
+
+    // No new animation/toast dependencies in package.json
+    const pkg = JSON.parse(readRel("package.json"));
+    const allDeps = { ...pkg.dependencies, ...pkg.devDependencies };
+    for (const forbiddenDep of ["framer-motion", "motion", "sonner", "react-hot-toast"]) {
+      assert.ok(!(forbiddenDep in allDeps), `Forbidden dependency ${forbiddenDep} found in package.json`);
+    }
+
+    // Notification inventory must have all 40 action-feedback table rows completed and 0 migrate rows remaining in Section 3
+    const inventory = readRel("docs/plans/uiux/notification-inventory.md");
+    const routeInventorySection = inventory.split("## 3. Bảng Kiểm Kê Chi Tiết Toàn Bộ Route Hoạt Động")[1] ?? "";
+    const completedRows = routeInventorySection.match(/\|\s*`completed(?:\s*\(UIUX-S1-[^`]+\))?`\s*\|/g) ?? [];
+    const migrateRows = routeInventorySection.match(/\|\s*`migrate[^`]*`\s*\|/g) ?? [];
+    assert.equal(completedRows.length, 40, "Expected all 40 action feedback rows in notification-inventory.md Section 3 to be completed");
+    assert.equal(migrateRows.length, 0, "Expected 0 unmigrated action feedback entries in notification-inventory.md");
   });
 });

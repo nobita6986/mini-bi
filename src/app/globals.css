@@ -37,6 +37,15 @@
   --surface-hover: color-mix(in srgb, var(--primary) 5%, var(--surface) 95%);
   --primary-soft: color-mix(in srgb, var(--primary) 10%, transparent);
   --primary-soft-border: color-mix(in srgb, var(--primary) 24%, transparent);
+
+  /* UIUX Chặng 1 — Motion tokens */
+  --ui-motion-fast: 120ms;
+  --ui-motion-hover: 160ms;
+  --ui-motion-tab: 200ms;
+  --ui-motion-reveal: 200ms;
+  --ui-motion-toast-in: 200ms;
+  --ui-motion-toast-out: 160ms;
+  --ui-motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -174,9 +183,18 @@ table.r22-report-table thead th:first-child {
   z-index: 20;
 }
 
-/* Chart đã tắt animation mặc định của recharts (tôn trọng prefers-reduced-motion). */
+/* Chart và Toast tôn trọng prefers-reduced-motion. */
 @media (prefers-reduced-motion: reduce) {
-  .recharts-wrapper * {
+  :root {
+    --ui-motion-fast: 0ms;
+    --ui-motion-hover: 0ms;
+    --ui-motion-tab: 0ms;
+    --ui-motion-reveal: 0ms;
+    --ui-motion-toast-in: 0ms;
+    --ui-motion-toast-out: 0ms;
+  }
+  .recharts-wrapper *,
+  [data-ui-toast-viewport] * {
     animation: none !important;
     transition: none !important;
   }

@@ -9,7 +9,48 @@
  */
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { registerHooks } from "node:module";
+import path from "node:path";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
+import ts from "typescript";
+
+const ROOT = process.cwd();
+
+registerHooks({
+  resolve(specifier, context, nextResolve) {
+    if (specifier === "next/link") return nextResolve("next/link.js", context);
+    if (specifier === "next/navigation") return nextResolve("next/navigation.js", context);
+    if (specifier.startsWith("@/")) {
+      const target = path.join(ROOT, "src", specifier.slice(2));
+      for (const ext of ["", ".ts", ".tsx", ".js"]) {
+        try {
+          return nextResolve(pathToFileURL(target + ext).href, context);
+        } catch {
+          // continue searching extensions
+        }
+      }
+    }
+    return nextResolve(specifier, context);
+  },
+  load(url, context, nextLoad) {
+    if (url.endsWith(".tsx") || url.endsWith(".ts")) {
+      const fileSource = readFileSync(new URL(url), "utf8");
+      const { outputText } = ts.transpileModule(fileSource, {
+        compilerOptions: {
+          module: ts.ModuleKind.ESNext,
+          target: ts.ScriptTarget.ESNext,
+          jsx: ts.JsxEmit.ReactJSX,
+        },
+        fileName: url,
+      });
+      return { format: "module", shortCircuit: true, source: outputText };
+    }
+    return nextLoad(url, context);
+  },
+});
+
+const { executeSessionLogout } = await import("./user-session-control.tsx");
 
 const source = readFileSync(
   new URL("./user-session-control.tsx", import.meta.url),
@@ -70,7 +111,7 @@ test("HF-R5: trigger is accessible and mobile safe", () => {
   assert.match(source, /aria-hidden/);
 });
 
-test("HF-R5: logout keeps the busy lock, navigates on 204 and never leaks the error", () => {
+test("HF-R5: logout keeps the busy lock, delegates to executeSessionLogout, navigates on 204 and never leaks the error", async () => {
   assert.match(source, /if \(busy\) return;/);
   assert.match(source, /method: "POST", credentials: "same-origin"/);
   assert.match(source, /res\.status === 204/);
@@ -79,10 +120,31 @@ test("HF-R5: logout keeps the busy lock, navigates on 204 and never leaks the er
   assert.ok(clearIdx > -1 && clearIdx < replaceIdx, "notify.clear() must run before router.replace('/login') on 204");
   assert.match(source, /router\.replace\("\/login"\)/);
   assert.match(source, /router\.refresh\(\)/);
+  assert.match(source, /executeSessionLogout\(\{\s*notify,\s*router\s*\}\)/);
   assert.match(source, /role="alert"/);
   assert.match(source, /Không thể đăng xuất lúc này\. Vui lòng thử lại\./);
   const rawErrors = source.match(/res\.(text|json)\(\)/g) ?? [];
   assert.equal(rawErrors.length, 1, "only the session payload is parsed");
+
+  const calls = [];
+  const ok204 = await executeSessionLogout({
+    fetchImpl: async (url, init) => {
+      calls.push(`fetch:${url}:${init?.method}:${init?.credentials}`);
+      return new Response(null, { status: 204 });
+    },
+    notify: { clear: () => calls.push("notify.clear") },
+    router: {
+      replace: (href) => calls.push(`router.replace:${href}`),
+      refresh: () => calls.push("router.refresh"),
+    },
+  });
+  assert.equal(ok204, true);
+  assert.deepEqual(calls, [
+    "fetch:/api/auth/logout:POST:same-origin",
+    "notify.clear",
+    "router.replace:/login",
+    "router.refresh",
+  ]);
 });
 
 test("HF-R5: the AppShell keeps rendering the control without a second request", () => {
