@@ -30,7 +30,7 @@ import {
 } from "@/components/ui/data-table";
 import { FilterToolbar } from "@/components/ui/filter-toolbar";
 import { PageHeader } from "@/components/ui/page-shell";
-import { FloatingToast } from "@/components/ui/toast";
+import { useNotify } from "@/components/ui/notify-provider";
 import { formatHcmDateTime, shortRef } from "@/lib/direct-entry/submission-lifecycle";
 import {
   BANK_ACCOUNT_SECTION_LABEL,
@@ -122,7 +122,6 @@ type Incoming<T> = {
   summary?: WorkerDirectorySummary;
 };
 type FetchOutcome<T> = { ok: true; page: Incoming<T> } | { ok: false; state: PageState; message: string | null };
-type Notice = { kind: "success" | "error"; message: string };
 
 const tabClass =
   "inline-flex min-h-11 items-center rounded-t-lg px-3.5 text-sm font-medium whitespace-nowrap transition-colors outline-none " +
@@ -188,7 +187,7 @@ export function WorkerOperations({
   const [workerSummary, setWorkerSummary] = useState<WorkerDirectorySummary | null>(null);
   const [submissionPage, setSubmissionPage] =
     useState<TabPage<SubmissionReadItem>>(emptyTabPage);
-  const [notice, setNotice] = useState<Notice | null>(null);
+  const notify = useNotify();
   const [conflict, setConflict] = useState<string | null>(null);
   const [drawerRow, setDrawerRow] = useState<WorkerDirectoryRow | null>(null);
   const [drawerMode, setDrawerMode] = useState<"proposal" | "correction">("proposal");
@@ -331,6 +330,12 @@ export function WorkerOperations({
       () => ({ ok: false as const, state: "unavailable" as PageState, message: WORKER_LOAD_FAILED_MESSAGE }));
     setBusyRequestId(null);
     if (!isCurrent()) return;
+    if (!outcome.ok) {
+      notify.error({
+        title: outcome.message ?? WORKER_LOAD_FAILED_MESSAGE,
+        dedupeKey: "worker-load-more-err",
+      });
+    }
     apply(outcome, true);
   }
 
@@ -421,16 +426,25 @@ export function WorkerOperations({
           </>
         }
         actions={
-          canExportThisTab && exportScope !== null ? (
-            <div className="flex flex-col items-start gap-1 sm:items-end">
-              <button type="button" className={primaryClass} onClick={() => setExportOpen(true)}>
-                Xuất Excel
-              </button>
-              <p className="max-w-xs text-[11px] leading-snug text-muted sm:text-right">
-                Xuất theo tab và bộ lọc trạng thái, dự án, người tuyển; không áp dụng từ khóa tìm kiếm.
-              </p>
-            </div>
-          ) : null
+          <div className="flex flex-wrap items-center gap-2">
+            <Link
+              href="/direct-entry/change-requests"
+              className={buttonClass}
+              data-testid="worker-change-request-module-link"
+            >
+              Yêu cầu thay đổi
+            </Link>
+            {canExportThisTab && exportScope !== null ? (
+              <div className="flex flex-col items-start gap-1 sm:items-end">
+                <button type="button" className={primaryClass} onClick={() => setExportOpen(true)}>
+                  Xuất Excel
+                </button>
+                <p className="max-w-xs text-[11px] leading-snug text-muted sm:text-right">
+                  Xuất theo tab và bộ lọc trạng thái, dự án, người tuyển; không áp dụng từ khóa tìm kiếm.
+                </p>
+              </div>
+            ) : null}
+          </div>
         }
       />
 
@@ -463,27 +477,6 @@ export function WorkerOperations({
             Tải lại dữ liệu
           </button>
         </div>
-      ) : null}
-
-      {notice ? (
-        <FloatingToast
-          tone={notice.kind === "error" ? "error" : "success"}
-          onDismiss={() => setNotice(null)}
-        >
-          <span>{notice.message}</span>
-          {notice.message.includes("Đã gửi yêu cầu thay đổi") ? (
-            <>
-              {" "}
-              <Link
-                href="/direct-entry/change-requests"
-                className="font-medium underline underline-offset-2"
-                data-testid="worker-change-request-module-link"
-              >
-                Mở Yêu cầu thay đổi
-              </Link>
-            </>
-          ) : null}
-        </FloatingToast>
       ) : null}
 
       <section
@@ -658,7 +651,10 @@ export function WorkerOperations({
         scope={exportScope}
         filters={filters}
         onOpenChange={(open) => { if (!open) setExportOpen(false); }}
-        onDone={(message) => { setExportOpen(false); setNotice({ kind: "success", message }); }}
+        onDone={(message) => {
+          setExportOpen(false);
+          notify.success({ title: message, dedupeKey: "worker-export-done" });
+        }}
       />
 
       <ProposeDrawer
@@ -671,9 +667,25 @@ export function WorkerOperations({
         ensureCatalog={ensureCatalog}
         onOpenChange={(open) => { if (!open) setDrawerRow(null); }}
         onDone={(message) => {
-          setNotice({ kind: "success", message }); setDrawerRow(null); void reload();
+          setDrawerRow(null);
+          void reload();
+          notify.success({
+            title: message,
+            dedupeKey: "worker-mutation:" + message,
+            action: message.includes("Đã gửi yêu cầu thay đổi")
+              ? {
+                  label: "Mở Yêu cầu thay đổi",
+                  href: "/direct-entry/change-requests",
+                  dataTestId: "worker-change-request-module-link",
+                }
+              : undefined,
+          });
         }}
-        onConflict={() => { setDrawerRow(null); setConflict(WORKER_CONFLICT_MESSAGE); }}
+        onConflict={() => {
+          setDrawerRow(null);
+          setConflict(WORKER_CONFLICT_MESSAGE);
+          notify.warning({ title: WORKER_CONFLICT_MESSAGE, dedupeKey: "worker-conflict" });
+        }}
       />
 
       <WorkerDetailDialog
@@ -935,6 +947,7 @@ function ProposeDrawer({
   onConflict: () => void;
 }) {
   const reasonId = useId();
+  const notify = useNotify();
   const [baseline, setBaseline] = useState<EntryBaseline | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -1080,13 +1093,19 @@ function ProposeDrawer({
               onConflict();
               return;
             }
-            setMessage(privilegedEditErrorMessage(response.status, errorCode));
+            notify.error({
+              title: privilegedEditErrorMessage(response.status, errorCode),
+              dedupeKey: "worker-privileged-edit-err",
+            });
             return;
           }
           onDone("Đã lưu chỉnh sửa trực tiếp.");
         } catch {
           setBusy(false);
-          setMessage("Không lưu được chỉnh sửa trực tiếp. Vui lòng thử lại.");
+          notify.error({
+            title: "Không lưu được chỉnh sửa trực tiếp. Vui lòng thử lại.",
+            dedupeKey: "worker-privileged-edit-err",
+          });
         }
         return;
       }
@@ -1138,15 +1157,27 @@ function ProposeDrawer({
       });
       setBusy(false);
       if (response.status === 409) { onConflict(); return; }
-      if (response.status === 403) { setMessage("Bạn không còn quyền đề xuất thay đổi."); return; }
+      if (response.status === 403) {
+        notify.error({
+          title: "Bạn không còn quyền đề xuất thay đổi.",
+          dedupeKey: "worker-propose-err",
+        });
+        return;
+      }
       if (response.status !== 200 && response.status !== 201) {
-        setMessage("Không gửi được yêu cầu thay đổi. Vui lòng thử lại.");
+        notify.error({
+          title: "Không gửi được yêu cầu thay đổi. Vui lòng thử lại.",
+          dedupeKey: "worker-propose-err",
+        });
         return;
       }
       onDone("Đã gửi yêu cầu thay đổi.");
     } catch {
       setBusy(false);
-      setMessage("Không gửi được yêu cầu thay đổi. Vui lòng thử lại.");
+      notify.error({
+        title: "Không gửi được yêu cầu thay đổi. Vui lòng thử lại.",
+        dedupeKey: "worker-propose-err",
+      });
     }
   }
 
@@ -1561,6 +1592,7 @@ function WorkerExportDialog({
   onDone: (message: string) => void;
 }) {
   const reasonId = useId();
+  const notify = useNotify();
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -1590,10 +1622,16 @@ function WorkerExportDialog({
       }
       const payload = await readJson(response);
       setBusy(false);
-      setMessage(workerExportErrorMessage(response.status, payload));
+      notify.error({
+        title: workerExportErrorMessage(response.status, payload),
+        dedupeKey: "worker-export-err",
+      });
     } catch {
       setBusy(false);
-      setMessage(workerExportErrorMessage(0, null));
+      notify.error({
+        title: workerExportErrorMessage(0, null),
+        dedupeKey: "worker-export-err",
+      });
     }
   }
 
