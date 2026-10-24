@@ -366,7 +366,8 @@ create table public.vendor_finance_audit_events (
       'RECONCILIATION_CREATED',
       'EVIDENCE_RESERVED',
       'EVIDENCE_FINALIZED',
-      'EVIDENCE_FAILED'
+      'EVIDENCE_FAILED',
+      'EVIDENCE_EXPIRED'
     )),
   reason text null
     check (reason is null or pg_catalog.length(pg_catalog.btrim(reason)) between 1 and 4000),
@@ -2870,7 +2871,7 @@ begin
       using errcode = '22023';
   end if;
 
-  if p_ttl_seconds is null or p_ttl_seconds < 30 or p_ttl_seconds > 900 then
+  if p_ttl_seconds is null or p_ttl_seconds < 1 or p_ttl_seconds > 900 then
     raise exception 'VENDOR_FINANCE_EVIDENCE_TTL_INVALID'
       using errcode = '22023';
   end if;
@@ -3088,7 +3089,7 @@ begin
 
   if p_evidence_id is null
      or p_outcome is null
-     or p_outcome not in ('INFO', 'READY', 'FAILED') then
+     or p_outcome not in ('INFO', 'READY', 'FAILED', 'EXPIRED') then
     raise exception 'VENDOR_FINANCE_EVIDENCE_INVALID'
       using errcode = '22023';
   end if;
@@ -3125,6 +3126,39 @@ begin
    where ev.evidence_id = p_evidence_id;
 
   if p_outcome = 'INFO' then
+    if v_ev.status = 'RESERVED' and v_ev.expires_at <= v_now then
+      perform pg_catalog.set_config('vendor_finance.evidence_transition', 'on', true);
+
+      update public.vendor_finance_evidence ev
+         set status = 'EXPIRED',
+             cleanup_after = v_now,
+             failure_code = 'RESERVATION_TTL_EXPIRED'
+       where ev.evidence_id = v_ev.evidence_id
+      returning * into v_ev;
+
+      insert into public.vendor_finance_audit_events (
+        vendor_id,
+        entry_id,
+        reconciliation_id,
+        evidence_id,
+        actor_user_id,
+        authority_source,
+        action,
+        metadata
+      ) values (
+        v_vendor_id,
+        v_ev.entry_id,
+        v_ev.reconciliation_id,
+        v_ev.evidence_id,
+        p_app_user_id,
+        v_authority_source,
+        'EVIDENCE_EXPIRED',
+        pg_catalog.jsonb_build_object(
+          'failure_code', v_ev.failure_code
+        )
+      );
+    end if;
+
     return pg_catalog.jsonb_build_object(
       'evidence_id', v_ev.evidence_id,
       'target_kind', v_target_kind,
@@ -3136,7 +3170,7 @@ begin
       'checksum_sha256', v_ev.checksum_sha256,
       'expires_at', pg_catalog.to_jsonb(v_ev.expires_at),
       'finalized_at', pg_catalog.to_jsonb(v_ev.finalized_at),
-      'is_expired', (v_ev.status = 'RESERVED' and v_ev.expires_at <= v_now)
+      'is_expired', (v_ev.status = 'EXPIRED')
     );
   end if;
 
@@ -3158,6 +3192,53 @@ begin
     end if;
     raise exception 'VENDOR_FINANCE_EVIDENCE_ALREADY_ATTACHED'
       using errcode = '23505';
+  end if;
+
+  if p_outcome = 'EXPIRED' then
+    if v_ev.status in ('EXPIRED', 'FAILED') then
+      return pg_catalog.jsonb_build_object(
+        'evidence_id', v_ev.evidence_id,
+        'status', v_ev.status,
+        'failure_code', v_ev.failure_code
+      );
+    end if;
+
+    perform pg_catalog.set_config('vendor_finance.evidence_transition', 'on', true);
+
+    update public.vendor_finance_evidence ev
+       set status = 'EXPIRED',
+           cleanup_after = v_now,
+           failure_code = coalesce(nullif(pg_catalog.btrim(p_failure_code), ''), 'RESERVATION_TTL_EXPIRED')
+     where ev.evidence_id = v_ev.evidence_id
+    returning * into v_updated;
+
+    insert into public.vendor_finance_audit_events (
+      vendor_id,
+      entry_id,
+      reconciliation_id,
+      evidence_id,
+      actor_user_id,
+      authority_source,
+      action,
+      metadata
+    ) values (
+      v_vendor_id,
+      v_ev.entry_id,
+      v_ev.reconciliation_id,
+      v_updated.evidence_id,
+      p_app_user_id,
+      v_authority_source,
+      'EVIDENCE_EXPIRED',
+      pg_catalog.jsonb_build_object(
+        'failure_code', v_updated.failure_code
+      )
+    );
+
+    return pg_catalog.jsonb_build_object(
+      'evidence_id', v_updated.evidence_id,
+      'status', v_updated.status,
+      'failure_code', v_updated.failure_code
+    );
   end if;
 
   if v_ev.status <> 'RESERVED' then
@@ -3209,10 +3290,39 @@ begin
        set status = 'EXPIRED',
            cleanup_after = v_now,
            failure_code = 'RESERVATION_TTL_EXPIRED'
-     where ev.evidence_id = v_ev.evidence_id;
+     where ev.evidence_id = v_ev.evidence_id
+    returning * into v_updated;
 
-    raise exception 'VENDOR_FINANCE_EVIDENCE_RESERVATION_EXPIRED'
-      using errcode = '40900';
+    insert into public.vendor_finance_audit_events (
+      vendor_id,
+      entry_id,
+      reconciliation_id,
+      evidence_id,
+      actor_user_id,
+      authority_source,
+      action,
+      metadata
+    ) values (
+      v_vendor_id,
+      v_ev.entry_id,
+      v_ev.reconciliation_id,
+      v_updated.evidence_id,
+      p_app_user_id,
+      v_authority_source,
+      'EVIDENCE_EXPIRED',
+      pg_catalog.jsonb_build_object(
+        'failure_code', v_updated.failure_code
+      )
+    );
+
+    -- Return committable EXPIRED outcome (do NOT raise exception, otherwise PostgreSQL
+    -- would roll back the RESERVED -> EXPIRED transition above!).
+    return pg_catalog.jsonb_build_object(
+      'expired', true,
+      'evidence_id', v_updated.evidence_id,
+      'status', v_updated.status,
+      'failure_code', v_updated.failure_code
+    );
   end if;
 
   update public.vendor_finance_evidence ev

@@ -143,6 +143,7 @@ test("createR2VendorFinanceEvidenceStorage signs short-lived private PUT/GET URL
   const sentCommands = [];
   const presignCalls = [];
   let getObjectMode = "valid";
+  let deleteObjectMode = "ok";
 
   const storage = createR2VendorFinanceEvidenceStorage(VALID_R2_ENV, {
     now: () => Date.parse("2026-10-24T02:00:00.000Z"),
@@ -166,6 +167,11 @@ test("createR2VendorFinanceEvidenceStorage signs short-lived private PUT/GET URL
             ContentLength: VALID_JPEG_BYTES.byteLength,
             Body: { transformToByteArray: async () => VALID_JPEG_BYTES },
           };
+        }
+        if (name === "DeleteObjectCommand" && deleteObjectMode === "missing") {
+          const err = new Error("NoSuchKey");
+          err.name = "NoSuchKey";
+          throw err;
         }
         return {};
       },
@@ -200,18 +206,30 @@ test("createR2VendorFinanceEvidenceStorage signs short-lived private PUT/GET URL
   getObjectMode = "oversized-header";
   assert.deepEqual(await storage.readStagedBounded(VALID_ENTRY_KEY), { kind: "too-large" });
 
-  // 3. Promote staged -> final + delete staged
+  // 3. Promote staged -> final MUST copy ONLY and keep staged intact until DB confirms READY
   sentCommands.length = 0;
   await storage.promoteStagedToFinal({
     storage_key: VALID_ENTRY_KEY,
     mime_type: "image/jpeg",
   });
-  assert.equal(sentCommands.length, 2);
+  assert.equal(sentCommands.length, 1);
   assert.equal(sentCommands[0].constructor.name, "CopyObjectCommand");
   assert.equal(sentCommands[0].input.Key, `preview/final/${VALID_ENTRY_KEY}`);
   assert.equal(sentCommands[0].input.CopySource, `hrp-bi-preview/preview/staging/${VALID_ENTRY_KEY}`);
+
+  // 3b. Explicit staged & final cleanup (idempotent on NoSuchKey)
+  sentCommands.length = 0;
+  await storage.deleteStaged(VALID_ENTRY_KEY);
+  await storage.deleteFinal(VALID_ENTRY_KEY);
+  assert.equal(sentCommands.length, 2);
+  assert.equal(sentCommands[0].constructor.name, "DeleteObjectCommand");
+  assert.equal(sentCommands[0].input.Key, `preview/staging/${VALID_ENTRY_KEY}`);
   assert.equal(sentCommands[1].constructor.name, "DeleteObjectCommand");
-  assert.equal(sentCommands[1].input.Key, `preview/staging/${VALID_ENTRY_KEY}`);
+  assert.equal(sentCommands[1].input.Key, `preview/final/${VALID_ENTRY_KEY}`);
+
+  deleteObjectMode = "missing";
+  await storage.deleteStaged(VALID_ENTRY_KEY);
+  await storage.deleteFinal(VALID_ENTRY_KEY);
 
   // 4. Short-lived download URL (120s) with generic attachment filename
   const download = await storage.createDownloadUrl({

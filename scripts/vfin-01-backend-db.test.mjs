@@ -56,6 +56,7 @@ import {
   computeReserveEvidenceFingerprint,
   computeReverseEntryFingerprint,
 } from "../src/lib/vendor-finance/vendor-finance-contract.ts";
+import { createVendorFinanceRepository } from "../src/lib/vendor-finance/vendor-finance-repository.ts";
 import { RECRUITMENT_DAILY_TEMPLATE_SCHEMA } from "../src/lib/work-reports/contracts.ts";
 import { buildWorkReportMetricContract } from "../src/lib/work-reports/metric-contract.ts";
 import {
@@ -1256,6 +1257,188 @@ test("(#2) Full VFIN-01 acceptance: domain isolation, Direct Entry & Work Report
       "23505",
       "VENDOR_FINANCE_EVIDENCE_ALREADY_ATTACHED",
     );
+
+    // -------------------------------------------------------------------------
+    // Evidence Expiry Persistence (PR #155 Blocker 2 DB Regression):
+    //   1) `INFO` on expired `RESERVED` row commits `status = 'EXPIRED'`, sets `cleanup_after`,
+    //      records `'EVIDENCE_EXPIRED'` audit event, and permits `vendor_finance_mark_evidence_cleaned`.
+    //   2) `READY` on expired `RESERVED` row returns committable `{ expired: true, status: 'EXPIRED' }`
+    //      WITHOUT `RAISE EXCEPTION` rollback, persists `status = 'EXPIRED'` + `'EVIDENCE_EXPIRED'`
+    //      audit event, maps cleanly in `createVendorFinanceRepository`, and permits
+    //      `vendor_finance_mark_evidence_cleaned` (`cleaned_up_at IS NOT NULL`).
+    // -------------------------------------------------------------------------
+    const expFp1 = computeReserveEvidenceFingerprint({
+      target_kind: "ENTRY",
+      target_id: ePostRecAdj.entry_id,
+      mime_type: "image/png",
+      size_bytes: 1024,
+      checksum_sha256: "5".repeat(64),
+    });
+    const {
+      rows: [evExpInfoRes],
+    } = await db.query(
+      `select public.vendor_finance_reserve_evidence(
+         $1::uuid, $2::uuid, 'ENTRY', $3::uuid, 'image/png', 1024, $4, 1, $5::uuid, $6
+       ) as result`,
+      [
+        ACCOUNTING_USER.auth,
+        ACCOUNTING_USER.app,
+        ePostRecAdj.entry_id,
+        "5".repeat(64),
+        nextUuid(),
+        expFp1,
+      ],
+    );
+    const evExpInfoId = evExpInfoRes.result.reservation.evidence_id;
+
+    const expFp2 = computeReserveEvidenceFingerprint({
+      target_kind: "ENTRY",
+      target_id: eHuge.entry_id,
+      mime_type: "image/png",
+      size_bytes: 1024,
+      checksum_sha256: "6".repeat(64),
+    });
+    const {
+      rows: [evExpReadyRes],
+    } = await db.query(
+      `select public.vendor_finance_reserve_evidence(
+         $1::uuid, $2::uuid, 'ENTRY', $3::uuid, 'image/png', 1024, $4, 1, $5::uuid, $6
+       ) as result`,
+      [
+        ACCOUNTING_USER.auth,
+        ACCOUNTING_USER.app,
+        eHuge.entry_id,
+        "6".repeat(64),
+        nextUuid(),
+        expFp2,
+      ],
+    );
+    const evExpReadyId = evExpReadyRes.result.reservation.evidence_id;
+
+    // Wait > 1s so both reservations cross `expires_at` in real PostgreSQL wall clock
+    await new Promise((resolve) => setTimeout(resolve, 1150));
+
+    // Path 1: `INFO` transitions `RESERVED -> EXPIRED` and commits in DB
+    const {
+      rows: [expInfoOut],
+    } = await db.query(
+      `select public.vendor_finance_complete_evidence(
+         $1::uuid, $2::uuid, $3::uuid, 'INFO', null
+       ) as info`,
+      [ACCOUNTING_USER.auth, ACCOUNTING_USER.app, evExpInfoId],
+    );
+    assert.equal(expInfoOut.info.status, "EXPIRED");
+    assert.equal(expInfoOut.info.is_expired, true);
+
+    const {
+      rows: [expInfoCleaned],
+    } = await db.query(
+      "select public.vendor_finance_mark_evidence_cleaned($1::uuid, $2::uuid, $3::uuid) as res",
+      [ACCOUNTING_USER.auth, ACCOUNTING_USER.app, evExpInfoId],
+    );
+    assert.equal(expInfoCleaned.res.cleaned, true);
+
+    const {
+      rows: [expInfoDbRow],
+    } = await db.query(
+      `select status, failure_code, cleanup_after is not null as has_cleanup, cleaned_up_at is not null as has_cleaned
+         from public.vendor_finance_evidence
+        where evidence_id = $1::uuid`,
+      [evExpInfoId],
+    );
+    assert.deepEqual(expInfoDbRow, {
+      status: "EXPIRED",
+      failure_code: "RESERVATION_TTL_EXPIRED",
+      has_cleanup: true,
+      has_cleaned: true,
+    });
+
+    // Path 2: `READY` race via `createVendorFinanceRepository` against real PGlite commits `EXPIRED` (no rollback!)
+    const pgliteRepo = createVendorFinanceRepository(async (fnName, params) => {
+      if (fnName === "vendor_finance_complete_evidence") {
+        const { rows } = await db.query(
+          `select public.vendor_finance_complete_evidence(
+             $1::uuid, $2::uuid, $3::uuid, $4, $5
+           ) as data`,
+          [
+            params.p_auth_subject,
+            params.p_app_user_id,
+            params.p_evidence_id,
+            params.p_outcome,
+            params.p_failure_code,
+          ],
+        );
+        return { data: rows[0].data, error: null };
+      }
+      if (fnName === "vendor_finance_mark_evidence_cleaned") {
+        const { rows } = await db.query(
+          `select public.vendor_finance_mark_evidence_cleaned(
+             $1::uuid, $2::uuid, $3::uuid
+           ) as data`,
+          [params.p_auth_subject, params.p_app_user_id, params.p_evidence_id],
+        );
+        return { data: rows[0].data, error: null };
+      }
+      throw new Error(`Unexpected RPC ${fnName}`);
+    });
+
+    const readyExpiredResult = await pgliteRepo.finalizeEvidenceReady({
+      auth_subject: ACCOUNTING_USER.auth,
+      app_user_id: ACCOUNTING_USER.app,
+      evidence_id: evExpReadyId,
+    });
+    assert.deepEqual(readyExpiredResult, {
+      ok: false,
+      code: "VENDOR_FINANCE_EVIDENCE_RESERVATION_EXPIRED",
+    });
+
+    // Idempotent `expireEvidenceReservation` + `markEvidenceCleaned` succeed because `EXPIRED` persisted!
+    const expIdemResult = await pgliteRepo.expireEvidenceReservation({
+      auth_subject: ACCOUNTING_USER.auth,
+      app_user_id: ACCOUNTING_USER.app,
+      evidence_id: evExpReadyId,
+      failure_code: "RESERVATION_TTL_EXPIRED",
+    });
+    assert.deepEqual(expIdemResult, {
+      ok: true,
+      data: { evidence_id: evExpReadyId, status: "EXPIRED" },
+    });
+
+    const markCleanedResult = await pgliteRepo.markEvidenceCleaned({
+      auth_subject: ACCOUNTING_USER.auth,
+      app_user_id: ACCOUNTING_USER.app,
+      evidence_id: evExpReadyId,
+    });
+    assert.deepEqual(markCleanedResult, {
+      ok: true,
+      data: { evidence_id: evExpReadyId, cleaned: true },
+    });
+
+    const {
+      rows: [expReadyDbRow],
+    } = await db.query(
+      `select status, failure_code, cleanup_after is not null as has_cleanup, cleaned_up_at is not null as has_cleaned
+         from public.vendor_finance_evidence
+        where evidence_id = $1::uuid`,
+      [evExpReadyId],
+    );
+    assert.deepEqual(expReadyDbRow, {
+      status: "EXPIRED",
+      failure_code: "RESERVATION_TTL_EXPIRED",
+      has_cleanup: true,
+      has_cleaned: true,
+    });
+
+    const {
+      rows: [expAuditCount],
+    } = await db.query(
+      `select count(*)::int as cnt
+         from public.vendor_finance_audit_events
+        where action = 'EVIDENCE_EXPIRED'
+          and evidence_id in ($1::uuid, $2::uuid)`,
+      [evExpInfoId, evExpReadyId],
+    );
+    assert.equal(expAuditCount.cnt, 2, "both expired reservations must persist EVIDENCE_EXPIRED audit events");
 
     // Ending ACCOUNTING_USER's membership immediately revokes VFIN access on the next call!
     const endAcctIdem = nextUuid();

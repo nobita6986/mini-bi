@@ -249,6 +249,22 @@ async function safeDeleteStagedObject(
   }
 }
 
+async function safeDeleteFinalObject(
+  storage: VendorFinanceEvidenceStorage,
+  storageKey: string,
+): Promise<boolean> {
+  if (typeof storage.deleteFinal !== "function") {
+    return true;
+  }
+  try {
+    await storage.deleteFinal(storageKey);
+    return true;
+  } catch {
+    console.error("[vendor-finance] final evidence cleanup failed");
+    return false;
+  }
+}
+
 // -----------------------------------------------------------------------------
 // 1. GET /api/vendor-finance/vendors
 // -----------------------------------------------------------------------------
@@ -809,7 +825,16 @@ export async function handlePostReserveVendorFinanceEvidence(
   if (!reserved.ok) return vfinError(reserved.code);
 
   for (const supersededKey of reserved.data.superseded_storage_keys) {
-    await safeDeleteStagedObject(dependencies.storage, supersededKey);
+    const cleanedStaged = await safeDeleteStagedObject(dependencies.storage, supersededKey);
+    const cleanedFinal = await safeDeleteFinalObject(dependencies.storage, supersededKey);
+    const supersededEvId = supersededKey.split("/").at(-1) ?? "";
+    if (cleanedStaged && cleanedFinal && isUuid(supersededEvId)) {
+      await dependencies.repository.markEvidenceCleaned({
+        auth_subject: actor.auth_subject,
+        app_user_id: actor.app_user_id,
+        evidence_id: supersededEvId,
+      });
+    }
   }
 
   let signedUpload: { url: string; expires_at: string; headers: Record<string, string> };
@@ -907,19 +932,24 @@ export async function handlePostFinalizeVendorFinanceEvidence(
       evidence_id: parsedEvidenceId.id,
     });
     if (!readyReplay.ok) return vfinError(readyReplay.code);
+    await safeDeleteStagedObject(dependencies.storage, info.storage_key);
     return vfinOk(readyReplay.data, 200);
   }
 
   if (info.status !== "RESERVED" || info.is_expired) {
-    const cleaned = await safeDeleteStagedObject(dependencies.storage, info.storage_key);
-    if (info.status === "RESERVED" && info.is_expired) {
-      await dependencies.repository.finalizeEvidenceReady({
+    let transitioned = info.status === "EXPIRED" || info.status === "FAILED";
+    if (info.status === "RESERVED") {
+      const expiredRes = await dependencies.repository.expireEvidenceReservation({
         auth_subject: actor.auth_subject,
         app_user_id: actor.app_user_id,
         evidence_id: parsedEvidenceId.id,
+        failure_code: "RESERVATION_TTL_EXPIRED",
       });
+      transitioned = expiredRes.ok;
     }
-    if (cleaned) {
+    const cleanedStaged = await safeDeleteStagedObject(dependencies.storage, info.storage_key);
+    const cleanedFinal = await safeDeleteFinalObject(dependencies.storage, info.storage_key);
+    if (transitioned && cleanedStaged && cleanedFinal) {
       await dependencies.repository.markEvidenceCleaned({
         auth_subject: actor.auth_subject,
         app_user_id: actor.app_user_id,
@@ -943,13 +973,13 @@ export async function handlePostFinalizeVendorFinanceEvidence(
 
   if (stagedRead.kind === "too-large") {
     const cleaned = await safeDeleteStagedObject(dependencies.storage, info.storage_key);
-    await dependencies.repository.failEvidenceReservation({
+    const failedRes = await dependencies.repository.failEvidenceReservation({
       auth_subject: actor.auth_subject,
       app_user_id: actor.app_user_id,
       evidence_id: parsedEvidenceId.id,
       failure_code: "VENDOR_FINANCE_EVIDENCE_SIZE_INVALID",
     });
-    if (cleaned) {
+    if (failedRes.ok && cleaned) {
       await dependencies.repository.markEvidenceCleaned({
         auth_subject: actor.auth_subject,
         app_user_id: actor.app_user_id,
@@ -968,13 +998,13 @@ export async function handlePostFinalizeVendorFinanceEvidence(
 
   if (!inspection.ok) {
     const cleaned = await safeDeleteStagedObject(dependencies.storage, info.storage_key);
-    await dependencies.repository.failEvidenceReservation({
+    const failedRes = await dependencies.repository.failEvidenceReservation({
       auth_subject: actor.auth_subject,
       app_user_id: actor.app_user_id,
       evidence_id: parsedEvidenceId.id,
       failure_code: inspection.code,
     });
-    if (cleaned) {
+    if (failedRes.ok && cleaned) {
       await dependencies.repository.markEvidenceCleaned({
         auth_subject: actor.auth_subject,
         app_user_id: actor.app_user_id,
@@ -999,7 +1029,34 @@ export async function handlePostFinalizeVendorFinanceEvidence(
     app_user_id: actor.app_user_id,
     evidence_id: parsedEvidenceId.id,
   });
-  if (!finalized.ok) return vfinError(finalized.code);
+  if (!finalized.ok) {
+    if (
+      finalized.code === "VENDOR_FINANCE_EVIDENCE_RESERVATION_EXPIRED" ||
+      finalized.code === "VENDOR_FINANCE_EVIDENCE_ALREADY_ATTACHED"
+    ) {
+      const cleanedFinal = await safeDeleteFinalObject(dependencies.storage, info.storage_key);
+      const cleanedStaged = await safeDeleteStagedObject(dependencies.storage, info.storage_key);
+      const expRes = await dependencies.repository.expireEvidenceReservation({
+        auth_subject: actor.auth_subject,
+        app_user_id: actor.app_user_id,
+        evidence_id: parsedEvidenceId.id,
+        failure_code:
+          finalized.code === "VENDOR_FINANCE_EVIDENCE_ALREADY_ATTACHED"
+            ? "VENDOR_FINANCE_EVIDENCE_ALREADY_ATTACHED"
+            : "RESERVATION_TTL_EXPIRED",
+      });
+      if (expRes.ok && cleanedFinal && cleanedStaged) {
+        await dependencies.repository.markEvidenceCleaned({
+          auth_subject: actor.auth_subject,
+          app_user_id: actor.app_user_id,
+          evidence_id: parsedEvidenceId.id,
+        });
+      }
+    }
+    return vfinError(finalized.code);
+  }
+
+  await safeDeleteStagedObject(dependencies.storage, info.storage_key);
 
   return vfinOk(finalized.data, 200);
 }

@@ -471,6 +471,13 @@ function makeMockRepository({
           data: { evidence_id: input.evidence_id, status: "FAILED" },
         };
       },
+      async expireEvidenceReservation(input) {
+        calls.push(["expireEvidenceReservation", input]);
+        return {
+          ok: true,
+          data: { evidence_id: input.evidence_id, status: "EXPIRED" },
+        };
+      },
       async getEvidenceDownload(input) {
         calls.push(["getEvidenceDownload", input]);
         return {
@@ -949,6 +956,7 @@ test("evidence lifecycle: invalid upload does NOT roll back money entry, cleans 
   const deletedStagedKeys = [];
   const reservations = new Map();
   let ledgerEntriesCount = 0;
+  let failNextDbFinalize = false;
 
   const loggedMessages = [];
   const origError = console.error;
@@ -1008,12 +1016,21 @@ test("evidence lifecycle: invalid upload does NOT roll back money entry, cleans 
         rec.status = "FAILED";
         return { ok: true, data: { evidence_id: rec.evidence_id, status: "FAILED" } };
       },
+      async expireEvidenceReservation(input) {
+        const rec = reservations.get(input.evidence_id);
+        rec.status = "EXPIRED";
+        return { ok: true, data: { evidence_id: rec.evidence_id, status: "EXPIRED" } };
+      },
       async markEvidenceCleaned(input) {
         const rec = reservations.get(input.evidence_id);
         rec.cleaned = true;
         return { ok: true, data: { evidence_id: rec.evidence_id, cleaned: true } };
       },
       async finalizeEvidenceReady(input) {
+        if (failNextDbFinalize) {
+          failNextDbFinalize = false;
+          return { ok: false, code: "VENDOR_FINANCE_UNAVAILABLE" };
+        }
         const rec = reservations.get(input.evidence_id);
         const replayed = rec.status === "READY";
         rec.status = "READY";
@@ -1067,12 +1084,15 @@ test("evidence lifecycle: invalid upload does NOT roll back money entry, cleans 
         return { kind: "found", bytes: stagedObjects.get(storageKey) };
       },
       async promoteStagedToFinal(input) {
+        // Mirrors real R2 storage: CopyObject ONLY; staged object stays until DB confirms READY.
         finalObjects.set(input.storage_key, stagedObjects.get(input.storage_key));
-        stagedObjects.delete(input.storage_key);
       },
       async deleteStaged(storageKey) {
         stagedObjects.delete(storageKey);
         deletedStagedKeys.push(storageKey);
+      },
+      async deleteFinal(storageKey) {
+        finalObjects.delete(storageKey);
       },
       async createDownloadUrl(input) {
         return {
@@ -1175,6 +1195,29 @@ test("evidence lifecycle: invalid upload does NOT roll back money entry, cleans 
     const key2 = reservations.get(EV_ID_2).storage_key;
     stagedObjects.set(key2, VALID_PNG);
 
+    // Step 4a (Blocker 1 regression): Simulate transient DB error AFTER promoteStagedToFinal copies staged -> final.
+    // Staged object MUST remain intact and metadata MUST stay RESERVED so retry succeeds!
+    failNextDbFinalize = true;
+    const fin2TransientErr = await handlePostFinalizeVendorFinanceEvidence(
+      new Request(`${ORIGIN}/api/vendor-finance/evidence/${EV_ID_2}/finalize`, {
+        method: "POST",
+        headers: SAME_ORIGIN_POST_HEADERS,
+        body: "{}",
+      }),
+      EV_ID_2,
+      "true",
+      deps,
+    );
+    assert.equal(fin2TransientErr.status, 503);
+    assert.deepEqual(await fin2TransientErr.json(), {
+      ok: false,
+      code: "VENDOR_FINANCE_UNAVAILABLE",
+    });
+    assert.equal(reservations.get(EV_ID_2).status, "RESERVED");
+    assert.equal(finalObjects.has(key2), true, "final copy occurred before DB step");
+    assert.equal(stagedObjects.has(key2), true, "staged object MUST be preserved until DB confirms READY");
+
+    // Step 4b: Retry finalize #2 -> reads preserved staged object, commits READY, THEN deletes staged!
     const fin2 = await handlePostFinalizeVendorFinanceEvidence(
       new Request(`${ORIGIN}/api/vendor-finance/evidence/${EV_ID_2}/finalize`, {
         method: "POST",
@@ -1190,6 +1233,7 @@ test("evidence lifecycle: invalid upload does NOT roll back money entry, cleans 
     assert.equal(fin2Body.data.evidence.status, "READY");
     assert.equal(fin2Body.data.replayed, false);
     assert.equal(finalObjects.has(key2), true);
+    assert.equal(stagedObjects.has(key2), false, "staged object deleted ONLY after DB confirmed READY");
     assert.equal(ledgerEntriesCount, 1);
 
     // Step 5: Download signed URL -> 200, omits storage_key
@@ -1211,6 +1255,200 @@ test("evidence lifecycle: invalid upload does NOT roll back money entry, cleans 
   } finally {
     console.error = origError;
   }
+});
+
+test("evidence expiry lifecycle (Blocker 2 regression): expired reservation transitions to EXPIRED without rollback, cleans staged & final R2 objects, and marks cleaned", async () => {
+  const stagedObjects = new Map();
+  const finalObjects = new Map();
+  const EV_EXP_1 = "60000000-0000-4000-8000-000000000011";
+  const EV_EXP_2 = "60000000-0000-4000-8000-000000000012";
+  const keyExp1 = `vfin-01/entry/${ENTRY_ID}/${EV_EXP_1}`;
+  const keyExp2 = `vfin-01/entry/${ENTRY_ID}/${EV_EXP_2}`;
+
+  const state = new Map([
+    [
+      EV_EXP_1,
+      {
+        evidence_id: EV_EXP_1,
+        target_kind: "ENTRY",
+        target_id: ENTRY_ID,
+        status: "RESERVED",
+        storage_key: keyExp1,
+        mime_type: "image/png",
+        size_bytes: VALID_PNG.byteLength,
+        checksum_sha256: VALID_PNG_SHA,
+        expires_at: "2026-10-24T01:59:00.000Z",
+        finalized_at: null,
+        is_expired: true,
+        cleaned: false,
+      },
+    ],
+    [
+      EV_EXP_2,
+      {
+        evidence_id: EV_EXP_2,
+        target_kind: "ENTRY",
+        target_id: ENTRY_ID,
+        status: "RESERVED",
+        storage_key: keyExp2,
+        mime_type: "image/png",
+        size_bytes: VALID_PNG.byteLength,
+        checksum_sha256: VALID_PNG_SHA,
+        expires_at: "2026-10-24T02:05:00.000Z",
+        finalized_at: null,
+        is_expired: false,
+        cleaned: false,
+      },
+    ],
+  ]);
+
+  stagedObjects.set(keyExp1, VALID_PNG);
+  finalObjects.set(keyExp1, VALID_PNG); // leftover final copy from an earlier aborted attempt
+  stagedObjects.set(keyExp2, VALID_PNG);
+
+  // Wire EV_EXP_2 through real `createVendorFinanceRepository` to verify committable `{ expired: true, status: "EXPIRED" }`
+  // RPC payload mapping alongside `expireEvidenceReservation` and `markEvidenceCleaned`.
+  const rpcRepo = createVendorFinanceRepository(async (fnName, params) => {
+    if (fnName === "vendor_finance_get_actor_access") {
+      return {
+        data: {
+          authorization_date: "2026-10-24",
+          can_view: true,
+          can_record: true,
+          authority_source: "accounting_department",
+        },
+        error: null,
+      };
+    }
+    const rec = state.get(params.p_evidence_id);
+    if (fnName === "vendor_finance_complete_evidence") {
+      if (params.p_outcome === "INFO") {
+        if (rec.is_expired && rec.status === "RESERVED") {
+          rec.status = "EXPIRED";
+        }
+        return {
+          data: {
+            evidence_id: rec.evidence_id,
+            target_kind: rec.target_kind,
+            target_id: rec.target_id,
+            status: rec.status,
+            storage_key: rec.storage_key,
+            mime_type: rec.mime_type,
+            size_bytes: rec.size_bytes,
+            checksum_sha256: rec.checksum_sha256,
+            expires_at: rec.expires_at,
+            finalized_at: rec.finalized_at,
+            is_expired: rec.status === "EXPIRED",
+          },
+          error: null,
+        };
+      }
+      if (params.p_outcome === "READY") {
+        // Simulate TTL expiring right before READY step: SQL commits EXPIRED and returns structured JSON (no exception!)
+        rec.status = "EXPIRED";
+        return {
+          data: {
+            expired: true,
+            evidence_id: rec.evidence_id,
+            status: "EXPIRED",
+            failure_code: "RESERVATION_TTL_EXPIRED",
+          },
+          error: null,
+        };
+      }
+      if (params.p_outcome === "EXPIRED") {
+        rec.status = "EXPIRED";
+        return {
+          data: {
+            evidence_id: rec.evidence_id,
+            status: "EXPIRED",
+            failure_code: params.p_failure_code ?? "RESERVATION_TTL_EXPIRED",
+          },
+          error: null,
+        };
+      }
+    }
+    if (fnName === "vendor_finance_mark_evidence_cleaned") {
+      assert.equal(rec.status, "EXPIRED", "mark_evidence_cleaned requires committed EXPIRED/FAILED status");
+      rec.cleaned = true;
+      return {
+        data: { evidence_id: rec.evidence_id, cleaned: true },
+        error: null,
+      };
+    }
+    throw new Error(`Unexpected RPC: ${fnName}`);
+  });
+
+  const storage = {
+    available: () => true,
+    async createUploadUrl() {
+      throw new Error("unexpected");
+    },
+    async readStagedBounded(storageKey) {
+      if (!stagedObjects.has(storageKey)) return { kind: "missing" };
+      return { kind: "found", bytes: stagedObjects.get(storageKey) };
+    },
+    async promoteStagedToFinal(input) {
+      finalObjects.set(input.storage_key, stagedObjects.get(input.storage_key));
+    },
+    async deleteStaged(storageKey) {
+      stagedObjects.delete(storageKey);
+    },
+    async deleteFinal(storageKey) {
+      finalObjects.delete(storageKey);
+    },
+    async createDownloadUrl() {
+      throw new Error("unexpected");
+    },
+  };
+
+  const deps = {
+    resolveSession: async () => makeSession(),
+    repository: rpcRepo,
+    storage,
+  };
+
+  // Case A: Expired before INFO check -> commits EXPIRED, deletes staged & final, marks cleaned -> 409
+  const resExp1 = await handlePostFinalizeVendorFinanceEvidence(
+    new Request(`${ORIGIN}/api/vendor-finance/evidence/${EV_EXP_1}/finalize`, {
+      method: "POST",
+      headers: SAME_ORIGIN_POST_HEADERS,
+      body: "{}",
+    }),
+    EV_EXP_1,
+    "true",
+    deps,
+  );
+  assert.equal(resExp1.status, 409);
+  assert.deepEqual(await resExp1.json(), {
+    ok: false,
+    code: "VENDOR_FINANCE_EVIDENCE_RESERVATION_EXPIRED",
+  });
+  assert.equal(state.get(EV_EXP_1).status, "EXPIRED");
+  assert.equal(state.get(EV_EXP_1).cleaned, true);
+  assert.equal(stagedObjects.has(keyExp1), false);
+  assert.equal(finalObjects.has(keyExp1), false);
+
+  // Case B: Expires right at READY step after promoteStagedToFinal copied final -> commits EXPIRED, deletes BOTH final & staged, marks cleaned -> 409
+  const resExp2 = await handlePostFinalizeVendorFinanceEvidence(
+    new Request(`${ORIGIN}/api/vendor-finance/evidence/${EV_EXP_2}/finalize`, {
+      method: "POST",
+      headers: SAME_ORIGIN_POST_HEADERS,
+      body: "{}",
+    }),
+    EV_EXP_2,
+    "true",
+    deps,
+  );
+  assert.equal(resExp2.status, 409);
+  assert.deepEqual(await resExp2.json(), {
+    ok: false,
+    code: "VENDOR_FINANCE_EVIDENCE_RESERVATION_EXPIRED",
+  });
+  assert.equal(state.get(EV_EXP_2).status, "EXPIRED");
+  assert.equal(state.get(EV_EXP_2).cleaned, true);
+  assert.equal(stagedObjects.has(keyExp2), false);
+  assert.equal(finalObjects.has(keyExp2), false);
 });
 
 test("createVendorFinanceRepository maps known SQL tokens & fails closed on non-canonical RPC projections", async () => {

@@ -227,6 +227,13 @@ export type VendorFinanceRepository = {
     },
   ): Promise<VendorFinanceRepoResult<{ evidence_id: string; status: "FAILED" }>>;
 
+  expireEvidenceReservation(
+    input: VendorFinanceActorRef & {
+      evidence_id: string;
+      failure_code?: string;
+    },
+  ): Promise<VendorFinanceRepoResult<{ evidence_id: string; status: "EXPIRED" | "FAILED" }>>;
+
   getEvidenceDownload(
     input: VendorFinanceActorRef & { evidence_id: string },
   ): Promise<VendorFinanceRepoResult<EvidenceDownloadRecord>>;
@@ -829,20 +836,39 @@ export function createVendorFinanceRepository(
       );
     },
 
-    finalizeEvidenceReady(input) {
-      return callProjected(
-        "finalizeEvidenceReady",
-        "mutation",
-        "vendor_finance_complete_evidence",
-        {
+    async finalizeEvidenceReady(input) {
+      try {
+        resolvedRpc ??= serviceRoleRpc();
+        const result = await resolvedRpc("vendor_finance_complete_evidence", {
           p_auth_subject: input.auth_subject,
           p_app_user_id: input.app_user_id,
           p_evidence_id: input.evidence_id,
           p_outcome: "READY",
           p_failure_code: null,
-        },
-        projectEvidenceFinalizeRecord,
-      );
+        });
+        if (result.error) {
+          return {
+            ok: false,
+            code: classifyVendorFinanceRpcError(result.error, "mutation"),
+          };
+        }
+        if (
+          isRecord(result.data) &&
+          result.data.expired === true &&
+          result.data.status === "EXPIRED"
+        ) {
+          return { ok: false, code: "VENDOR_FINANCE_EVIDENCE_RESERVATION_EXPIRED" };
+        }
+        const projected = projectEvidenceFinalizeRecord(result.data);
+        if (!projected) {
+          console.error("[vendor-finance] finalizeEvidenceReady returned non-canonical projection");
+          return { ok: false, code: "VENDOR_FINANCE_UNAVAILABLE" };
+        }
+        return { ok: true, data: projected };
+      } catch {
+        console.error("[vendor-finance] finalizeEvidenceReady RPC failed");
+        return { ok: false, code: "VENDOR_FINANCE_UNAVAILABLE" };
+      }
     },
 
     failEvidenceReservation(input) {
@@ -868,6 +894,36 @@ export function createVendorFinanceRepository(
             return null;
           }
           return { evidence_id: raw.evidence_id.toLowerCase(), status: "FAILED" as const };
+        },
+      );
+    },
+
+    expireEvidenceReservation(input) {
+      return callProjected(
+        "expireEvidenceReservation",
+        "mutation",
+        "vendor_finance_complete_evidence",
+        {
+          p_auth_subject: input.auth_subject,
+          p_app_user_id: input.app_user_id,
+          p_evidence_id: input.evidence_id,
+          p_outcome: "EXPIRED",
+          p_failure_code: input.failure_code ?? "RESERVATION_TTL_EXPIRED",
+        },
+        (raw) => {
+          if (
+            !isRecord(raw) ||
+            !exactKeys(raw, ["evidence_id", "status", "failure_code"]) ||
+            typeof raw.evidence_id !== "string" ||
+            !UUID_REGEX.test(raw.evidence_id) ||
+            (raw.status !== "EXPIRED" && raw.status !== "FAILED")
+          ) {
+            return null;
+          }
+          return {
+            evidence_id: raw.evidence_id.toLowerCase(),
+            status: raw.status,
+          };
         },
       );
     },

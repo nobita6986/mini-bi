@@ -169,6 +169,7 @@ export type VendorFinanceEvidenceStorage = {
     mime_type: VendorFinanceEvidenceMimeType;
   }): Promise<void>;
   deleteStaged(storageKey: string): Promise<void>;
+  deleteFinal(storageKey: string): Promise<void>;
   createDownloadUrl(input: {
     storage_key: string;
     mime_type: VendorFinanceEvidenceMimeType;
@@ -187,6 +188,9 @@ export const unavailableVendorFinanceEvidenceStorage: VendorFinanceEvidenceStora
     throw new Error("VENDOR_FINANCE_STORAGE_UNAVAILABLE");
   },
   async deleteStaged() {
+    throw new Error("VENDOR_FINANCE_STORAGE_UNAVAILABLE");
+  },
+  async deleteFinal() {
     throw new Error("VENDOR_FINANCE_STORAGE_UNAVAILABLE");
   },
   async createDownloadUrl() {
@@ -299,6 +303,20 @@ export function createR2VendorFinanceEvidenceStorage(
     }
   };
 
+  const deleteFinalInternal = async (storageKey: string): Promise<void> => {
+    try {
+      await getClient().send(
+        new DeleteObjectCommand({
+          Bucket: config.bucket,
+          Key: vfinFinalObjectKey(config.environment, storageKey),
+        }),
+      );
+    } catch (error) {
+      if (isNotFoundError(error)) return;
+      throw error;
+    }
+  };
+
   return {
     available: () => true,
 
@@ -378,6 +396,8 @@ export function createR2VendorFinanceEvidenceStorage(
     async promoteStagedToFinal(input) {
       const stagedKey = vfinStagingObjectKey(config.environment, input.storage_key);
       const finalKey = vfinFinalObjectKey(config.environment, input.storage_key);
+      // Copy staged -> final ONLY; staged object MUST stay intact until DB commits `READY`
+      // so transient DB errors on finalize remain safely retryable.
       await getClient().send(
         new CopyObjectCommand({
           Bucket: config.bucket,
@@ -387,15 +407,14 @@ export function createR2VendorFinanceEvidenceStorage(
           MetadataDirective: "REPLACE",
         }),
       );
-      try {
-        await deleteStagedInternal(input.storage_key);
-      } catch {
-        // Best-effort staged cleanup after final copy succeeds.
-      }
     },
 
     async deleteStaged(storageKey) {
       await deleteStagedInternal(storageKey);
+    },
+
+    async deleteFinal(storageKey) {
+      await deleteFinalInternal(storageKey);
     },
 
     async createDownloadUrl(input) {
