@@ -15,7 +15,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Building2, ChevronDown, ClipboardList, FileDiff, LayoutDashboard, NotebookPen, ShieldCheck, Users } from "lucide-react";
+import { Building2, ChevronDown, ClipboardList, FileDiff, Landmark, LayoutDashboard, NotebookPen, ShieldCheck, Users } from "lucide-react";
 import { DropdownMenu } from "radix-ui";
 
 import { findEntryByPath, groupNavEntries, type NavGroupId, type NavMenuEntry } from "@/lib/navigation/registry";
@@ -31,6 +31,7 @@ const NAV_ICONS: Record<string, typeof LayoutDashboard> = {
   "change-requests": FileDiff,
   "work-reports": NotebookPen,
   "work-report-reviews": ClipboardList,
+  finance: Landmark,
   admin: ShieldCheck,
 } as const;
 

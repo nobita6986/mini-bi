@@ -73,6 +73,10 @@ export async function AppShell({
   await connection();
   const directEntryEnabled = isDirectEntryUiEnabled(process.env.DIRECT_ENTRY_UI_ENABLED);
   const workReportsEnabled = process.env.WORK_REPORTS_API_ENABLED === "true";
+  const vendorFinanceEnabled = process.env.DIRECT_ENTRY_API_ENABLED === "true";
+  const isEntryFeatureEnabled = (entry: { id: string }) =>
+    (!WORK_REPORTS_NAV_ENTRY_IDS.has(entry.id) || workReportsEnabled) &&
+    (entry.id !== "finance" || vendorFinanceEnabled);
 
   // P3-W06A R1: phan tach ro rang tang viewport va tang capability.
   // - `filterEntriesForActor` chiu trach nhiem viewport/visibility: loc
@@ -86,7 +90,7 @@ export async function AppShell({
     directEntryEnabled,
     actor,
     decide: (entry) =>
-      (!WORK_REPORTS_NAV_ENTRY_IDS.has(entry.id) || workReportsEnabled) && decideNavEntryVisibility({
+      isEntryFeatureEnabled(entry) && decideNavEntryVisibility({
         capabilityKey: entry.capability,
         actor,
         viewport: "desktop",
@@ -98,7 +102,7 @@ export async function AppShell({
     directEntryEnabled,
     actor,
     decide: (entry) =>
-      (!WORK_REPORTS_NAV_ENTRY_IDS.has(entry.id) || workReportsEnabled) && decideNavEntryVisibility({
+      isEntryFeatureEnabled(entry) && decideNavEntryVisibility({
         capabilityKey: entry.capability,
         actor,
         viewport: "mobile",
@@ -107,7 +111,7 @@ export async function AppShell({
   });
   return (
     <div className="flex min-h-full flex-1 flex-col">
-      <header className="sticky top-0 z-20 border-b border-border bg-background/95 backdrop-blur">
+      <header className="sticky top-0 z-20 border-b border-border bg-background/95 backdrop-blur print:hidden">
         <div className="mx-auto flex min-h-14 w-full max-w-6xl flex-wrap items-center gap-3 px-4 py-2 sm:px-6">
           {/* Mobile: hamburger trigger */}
           <MobileNav

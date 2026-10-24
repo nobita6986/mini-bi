@@ -19,6 +19,7 @@ import {
   Building2,
   ClipboardList,
   FileDiff,
+  Landmark,
   LayoutDashboard,
   NotebookPen,
   ShieldCheck,
@@ -230,6 +231,17 @@ export const NAV_ENTRIES: ReadonlyArray<NavEntry> = [
     status: "current",
     capability: "work_report_reviews",
     group: "daily-reports",
+    visibility: { desktop: true, mobile: true },
+  },
+  {
+    id: "finance",
+    label: "Tài chính",
+    path: "/finance",
+    description:
+      "Theo dõi công nợ, tạm ứng, sổ cái, đối soát và chứng từ tài chính Vendor theo quyền được máy chủ xác nhận.",
+    icon: Landmark,
+    status: "current",
+    capability: "finance",
     visibility: { desktop: true, mobile: true },
   },
   {
