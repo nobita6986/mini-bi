@@ -82,6 +82,7 @@ const TEST_WEIGHTS = {
   "test:attendance-admin-report": 9.0,
   "test:offboarding-report": 9.0,
   "test:org-shell-01": 8.0,
+  "test:org-shell-01-ui": 2.0,
 };
 
 const target = process.argv[2];
