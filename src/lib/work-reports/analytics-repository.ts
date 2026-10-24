@@ -168,7 +168,41 @@ export type WorkReportAnalyticsContributionsInput = WorkReportAnalyticsFilterInp
   limit: number;
 };
 
+export type WorkReportAnalyticsFilterTemplateVersionOption = {
+  version_id: string;
+  version_no: number;
+  status: string;
+};
+
+export type WorkReportAnalyticsFilterTemplateOption = {
+  template_id: string;
+  template_code: string;
+  display_name: string;
+  status: string;
+  versions: readonly WorkReportAnalyticsFilterTemplateVersionOption[];
+};
+
+export type WorkReportAnalyticsFilterTeamOption = {
+  team_id: string;
+  code: string;
+  display_name: string;
+};
+
+export type WorkReportAnalyticsFilterAssigneeOption = {
+  app_user_id: string;
+  display_name: string;
+  team_ids: readonly string[];
+};
+
+export type WorkReportAnalyticsFilterOptions = {
+  effective_scope: WorkReportEffectiveScope;
+  templates: readonly WorkReportAnalyticsFilterTemplateOption[];
+  teams: readonly WorkReportAnalyticsFilterTeamOption[];
+  assignees: readonly WorkReportAnalyticsFilterAssigneeOption[];
+};
+
 export type AnalyticsRepository = {
+  options(input: WorkReportActorRef): Promise<WorkReportAnalyticsRpcOutcome<WorkReportAnalyticsFilterOptions>>;
   overview(input: WorkReportAnalyticsFilterInput): Promise<WorkReportAnalyticsRpcOutcome<WorkReportAnalyticsOverview>>;
   breakdown(input: WorkReportAnalyticsBreakdownInput): Promise<WorkReportAnalyticsRpcOutcome<WorkReportAnalyticsBreakdown>>;
   contributions(input: WorkReportAnalyticsContributionsInput): Promise<WorkReportAnalyticsRpcOutcome<WorkReportAnalyticsContributions>>;
@@ -333,6 +367,52 @@ function isContributions(value: unknown): value is WorkReportAnalyticsContributi
   );
 }
 
+function isAnalyticsFilterOptions(value: unknown): value is WorkReportAnalyticsFilterOptions {
+  return (
+    isRecord(value) &&
+    isEffectiveScope(value.effective_scope) &&
+    Array.isArray(value.templates) &&
+    value.templates.every(
+      (tpl) =>
+        isRecord(tpl) &&
+        typeof tpl.template_id === "string" &&
+        UUID.test(tpl.template_id) &&
+        typeof tpl.template_code === "string" &&
+        typeof tpl.display_name === "string" &&
+        typeof tpl.status === "string" &&
+        Array.isArray(tpl.versions) &&
+        tpl.versions.every(
+          (ver) =>
+            isRecord(ver) &&
+            typeof ver.version_id === "string" &&
+            UUID.test(ver.version_id) &&
+            Number.isInteger(ver.version_no) &&
+            Number(ver.version_no) >= 1 &&
+            typeof ver.status === "string",
+        ),
+    ) &&
+    Array.isArray(value.teams) &&
+    value.teams.every(
+      (team) =>
+        isRecord(team) &&
+        typeof team.team_id === "string" &&
+        UUID.test(team.team_id) &&
+        typeof team.code === "string" &&
+        typeof team.display_name === "string",
+    ) &&
+    Array.isArray(value.assignees) &&
+    value.assignees.every(
+      (user) =>
+        isRecord(user) &&
+        typeof user.app_user_id === "string" &&
+        UUID.test(user.app_user_id) &&
+        typeof user.display_name === "string" &&
+        Array.isArray(user.team_ids) &&
+        user.team_ids.every((tid) => typeof tid === "string" && UUID.test(tid)),
+    )
+  );
+}
+
 function isReconciliation(value: unknown): value is WorkReportMetricReconciliation {
   return (
     isRecord(value) &&
@@ -398,6 +478,16 @@ export function createAnalyticsRepository(rpc?: Rpc): AnalyticsRepository {
   };
 
   return {
+    options(input) {
+      return run(
+        "work_report_analytics_filter_options",
+        {
+          p_auth_subject: input.auth_subject,
+          p_app_user_id: input.app_user_id,
+        },
+        isAnalyticsFilterOptions,
+      );
+    },
     overview(input) {
       return run(
         "work_report_analytics_overview",

@@ -1,0 +1,26 @@
+import "server-only";
+
+import { getDirectEntryActor } from "@/lib/auth/direct-entry-session";
+import { createDirectEntryActorRepository } from "@/lib/direct-entry/actor-context-repository";
+import { patchWorkReportGroup } from "@/lib/work-reports/assignment-api";
+import { createAssignmentRepository } from "@/lib/work-reports/assignment-repository";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+export async function PATCH(
+  request: Request,
+  context: { params: Promise<{ groupId: string }> },
+): Promise<Response> {
+  if (process.env.WORK_REPORTS_API_ENABLED !== "true") {
+    return Response.json(
+      { ok: false, code: "NOT_FOUND" },
+      { status: 404, headers: { "Cache-Control": "private, no-store" } },
+    );
+  }
+  const { groupId } = await context.params;
+  return patchWorkReportGroup(request, groupId, "true", {
+    resolveSession: () => getDirectEntryActor(createDirectEntryActorRepository()),
+    repository: createAssignmentRepository(),
+  });
+}

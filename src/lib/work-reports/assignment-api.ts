@@ -57,11 +57,14 @@ function idempotencyHeaderMatches(request: Request, key: string): boolean {
 
 function projectCreate(value: unknown): Omit<AssignmentCreateInput, keyof WorkReportActorRef> | null {
   if (!isRecord(value) || !validateClientBusinessPayload(value).ok) return null;
-  const keys = ["template_id", "target_kind", "target_user_id", "target_team_id", "target_user_ids", "frequency",
+  const requiredKeys = ["template_id", "target_kind", "target_user_id", "target_team_id", "target_user_ids", "frequency",
     "is_mandatory", "due_day_offset", "due_time_local", "exclude_sundays", "effective_from", "effective_to", "idempotency_key"];
-  if (Object.keys(value).some((key) => !keys.includes(key)) || keys.some((key) => !(key in value))) return null;
+  const allowedKeys = [...requiredKeys, "target_group_id"];
+  if (Object.keys(value).some((key) => !allowedKeys.includes(key)) || requiredKeys.some((key) => !(key in value))) return null;
+  const targetGroup = "target_group_id" in value ? value.target_group_id : null;
+  if (!(targetGroup === null || (typeof targetGroup === "string" && UUID.test(targetGroup)))) return null;
   if (typeof value.template_id !== "string" || !UUID.test(value.template_id) ||
-      !["USER", "TEAM", "USER_SET"].includes(String(value.target_kind)) ||
+      !["USER", "TEAM", "USER_SET", "GROUP"].includes(String(value.target_kind)) ||
       !["DAILY", "WEEKLY", "MONTHLY", "ONCE"].includes(String(value.frequency)) ||
       typeof value.is_mandatory !== "boolean" || !Number.isInteger(value.due_day_offset) ||
       Number(value.due_day_offset) < 0 || Number(value.due_day_offset) > 31 ||
@@ -74,11 +77,15 @@ function projectCreate(value: unknown): Omit<AssignmentCreateInput, keyof WorkRe
   const kind = value.target_kind;
   const targetUser = value.target_user_id;
   const targetTeam = value.target_team_id;
-  if (kind === "USER" && (typeof targetUser !== "string" || !UUID.test(targetUser) || targetTeam !== null || value.target_user_ids.length !== 0)) return null;
-  if (kind === "TEAM" && (typeof targetTeam !== "string" || !UUID.test(targetTeam) || targetUser !== null || value.target_user_ids.length !== 0)) return null;
-  if (kind === "USER_SET" && (targetUser !== null || targetTeam !== null || value.target_user_ids.length < 1 ||
+  if (kind === "USER" && (typeof targetUser !== "string" || !UUID.test(targetUser) || targetTeam !== null || targetGroup !== null || value.target_user_ids.length !== 0)) return null;
+  if (kind === "TEAM" && (typeof targetTeam !== "string" || !UUID.test(targetTeam) || targetUser !== null || targetGroup !== null || value.target_user_ids.length !== 0)) return null;
+  if (kind === "USER_SET" && (targetUser !== null || targetTeam !== null || targetGroup !== null || value.target_user_ids.length < 1 ||
       new Set(value.target_user_ids).size !== value.target_user_ids.length)) return null;
-  return value as unknown as Omit<AssignmentCreateInput, keyof WorkReportActorRef>;
+  if (kind === "GROUP" && (typeof targetGroup !== "string" || !UUID.test(targetGroup) || targetUser !== null || targetTeam !== null || value.target_user_ids.length !== 0)) return null;
+  return {
+    ...(value as Omit<AssignmentCreateInput, keyof WorkReportActorRef | "target_group_id">),
+    target_group_id: targetGroup,
+  };
 }
 
 function mapOutcome<T>(result: WorkReportRpcOutcome<T>): Response {
@@ -207,4 +214,147 @@ export async function materializeWorkReportObligations(request: Request, enabled
   if (actor instanceof Response) return actor;
   try { return mapOutcome(await deps.repository.materialize({ ...actor, business_date: body.business_date as string })); }
   catch { console.error("[work-reports] obligation materialization unavailable"); return fail("WORK_REPORT_UNAVAILABLE", 503); }
+}
+
+function parseGroupDefinition(value: Record<string, unknown>): {
+  display_name: string;
+  description: string | null;
+  member_user_ids: string[];
+  idempotency_key: string;
+} | null {
+  if (
+    typeof value.display_name !== "string" ||
+    value.display_name.trim().length < 1 ||
+    value.display_name.trim().length > 160 ||
+    !(value.description === null || (typeof value.description === "string" && value.description.trim().length <= 1000)) ||
+    !Array.isArray(value.member_user_ids) ||
+    value.member_user_ids.length < 1 ||
+    value.member_user_ids.length > 500 ||
+    value.member_user_ids.some((id) => typeof id !== "string" || !UUID.test(id)) ||
+    new Set(value.member_user_ids).size !== value.member_user_ids.length ||
+    typeof value.idempotency_key !== "string" ||
+    !KEY.test(value.idempotency_key)
+  ) {
+    return null;
+  }
+  const trimmedDesc = value.description === null ? "" : value.description.trim();
+  return {
+    display_name: value.display_name.trim(),
+    description: trimmedDesc.length > 0 ? trimmedDesc : null,
+    member_user_ids: value.member_user_ids,
+    idempotency_key: value.idempotency_key,
+  };
+}
+
+export async function listWorkReportGroups(
+  request: Request,
+  enabled: string | undefined,
+  deps: AssignmentApiDependencies,
+): Promise<Response> {
+  if (enabled !== "true") return fail("NOT_FOUND", 404);
+  const url = new URL(request.url);
+  if (url.searchParams.size > 0) return fail("WORK_REPORT_REQUEST_INVALID", 400);
+  const actor = await actorFromSession(deps);
+  if (actor instanceof Response) return actor;
+  try {
+    return mapOutcome(await deps.repository.listGroups(actor));
+  } catch {
+    console.error("[work-reports] group list unavailable");
+    return fail("WORK_REPORT_UNAVAILABLE", 503);
+  }
+}
+
+export async function createWorkReportGroup(
+  request: Request,
+  enabled: string | undefined,
+  deps: AssignmentApiDependencies,
+): Promise<Response> {
+  if (enabled !== "true") return fail("NOT_FOUND", 404);
+  const guard = mutationGuard(request);
+  if (guard) return guard;
+  const body = await readBoundedJson(request);
+  const requiredKeys = ["display_name", "description", "member_user_ids", "idempotency_key"];
+  if (
+    !isRecord(body) ||
+    !validateClientBusinessPayload(body).ok ||
+    Object.keys(body).length !== requiredKeys.length ||
+    requiredKeys.some((key) => !(key in body))
+  ) {
+    return fail("WORK_REPORT_GROUP_INVALID", 400);
+  }
+  const parsed = parseGroupDefinition(body);
+  if (!parsed) return fail("WORK_REPORT_GROUP_INVALID", 400);
+  if (!idempotencyHeaderMatches(request, parsed.idempotency_key)) return fail("IDEMPOTENCY_KEY_MISMATCH", 400);
+  const actor = await actorFromSession(deps);
+  if (actor instanceof Response) return actor;
+  try {
+    return mapOutcome(await deps.repository.createGroup({ ...actor, ...parsed }));
+  } catch {
+    console.error("[work-reports] group create unavailable");
+    return fail("WORK_REPORT_UNAVAILABLE", 503);
+  }
+}
+
+export async function patchWorkReportGroup(
+  request: Request,
+  groupId: string,
+  enabled: string | undefined,
+  deps: AssignmentApiDependencies,
+): Promise<Response> {
+  if (enabled !== "true") return fail("NOT_FOUND", 404);
+  if (!UUID.test(groupId)) return fail("WORK_REPORT_GROUP_INVALID", 400);
+  const guard = mutationGuard(request);
+  if (guard) return guard;
+  const body = await readBoundedJson(request);
+  if (!isRecord(body) || !validateClientBusinessPayload(body).ok) {
+    return fail("WORK_REPORT_GROUP_INVALID", 400);
+  }
+  const keys = Object.keys(body);
+  const activeKeys = ["expected_version", "active", "idempotency_key"];
+  const updateKeys = ["expected_version", "display_name", "description", "member_user_ids", "idempotency_key"];
+  const isActiveToggle = keys.length === activeKeys.length && activeKeys.every((key) => key in body);
+  const isContentUpdate = keys.length === updateKeys.length && updateKeys.every((key) => key in body);
+  if ((!isActiveToggle && !isContentUpdate) || !Number.isInteger(body.expected_version) || Number(body.expected_version) < 1) {
+    return fail("WORK_REPORT_GROUP_INVALID", 400);
+  }
+  if (isActiveToggle) {
+    if (typeof body.active !== "boolean" || typeof body.idempotency_key !== "string" || !KEY.test(body.idempotency_key)) {
+      return fail("WORK_REPORT_GROUP_INVALID", 400);
+    }
+    if (!idempotencyHeaderMatches(request, body.idempotency_key)) return fail("IDEMPOTENCY_KEY_MISMATCH", 400);
+    const actor = await actorFromSession(deps);
+    if (actor instanceof Response) return actor;
+    try {
+      return mapOutcome(
+        await deps.repository.setGroupActive({
+          ...actor,
+          group_id: groupId,
+          expected_version: Number(body.expected_version),
+          active: body.active,
+          idempotency_key: body.idempotency_key,
+        }),
+      );
+    } catch {
+      console.error("[work-reports] group active update unavailable");
+      return fail("WORK_REPORT_UNAVAILABLE", 503);
+    }
+  }
+  const parsed = parseGroupDefinition(body);
+  if (!parsed) return fail("WORK_REPORT_GROUP_INVALID", 400);
+  if (!idempotencyHeaderMatches(request, parsed.idempotency_key)) return fail("IDEMPOTENCY_KEY_MISMATCH", 400);
+  const actor = await actorFromSession(deps);
+  if (actor instanceof Response) return actor;
+  try {
+    return mapOutcome(
+      await deps.repository.updateGroup({
+        ...actor,
+        group_id: groupId,
+        expected_version: Number(body.expected_version),
+        ...parsed,
+      }),
+    );
+  } catch {
+    console.error("[work-reports] group update unavailable");
+    return fail("WORK_REPORT_UNAVAILABLE", 503);
+  }
 }

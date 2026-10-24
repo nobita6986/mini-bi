@@ -44,14 +44,54 @@ test("assignment page resolves the request actor and requires report_assign scop
   assert.doesNotMatch(source, /actor\.(?:role|title)|role_name|job_title/i);
 });
 
-test("assignment form loads scoped templates and targets without accepting client identity", async () => {
+test("assignment form loads scoped templates, targets, and custom cross-team groups without accepting client identity", async () => {
   const source = await readFile(assignmentManagerPath, "utf8");
   assert.match(source, /response\.status === 403/);
   assert.match(source, /WORK_REPORT_ACCESS_DENIED/);
   assert.match(source, /fetch\(`\/api\/work-reports\/assignments\$\{query\}`/);
+  assert.match(source, /fetch\("\/api\/work-reports\/groups"/);
   assert.match(source, /Danh sách nhân viên được xác định từ liên kết tài khoản và thành viên nhóm hiện hành/);
   assert.doesNotMatch(source, /nhập mã định danh|UUID, cách nhau/i);
-  assert.match(source, /disabled=\{busy \|\| !templates\.length \|\| !teamId \|\| !templatesLoaded\}/);
+  assert.match(source, /(!teamId && targetKind !== "GROUP")/);
+  assert.match(source, /<option value="GROUP">Nhóm báo cáo tùy chỉnh<\/option>/);
+  assert.match(source, /target_group_id: targetKind === "GROUP" \? targetGroupId : null/);
+  assert.match(source, /Ngừng sử dụng/);
+  assert.doesNotMatch(source, /method:\s*"DELETE"/i);
+});
+
+test("multi-line field labels preserve line breaks across employee form renderer and read-only/review renderer", async () => {
+  const formRendererSource = await readFile(rendererPath, "utf8");
+  const readonlySource = await readFile(new URL("../reader/report-readonly-content.tsx", import.meta.url), "utf8");
+  assert.match(formRendererSource, /<label htmlFor=\{field\.field_key\} className="block whitespace-pre-line break-words text-sm font-medium">/);
+  assert.match(readonlySource, /<p className="whitespace-pre-line break-words text-sm font-medium">\{field\.label\}<\/p>/);
+
+  const multilineSchema = structuredClone(RECRUITMENT_DAILY_TEMPLATE_SCHEMA);
+  multilineSchema.sections[0].fields[0].label = "Số cuộc gọi\n(trong ca trực)";
+  const parsed = parseReaderDetail({
+    ok: true,
+    data: {
+      obligation: {
+        period_key: "2026-10-24",
+        period_start_date: "2026-10-24",
+        period_end_date: "2026-10-24",
+        due_at: "2026-10-24T16:59:59Z",
+        snapshot_team_display_name: "Team A",
+        snapshot_team_code: "TEAM_A",
+        obligation_status: "ACTIVE",
+      },
+      template: {
+        template_code: "DAILY_V1",
+        display_name: "Báo cáo ngày",
+        schema_json: multilineSchema,
+      },
+      submission: null,
+      latest_review_event: null,
+      revisions: [],
+    },
+  });
+  assert.ok(parsed, "multi-line field label passes reader detail validation");
+  assert.equal(parsed.template.schema_json.sections[0].fields[0].label, "Số cuộc gọi\n(trong ca trực)");
+  assert.equal(parsed.template.schema_json.sections[0].fields[0].field_key, "calls_made");
 });
 
 test("read-only value renderer covers all eight field types without raw JSON or option keys", () => {

@@ -175,6 +175,28 @@ function parseBaseFilters(
   };
 }
 
+export async function getWorkReportAnalyticsOptions(
+  request: Request,
+  enabled: string | undefined,
+  deps: AnalyticsApiDependencies,
+): Promise<Response> {
+  if (enabled !== "true") return fail("NOT_FOUND", 404);
+  const { searchParams } = new URL(request.url);
+  if (searchParams.size > 0) {
+    return fail("WORK_REPORT_QUERY_INVALID", 400);
+  }
+
+  const actor = await trustedActor(deps);
+  if (actor instanceof Response) return actor;
+
+  try {
+    return mapOutcome(await deps.repository.options(actor));
+  } catch {
+    console.error("[work-reports] analytics options unavailable");
+    return fail("WORK_REPORT_UNAVAILABLE", 503);
+  }
+}
+
 export async function getWorkReportAnalyticsOverview(
   request: Request,
   enabled: string | undefined,

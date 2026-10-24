@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import test from "node:test";
 
 import {
   getWorkReportAnalyticsBreakdown,
   getWorkReportAnalyticsContributions,
+  getWorkReportAnalyticsOptions,
   getWorkReportAnalyticsOverview,
 } from "./analytics-api.ts";
 import {
@@ -378,6 +381,75 @@ test("analytics API maps scope denial (SEC-WR-02), capability denial (SEC-WR-03/
   const evidenceBody = await evidenceRes.json();
   assert.equal(evidenceBody.ok, true);
   assert.equal(evidenceBody.data.submission.submission_id, SUBMISSION_ID);
+});
+
+test("analytics filter options endpoint enforces feature gate, zero-param allowlist, and report_analytics_view capability", async () => {
+  const sampleOptions = {
+    effective_scope: { kind: "team", label: "Team Tuyển Dụng A" },
+    templates: [
+      {
+        template_id: TEMPLATE_ID,
+        template_code: "RECRUITMENT_DAILY_V1",
+        display_name: "Báo cáo ngày",
+        status: "ACTIVE",
+        versions: [{ version_id: VERSION_ID, version_no: 1, status: "PUBLISHED" }],
+      },
+    ],
+    teams: [{ team_id: TEAM_A, code: "TEAM_A", display_name: "Team Tuyển Dụng A" }],
+    assignees: [{ app_user_id: ASSIGNEE_A, display_name: "Staff A1", team_ids: [TEAM_A] }],
+  };
+
+  let rpcCalled;
+  const repo = createAnalyticsRepository(async (name, args) => {
+    rpcCalled = { name, args };
+    return { data: sampleOptions, error: null };
+  });
+  const deps = { resolveSession: activeSession, repository: repo };
+
+  assert.equal(
+    (await getWorkReportAnalyticsOptions(new Request("http://localhost/api/work-reports/analytics/options"), "false", deps)).status,
+    404,
+  );
+  assert.equal(
+    (await getWorkReportAnalyticsOptions(
+      new Request(`http://localhost/api/work-reports/analytics/options?team_id=${TEAM_B}`),
+      "true",
+      deps,
+    )).status,
+    400,
+  );
+
+  const okRes = await getWorkReportAnalyticsOptions(
+    new Request("http://localhost/api/work-reports/analytics/options"),
+    "true",
+    deps,
+  );
+  assert.equal(okRes.status, 200);
+  assert.equal(okRes.headers.get("cache-control"), "private, no-store");
+  assert.equal(okRes.headers.get("x-content-type-options"), "nosniff");
+  assert.deepEqual(rpcCalled, {
+    name: "work_report_analytics_filter_options",
+    args: { p_auth_subject: AUTH, p_app_user_id: APP },
+  });
+  const body = await okRes.json();
+  assert.equal(body.ok, true);
+  assert.deepEqual(body.data, sampleOptions);
+
+  const deniedRepo = createAnalyticsRepository(async () => ({
+    data: null,
+    error: { code: "42501", message: "WORK_REPORT_CAPABILITY_DENIED" },
+  }));
+  const deniedRes = await getWorkReportAnalyticsOptions(
+    new Request("http://localhost/api/work-reports/analytics/options"),
+    "true",
+    { resolveSession: activeSession, repository: deniedRepo },
+  );
+  assert.equal(deniedRes.status, 403);
+  assert.equal((await deniedRes.json()).code, "WORK_REPORT_ACCESS_DENIED");
+
+  const optionsRoute = await readFile(path.resolve("src/app/api/work-reports/analytics/options/route.ts"), "utf8");
+  assert.match(optionsRoute, /import "server-only";/);
+  assert.match(optionsRoute, /process\.env\.WORK_REPORTS_API_ENABLED !== "true"/);
 });
 
 import "./review-delegation-api.test.mjs";
