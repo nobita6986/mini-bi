@@ -17,6 +17,8 @@ import {
   computeHqLocationRequestFingerprint,
   getAttendanceCheckInPhoto,
   getAttendanceAdminReport,
+  getAttendanceSelfCheckInPhoto,
+  getAttendanceSelfHistory,
   putAttendanceHqLocation,
 } from "./attendance-report-api.ts";
 import {
@@ -29,12 +31,14 @@ import {
   getVietnamTodayIsoDate,
   isValidIsoCalendarDate,
   parseAttendanceReportQuery,
+  parseAttendanceSelfHistoryQuery,
   parseSetHqLocationBody,
   projectAttendanceAdminReport,
   projectSetHqLocationResult,
   shiftIsoDateDays,
 } from "./attendance-report-contract.ts";
 import { createServiceAttendanceAdminReportRepository } from "./attendance-report-repository.ts";
+import { createServiceAttendanceSelfHistoryRepository } from "./attendance-self-history-repository.ts";
 
 const AUTH_SUBJECT = "19000000-0000-4000-8000-0000000000a1";
 const APP_USER_ID = "29000000-0000-4000-8000-0000000000a1";
@@ -1145,6 +1149,116 @@ test("Attendance photo endpoint resolves a private R2 key only for Admin/BoD and
     checkin_id: CHECKIN_ID,
   });
   assert.deepEqual(malformed, { ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" });
+});
+
+test("Employee attendance history uses only the verified actor and rejects caller-selected employees", async () => {
+  const rpcCalls = [];
+  const repository = createServiceAttendanceSelfHistoryRepository(async (name, args) => {
+    rpcCalls.push({ name, args });
+    return {
+      data: {
+        items: [{
+          checkin_id: CHECKIN_ID,
+          employee_display_name: "Test Actor",
+          business_date: "2026-10-23",
+          sequence_in_day: 1,
+          captured_at: "2026-10-23T01:05:00.000Z",
+          received_at: "2026-10-23T01:05:02.000Z",
+          time_source: "SERVER_ANCHORED",
+          latitude: 21.02851,
+          longitude: 105.85417,
+          accuracy_meters: 8.5,
+          address_hint: "Hoàn Kiếm, Hà Nội",
+          note: "Ca sáng",
+        }],
+        pagination: { page: 1, page_size: 100, total_rows: 1, total_pages: 1, has_more: false },
+      },
+      error: null,
+    };
+  });
+  const response = await getAttendanceSelfHistory(
+    new Request("https://bi.example.com/api/attendance/history?from_date=2026-10-01&to_date=2026-10-23&page=1&page_size=100"),
+    { resolveSession: async () => makeSessionOk(TEAM_LEADER_CAPS, TEAM_SCOPE), repository },
+  );
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "private, no-store");
+  const body = await response.json();
+  assert.equal(body.report.items.length, 1);
+  assert.equal(body.report.items[0].checkin_id, CHECKIN_ID);
+  assert.deepEqual(rpcCalls, [{
+    name: "attendance_self_history",
+    args: {
+      p_auth_subject: AUTH_SUBJECT,
+      p_app_user_id: APP_USER_ID,
+      p_from_date: "2026-10-01",
+      p_to_date: "2026-10-23",
+      p_page: 1,
+      p_page_size: 100,
+    },
+  }]);
+
+  let sessionCalls = 0;
+  const tampered = await getAttendanceSelfHistory(
+    new Request(`https://bi.example.com/api/attendance/history?employee_id=${OTHER_IDEMPOTENCY_KEY}`),
+    {
+      resolveSession: async () => { sessionCalls += 1; return makeSessionOk(TEAM_LEADER_CAPS, TEAM_SCOPE); },
+      repository,
+    },
+  );
+  assert.equal(tampered.status, 400);
+  assert.equal(sessionCalls, 0);
+  assert.equal(rpcCalls.length, 1);
+
+  assert.deepEqual(
+    parseAttendanceSelfHistoryQuery(new URLSearchParams("employee_id=someone-else")),
+    { ok: false, code: "ATTENDANCE_REPORT_QUERY_INVALID" },
+  );
+});
+
+test("Employee attendance photo endpoint resolves only the signed-in actor's private key", async () => {
+  const storageKey = `preview/attendance-checkins/${APP_USER_ID}/${IDEMPOTENCY_KEY}/${CHECKIN_ID}.jpg`;
+  const bytes = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);
+  const rpcCalls = [];
+  const reads = [];
+  const repository = createServiceAttendanceSelfHistoryRepository(async (name, args) => {
+    rpcCalls.push({ name, args });
+    return { data: { found: true, photo_storage_key: storageKey }, error: null };
+  });
+  const storage = {
+    available: () => true,
+    async readCheckInPhoto(key) { reads.push(key); return bytes; },
+  };
+
+  const response = await getAttendanceSelfCheckInPhoto(
+    new Request(`https://bi.example.com/api/attendance/checkins/${CHECKIN_ID}/photo`),
+    CHECKIN_ID,
+    {
+      resolveSession: async () => makeSessionOk(TEAM_LEADER_CAPS, TEAM_SCOPE),
+      repository,
+      storage,
+    },
+  );
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("content-type"), "image/jpeg");
+  assert.equal(response.headers.get("cache-control"), "private, no-store, max-age=0");
+  assert.deepEqual(new Uint8Array(await response.arrayBuffer()), bytes);
+  assert.deepEqual(reads, [storageKey]);
+  assert.deepEqual(rpcCalls, [{
+    name: "attendance_self_checkin_photo",
+    args: { p_auth_subject: AUTH_SUBJECT, p_app_user_id: APP_USER_ID, p_checkin_id: CHECKIN_ID },
+  }]);
+
+  const hiddenOtherCheckin = await getAttendanceSelfCheckInPhoto(
+    new Request(`https://bi.example.com/api/attendance/checkins/${CHECKIN_ID}/photo`),
+    CHECKIN_ID,
+    {
+      resolveSession: async () => makeSessionOk(TEAM_LEADER_CAPS, TEAM_SCOPE),
+      repository: createServiceAttendanceSelfHistoryRepository(async () => ({ data: { found: false }, error: null })),
+      storage,
+    },
+  );
+  assert.equal(hiddenOtherCheckin.status, 404);
+  assert.deepEqual(await hiddenOtherCheckin.json(), { ok: false, code: "ATTENDANCE_PHOTO_NOT_FOUND" });
 });
 
 test("Contract date, coordinate, and distance formatting helpers respect Asia/Ho_Chi_Minh business calendar", () => {

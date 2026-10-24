@@ -37,6 +37,8 @@ import { projectAttendanceAdminReport } from "../src/lib/attendance/attendance-r
 import {
   ATTENDANCE_ADMIN_REPORT_MIGRATION_NAME,
   ATTENDANCE_ADMIN_REPORT_RPC_SIGNATURES,
+  ATTENDANCE_SELF_HISTORY_MIGRATION_NAME,
+  ATTENDANCE_SELF_HISTORY_RPC_SIGNATURES,
   migrationChecksum,
   migrationSqlForTransaction,
 } from "./lib/migration-validation.mjs";
@@ -167,12 +169,12 @@ async function loadMigrations() {
   );
 }
 
-async function createDatabase({ stopBeforeTarget = false } = {}) {
+async function createDatabase({ stopBeforeTarget = false, targetMigrationName = ATTENDANCE_ADMIN_REPORT_MIGRATION_NAME } = {}) {
   const db = new PGlite();
   await db.exec(AUTH_PROLOGUE);
   const migrations = await loadMigrations();
   const targetIndex = migrations.findIndex(
-    (m) => m.name === ATTENDANCE_ADMIN_REPORT_MIGRATION_NAME,
+    (m) => m.name === targetMigrationName,
   );
   assert.ok(targetIndex >= 0, "Attendance Admin Report migration must exist");
   const slice = stopBeforeTarget ? migrations.slice(0, targetIndex) : migrations;
@@ -347,6 +349,36 @@ async function callPhotoAsServiceRole(db, args) {
       `select public.attendance_admin_checkin_photo(
         $1::uuid, $2::uuid, $3::uuid
       ) as data`,
+      [args.auth_subject, args.app_user_id, args.checkin_id],
+    );
+    await db.exec("commit;");
+    return res.rows[0].data;
+  } catch (err) {
+    await db.exec("rollback;");
+    throw err;
+  }
+}
+
+async function callSelfHistoryAsServiceRole(db, args) {
+  await db.exec("begin; set local role service_role;");
+  try {
+    const res = await db.query(
+      `select public.attendance_self_history($1::uuid, $2::uuid, $3::date, $4::date, $5::integer, $6::integer) as data`,
+      [args.auth_subject, args.app_user_id, args.from_date ?? null, args.to_date ?? null, args.page ?? 1, args.page_size ?? 100],
+    );
+    await db.exec("commit;");
+    return res.rows[0].data;
+  } catch (err) {
+    await db.exec("rollback;");
+    throw err;
+  }
+}
+
+async function callSelfPhotoAsServiceRole(db, args) {
+  await db.exec("begin; set local role service_role;");
+  try {
+    const res = await db.query(
+      "select public.attendance_self_checkin_photo($1::uuid, $2::uuid, $3::uuid) as data",
       [args.auth_subject, args.app_user_id, args.checkin_id],
     );
     await db.exec("commit;");
@@ -544,6 +576,47 @@ test("Attendance Admin Report migration rolls back atomically on failure and rec
   }
 });
 
+test("Attendance self-history migration rolls back atomically and exposes only service-role RPC signatures", async () => {
+  const { db, targetMigration } = await createDatabase({
+    stopBeforeTarget: true,
+    targetMigrationName: ATTENDANCE_SELF_HISTORY_MIGRATION_NAME,
+  });
+  try {
+    assert.equal(targetMigration.name, ATTENDANCE_SELF_HISTORY_MIGRATION_NAME);
+    const checksum = migrationChecksum(targetMigration.sql);
+    assert.match(checksum, /^[0-9a-f]{64}$/);
+    assert.equal(migrationChecksum(targetMigration.sql.replace(/\n/g, "\r\n")), checksum);
+
+    await assert.rejects(async () => {
+      await db.exec("begin;");
+      try {
+        await db.exec(`${migrationSqlForTransaction(targetMigration.sql)}\nselect 1 / 0;\n`);
+        await db.exec("commit;");
+      } catch (err) {
+        await db.exec("rollback;");
+        throw err;
+      }
+    }, (err) => err.code === "22012");
+
+    const { rows: rolledBack } = await db.query(
+      `select count(*)::int as n from pg_catalog.pg_proc p
+        join pg_catalog.pg_namespace n on n.oid = p.pronamespace
+       where n.nspname = 'public' and p.proname in ('attendance_self_history', 'attendance_self_checkin_photo')`,
+    );
+    assert.equal(rolledBack[0].n, 0);
+
+    await db.exec("begin;");
+    await db.exec(migrationSqlForTransaction(targetMigration.sql));
+    await db.exec("commit;");
+    for (const signature of ATTENDANCE_SELF_HISTORY_RPC_SIGNATURES) {
+      const { rows } = await db.query("select pg_catalog.to_regprocedure($1)::text as name", [signature]);
+      assert.ok(rows[0].name, `${signature} exists after applying its migration`);
+    }
+  } finally {
+    await db.close();
+  }
+});
+
 test("Attendance Admin Report SQL enforces ACL/immutability, role matrix, HQ revision history, point-in-time distances, business-date filter, search, and pagination", async () => {
   const { db } = await createDatabase();
   try {
@@ -604,6 +677,25 @@ test("Attendance Admin Report SQL enforces ACL/immutability, role matrix, HQ rev
         },
         (err) => err.code === "42501",
       );
+
+      for (const sql of [
+        "select public.attendance_self_history($1::uuid, $2::uuid, null, null, 1, 100)",
+        "select public.attendance_self_checkin_photo($1::uuid, $2::uuid, $3::uuid)",
+      ]) {
+        await assert.rejects(async () => {
+          await db.exec(`begin; set local role ${role};`);
+          try {
+            const params = sql.includes("attendance_self_checkin_photo")
+              ? [ACTORS.STAFF_A.auth, ACTORS.STAFF_A.app, nextUuid()]
+              : [ACTORS.STAFF_A.auth, ACTORS.STAFF_A.app];
+            await db.query(sql, params);
+            await db.exec("commit;");
+          } catch (err) {
+            await db.exec("rollback;");
+            throw err;
+          }
+        }, (err) => err.code === "42501");
+      }
 
       await assert.rejects(
         async () => {
@@ -1244,6 +1336,64 @@ test("Attendance Admin Report SQL enforces ACL/immutability, role matrix, HQ rev
         }),
       (err) => err.code === "22023" && String(err.message).includes("ATTENDANCE_REPORT_RANGE_INVALID"),
     );
+
+    // Ordinary enabled employees can restore only their own rows and photos.
+    const staffASelfHistory = await callSelfHistoryAsServiceRole(db, {
+      auth_subject: ACTORS.STAFF_A.auth,
+      app_user_id: ACTORS.STAFF_A.app,
+      from_date: minDate,
+      to_date: maxDate,
+      page_size: 100,
+    });
+    assert.equal(staffASelfHistory.pagination.total_rows, 4);
+    assert.ok(staffASelfHistory.items.every((item) => item.employee_display_name === ACTORS.STAFF_A.name));
+    const serializedSelfHistory = JSON.stringify(staffASelfHistory);
+    assert.equal(serializedSelfHistory.includes("photo_storage_key"), false);
+    assert.equal(serializedSelfHistory.includes(ACTORS.STAFF_A.app), false);
+    assert.equal(serializedSelfHistory.includes(ACTORS.STAFF_A.auth), false);
+
+    const staffBSelfHistory = await callSelfHistoryAsServiceRole(db, {
+      auth_subject: ACTORS.STAFF_B.auth,
+      app_user_id: ACTORS.STAFF_B.app,
+      from_date: minDate,
+      to_date: maxDate,
+    });
+    assert.equal(staffBSelfHistory.pagination.total_rows, 3);
+    assert.ok(staffBSelfHistory.items.every((item) => item.employee_display_name === ACTORS.STAFF_B.name));
+    assert.ok(staffBSelfHistory.items.every((item) => item.employee_display_name !== ACTORS.STAFF_A.name));
+
+    await assert.rejects(
+      () => callSelfHistoryAsServiceRole(db, {
+        auth_subject: ACTORS.STAFF_B.auth,
+        app_user_id: ACTORS.STAFF_A.app,
+        from_date: minDate,
+        to_date: maxDate,
+      }),
+      (err) => err.code === "42501" && String(err.message).includes("ATTENDANCE_ACTOR_DENIED"),
+    );
+    await assert.rejects(
+      () => callSelfHistoryAsServiceRole(db, {
+        auth_subject: ACTORS.DISABLED_ADMIN.auth,
+        app_user_id: ACTORS.DISABLED_ADMIN.app,
+        from_date: minDate,
+        to_date: maxDate,
+      }),
+      (err) => err.code === "42501" && String(err.message).includes("ATTENDANCE_ACTOR_DENIED"),
+    );
+
+    const ownPhoto = await callSelfPhotoAsServiceRole(db, {
+      auth_subject: ACTORS.STAFF_A.auth,
+      app_user_id: ACTORS.STAFF_A.app,
+      checkin_id: c0PreHq.checkin_id,
+    });
+    assert.equal(ownPhoto.found, true);
+    assert.match(ownPhoto.photo_storage_key, /^preview\/attendance\//);
+    const anotherUsersPhoto = await callSelfPhotoAsServiceRole(db, {
+      auth_subject: ACTORS.STAFF_B.auth,
+      app_user_id: ACTORS.STAFF_B.app,
+      checkin_id: c0PreHq.checkin_id,
+    });
+    assert.deepEqual(anotherUsersPhoto, { found: false });
 
     const serialized = JSON.stringify(fullReport);
     assert.equal(serialized.includes("photo_storage_key"), false);
