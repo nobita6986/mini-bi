@@ -85,6 +85,7 @@ const TEST_WEIGHTS = {
   "test:org-shell-01": 8.0,
   "test:org-shell-01-ui": 2.0,
   "test:vfin-01": 12.0,
+  "test:vfin-01-ui": 2.5,
 };
 
 const target = process.argv[2];

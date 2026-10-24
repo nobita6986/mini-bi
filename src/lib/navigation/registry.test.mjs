@@ -17,9 +17,9 @@ const {
 const { isDirectEntryUiEnabled } = await import("../direct-entry/ui-model.ts");
 
 test("CURRENT_NAV_ENTRIES chứa các entry hiện hành trong một registry", () => {
-  assert.equal(CURRENT_NAV_ENTRIES.length, 8, "phải có đúng 8 entries current");
+  assert.equal(CURRENT_NAV_ENTRIES.length, 9, "phải có đúng 9 entries current");
   const ids = CURRENT_NAV_ENTRIES.map((e) => e.id).sort();
-  assert.deepEqual(ids, ["admin", "change-requests", "dashboard", "direct-entry", "project-operations", "work-report-reviews", "work-reports", "worker-operations"],
+  assert.deepEqual(ids, ["admin", "change-requests", "dashboard", "direct-entry", "finance", "project-operations", "work-report-reviews", "work-reports", "worker-operations"],
     `got ids: ${ids.join(",")}`);
 });
 
@@ -88,12 +88,30 @@ test("Work Report reviews nav points to the F2 review inbox", () => {
   assert.equal(entry?.capability, "work_report_reviews");
 });
 
+test("Vendor Finance nav entry points to /finance and highlights all /finance/** child routes", () => {
+  const entry = CURRENT_NAV_ENTRIES.find((item) => item.id === "finance");
+  assert.ok(entry);
+  assert.equal(entry?.label, "Tài chính");
+  assert.equal(entry?.path, "/finance");
+  assert.equal(entry?.capability, "finance");
+  assert.deepEqual(entry?.visibility, { desktop: true, mobile: true });
+  for (const childPath of [
+    "/finance",
+    "/finance/vendors",
+    "/finance/vendors/vendor_1",
+    "/finance/opening-balance",
+    "/finance/documents/00000000-0000-4000-8000-000000000001",
+  ]) {
+    assert.equal(findEntryByPath(childPath)?.id, "finance", childPath);
+  }
+});
+
 test("Desktop viewport theo feature flag, luôn giữ Dashboard và không có Pipeline Check", () => {
   const desktop = entriesForViewport("desktop", true);
   assert.ok(!desktop.some((e) => e.id === "pipeline-check"));
   assert.ok(desktop.some((e) => e.id === "dashboard"));
   assert.ok(desktop.some((e) => e.id === "direct-entry"));
-  assert.deepEqual(entriesForViewport("desktop", false).map((entry) => entry.id), ["dashboard", "work-reports", "work-report-reviews", "admin"]);
+  assert.deepEqual(entriesForViewport("desktop", false).map((entry) => entry.id), ["dashboard", "work-reports", "work-report-reviews", "finance", "admin"]);
 });
 
 test("Mobile viewport theo feature flag, luôn giữ Dashboard và không có Pipeline Check", () => {
@@ -101,15 +119,15 @@ test("Mobile viewport theo feature flag, luôn giữ Dashboard và không có Pi
   assert.ok(!mobile.some((e) => e.id === "pipeline-check"));
   assert.ok(mobile.some((e) => e.id === "dashboard"));
   assert.ok(mobile.some((e) => e.id === "direct-entry"));
-  assert.deepEqual(entriesForViewport("mobile", false).map((entry) => entry.id), ["dashboard", "work-reports", "work-report-reviews", "admin"]);
+  assert.deepEqual(entriesForViewport("mobile", false).map((entry) => entry.id), ["dashboard", "work-reports", "work-report-reviews", "finance", "admin"]);
 });
 
 test("feature flag Direct Entry chỉ mở với giá trị chính xác true", () => {
   assert.equal(isDirectEntryUiEnabled("true"), true);
   for (const flag of [undefined, "", "false", "TRUE", "1", " true "]) {
     assert.equal(isDirectEntryUiEnabled(flag), false, String(flag));
-    assert.deepEqual(entriesForViewport("desktop", isDirectEntryUiEnabled(flag)).map((entry) => entry.id), ["dashboard", "work-reports", "work-report-reviews", "admin"]);
-    assert.deepEqual(entriesForViewport("mobile", isDirectEntryUiEnabled(flag)).map((entry) => entry.id), ["dashboard", "work-reports", "work-report-reviews", "admin"]);
+    assert.deepEqual(entriesForViewport("desktop", isDirectEntryUiEnabled(flag)).map((entry) => entry.id), ["dashboard", "work-reports", "work-report-reviews", "finance", "admin"]);
+    assert.deepEqual(entriesForViewport("mobile", isDirectEntryUiEnabled(flag)).map((entry) => entry.id), ["dashboard", "work-reports", "work-report-reviews", "finance", "admin"]);
   }
 });
 

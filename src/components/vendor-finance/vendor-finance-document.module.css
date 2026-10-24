@@ -1,0 +1,89 @@
+.voucherSheet {
+  background: var(--surface);
+  color: var(--foreground);
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  padding: 1.5rem;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06);
+  overflow-wrap: anywhere;
+}
+
+@media (min-width: 640px) {
+  .voucherSheet {
+    padding: 2.25rem;
+  }
+}
+
+.avoidBreak {
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+.disclaimerBox {
+  border: 1.5px solid #b45309;
+  background: rgba(245, 158, 11, 0.1);
+  color: var(--foreground);
+  border-radius: 0.75rem;
+  padding: 0.875rem 1rem;
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+.signatureGrid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1.25rem;
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+@media (min-width: 640px) {
+  .signatureGrid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@page {
+  size: A4 portrait;
+  margin: 12mm;
+}
+
+@media print {
+  .screenOnly {
+    display: none !important;
+  }
+
+  .printContainer {
+    max-width: 100% !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  .voucherSheet {
+    background: #ffffff !important;
+    color: #0f172a !important;
+    border: 1px solid #94a3b8 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    padding: 8mm !important;
+    width: 100% !important;
+    max-width: none !important;
+  }
+
+  .voucherSheet * {
+    color: #0f172a !important;
+    border-color: #cbd5e1 !important;
+  }
+
+  .disclaimerBox {
+    background: #fffbeb !important;
+    border: 1.5px solid #92400e !important;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
+  .signatureGrid {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    gap: 8mm !important;
+  }
+}
