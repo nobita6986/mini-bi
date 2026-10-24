@@ -147,6 +147,13 @@ export type AttendanceAdminReportProjection = {
   items: AttendanceReportItemProjection[];
 };
 
+export type ParsedAttendanceSelfHistoryQuery = {
+  from_date: string;
+  to_date: string;
+  page: number;
+  page_size: number;
+};
+
 export type SetAttendanceHqLocationProjection = {
   replayed: boolean;
   hq: AttendanceHqLocationProjection;
@@ -316,6 +323,47 @@ export function parseAttendanceReportQuery(
       employee_id: employeeId,
     },
   };
+}
+
+export function parseAttendanceSelfHistoryQuery(
+  searchParams: URLSearchParams,
+):
+  | { ok: true; value: ParsedAttendanceSelfHistoryQuery }
+  | { ok: false; code: AttendanceReportErrorCode } {
+  const allowedKeys = new Set(["from_date", "to_date", "page", "page_size"]);
+  for (const key of searchParams.keys()) {
+    if (!allowedKeys.has(key) || searchParams.getAll(key).length !== 1) {
+      return { ok: false, code: "ATTENDANCE_REPORT_QUERY_INVALID" };
+    }
+  }
+
+  const rawTo = searchParams.get("to_date")?.trim() || null;
+  const toDate = rawTo ?? getVietnamTodayIsoDate();
+  if (!isValidIsoCalendarDate(toDate)) {
+    return { ok: false, code: "ATTENDANCE_REPORT_RANGE_INVALID" };
+  }
+
+  const rawFrom = searchParams.get("from_date")?.trim() || null;
+  const fromDate = rawFrom ?? shiftIsoDateDays(toDate, -89);
+  const fromDay = parseIsoDateToUtcEpochDay(fromDate);
+  const toDay = parseIsoDateToUtcEpochDay(toDate);
+  if (fromDay === null || toDay === null || fromDay > toDay || toDay - fromDay > ATTENDANCE_REPORT_MAX_RANGE_DAYS) {
+    return { ok: false, code: "ATTENDANCE_REPORT_RANGE_INVALID" };
+  }
+
+  const rawPage = searchParams.get("page") ?? "1";
+  const rawPageSize = searchParams.get("page_size") ?? "100";
+  if (!/^\d{1,6}$/.test(rawPage) || !/^\d{1,6}$/.test(rawPageSize)) {
+    return { ok: false, code: "ATTENDANCE_REPORT_PAGINATION_INVALID" };
+  }
+  const page = Number(rawPage);
+  const pageSize = Number(rawPageSize);
+  if (!Number.isSafeInteger(page) || page < 1 || page > ATTENDANCE_REPORT_MAX_PAGE ||
+      !Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > ATTENDANCE_REPORT_MAX_PAGE_SIZE) {
+    return { ok: false, code: "ATTENDANCE_REPORT_PAGINATION_INVALID" };
+  }
+
+  return { ok: true, value: { from_date: fromDate, to_date: toDate, page, page_size: pageSize } };
 }
 
 export function parseSetHqLocationBody(

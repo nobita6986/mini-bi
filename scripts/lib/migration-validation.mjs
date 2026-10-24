@@ -91,6 +91,12 @@ export const HF_OFFBOARDING_SUPPRESSION_AND_ATTENDANCE_FILTER_RPC_SIGNATURES = O
   "public.direct_entry_offboarding_hide_snapshot(uuid, uuid, uuid, uuid, text, text)",
   "public.attendance_admin_report(uuid, uuid, date, date, integer, integer, text, uuid)",
 ]);
+export const ATTENDANCE_SELF_HISTORY_MIGRATION_NAME =
+  "20261025130000_attendance_self_history.sql";
+export const ATTENDANCE_SELF_HISTORY_RPC_SIGNATURES = Object.freeze([
+  "public.attendance_self_history(uuid, uuid, date, date, integer, integer)",
+  "public.attendance_self_checkin_photo(uuid, uuid, uuid)",
+]);
 export const ORG_SHELL_01_DEPARTMENTS_MIGRATION_NAME =
   "20261025090000_org_shell_01_departments.sql";
 export const ORG_SHELL_01_DEPARTMENTS_RPC_SIGNATURES = Object.freeze([
@@ -342,6 +348,7 @@ export async function verifyS0T1CHistoricalCompatibility(
     offboardingReportApplied = false,
     asyncDocumentsAttendancePhotoApplied = false,
     hfOffboardingSuppressionAndAttendanceFilterApplied = false,
+    attendanceSelfHistoryApplied = false,
     orgShell01DepartmentsApplied = false,
     vfin01BackendApplied = false } = {},
 ) {
@@ -373,6 +380,7 @@ export async function verifyS0T1CHistoricalCompatibility(
     ...(hfOffboardingSuppressionAndAttendanceFilterApplied
       ? HF_OFFBOARDING_SUPPRESSION_AND_ATTENDANCE_FILTER_RPC_SIGNATURES
       : []),
+    ...(attendanceSelfHistoryApplied ? ATTENDANCE_SELF_HISTORY_RPC_SIGNATURES : []),
     ...(orgShell01DepartmentsApplied ? ORG_SHELL_01_DEPARTMENTS_RPC_SIGNATURES : []),
     ...(vfin01BackendApplied ? VFIN_01_BACKEND_RPC_SIGNATURES : []),
   ];
@@ -587,6 +595,8 @@ export async function verifyAppliedMigrationChecksum(
           appliedMap.has(ASYNC_DOCUMENTS_ATTENDANCE_PHOTO_MIGRATION_NAME),
         hfOffboardingSuppressionAndAttendanceFilterApplied:
           appliedMap.has(HF_OFFBOARDING_SUPPRESSION_AND_ATTENDANCE_FILTER_MIGRATION_NAME),
+        attendanceSelfHistoryApplied:
+          appliedMap.has(ATTENDANCE_SELF_HISTORY_MIGRATION_NAME),
         orgShell01DepartmentsApplied:
           appliedMap.has(ORG_SHELL_01_DEPARTMENTS_MIGRATION_NAME),
         vfin01BackendApplied:

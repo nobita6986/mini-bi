@@ -12,10 +12,12 @@ import {
 import {
   attendanceReportHttpStatusForError,
   parseAttendanceReportQuery,
+  parseAttendanceSelfHistoryQuery,
   parseSetHqLocationBody,
   type AttendanceReportErrorCode,
 } from "./attendance-report-contract.ts";
 import type { AttendanceAdminReportRepository } from "./attendance-report-repository.ts";
+import type { AttendanceSelfHistoryRepository } from "./attendance-self-history-repository.ts";
 import type { AttendanceObjectStorage } from "./r2-attendance-storage.ts";
 
 const MAX_HQ_JSON_BODY_BYTES = 8_192;
@@ -35,6 +37,15 @@ export type AttendanceAdminReportApiDependencies = {
 };
 
 export type AttendancePhotoApiDependencies = AttendanceAdminReportApiDependencies & {
+  storage: Pick<AttendanceObjectStorage, "available" | "readCheckInPhoto">;
+};
+
+export type AttendanceSelfHistoryApiDependencies = {
+  resolveSession(): Promise<DirectEntrySessionResult>;
+  repository: AttendanceSelfHistoryRepository;
+};
+
+export type AttendanceSelfPhotoApiDependencies = AttendanceSelfHistoryApiDependencies & {
   storage: Pick<AttendanceObjectStorage, "available" | "readCheckInPhoto">;
 };
 
@@ -281,6 +292,85 @@ export async function getAttendanceCheckInPhoto(
     });
   } catch {
     console.error("[attendance-admin] private photo read failed");
+    return reportError("ATTENDANCE_REPORT_UNAVAILABLE");
+  }
+}
+
+export async function getAttendanceSelfHistory(
+  request: Request,
+  dependencies: AttendanceSelfHistoryApiDependencies,
+): Promise<Response> {
+  if (hasDisallowedAuthorityHeaders(request)) {
+    return reportError("ATTENDANCE_REPORT_QUERY_INVALID");
+  }
+
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(request.url);
+  } catch {
+    return reportError("ATTENDANCE_REPORT_QUERY_INVALID");
+  }
+  const parsedQuery = parseAttendanceSelfHistoryQuery(parsedUrl.searchParams);
+  if (!parsedQuery.ok) return reportError(parsedQuery.code);
+
+  const actorResult = await resolveVerifiedActor(dependencies.resolveSession);
+  if (!actorResult.ok) return actorResult.response;
+
+  const result = await dependencies.repository.getSelfHistory({
+    auth_subject: actorResult.auth_subject,
+    app_user_id: actorResult.app_user_id,
+    ...parsedQuery.value,
+  });
+  if (!result.ok) return reportError(result.code);
+
+  return noStoreJson({ ok: true, report: result.page }, 200);
+}
+
+export async function getAttendanceSelfCheckInPhoto(
+  request: Request,
+  checkinId: string,
+  dependencies: AttendanceSelfPhotoApiDependencies,
+): Promise<Response> {
+  if (hasDisallowedAuthorityHeaders(request)) {
+    return reportError("ATTENDANCE_REPORT_QUERY_INVALID");
+  }
+  try {
+    if (new URL(request.url).search.length > 0 || !isUuid(checkinId)) {
+      return reportError("ATTENDANCE_REPORT_QUERY_INVALID");
+    }
+  } catch {
+    return reportError("ATTENDANCE_REPORT_QUERY_INVALID");
+  }
+
+  const actorResult = await resolveVerifiedActor(dependencies.resolveSession);
+  if (!actorResult.ok) return actorResult.response;
+  if (!dependencies.storage.available()) return reportError("ATTENDANCE_REPORT_UNAVAILABLE");
+
+  const photo = await dependencies.repository.getSelfCheckInPhotoStorageKey({
+    auth_subject: actorResult.auth_subject,
+    app_user_id: actorResult.app_user_id,
+    checkin_id: checkinId.toLowerCase(),
+  });
+  if (!photo.ok) return reportError(photo.code);
+  if (photo.storage_key === null) return failJson("ATTENDANCE_PHOTO_NOT_FOUND", 404);
+
+  try {
+    const bytes = await dependencies.storage.readCheckInPhoto(photo.storage_key);
+    const body = new ArrayBuffer(bytes.byteLength);
+    new Uint8Array(body).set(bytes);
+    return new Response(body, {
+      status: 200,
+      headers: {
+        "Cache-Control": "private, no-store, max-age=0",
+        "Content-Disposition": `inline; filename="attendance-${checkinId.toLowerCase()}.jpg"`,
+        "Content-Security-Policy": "sandbox",
+        "Content-Type": "image/jpeg",
+        "Referrer-Policy": "no-referrer",
+        "X-Content-Type-Options": "nosniff",
+      },
+    });
+  } catch {
+    console.error("[attendance-self] private photo read failed");
     return reportError("ATTENDANCE_REPORT_UNAVAILABLE");
   }
 }

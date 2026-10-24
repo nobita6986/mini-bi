@@ -41,6 +41,8 @@ import {
   ASYNC_DOCUMENTS_ATTENDANCE_PHOTO_RPC_SIGNATURE,
   HF_OFFBOARDING_SUPPRESSION_AND_ATTENDANCE_FILTER_MIGRATION_NAME,
   HF_OFFBOARDING_SUPPRESSION_AND_ATTENDANCE_FILTER_RPC_SIGNATURES,
+  ATTENDANCE_SELF_HISTORY_MIGRATION_NAME,
+  ATTENDANCE_SELF_HISTORY_RPC_SIGNATURES,
   ORG_SHELL_01_DEPARTMENTS_MIGRATION_NAME,
   ORG_SHELL_01_DEPARTMENTS_RPC_SIGNATURES,
   VFIN_01_BACKEND_MIGRATION_NAME,
@@ -658,6 +660,26 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
           `HF offboarding/attendance RPC ${sig} revokes client and inherited EXECUTE before granting service_role`,
         );
       }
+      const attendanceSelfHistoryMigration = await readFile(
+        path.join(MIGRATION_DIR, ATTENDANCE_SELF_HISTORY_MIGRATION_NAME), "utf8",
+      );
+      const attendanceSelfHistoryNormalized = attendanceSelfHistoryMigration
+        .replace(/\s+/g, " ")
+        .replace(/\(\s+/g, "(")
+        .replace(/\s+\)/g, ")")
+        .toLowerCase();
+      for (const sig of ATTENDANCE_SELF_HISTORY_RPC_SIGNATURES) {
+        const sigGrant = `grant execute on function ${sig.toLowerCase()} to service_role;`;
+        const sigRevoke = `revoke all on function ${sig.toLowerCase()} from public, anon, authenticated, service_role;`;
+        assert.ok(
+          attendanceSelfHistoryNormalized.includes(sigGrant),
+          `Attendance self-history RPC ${sig} is explicitly granted only to service_role`,
+        );
+        assert.ok(
+          attendanceSelfHistoryNormalized.includes(sigRevoke),
+          `Attendance self-history RPC ${sig} revokes client and inherited EXECUTE before granting service_role`,
+        );
+      }
       const orgShell01Migration = await readFile(
         path.join(MIGRATION_DIR, ORG_SHELL_01_DEPARTMENTS_MIGRATION_NAME),
         "utf8",
@@ -725,6 +747,7 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
         ...OFFBOARDING_REPORT_RPC_SIGNATURES,
         ASYNC_DOCUMENTS_ATTENDANCE_PHOTO_RPC_SIGNATURE,
         ...HF_OFFBOARDING_SUPPRESSION_AND_ATTENDANCE_FILTER_RPC_SIGNATURES,
+        ...ATTENDANCE_SELF_HISTORY_RPC_SIGNATURES,
         ...ORG_SHELL_01_DEPARTMENTS_RPC_SIGNATURES,
         ...VFIN_01_BACKEND_RPC_SIGNATURES);
       assert.ok(expectedSignatures.length > 0, "the explicit server/invoker allowlist is not empty");
@@ -756,6 +779,7 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
           ...OFFBOARDING_REPORT_RPC_SIGNATURES,
           ASYNC_DOCUMENTS_ATTENDANCE_PHOTO_RPC_SIGNATURE,
           ...HF_OFFBOARDING_SUPPRESSION_AND_ATTENDANCE_FILTER_RPC_SIGNATURES,
+          ...ATTENDANCE_SELF_HISTORY_RPC_SIGNATURES,
           ...ORG_SHELL_01_DEPARTMENTS_RPC_SIGNATURES,
           ...VFIN_01_BACKEND_RPC_SIGNATURES].sort(),
         "only explicitly reviewed post-S0 RPCs add service_role grants after the S0 baseline",
