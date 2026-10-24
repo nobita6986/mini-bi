@@ -87,6 +87,15 @@ export function VendorFinanceDocumentView({ entryId }: { entryId: string }) {
 
   const entry = data?.entry ?? null;
 
+  const backHref = (() => {
+    if (!entry) return "/finance/vendors";
+    const sp = new URLSearchParams();
+    sp.set("ledgerScope", entry.ledger_scope);
+    if (entry.project_id) sp.set("projectId", entry.project_id);
+    if (entry.accountant_ref) sp.set("accountantRef", entry.accountant_ref);
+    return `/finance/vendors/${encodeURIComponent(entry.vendor_id)}?${sp.toString()}`;
+  })();
+
   const handlePrint = () => {
     if (typeof window !== "undefined") {
       window.print();
@@ -103,11 +112,7 @@ export function VendorFinanceDocumentView({ entryId }: { entryId: string }) {
         className={`flex flex-wrap items-center justify-between gap-2 print:hidden ${styles.screenOnly}`}
       >
         <Link
-          href={
-            entry
-              ? `/finance/vendors/${encodeURIComponent(entry.vendor_id)}`
-              : "/finance/vendors"
-          }
+          href={backHref}
           className="inline-flex min-h-11 sm:min-h-9 items-center gap-1.5 text-xs sm:text-sm font-medium text-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 rounded"
         >
           <ArrowLeft className="h-4 w-4" aria-hidden />
@@ -187,7 +192,7 @@ export function VendorFinanceDocumentView({ entryId }: { entryId: string }) {
             <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:text-right">
               <dt className="text-muted">Số chứng từ:</dt>
               <dd className="font-mono font-bold text-foreground">{entry.document_no}</dd>
-              <dt className="text-muted">Thứ tự sổ cái:</dt>
+              <dt className="text-muted">Thứ tự sổ chi tiết:</dt>
               <dd className="font-mono text-foreground">#{entry.vendor_sequence}</dd>
               <dt className="text-muted">Ngày hiệu lực:</dt>
               <dd className="font-mono font-medium text-foreground">
@@ -218,9 +223,9 @@ export function VendorFinanceDocumentView({ entryId }: { entryId: string }) {
             </div>
           </section>
 
-          {/* Counterparty Snapshot & Metadata */}
+          {/* Counterparty, Project & Responsible Accountant Snapshot */}
           <section
-            aria-label="Thông tin đối tác tại thời điểm lập chứng từ"
+            aria-label="Thông tin sổ dự án, kế toán phụ trách và đối tác tại thời điểm lập chứng từ"
             className={`rounded-xl border border-border bg-surface-muted/40 p-4 ${styles.avoidBreak}`}
           >
             <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
@@ -240,9 +245,33 @@ export function VendorFinanceDocumentView({ entryId }: { entryId: string }) {
                 <dd className="mt-0.5 font-mono text-foreground">{entry.vendor_id}</dd>
               </div>
               <div>
-                <dt className="text-xs font-medium text-muted">Người lập trên hệ thống</dt>
+                <dt className="text-xs font-medium text-muted">Dự án thuộc sổ hạch toán</dt>
+                <dd
+                  data-testid="vfin-voucher-project-snapshot"
+                  className="mt-0.5 font-semibold text-foreground"
+                >
+                  {entry.ledger_scope === "LEGACY_UNALLOCATED"
+                    ? "Sổ lịch sử VFIN-01 (chưa gắn dự án)"
+                    : `${entry.project_display_name_snapshot ?? entry.project_id} (${entry.project_id})`}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs font-medium text-muted">Kế toán phụ trách sổ dự án</dt>
+                <dd
+                  data-testid="vfin-voucher-responsible-accountant"
+                  className="mt-0.5 font-semibold text-foreground"
+                >
+                  {entry.responsible_accountant_display_name ?? "Chưa gắn kế toán dự án (VFIN-01)"}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs font-medium text-muted">Người nhập giao dịch trên hệ thống</dt>
                 <dd className="mt-0.5 font-medium text-foreground">
                   {entry.created_by_display_name}
+                  {entry.responsible_accountant_display_name &&
+                  entry.created_by_display_name !== entry.responsible_accountant_display_name
+                    ? " (Ghi nhận hộ — chứng từ vẫn thuộc sổ kế toán dự án)"
+                    : ""}
                 </dd>
               </div>
               {entry.opening_batch_id ? (
@@ -258,14 +287,14 @@ export function VendorFinanceDocumentView({ entryId }: { entryId: string }) {
 
           {/* Monetary & Running Balance Table */}
           <section
-            aria-label="Chi tiết số tiền và biến động công nợ"
+            aria-label="Chi tiết số tiền và biến động công nợ trên sổ dự án"
             className={styles.avoidBreak}
           >
             <table className="w-full border-collapse rounded-xl border border-border text-sm">
               <thead>
                 <tr className="border-b border-border bg-surface-muted text-xs uppercase text-muted">
                   <th scope="col" className="px-4 py-2.5 text-left font-semibold">
-                    Chỉ tiêu tài chính
+                    Chỉ tiêu tài chính (Sổ riêng Dự án × Kế toán × Vendor)
                   </th>
                   <th scope="col" className="px-4 py-2.5 text-right font-semibold">
                     Giá trị (VND)
@@ -285,7 +314,7 @@ export function VendorFinanceDocumentView({ entryId }: { entryId: string }) {
                   </td>
                 </tr>
                 <tr className="border-b border-border">
-                  <td className="px-4 py-2.5 text-muted">Số dư công nợ trước bút toán</td>
+                  <td className="px-4 py-2.5 text-muted">Số dư sổ chi tiết trước bút toán</td>
                   <td className="px-4 py-2.5 text-right font-mono tabular-nums text-foreground">
                     {formatVndMinor(entry.balance_before_minor)}
                   </td>
@@ -300,7 +329,7 @@ export function VendorFinanceDocumentView({ entryId }: { entryId: string }) {
                 </tr>
                 <tr>
                   <td className="px-4 py-2.5 font-semibold text-foreground">
-                    Số dư công nợ sau bút toán
+                    Số dư sổ chi tiết sau bút toán (không bù trừ với dự án khác)
                   </td>
                   <td
                     data-testid="vfin-voucher-balance-after"
@@ -396,17 +425,21 @@ export function VendorFinanceDocumentView({ entryId }: { entryId: string }) {
           {/* Signature Blocks */}
           <footer aria-label="Khối chữ ký xác nhận" className={`pt-2 ${styles.signatureGrid}`}>
             <div className="rounded-lg border border-dashed border-border p-3 text-center">
-              <p className="text-xs font-semibold uppercase text-foreground">Người lập chứng từ</p>
+              <p className="text-xs font-semibold uppercase text-foreground">Người nhập hệ thống</p>
               <p className="text-[11px] text-muted">(Ký, ghi rõ họ tên)</p>
               <div className="h-16" />
               <p className="text-xs font-medium text-foreground">{entry.created_by_display_name}</p>
             </div>
 
             <div className="rounded-lg border border-dashed border-border p-3 text-center">
-              <p className="text-xs font-semibold uppercase text-foreground">Kế toán kiểm soát</p>
+              <p className="text-xs font-semibold uppercase text-foreground">
+                Kế toán phụ trách sổ dự án
+              </p>
               <p className="text-[11px] text-muted">(Ký, ghi rõ họ tên)</p>
               <div className="h-16" />
-              <p className="text-xs text-muted">……………………………………</p>
+              <p className="text-xs font-medium text-foreground">
+                {entry.responsible_accountant_display_name ?? "……………………………………"}
+              </p>
             </div>
 
             <div className="rounded-lg border border-dashed border-border p-3 text-center">

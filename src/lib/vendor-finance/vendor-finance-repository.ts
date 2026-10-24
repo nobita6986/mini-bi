@@ -5,12 +5,22 @@ import {
   VENDOR_FINANCE_EVIDENCE_MAX_BYTES,
   VENDOR_FINANCE_EVIDENCE_UPLOAD_URL_TTL_SECONDS,
   projectActorAccess,
+  projectActorContextOptions,
+  projectAssignGlobalRoleMutation,
+  projectAssignProjectAccountantMutation,
   projectCreateReconciliationMutation,
+  projectEndGlobalRoleMutation,
+  projectEndProjectAccountantMutation,
   projectEvidenceSummary,
+  projectListGlobalRolesAdmin,
+  projectListProjectAccountantsAdmin,
+  projectListProjectVendorsAdmin,
+  projectMonthlyReport,
   projectOpeningApplyMutation,
   projectOpeningPreview,
   projectRecordEntryMutation,
   projectReverseEntryMutation,
+  projectSetProjectVendorLinkMutation,
   projectVendorFinanceEntriesPage,
   projectVendorFinanceSingleEntry,
   projectVendorFinanceVendorDetail,
@@ -20,7 +30,12 @@ import {
   type OpeningBatchItemInput,
   type VendorFinanceActiveFilter,
   type VendorFinanceActorAccessProjection,
+  type VendorFinanceActorContextOptionsResponse,
+  type VendorFinanceAssignGlobalRoleResponse,
+  type VendorFinanceAssignProjectAccountantResponse,
   type VendorFinanceBalanceFilter,
+  type VendorFinanceEndGlobalRoleResponse,
+  type VendorFinanceEndProjectAccountantResponse,
   type VendorFinanceEntriesPageResponse,
   type VendorFinanceEntryProjection,
   type VendorFinanceEntryType,
@@ -28,10 +43,17 @@ import {
   type VendorFinanceEvidenceFinalizeResponse,
   type VendorFinanceEvidenceMimeType,
   type VendorFinanceEvidenceTargetKind,
+  type VendorFinanceGlobalRoleCode,
+  type VendorFinanceLedgerScope,
+  type VendorFinanceListGlobalRolesAdminResponse,
+  type VendorFinanceListProjectAccountantsAdminResponse,
+  type VendorFinanceListProjectVendorsAdminResponse,
+  type VendorFinanceMonthlyReportResponse,
   type VendorFinanceOpeningApplyResponse,
   type VendorFinanceOpeningPreviewResponse,
   type VendorFinanceReconciliationProjection,
   type VendorFinanceReconciliationsPageResponse,
+  type VendorFinanceSetProjectVendorLinkResponse,
   type VendorFinanceSingleEntryResponse,
   type VendorFinanceVendorDetailResponse,
   type VendorFinanceVendorListResponse,
@@ -101,18 +123,30 @@ export type VendorFinanceRepository = {
     actor: VendorFinanceActorRef,
   ): Promise<VendorFinanceRepoResult<VendorFinanceActorAccessProjection>>;
 
+  listContextOptions(
+    actor: VendorFinanceActorRef,
+  ): Promise<VendorFinanceRepoResult<VendorFinanceActorContextOptionsResponse>>;
+
   listVendors(
     input: VendorFinanceActorRef & {
       search: string | null;
       active: VendorFinanceActiveFilter;
       balance_filter: VendorFinanceBalanceFilter;
+      project_id: string | null;
+      accountant_ref: string | null;
+      ledger_scope: VendorFinanceLedgerScope | null;
       page: number;
       page_size: number;
     },
   ): Promise<VendorFinanceRepoResult<VendorFinanceVendorListResponse>>;
 
   getVendor(
-    input: VendorFinanceActorRef & { vendor_id: string },
+    input: VendorFinanceActorRef & {
+      vendor_id: string;
+      project_id?: string | null;
+      accountant_ref?: string | null;
+      ledger_scope?: VendorFinanceLedgerScope | null;
+    },
   ): Promise<VendorFinanceRepoResult<VendorFinanceVendorDetailResponse>>;
 
   listVendorEntries(
@@ -121,6 +155,10 @@ export type VendorFinanceRepository = {
       before_sequence: number | null;
       entry_type: VendorFinanceEntryType | null;
       page_size: number;
+      project_id?: string | null;
+      accountant_ref?: string | null;
+      ledger_scope?: VendorFinanceLedgerScope | null;
+      month?: string | null;
     },
   ): Promise<VendorFinanceRepoResult<VendorFinanceEntriesPageResponse>>;
 
@@ -133,11 +171,15 @@ export type VendorFinanceRepository = {
       vendor_id: string;
       page: number;
       page_size: number;
+      project_id?: string | null;
+      accountant_ref?: string | null;
+      ledger_scope?: VendorFinanceLedgerScope | null;
     },
   ): Promise<VendorFinanceRepoResult<VendorFinanceReconciliationsPageResponse>>;
 
   recordEntry(
     input: VendorFinanceActorRef & {
+      project_id: string;
       vendor_id: string;
       entry_type: NormalVendorFinanceEntryType;
       amount_minor: string;
@@ -168,6 +210,7 @@ export type VendorFinanceRepository = {
 
   previewOpeningBatch(
     input: VendorFinanceActorRef & {
+      project_id: string;
       cutoff_date: string;
       items: readonly OpeningBatchItemInput[];
     },
@@ -175,6 +218,7 @@ export type VendorFinanceRepository = {
 
   applyOpeningBatch(
     input: VendorFinanceActorRef & {
+      project_id: string;
       cutoff_date: string;
       items: readonly OpeningBatchItemInput[];
       reason: string;
@@ -185,6 +229,8 @@ export type VendorFinanceRepository = {
 
   createReconciliation(
     input: VendorFinanceActorRef & {
+      project_id: string;
+      accountant_ref: string | null;
       vendor_id: string;
       as_of_date: string;
       confirmed_balance_minor: string;
@@ -198,6 +244,101 @@ export type VendorFinanceRepository = {
       replayed: boolean;
     }>
   >;
+
+  getMonthlyReport(
+    input: VendorFinanceActorRef & {
+      month: string;
+      project_id: string | null;
+      accountant_ref: string | null;
+      vendor_id: string | null;
+    },
+  ): Promise<VendorFinanceRepoResult<VendorFinanceMonthlyReportResponse>>;
+
+  listProjectAccountantsAdmin(
+    input: VendorFinanceActorRef & {
+      search: string | null;
+      include_history: boolean;
+      page: number;
+      page_size: number;
+    },
+  ): Promise<VendorFinanceRepoResult<VendorFinanceListProjectAccountantsAdminResponse>>;
+
+  assignProjectAccountantAdmin(
+    input: VendorFinanceActorRef & {
+      project_id: string;
+      accountant_ref: string;
+      expected_version: number;
+      valid_from: string | null;
+      reason: string;
+      idempotency_key: string;
+      request_fingerprint: string;
+    },
+  ): Promise<VendorFinanceRepoResult<VendorFinanceAssignProjectAccountantResponse>>;
+
+  endProjectAccountantAdmin(
+    input: VendorFinanceActorRef & {
+      assignment_id: string;
+      expected_version: number;
+      valid_to: string | null;
+      reason: string;
+      idempotency_key: string;
+      request_fingerprint: string;
+    },
+  ): Promise<VendorFinanceRepoResult<VendorFinanceEndProjectAccountantResponse>>;
+
+  listProjectVendorsAdmin(
+    input: VendorFinanceActorRef & {
+      project_id: string;
+      search: string | null;
+      only_linked: boolean;
+      page: number;
+      page_size: number;
+    },
+  ): Promise<VendorFinanceRepoResult<VendorFinanceListProjectVendorsAdminResponse>>;
+
+  setProjectVendorLinkAdmin(
+    input: VendorFinanceActorRef & {
+      project_id: string;
+      vendor_id: string;
+      active: boolean;
+      expected_version: number;
+      reason: string;
+      idempotency_key: string;
+      request_fingerprint: string;
+    },
+  ): Promise<VendorFinanceRepoResult<VendorFinanceSetProjectVendorLinkResponse>>;
+
+  listGlobalRolesAdmin(
+    input: VendorFinanceActorRef & {
+      search: string | null;
+      include_history: boolean;
+      page: number;
+      page_size: number;
+    },
+  ): Promise<VendorFinanceRepoResult<VendorFinanceListGlobalRolesAdminResponse>>;
+
+  assignGlobalRoleAdmin(
+    input: VendorFinanceActorRef & {
+      account_ref: string;
+      role_code: VendorFinanceGlobalRoleCode;
+      expected_version: number;
+      valid_from: string | null;
+      reason: string;
+      idempotency_key: string;
+      request_fingerprint: string;
+    },
+  ): Promise<VendorFinanceRepoResult<VendorFinanceAssignGlobalRoleResponse>>;
+
+  endGlobalRoleAdmin(
+    input: VendorFinanceActorRef & {
+      role_grant_id: string;
+      expected_version: number;
+      valid_to: string | null;
+      reason: string;
+      idempotency_key: string;
+      request_fingerprint: string;
+    },
+  ): Promise<VendorFinanceRepoResult<VendorFinanceEndGlobalRoleResponse>>;
 
   reserveEvidence(
     input: VendorFinanceActorRef & {
@@ -250,25 +391,49 @@ const SHA256_HEX_REGEX = /^[0-9a-f]{64}$/i;
 const KNOWN_RPC_TOKENS: ReadonlyArray<readonly [string, VendorFinanceErrorCode]> = [
   ["VENDOR_FINANCE_VENDOR_INACTIVE_ENTRY_FORBIDDEN", "VENDOR_FINANCE_VENDOR_INACTIVE_ENTRY_FORBIDDEN"],
   ["VENDOR_FINANCE_OPENING_BATCH_DUPLICATE_VENDOR", "VENDOR_FINANCE_OPENING_BATCH_DUPLICATE_VENDOR"],
+  ["VENDOR_FINANCE_GLOBAL_ROLE_ALREADY_ASSIGNED", "VENDOR_FINANCE_GLOBAL_ROLE_ALREADY_ASSIGNED"],
+  ["VENDOR_FINANCE_GLOBAL_ROLE_VERSION_CONFLICT", "VENDOR_FINANCE_GLOBAL_ROLE_VERSION_CONFLICT"],
   ["VENDOR_FINANCE_EVIDENCE_RESERVATION_EXPIRED", "VENDOR_FINANCE_EVIDENCE_RESERVATION_EXPIRED"],
+  ["VENDOR_FINANCE_PROJECT_ACCOUNTANT_INACTIVE", "VENDOR_FINANCE_PROJECT_ACCOUNTANT_INACTIVE"],
+  ["VENDOR_FINANCE_ASSIGNMENT_VERSION_CONFLICT", "VENDOR_FINANCE_ASSIGNMENT_VERSION_CONFLICT"],
   ["VENDOR_FINANCE_VENDOR_ALREADY_INITIALIZED", "VENDOR_FINANCE_VENDOR_ALREADY_INITIALIZED"],
+  ["VENDOR_FINANCE_PROJECT_ASSIGNMENT_OVERLAP", "VENDOR_FINANCE_PROJECT_ASSIGNMENT_OVERLAP"],
   ["VENDOR_FINANCE_OPENING_BATCH_SIZE_INVALID", "VENDOR_FINANCE_OPENING_BATCH_SIZE_INVALID"],
   ["VENDOR_FINANCE_EVIDENCE_ALREADY_ATTACHED", "VENDOR_FINANCE_EVIDENCE_ALREADY_ATTACHED"],
   ["VENDOR_FINANCE_EVIDENCE_CHECKSUM_INVALID", "VENDOR_FINANCE_EVIDENCE_CHECKSUM_INVALID"],
+  ["VENDOR_FINANCE_PROJECT_ALREADY_ASSIGNED", "VENDOR_FINANCE_PROJECT_ALREADY_ASSIGNED"],
   ["VENDOR_FINANCE_CANNOT_REVERSE_REVERSAL", "VENDOR_FINANCE_CANNOT_REVERSE_REVERSAL"],
   ["VENDOR_FINANCE_RECONCILIATION_NOT_FOUND", "VENDOR_FINANCE_RECONCILIATION_NOT_FOUND"],
+  ["VENDOR_FINANCE_PROJECT_VENDOR_UNLINKED", "VENDOR_FINANCE_PROJECT_VENDOR_UNLINKED"],
+  ["VENDOR_FINANCE_PROJECT_VENDOR_INACTIVE", "VENDOR_FINANCE_PROJECT_VENDOR_INACTIVE"],
+  ["VENDOR_FINANCE_ACCOUNTANT_NOT_ELIGIBLE", "VENDOR_FINANCE_ACCOUNT_NOT_ELIGIBLE"],
   ["VENDOR_FINANCE_ENTRY_ALREADY_REVERSED", "VENDOR_FINANCE_ENTRY_ALREADY_REVERSED"],
   ["VENDOR_FINANCE_EVIDENCE_TARGET_INVALID", "VENDOR_FINANCE_EVIDENCE_TARGET_INVALID"],
+  ["VENDOR_FINANCE_PROJECT_ACCESS_DENIED", "VENDOR_FINANCE_PROJECT_ACCESS_DENIED"],
   ["VENDOR_FINANCE_OPENING_BATCH_INVALID", "VENDOR_FINANCE_OPENING_BATCH_INVALID"],
   ["VENDOR_FINANCE_EVIDENCE_MIME_INVALID", "VENDOR_FINANCE_EVIDENCE_MIME_INVALID"],
   ["VENDOR_FINANCE_EVIDENCE_SIZE_INVALID", "VENDOR_FINANCE_EVIDENCE_SIZE_INVALID"],
+  ["VENDOR_FINANCE_LINK_VERSION_CONFLICT", "VENDOR_FINANCE_LINK_VERSION_CONFLICT"],
+  ["VENDOR_FINANCE_GLOBAL_ROLE_NOT_FOUND", "VENDOR_FINANCE_GLOBAL_ROLE_NOT_FOUND"],
   ["VENDOR_FINANCE_IDEMPOTENCY_CONFLICT", "VENDOR_FINANCE_IDEMPOTENCY_CONFLICT"],
+  ["VENDOR_FINANCE_LINK_TARGET_INACTIVE", "VENDOR_FINANCE_LINK_TARGET_INACTIVE"],
+  ["VENDOR_FINANCE_ACCOUNT_NOT_ELIGIBLE", "VENDOR_FINANCE_ACCOUNT_NOT_ELIGIBLE"],
+  ["VENDOR_FINANCE_ASSIGNMENT_NOT_FOUND", "VENDOR_FINANCE_ASSIGNMENT_NOT_FOUND"],
+  ["VENDOR_FINANCE_GLOBAL_ROLE_OVERLAP", "VENDOR_FINANCE_GLOBAL_ROLE_OVERLAP"],
+  ["VENDOR_FINANCE_GLOBAL_ROLE_INVALID", "VENDOR_FINANCE_GLOBAL_ROLE_INVALID"],
+  ["VENDOR_FINANCE_SUBLEDGER_NOT_FOUND", "VENDOR_FINANCE_SUBLEDGER_NOT_FOUND"],
   ["VENDOR_FINANCE_OPENING_BATCH_EMPTY", "VENDOR_FINANCE_OPENING_BATCH_EMPTY"],
   ["VENDOR_FINANCE_IDEMPOTENCY_INVALID", "IDEMPOTENCY_KEY_INVALID"],
+  ["VENDOR_FINANCE_PROJECT_UNASSIGNED", "VENDOR_FINANCE_PROJECT_UNASSIGNED"],
+  ["VENDOR_FINANCE_ASSIGNMENT_INVALID", "VENDOR_FINANCE_ASSIGNMENT_INVALID"],
   ["VENDOR_FINANCE_EVIDENCE_NOT_FOUND", "VENDOR_FINANCE_EVIDENCE_NOT_FOUND"],
   ["VENDOR_FINANCE_ENTRY_TYPE_INVALID", "VENDOR_FINANCE_ENTRY_TYPE_INVALID"],
+  ["VENDOR_FINANCE_PROJECT_NOT_FOUND", "VENDOR_FINANCE_PROJECT_NOT_FOUND"],
+  ["VENDOR_FINANCE_PROJECT_INACTIVE", "VENDOR_FINANCE_PROJECT_INACTIVE"],
+  ["VENDOR_FINANCE_RECONCILE_DENIED", "VENDOR_FINANCE_RECONCILE_DENIED"],
   ["VENDOR_FINANCE_VENDOR_NOT_FOUND", "VENDOR_FINANCE_VENDOR_NOT_FOUND"],
   ["VENDOR_FINANCE_EVIDENCE_INVALID", "VENDOR_FINANCE_EVIDENCE_TARGET_INVALID"],
+  ["VENDOR_FINANCE_PROJECT_INVALID", "VENDOR_FINANCE_PROJECT_INVALID"],
   ["VENDOR_FINANCE_ENTRY_NOT_FOUND", "VENDOR_FINANCE_ENTRY_NOT_FOUND"],
   ["VENDOR_FINANCE_AMOUNT_OVERFLOW", "VENDOR_FINANCE_AMOUNT_OVERFLOW"],
   ["VENDOR_FINANCE_AMOUNT_INVALID", "VENDOR_FINANCE_AMOUNT_INVALID"],
@@ -277,8 +442,10 @@ const KNOWN_RPC_TOKENS: ReadonlyArray<readonly [string, VendorFinanceErrorCode]>
   ["VENDOR_FINANCE_VENDOR_INVALID", "VENDOR_FINANCE_VENDOR_INVALID"],
   ["VENDOR_FINANCE_ACCESS_DENIED", "VENDOR_FINANCE_ACCESS_DENIED"],
   ["VENDOR_FINANCE_RECORD_DENIED", "VENDOR_FINANCE_RECORD_DENIED"],
+  ["VENDOR_FINANCE_ADMIN_DENIED", "VENDOR_FINANCE_ADMIN_DENIED"],
   ["VENDOR_FINANCE_QUERY_INVALID", "VENDOR_FINANCE_QUERY_INVALID"],
   ["VENDOR_FINANCE_ENTRY_INVALID", "VENDOR_FINANCE_ENTRY_INVALID"],
+  ["VENDOR_FINANCE_LINK_INVALID", "VENDOR_FINANCE_LINK_INVALID"],
   ["VENDOR_FINANCE_DATE_INVALID", "VENDOR_FINANCE_DATE_INVALID"],
 ];
 
@@ -318,6 +485,9 @@ export function classifyVendorFinanceRpcError(
 
   if (trimmed.includes("actor mapping denied")) {
     return "ACTOR_NOT_AVAILABLE";
+  }
+  if (trimmed.includes("admin capability denied")) {
+    return "VENDOR_FINANCE_ADMIN_DENIED";
   }
 
   if (error.code === "42501") {
@@ -630,6 +800,19 @@ export function createVendorFinanceRepository(
       );
     },
 
+    listContextOptions(actor) {
+      return callProjected(
+        "listContextOptions",
+        "read",
+        "vendor_finance_list_actor_context_options",
+        {
+          p_auth_subject: actor.auth_subject,
+          p_app_user_id: actor.app_user_id,
+        },
+        projectActorContextOptions,
+      );
+    },
+
     listVendors(input) {
       return callProjected(
         "listVendors",
@@ -641,6 +824,9 @@ export function createVendorFinanceRepository(
           p_search: input.search,
           p_active_filter: input.active,
           p_balance_filter: input.balance_filter,
+          p_project_id: input.project_id,
+          p_accountant_user_id: input.accountant_ref,
+          p_ledger_scope: input.ledger_scope ?? "all",
           p_page: input.page,
           p_page_size: input.page_size,
         },
@@ -657,6 +843,9 @@ export function createVendorFinanceRepository(
           p_auth_subject: input.auth_subject,
           p_app_user_id: input.app_user_id,
           p_vendor_id: input.vendor_id,
+          p_project_id: input.project_id ?? null,
+          p_accountant_user_id: input.accountant_ref ?? null,
+          p_ledger_scope: input.ledger_scope ?? null,
         },
         projectVendorFinanceVendorDetail,
       );
@@ -674,8 +863,18 @@ export function createVendorFinanceRepository(
           p_before_sequence: input.before_sequence,
           p_entry_type: input.entry_type,
           p_page_size: input.page_size,
+          p_project_id: input.project_id ?? null,
+          p_accountant_user_id: input.accountant_ref ?? null,
+          p_ledger_scope: input.ledger_scope ?? null,
+          p_month: input.month ?? null,
         },
-        projectVendorFinanceEntriesPage,
+        (raw) =>
+          projectVendorFinanceEntriesPage(raw, {
+            project_id: input.project_id ?? null,
+            accountant_ref: input.accountant_ref ?? null,
+            ledger_scope: input.ledger_scope ?? null,
+            month: input.month ?? null,
+          }),
       );
     },
 
@@ -704,6 +903,9 @@ export function createVendorFinanceRepository(
           p_vendor_id: input.vendor_id,
           p_page: input.page,
           p_page_size: input.page_size,
+          p_project_id: input.project_id ?? null,
+          p_accountant_user_id: input.accountant_ref ?? null,
+          p_ledger_scope: input.ledger_scope ?? null,
         },
         projectVendorReconciliationsPage,
       );
@@ -718,6 +920,7 @@ export function createVendorFinanceRepository(
           p_auth_subject: input.auth_subject,
           p_app_user_id: input.app_user_id,
           p_vendor_id: input.vendor_id,
+          p_project_id: input.project_id,
           p_entry_type: input.entry_type,
           p_amount_minor: input.amount_minor,
           p_effective_date: input.effective_date,
@@ -755,6 +958,7 @@ export function createVendorFinanceRepository(
         {
           p_auth_subject: input.auth_subject,
           p_app_user_id: input.app_user_id,
+          p_project_id: input.project_id,
           p_cutoff_date: input.cutoff_date,
           p_items: input.items,
         },
@@ -770,6 +974,7 @@ export function createVendorFinanceRepository(
         {
           p_auth_subject: input.auth_subject,
           p_app_user_id: input.app_user_id,
+          p_project_id: input.project_id,
           p_cutoff_date: input.cutoff_date,
           p_items: input.items,
           p_reason: input.reason,
@@ -789,6 +994,8 @@ export function createVendorFinanceRepository(
           p_auth_subject: input.auth_subject,
           p_app_user_id: input.app_user_id,
           p_vendor_id: input.vendor_id,
+          p_project_id: input.project_id,
+          p_accountant_user_id: input.accountant_ref,
           p_as_of_date: input.as_of_date,
           p_confirmed_balance_minor: input.confirmed_balance_minor,
           p_reason: input.reason,
@@ -796,6 +1003,173 @@ export function createVendorFinanceRepository(
           p_request_fingerprint: input.request_fingerprint,
         },
         projectCreateReconciliationMutation,
+      );
+    },
+
+    getMonthlyReport(input) {
+      return callProjected(
+        "getMonthlyReport",
+        "read",
+        "vendor_finance_get_monthly_report",
+        {
+          p_auth_subject: input.auth_subject,
+          p_app_user_id: input.app_user_id,
+          p_month: input.month,
+          p_project_id: input.project_id,
+          p_accountant_user_id: input.accountant_ref,
+          p_vendor_id: input.vendor_id,
+        },
+        projectMonthlyReport,
+      );
+    },
+
+    listProjectAccountantsAdmin(input) {
+      return callProjected(
+        "listProjectAccountantsAdmin",
+        "read",
+        "vendor_finance_list_project_accountants_admin",
+        {
+          p_auth_subject: input.auth_subject,
+          p_app_user_id: input.app_user_id,
+          p_search: input.search,
+          p_include_history: input.include_history,
+          p_page: input.page,
+          p_page_size: input.page_size,
+        },
+        projectListProjectAccountantsAdmin,
+      );
+    },
+
+    assignProjectAccountantAdmin(input) {
+      return callProjected(
+        "assignProjectAccountantAdmin",
+        "mutation",
+        "vendor_finance_assign_project_accountant_admin",
+        {
+          p_auth_subject: input.auth_subject,
+          p_app_user_id: input.app_user_id,
+          p_project_id: input.project_id,
+          p_accountant_user_id: input.accountant_ref,
+          p_expected_version: input.expected_version,
+          p_valid_from: input.valid_from,
+          p_reason: input.reason,
+          p_idempotency_key: input.idempotency_key,
+          p_request_fingerprint: input.request_fingerprint,
+        },
+        projectAssignProjectAccountantMutation,
+      );
+    },
+
+    endProjectAccountantAdmin(input) {
+      return callProjected(
+        "endProjectAccountantAdmin",
+        "mutation",
+        "vendor_finance_end_project_accountant_admin",
+        {
+          p_auth_subject: input.auth_subject,
+          p_app_user_id: input.app_user_id,
+          p_assignment_id: input.assignment_id,
+          p_expected_version: input.expected_version,
+          p_valid_to: input.valid_to,
+          p_reason: input.reason,
+          p_idempotency_key: input.idempotency_key,
+          p_request_fingerprint: input.request_fingerprint,
+        },
+        projectEndProjectAccountantMutation,
+      );
+    },
+
+    listProjectVendorsAdmin(input) {
+      return callProjected(
+        "listProjectVendorsAdmin",
+        "read",
+        "vendor_finance_list_project_vendors_admin",
+        {
+          p_auth_subject: input.auth_subject,
+          p_app_user_id: input.app_user_id,
+          p_project_id: input.project_id,
+          p_search: input.search,
+          p_only_linked: input.only_linked,
+          p_page: input.page,
+          p_page_size: input.page_size,
+        },
+        projectListProjectVendorsAdmin,
+      );
+    },
+
+    setProjectVendorLinkAdmin(input) {
+      return callProjected(
+        "setProjectVendorLinkAdmin",
+        "mutation",
+        "vendor_finance_set_project_vendor_link_admin",
+        {
+          p_auth_subject: input.auth_subject,
+          p_app_user_id: input.app_user_id,
+          p_project_id: input.project_id,
+          p_vendor_id: input.vendor_id,
+          p_active: input.active,
+          p_expected_version: input.expected_version,
+          p_reason: input.reason,
+          p_idempotency_key: input.idempotency_key,
+          p_request_fingerprint: input.request_fingerprint,
+        },
+        projectSetProjectVendorLinkMutation,
+      );
+    },
+
+    listGlobalRolesAdmin(input) {
+      return callProjected(
+        "listGlobalRolesAdmin",
+        "read",
+        "vendor_finance_list_global_roles_admin",
+        {
+          p_auth_subject: input.auth_subject,
+          p_app_user_id: input.app_user_id,
+          p_search: input.search,
+          p_include_history: input.include_history,
+          p_page: input.page,
+          p_page_size: input.page_size,
+        },
+        projectListGlobalRolesAdmin,
+      );
+    },
+
+    assignGlobalRoleAdmin(input) {
+      return callProjected(
+        "assignGlobalRoleAdmin",
+        "mutation",
+        "vendor_finance_assign_global_role_admin",
+        {
+          p_auth_subject: input.auth_subject,
+          p_app_user_id: input.app_user_id,
+          p_target_user_id: input.account_ref,
+          p_role_code: input.role_code,
+          p_expected_version: input.expected_version,
+          p_valid_from: input.valid_from,
+          p_reason: input.reason,
+          p_idempotency_key: input.idempotency_key,
+          p_request_fingerprint: input.request_fingerprint,
+        },
+        projectAssignGlobalRoleMutation,
+      );
+    },
+
+    endGlobalRoleAdmin(input) {
+      return callProjected(
+        "endGlobalRoleAdmin",
+        "mutation",
+        "vendor_finance_end_global_role_admin",
+        {
+          p_auth_subject: input.auth_subject,
+          p_app_user_id: input.app_user_id,
+          p_role_grant_id: input.role_grant_id,
+          p_expected_version: input.expected_version,
+          p_valid_to: input.valid_to,
+          p_reason: input.reason,
+          p_idempotency_key: input.idempotency_key,
+          p_request_fingerprint: input.request_fingerprint,
+        },
+        projectEndGlobalRoleMutation,
       );
     },
 

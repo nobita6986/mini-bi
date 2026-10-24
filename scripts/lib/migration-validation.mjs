@@ -137,6 +137,35 @@ export const HF_WORK_REPORTS_GROUPS_AND_ANALYTICS_OPTIONS_RPC_SIGNATURES = Objec
   "public.work_report_create_group_assignment(uuid, uuid, uuid, uuid, text, boolean, integer, time without time zone, boolean, date, date, text)",
   "public.work_report_analytics_filter_options(uuid, uuid)",
 ]);
+export const VFIN_02_PROJECT_LEDGERS_MIGRATION_NAME =
+  "20261026090000_vfin_02_project_accountant_ledgers.sql";
+export const VFIN_02_PROJECT_LEDGERS_RPC_SIGNATURES = Object.freeze([
+  "public.vendor_finance_get_actor_access(uuid, uuid)",
+  "public.vendor_finance_list_actor_context_options(uuid, uuid)",
+  "public.vendor_finance_list_vendors(uuid, uuid, text, text, text, text, uuid, text, integer, integer)",
+  "public.vendor_finance_get_vendor(uuid, uuid, text, text, uuid, text)",
+  "public.vendor_finance_list_vendor_entries(uuid, uuid, text, bigint, text, integer, text, uuid, text, text)",
+  "public.vendor_finance_get_entry(uuid, uuid, uuid)",
+  "public.vendor_finance_list_vendor_reconciliations(uuid, uuid, text, integer, integer, text, uuid, text)",
+  "public.vendor_finance_record_entry(uuid, uuid, text, text, text, text, date, text, uuid, text)",
+  "public.vendor_finance_reverse_entry(uuid, uuid, uuid, date, text, uuid, text)",
+  "public.vendor_finance_preview_opening_batch(uuid, uuid, text, date, jsonb)",
+  "public.vendor_finance_apply_opening_batch(uuid, uuid, text, date, jsonb, text, uuid, text)",
+  "public.vendor_finance_create_reconciliation(uuid, uuid, text, text, uuid, date, text, text, uuid, text)",
+  "public.vendor_finance_get_monthly_report(uuid, uuid, text, text, uuid, text)",
+  "public.vendor_finance_reserve_evidence(uuid, uuid, text, uuid, text, integer, text, integer, uuid, text)",
+  "public.vendor_finance_complete_evidence(uuid, uuid, uuid, text, text)",
+  "public.vendor_finance_get_evidence_download(uuid, uuid, uuid)",
+  "public.vendor_finance_mark_evidence_cleaned(uuid, uuid, uuid)",
+  "public.vendor_finance_list_project_accountants_admin(uuid, uuid, text, boolean, integer, integer)",
+  "public.vendor_finance_assign_project_accountant_admin(uuid, uuid, text, uuid, integer, date, text, uuid, text)",
+  "public.vendor_finance_end_project_accountant_admin(uuid, uuid, uuid, integer, date, text, uuid, text)",
+  "public.vendor_finance_list_project_vendors_admin(uuid, uuid, text, text, boolean, integer, integer)",
+  "public.vendor_finance_set_project_vendor_link_admin(uuid, uuid, text, text, boolean, integer, text, uuid, text)",
+  "public.vendor_finance_list_global_roles_admin(uuid, uuid, text, boolean, integer, integer)",
+  "public.vendor_finance_assign_global_role_admin(uuid, uuid, uuid, text, integer, date, text, uuid, text)",
+  "public.vendor_finance_end_global_role_admin(uuid, uuid, uuid, integer, date, text, uuid, text)",
+]);
 export const F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES = Object.freeze([
   "public.work_report_list_templates(uuid, uuid)",
   "public.work_report_get_template(uuid, uuid, uuid)",
@@ -361,7 +390,8 @@ export async function verifyS0T1CHistoricalCompatibility(
     attendanceSelfHistoryApplied = false,
     orgShell01DepartmentsApplied = false,
     vfin01BackendApplied = false,
-    hfWorkReportsGroupsAndAnalyticsOptionsApplied = false } = {},
+    hfWorkReportsGroupsAndAnalyticsOptionsApplied = false,
+    vfin02ProjectLedgersApplied = false } = {},
 ) {
   const baseAllowlist = extractS0T1CAllowlistSignatures(migrationSql);
   if (baseAllowlist.length === 0) {
@@ -393,7 +423,11 @@ export async function verifyS0T1CHistoricalCompatibility(
       : []),
     ...(attendanceSelfHistoryApplied ? ATTENDANCE_SELF_HISTORY_RPC_SIGNATURES : []),
     ...(orgShell01DepartmentsApplied ? ORG_SHELL_01_DEPARTMENTS_RPC_SIGNATURES : []),
-    ...(vfin01BackendApplied ? VFIN_01_BACKEND_RPC_SIGNATURES : []),
+    ...(vfin02ProjectLedgersApplied
+      ? VFIN_02_PROJECT_LEDGERS_RPC_SIGNATURES
+      : vfin01BackendApplied
+        ? VFIN_01_BACKEND_RPC_SIGNATURES
+        : []),
     ...(hfWorkReportsGroupsAndAnalyticsOptionsApplied
       ? HF_WORK_REPORTS_GROUPS_AND_ANALYTICS_OPTIONS_RPC_SIGNATURES
       : []),
@@ -617,6 +651,8 @@ export async function verifyAppliedMigrationChecksum(
           appliedMap.has(VFIN_01_BACKEND_MIGRATION_NAME),
         hfWorkReportsGroupsAndAnalyticsOptionsApplied:
           appliedMap.has(HF_WORK_REPORTS_GROUPS_AND_ANALYTICS_OPTIONS_MIGRATION_NAME),
+        vfin02ProjectLedgersApplied:
+          appliedMap.has(VFIN_02_PROJECT_LEDGERS_MIGRATION_NAME),
       },
     );
     if (postconditions.ok) {

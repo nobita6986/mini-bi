@@ -11,6 +11,8 @@ import { FormDialog } from "@/components/ui/form-dialog";
 import { useNotify } from "@/components/ui/notify-provider";
 import type {
   NormalVendorFinanceEntryType,
+  VendorFinanceContextProjectOption,
+  VendorFinanceDetailSubLedger,
   VendorFinanceEntryProjection,
   VendorFinanceReconciliationProjection,
 } from "@/lib/vendor-finance/vendor-finance-contract";
@@ -42,7 +44,7 @@ import {
 } from "@/lib/vendor-finance/ui-model";
 
 // =============================================================================
-// 1. Record Normal Entry Dialog (Two-Phase Commit + Safe Evidence Retry)
+// 1. Record Normal Entry Dialog (Project-Scoped + Server-Derived Responsible Accountant)
 // =============================================================================
 export function RecordVendorEntryDialog({
   open,
@@ -50,6 +52,8 @@ export function RecordVendorEntryDialog({
   vendorId,
   vendorDisplayName,
   vendorActive,
+  recordableProjects,
+  initialProjectId,
   defaultDate,
   allowedEntryTypes,
   initialEntryType,
@@ -60,12 +64,15 @@ export function RecordVendorEntryDialog({
   vendorId: string;
   vendorDisplayName: string;
   vendorActive: boolean;
+  recordableProjects: readonly VendorFinanceContextProjectOption[];
+  initialProjectId?: string | null;
   defaultDate: string;
   allowedEntryTypes: readonly NormalVendorFinanceEntryType[];
   initialEntryType?: NormalVendorFinanceEntryType;
   onDataChanged: () => void;
 }) {
   const descriptionId = useId();
+  const projectSelectId = useId();
   const typeSelectId = useId();
   const amountInputId = useId();
   const dateInputId = useId();
@@ -73,11 +80,17 @@ export function RecordVendorEntryDialog({
   const fileInputId = useId();
   const notify = useNotify();
 
+  const resolvedDefaultProject =
+    initialProjectId && recordableProjects.some((p) => p.project_id === initialProjectId)
+      ? initialProjectId
+      : (recordableProjects[0]?.project_id ?? "");
+
   const resolvedDefaultType: NormalVendorFinanceEntryType =
     initialEntryType && allowedEntryTypes.includes(initialEntryType)
       ? initialEntryType
       : (allowedEntryTypes[0] ?? "DEBT_RECORDED");
 
+  const [projectId, setProjectId] = useState<string>(resolvedDefaultProject);
   const [entryType, setEntryType] = useState<NormalVendorFinanceEntryType>(resolvedDefaultType);
   const [amountInput, setAmountInput] = useState("");
   const [effectiveDate, setEffectiveDate] = useState(defaultDate);
@@ -98,6 +111,7 @@ export function RecordVendorEntryDialog({
   const rotateKey = () => setIdempotencyKey(createClientIdempotencyKey());
 
   const resetAll = () => {
+    setProjectId(resolvedDefaultProject);
     setEntryType(resolvedDefaultType);
     setAmountInput("");
     setEffectiveDate(defaultDate);
@@ -135,6 +149,21 @@ export function RecordVendorEntryDialog({
     setEvidenceFile(file);
   };
 
+  const selectedProject =
+    recordableProjects.find((p) => p.project_id === projectId) ?? null;
+  const vendorLinkInProject = selectedProject?.linked_vendors.find(
+    (lv) => lv.vendor_id === vendorId,
+  );
+  const effectiveAllowedEntryTypes: readonly NormalVendorFinanceEntryType[] =
+    !vendorActive || (vendorLinkInProject && !vendorLinkInProject.link_active) || (selectedProject && !selectedProject.active)
+      ? allowedEntryTypes.filter(
+          (t) =>
+            t === "PAYMENT_RECORDED" ||
+            t === "ADJUSTMENT_INCREASE" ||
+            t === "ADJUSTMENT_DECREASE",
+        )
+      : allowedEntryTypes;
+
   const parsedAmountPreview = normalizePositiveVndInput(amountInput);
   const directionHint = ENTRY_TYPE_DIRECTION_HINTS_VI[entryType];
 
@@ -154,12 +183,13 @@ export function RecordVendorEntryDialog({
     }
 
     const built = buildRecordEntryRequest({
+      project_id: projectId,
       entry_type: entryType,
       amount_input: amountInput,
       effective_date: effectiveDate,
       reason,
       idempotency_key: idempotencyKey,
-      allowed_entry_types: allowedEntryTypes,
+      allowed_entry_types: effectiveAllowedEntryTypes,
     });
     if (!built.ok) {
       setErrorMsg(built.message);
@@ -210,7 +240,7 @@ export function RecordVendorEntryDialog({
       setSubmitting(false);
       notify.success({
         title: `Đã ghi nhận ${savedEntry.document_no}`,
-        description: `${ENTRY_TYPE_LABELS_VI[savedEntry.entry_type]} · ${formatVndMinor(savedEntry.amount_minor)}`,
+        description: `${savedEntry.project_display_name_snapshot ?? savedEntry.project_id} · ${ENTRY_TYPE_LABELS_VI[savedEntry.entry_type]} · ${formatVndMinor(savedEntry.amount_minor)}`,
       });
       resetAll();
       onOpenChange(false);
@@ -236,7 +266,7 @@ export function RecordVendorEntryDialog({
     onDataChanged();
     notify.success({
       title: `Đã ghi nhận ${savedEntry.document_no} kèm ảnh bằng chứng`,
-      description: `${ENTRY_TYPE_LABELS_VI[savedEntry.entry_type]} · ${formatVndMinor(savedEntry.amount_minor)}`,
+      description: `${savedEntry.project_display_name_snapshot ?? savedEntry.project_id} · ${ENTRY_TYPE_LABELS_VI[savedEntry.entry_type]} · ${formatVndMinor(savedEntry.amount_minor)}`,
     });
     resetAll();
     onOpenChange(false);
@@ -285,8 +315,8 @@ export function RecordVendorEntryDialog({
       }
       description={
         committedEntry
-          ? "Bút toán tiền đã được ghi nhận vào sổ cái. Thao tác thử lại bên dưới chỉ tải ảnh bằng chứng, không gửi lại bút toán tiền."
-          : "Số dư chỉ được cập nhật sau khi máy chủ xác nhận thành công."
+          ? "Bút toán tiền đã được ghi nhận vào sổ dự án. Thao tác thử lại bên dưới chỉ tải ảnh bằng chứng, không gửi lại bút toán tiền."
+          : "Khoản tiền được hạch toán riêng vào sổ Dự án × Kế toán phụ trách; số dư chỉ cập nhật sau khi máy chủ xác nhận."
       }
       descriptionId={descriptionId}
       dataTestId="vfin-record-entry-dialog"
@@ -299,11 +329,21 @@ export function RecordVendorEntryDialog({
               <span>Đã ghi nhận bút toán {committedEntry.document_no} an toàn</span>
             </div>
             <p className="mt-1 text-xs text-muted">
+              Dự án:{" "}
+              <strong className="text-foreground">
+                {committedEntry.project_display_name_snapshot ?? committedEntry.project_id}
+              </strong>{" "}
+              · Kế toán phụ trách sổ:{" "}
+              <strong className="text-foreground">
+                {committedEntry.responsible_accountant_display_name ?? "—"}
+              </strong>
+            </p>
+            <p className="mt-0.5 text-xs text-muted">
               {ENTRY_TYPE_LABELS_VI[committedEntry.entry_type]} · Số tiền:{" "}
               <strong className="font-mono text-foreground">
                 {formatVndMinor(committedEntry.amount_minor)}
               </strong>{" "}
-              · Số dư sau GD:{" "}
+              · Số dư sổ sau GD:{" "}
               <strong className="font-mono text-foreground">
                 {formatVndMinor(committedEntry.balance_after_minor)}
               </strong>
@@ -365,6 +405,22 @@ export function RecordVendorEntryDialog({
             </div>
           </div>
         </div>
+      ) : recordableProjects.length === 0 ? (
+        <div className="space-y-4">
+          <Alert tone="warning" title="Chưa có dự án hợp lệ để ghi nhận cho Vendor này">
+            <p>
+              Để ghi nhận thu/chi cho <strong>{vendorDisplayName}</strong>, dự án phải đang có{" "}
+              <strong>kế toán phụ trách hiệu lực</strong> và Vendor phải được{" "}
+              <strong>khai báo liên kết với dự án</strong> (Full Admin cấu hình tại mục Phân công &
+              vai trò).
+            </p>
+          </Alert>
+          <div className="flex justify-end border-t border-border pt-3">
+            <Button variant="secondary" onClick={() => handleOpenChange(false)}>
+              Đóng
+            </Button>
+          </div>
+        </div>
       ) : (
         <form onSubmit={(e) => void handleSubmitEntry(e)} className="space-y-4" noValidate>
           {!vendorActive ? (
@@ -383,6 +439,41 @@ export function RecordVendorEntryDialog({
           ) : null}
 
           <div className="space-y-1.5">
+            <label htmlFor={projectSelectId} className="block text-sm font-medium text-foreground">
+              Dự án hạch toán <span className="text-rose-600">*</span>
+            </label>
+            <select
+              id={projectSelectId}
+              data-testid="vfin-record-project-select"
+              value={projectId}
+              disabled={submitting}
+              onChange={(e) => {
+                setProjectId(e.target.value);
+                setErrorMsg(null);
+                rotateKey();
+              }}
+              className="min-h-11 sm:min-h-10 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+            >
+              {recordableProjects.map((proj) => (
+                <option key={proj.project_id} value={proj.project_id}>
+                  {proj.display_name} ({proj.project_id}) — KT:{" "}
+                  {proj.active_accountant_display_name ?? "Chưa phân công"}
+                </option>
+              ))}
+            </select>
+            {selectedProject ? (
+              <div className="rounded-lg border border-border bg-surface-muted/50 px-3 py-2 text-xs text-muted">
+                Kế toán chịu trách nhiệm sổ dự án:{" "}
+                <strong className="text-foreground">
+                  {selectedProject.active_accountant_display_name ?? "Chưa phân công"}
+                </strong>
+                . Giao dịch do người cầm tiền hoặc người nhập hộ tạo vẫn được ghi đúng vào sổ của kế
+                toán phụ trách dự án (không chuyển sang sổ cá nhân của người nhập).
+              </div>
+            ) : null}
+          </div>
+
+          <div className="space-y-1.5">
             <label htmlFor={typeSelectId} className="block text-sm font-medium text-foreground">
               Loại bút toán <span className="text-rose-600">*</span>
             </label>
@@ -397,7 +488,7 @@ export function RecordVendorEntryDialog({
               }}
               className="min-h-11 sm:min-h-10 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
             >
-              {allowedEntryTypes.map((type) => (
+              {effectiveAllowedEntryTypes.map((type) => (
                 <option key={type} value={type}>
                   {ENTRY_TYPE_LABELS_VI[type]}
                 </option>
@@ -645,7 +736,7 @@ export function ReverseVendorEntryDialog({
       onOpenChange={handleClose}
       closeDisabled={submitting}
       title={entry ? `Hoàn tác bút toán ${entry.document_no}` : "Hoàn tác bút toán"}
-      description="Hệ thống sổ cái bất biến (append-only): thao tác này sẽ tạo một bút toán REVERSAL ngược dấu và khóa hoàn tác vĩnh viễn trên bút toán gốc."
+      description="Hệ thống sổ cái bất biến (append-only): thao tác này sẽ tạo một bút toán REVERSAL ngược dấu trên đúng sổ dự án của chứng từ gốc và khóa hoàn tác vĩnh viễn trên bút toán gốc."
       descriptionId={descriptionId}
       dataTestId="vfin-reverse-entry-dialog"
     >
@@ -656,6 +747,14 @@ export function ReverseVendorEntryDialog({
               <span className="font-mono font-semibold text-foreground">{entry.document_no}</span>
               <StatusBadge tone="neutral">{ENTRY_TYPE_LABELS_VI[entry.entry_type]}</StatusBadge>
             </div>
+            <p className="text-muted">
+              Sổ hạch toán:{" "}
+              <strong className="text-foreground">
+                {entry.ledger_scope === "LEGACY_UNALLOCATED"
+                  ? "Sổ lịch sử VFIN-01"
+                  : `${entry.project_display_name_snapshot ?? entry.project_id} · KT: ${entry.responsible_accountant_display_name ?? "—"}`}
+              </strong>
+            </p>
             <p className="text-muted">
               Ngày hiệu lực gốc:{" "}
               <strong className="font-mono text-foreground">
@@ -731,14 +830,15 @@ export function ReverseVendorEntryDialog({
 }
 
 // =============================================================================
-// 3. Daily Reconciliation Dialog (Two-Phase Commit + Never Auto-Adjusts Ledger)
+// 3. Daily Reconciliation Dialog (Sub-Ledger Scoped + Never Auto-Adjusts Ledger)
 // =============================================================================
 export function CreateVendorReconciliationDialog({
   open,
   onOpenChange,
   vendorId,
   vendorDisplayName,
-  currentSystemBalanceMinor,
+  reconcilableSubLedgers,
+  initialSubLedgerKey,
   defaultAsOfDate,
   onDataChanged,
 }: {
@@ -746,19 +846,36 @@ export function CreateVendorReconciliationDialog({
   onOpenChange: (open: boolean) => void;
   vendorId: string;
   vendorDisplayName: string;
-  currentSystemBalanceMinor: string;
+  reconcilableSubLedgers: readonly VendorFinanceDetailSubLedger[];
+  initialSubLedgerKey?: string | null;
   defaultAsOfDate: string;
   onDataChanged: () => void;
 }) {
   const descriptionId = useId();
+  const subLedgerSelectId = useId();
   const dateInputId = useId();
   const confirmedInputId = useId();
   const reasonInputId = useId();
   const fileInputId = useId();
   const notify = useNotify();
 
+  const makeKey = (s: VendorFinanceDetailSubLedger) =>
+    `${s.project_id ?? ""}:${s.accountant_ref ?? ""}`;
+
+  const defaultSubLedger =
+    (initialSubLedgerKey
+      ? reconcilableSubLedgers.find((s) => makeKey(s) === initialSubLedgerKey)
+      : undefined) ??
+    reconcilableSubLedgers[0] ??
+    null;
+
+  const [selectedKey, setSelectedKey] = useState<string>(
+    defaultSubLedger ? makeKey(defaultSubLedger) : "",
+  );
   const [asOfDate, setAsOfDate] = useState(defaultAsOfDate);
-  const [confirmedInput, setConfirmedInput] = useState(currentSystemBalanceMinor);
+  const [confirmedInput, setConfirmedInput] = useState(
+    defaultSubLedger?.current_balance_minor ?? "0",
+  );
   const [reason, setReason] = useState("");
   const [idempotencyKey, setIdempotencyKey] = useState(() => createClientIdempotencyKey());
   const [evidenceFile, setEvidenceFile] = useState<File | null>(null);
@@ -773,9 +890,14 @@ export function CreateVendorReconciliationDialog({
 
   const rotateKey = () => setIdempotencyKey(createClientIdempotencyKey());
 
+  const activeSubLedger =
+    reconcilableSubLedgers.find((s) => makeKey(s) === selectedKey) ?? defaultSubLedger;
+  const currentSystemBalanceMinor = activeSubLedger?.current_balance_minor ?? "0";
+
   const resetAll = () => {
+    setSelectedKey(defaultSubLedger ? makeKey(defaultSubLedger) : "");
     setAsOfDate(defaultAsOfDate);
-    setConfirmedInput(currentSystemBalanceMinor);
+    setConfirmedInput(defaultSubLedger?.current_balance_minor ?? "0");
     setReason("");
     setIdempotencyKey(createClientIdempotencyKey());
     setEvidenceFile(null);
@@ -820,6 +942,11 @@ export function CreateVendorReconciliationDialog({
     if (committedRec) return;
     setErrorMsg(null);
 
+    if (!activeSubLedger || !activeSubLedger.project_id) {
+      setErrorMsg("Vui lòng chọn sổ dự án hợp lệ để đối soát.");
+      return;
+    }
+
     if (evidenceFile) {
       const check = validateEvidenceFilePreflight(evidenceFile);
       if (!check.ok) {
@@ -829,6 +956,8 @@ export function CreateVendorReconciliationDialog({
     }
 
     const built = buildCreateReconciliationRequest({
+      project_id: activeSubLedger.project_id,
+      accountant_ref: activeSubLedger.accountant_ref,
       as_of_date: asOfDate,
       confirmed_balance_input: confirmedInput,
       reason,
@@ -880,7 +1009,7 @@ export function CreateVendorReconciliationDialog({
       setSubmitting(false);
       notify.success({
         title: `Đã chốt đối soát ngày ${formatVietnamDateLabel(savedRec.as_of_date)}`,
-        description: `Chênh lệch: ${formatSignedVndDelta(savedRec.difference_minor)}`,
+        description: `${savedRec.project_display_name_snapshot ?? savedRec.project_id} · Chênh lệch: ${formatSignedVndDelta(savedRec.difference_minor)}`,
       });
       resetAll();
       onOpenChange(false);
@@ -949,9 +1078,9 @@ export function CreateVendorReconciliationDialog({
       title={
         committedRec
           ? `Đối soát ngày ${formatVietnamDateLabel(committedRec.as_of_date)} đã lưu — Hoàn tất ảnh`
-          : `Chốt đối soát công nợ — ${vendorDisplayName}`
+          : `Chốt đối soát công nợ theo sổ dự án — ${vendorDisplayName}`
       }
-      description="Ghi nhận số dư hệ thống, số dư Vendor xác nhận và chênh lệch tại ngày chốt. Đối soát KHÔNG tự động tạo bút toán điều chỉnh sổ cái."
+      description="Ghi nhận số dư hệ thống của sổ Dự án × Kế toán phụ trách, số dư Vendor xác nhận và chênh lệch tại ngày chốt. Đối soát KHÔNG tự động tạo bút toán điều chỉnh sổ cái."
       descriptionId={descriptionId}
       dataTestId="vfin-reconciliation-dialog"
     >
@@ -965,6 +1094,16 @@ export function CreateVendorReconciliationDialog({
               </span>
             </div>
             <p className="mt-1 text-xs text-muted">
+              Sổ dự án:{" "}
+              <strong className="text-foreground">
+                {committedRec.project_display_name_snapshot ?? committedRec.project_id}
+              </strong>{" "}
+              · Kế toán phụ trách:{" "}
+              <strong className="text-foreground">
+                {committedRec.responsible_accountant_display_name ?? "—"}
+              </strong>
+            </p>
+            <p className="mt-0.5 text-xs text-muted">
               Hệ thống:{" "}
               <strong className="font-mono text-foreground">
                 {formatVndMinor(committedRec.system_balance_minor)}
@@ -1023,9 +1162,10 @@ export function CreateVendorReconciliationDialog({
         <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4" noValidate>
           <Alert tone="info" title="Không tự động sinh điều chỉnh (adjustment)">
             <p>
-              Máy chủ sẽ tự động tính số dư hệ thống đến hết ngày đối soát và lưu chênh lệch. Nếu
-              cần điều chỉnh công nợ sau khi đối soát, Kế toán lập riêng bút toán Điều chỉnh tăng /
-              giảm kèm lý do.
+              Máy chủ sẽ tự động tính số dư hệ thống của đúng sổ{" "}
+              <strong>Dự án × Kế toán phụ trách</strong> đến hết ngày đối soát và lưu chênh lệch.
+              Nếu cần điều chỉnh công nợ sau khi đối soát, Kế toán lập riêng bút toán Điều chỉnh
+              tăng / giảm kèm lý do.
             </p>
           </Alert>
 
@@ -1034,6 +1174,41 @@ export function CreateVendorReconciliationDialog({
               <p>{errorMsg}</p>
             </Alert>
           ) : null}
+
+          <div className="space-y-1.5">
+            <label htmlFor={subLedgerSelectId} className="block text-sm font-medium text-foreground">
+              Sổ chi tiết cần đối soát (Dự án × Kế toán phụ trách){" "}
+              <span className="text-rose-600">*</span>
+            </label>
+            <select
+              id={subLedgerSelectId}
+              data-testid="vfin-reconciliation-subledger-select"
+              value={selectedKey}
+              disabled={submitting}
+              onChange={(e) => {
+                const nextKey = e.target.value;
+                setSelectedKey(nextKey);
+                const nextSub = reconcilableSubLedgers.find((s) => makeKey(s) === nextKey);
+                if (nextSub) {
+                  setConfirmedInput(nextSub.current_balance_minor);
+                }
+                setErrorMsg(null);
+                rotateKey();
+              }}
+              className="min-h-11 sm:min-h-10 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+            >
+              {reconcilableSubLedgers.map((sub) => {
+                const k = makeKey(sub);
+                return (
+                  <option key={k} value={k}>
+                    {sub.project_display_name ?? sub.project_id} ({sub.project_id}) · KT:{" "}
+                    {sub.responsible_accountant_display_name ?? "—"} · Số dư:{" "}
+                    {formatVndMinor(sub.current_balance_minor)}
+                  </option>
+                );
+              })}
+            </select>
+          </div>
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
@@ -1059,7 +1234,7 @@ export function CreateVendorReconciliationDialog({
                 htmlFor={confirmedInputId}
                 className="block text-sm font-medium text-foreground"
               >
-                Số dư Vendor xác nhận (VND) <span className="text-rose-600">*</span>
+                Số dư Vendor xác nhận trên sổ này (VND) <span className="text-rose-600">*</span>
               </label>
               <input
                 id={confirmedInputId}
@@ -1081,7 +1256,7 @@ export function CreateVendorReconciliationDialog({
 
           <div className="grid grid-cols-1 gap-2 rounded-xl border border-border bg-surface-muted/50 p-3 text-xs sm:grid-cols-3">
             <div>
-              <p className="text-muted">Số dư sổ cái hiện tại (tham chiếu)</p>
+              <p className="text-muted">Số dư sổ hiện tại (tham chiếu)</p>
               <p className="mt-0.5 font-mono text-sm font-semibold tabular-nums text-foreground">
                 {formatVndMinor(currentSystemBalanceMinor)}
               </p>

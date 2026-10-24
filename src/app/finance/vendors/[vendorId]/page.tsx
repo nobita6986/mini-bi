@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { notFound } from "next/navigation";
 
 import { VendorFinanceDetailView } from "@/components/vendor-finance/vendor-finance-detail-view";
@@ -32,13 +33,22 @@ export default async function FinanceVendorDetailPage({
       const safeId = decodeSafeVendorId(vendorId);
       return safeId ? `/finance/vendors/${encodeURIComponent(safeId)}` : "/finance/vendors";
     },
-    render: async ({ canRecord }) => {
+    render: async ({ canRecord, canReconcile, canManageProjectAssignments }) => {
       const { vendorId } = await params;
       const safeId = decodeSafeVendorId(vendorId);
       if (!safeId) {
         notFound();
       }
-      return <VendorFinanceDetailView vendorId={safeId} initialCanRecord={canRecord} />;
+      return (
+        <Suspense fallback={null}>
+          <VendorFinanceDetailView
+            vendorId={safeId}
+            initialCanRecord={canRecord}
+            initialCanReconcile={canReconcile}
+            initialCanManageProjectAssignments={canManageProjectAssignments}
+          />
+        </Suspense>
+      );
     },
   });
 }

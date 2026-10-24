@@ -1,0 +1,1905 @@
+/**
+ * VFIN-02 — Project-Scoped Vendor Finance Sub-Ledgers, Controlled Vendor–Project Links,
+ * Accountant Handover Isolation, Narrow Global Reconciler & Monthly Debt Report DB Suite.
+ *
+ * Applies the full repository migration stack on ephemeral PGlite (including pre-existing
+ * VFIN-01 legacy rows migrated forward) and exercises both PostgreSQL RPCs and the
+ * fail-closed TypeScript `createVendorFinanceRepository` projections end-to-end:
+ *   1. Atomic migration rollback on failure + LF/CRLF-deterministic SHA-256 checksum.
+ *   2. Zero schema/constraint/trigger/data drift on untouched recruitment, Direct Entry,
+ *      Team Leader, Project-Team scope, Organization Department, and Work Reports tables.
+ *   3. Safe preservation of pre-existing VFIN-01 rows in `LEGACY_UNALLOCATED` without
+ *      guessed allocation, mutation, or double counting; hidden from project-scoped
+ *      accountants and isolated for global viewers.
+ *   4. Controlled governance by Canonical Full Admin (`1 project = 1 active accountant`,
+ *      controlled `vendor_finance_project_vendors` links, global role designations) and
+ *      fail-closed rejection of non-admin actors.
+ *   5. Controlled Vendor–Project link enforcement (`VENDOR_FINANCE_PROJECT_VENDOR_UNLINKED`)
+ *      on normal entries, opening balance batches (whole-batch rollback), and reconciliations.
+ *   6. Hierarchy `Company -> Responsible Accountant -> Project -> Vendor` & ZERO cross-netting:
+ *      same Vendor across 2 Projects & 2 Accountants (including opposite `+10M` payable vs
+ *      `-4M` advance) never nets into `+6M`.
+ *   7. 4-Role authorization matrix + Cash-Holder record-on-behalf ownership invariant
+ *      (`responsible_accountant_user_id` stays on the project's active accountant while
+ *      `created_by_user_id` records the actor) + narrow BoD `GLOBAL_RECONCILER` without
+ *      `can_record`.
+ *   8. Project accountant handover (`A -> B` on `PRJ_1`): `A`'s historical `(V, PRJ_1, A)`
+ *      book stays owned by `A` (read-only to `A`, zero leakage of `B`'s `(V, PRJ_1, B)` book).
+ *   9. Monthly Project Debt Report (`MISSING_CANONICAL_SOURCE` revenue honesty, non-netted
+ *      component totals, `month=YYYY-MM` drill-down, and `LEGACY_UNALLOCATED` isolation).
+ *  10. Forced RLS, zero direct table grants across all 10 `vendor_finance_*` tables, and
+ *      `service_role`-only EXECUTE ACL matching `VFIN_02_PROJECT_LEDGERS_RPC_SIGNATURES`.
+ */
+
+import assert from "node:assert/strict";
+import { readFile, readdir } from "node:fs/promises";
+import path from "node:path";
+import test from "node:test";
+
+import { PGlite } from "@electric-sql/pglite";
+import { computeAssignAccountingMemberFingerprint } from "../src/lib/departments/department-contract.ts";
+import {
+  computeApplyOpeningBatchFingerprint,
+  computeAssignGlobalRoleFingerprint,
+  computeAssignProjectAccountantFingerprint,
+  computeCreateReconciliationFingerprint,
+  computeEndGlobalRoleFingerprint,
+  computeEndProjectAccountantFingerprint,
+  computeRecordEntryFingerprint,
+  computeReserveEvidenceFingerprint,
+  computeReverseEntryFingerprint,
+  computeSetProjectVendorLinkFingerprint,
+} from "../src/lib/vendor-finance/vendor-finance-contract.ts";
+import { createVendorFinanceRepository } from "../src/lib/vendor-finance/vendor-finance-repository.ts";
+import {
+  VFIN_02_PROJECT_LEDGERS_MIGRATION_NAME,
+  VFIN_02_PROJECT_LEDGERS_RPC_SIGNATURES,
+  migrationChecksum,
+  migrationSqlForTransaction,
+} from "./lib/migration-validation.mjs";
+import { AUTH_PROLOGUE } from "./lib/s04c-read-fixture.mjs";
+
+const MIGRATION_DIR = path.resolve("supabase/migrations");
+
+const TEAM_ALPHA = "99500000-0000-4000-8000-00000000000a";
+const PRJ_1 = "vfin_02_prj_north";
+const PRJ_2 = "vfin_02_prj_south";
+
+const FULL_ADMIN = {
+  auth: "19500000-0000-4000-8000-000000000001",
+  app: "29500000-0000-4000-8000-000000000001",
+  name: "Quản Trị Toàn Quyền VFIN-02",
+};
+const ACCT_A = {
+  auth: "19500000-0000-4000-8000-000000000002",
+  app: "29500000-0000-4000-8000-000000000002",
+  recruiter: "39500000-0000-4000-8000-000000000002",
+  name: "Kế Toán Dự Án A",
+  code: "KT-201",
+};
+const ACCT_B = {
+  auth: "19500000-0000-4000-8000-000000000003",
+  app: "29500000-0000-4000-8000-000000000003",
+  recruiter: "39500000-0000-4000-8000-000000000003",
+  name: "Kế Toán Dự Án B",
+  code: "KT-202",
+};
+const CASH_HOLDER_VIEW = {
+  auth: "19500000-0000-4000-8000-000000000004",
+  app: "29500000-0000-4000-8000-000000000004",
+  name: "Kế Toán Cầm Tiền Theo Dõi",
+};
+const CASH_HOLDER_BEHALF = {
+  auth: "19500000-0000-4000-8000-000000000005",
+  app: "29500000-0000-4000-8000-000000000005",
+  name: "Kế Toán Cầm Tiền Nhập Hộ",
+};
+const BOD_RECONCILER = {
+  auth: "19500000-0000-4000-8000-000000000006",
+  app: "29500000-0000-4000-8000-000000000006",
+  name: "Ban Giám Đốc Đối Soát",
+};
+const BOD_VIEWER = {
+  auth: "19500000-0000-4000-8000-000000000007",
+  app: "29500000-0000-4000-8000-000000000007",
+  name: "Ban Giám Đốc Chỉ Xem",
+};
+const TEAM_LEADER = {
+  auth: "19500000-0000-4000-8000-000000000008",
+  app: "29500000-0000-4000-8000-000000000008",
+  recruiter: "39500000-0000-4000-8000-000000000008",
+  name: "Trưởng Nhóm Tuyển Dụng",
+  code: "TL-208",
+};
+const STAFF_MEMBER = {
+  auth: "19500000-0000-4000-8000-000000000009",
+  app: "29500000-0000-4000-8000-000000000009",
+  recruiter: "39500000-0000-4000-8000-000000000009",
+  name: "Nhân Viên Tuyển Dụng",
+  code: "NV-209",
+};
+
+let uuidSeq = 0;
+function nextUuid() {
+  uuidSeq += 1;
+  return `79500000-0000-4000-8000-${String(uuidSeq).padStart(12, "0")}`;
+}
+
+async function loadMigrations() {
+  const names = (await readdir(MIGRATION_DIR)).filter((n) => n.endsWith(".sql")).sort();
+  return Promise.all(
+    names.map(async (name) => ({
+      name,
+      sql: await readFile(path.join(MIGRATION_DIR, name), "utf8"),
+    })),
+  );
+}
+
+async function createPreVfin02Database() {
+  const db = new PGlite();
+  await db.exec(AUTH_PROLOGUE);
+  const migrations = await loadMigrations();
+  const targetIdx = migrations.findIndex((m) => m.name === VFIN_02_PROJECT_LEDGERS_MIGRATION_NAME);
+  assert.ok(targetIdx >= 0, "VFIN-02 migration must exist in supabase/migrations");
+  for (const m of migrations.slice(0, targetIdx)) {
+    await db.exec(m.sql);
+  }
+  return { db, targetMigration: migrations[targetIdx], restMigrations: migrations.slice(targetIdx + 1) };
+}
+
+const UNTOUCHED_TABLES = [
+  "teams",
+  "recruiter_team_memberships",
+  "direct_entry_team_leader_assignments",
+  "direct_entry_project_team_scopes",
+  "direct_entry_scope_grants",
+  "organization_departments",
+  "organization_department_memberships",
+];
+
+async function captureUntouchedSnapshot(db) {
+  const { rows: columns } = await db.query(
+    `select table_name, ordinal_position::int as pos, column_name, data_type, udt_name, is_nullable
+       from information_schema.columns
+      where table_schema = 'public' and table_name = any($1::text[])
+      order by table_name, ordinal_position`,
+    [UNTOUCHED_TABLES],
+  );
+  const { rows: constraints } = await db.query(
+    `select rel.relname as table_name, con.conname, con.contype, pg_get_constraintdef(con.oid, true) as def
+       from pg_constraint con
+       join pg_class rel on rel.oid = con.conrelid
+       join pg_namespace n on n.oid = rel.relnamespace
+      where n.nspname = 'public' and rel.relname = any($1::text[])
+      order by rel.relname, con.conname`,
+    [UNTOUCHED_TABLES],
+  );
+  const { rows: triggers } = await db.query(
+    `select c.relname as table_name, t.tgname, pg_get_triggerdef(t.oid, true) as def
+       from pg_trigger t
+       join pg_class c on c.oid = t.tgrelid
+       join pg_namespace n on n.oid = c.relnamespace
+      where n.nspname = 'public' and not t.tgisinternal and c.relname = any($1::text[])
+      order by c.relname, t.tgname`,
+    [UNTOUCHED_TABLES],
+  );
+  const data = {};
+  for (const tbl of UNTOUCHED_TABLES) {
+    const { rows } = await db.query(
+      `select to_jsonb(r) as row from public.${tbl} r order by to_jsonb(r)::text`,
+    );
+    data[tbl] = rows;
+  }
+  return { columns, constraints, triggers, data };
+}
+
+/**
+ * Maps `createVendorFinanceRepository` RPC calls onto PGlite with exact parameter order/casts.
+ */
+const VFIN_02_RPC_BINDINGS = {
+  vendor_finance_get_actor_access: [
+    ["p_auth_subject", "uuid"],
+    ["p_app_user_id", "uuid"],
+  ],
+  vendor_finance_list_actor_context_options: [
+    ["p_auth_subject", "uuid"],
+    ["p_app_user_id", "uuid"],
+  ],
+  vendor_finance_list_vendors: [
+    ["p_auth_subject", "uuid"],
+    ["p_app_user_id", "uuid"],
+    ["p_search", "text"],
+    ["p_active_filter", "text"],
+    ["p_balance_filter", "text"],
+    ["p_project_id", "text"],
+    ["p_accountant_user_id", "uuid"],
+    ["p_ledger_scope", "text"],
+    ["p_page", "integer"],
+    ["p_page_size", "integer"],
+  ],
+  vendor_finance_get_vendor: [
+    ["p_auth_subject", "uuid"],
+    ["p_app_user_id", "uuid"],
+    ["p_vendor_id", "text"],
+    ["p_project_id", "text"],
+    ["p_accountant_user_id", "uuid"],
+    ["p_ledger_scope", "text"],
+  ],
+  vendor_finance_list_vendor_entries: [
+    ["p_auth_subject", "uuid"],
+    ["p_app_user_id", "uuid"],
+    ["p_vendor_id", "text"],
+    ["p_before_sequence", "bigint"],
+    ["p_entry_type", "text"],
+    ["p_page_size", "integer"],
+    ["p_project_id", "text"],
+    ["p_accountant_user_id", "uuid"],
+    ["p_ledger_scope", "text"],
+    ["p_month", "text"],
+  ],
+  vendor_finance_get_entry: [
+    ["p_auth_subject", "uuid"],
+    ["p_app_user_id", "uuid"],
+    ["p_entry_id", "uuid"],
+  ],
+  vendor_finance_list_vendor_reconciliations: [
+    ["p_auth_subject", "uuid"],
+    ["p_app_user_id", "uuid"],
+    ["p_vendor_id", "text"],
+    ["p_page", "integer"],
+    ["p_page_size", "integer"],
+    ["p_project_id", "text"],
+    ["p_accountant_user_id", "uuid"],
+    ["p_ledger_scope", "text"],
+  ],
+  vendor_finance_record_entry: [
+    ["p_auth_subject", "uuid"],
+    ["p_app_user_id", "uuid"],
+    ["p_vendor_id", "text"],
+    ["p_project_id", "text"],
+    ["p_entry_type", "text"],
+    ["p_amount_minor", "text"],
+    ["p_effective_date", "date"],
+    ["p_reason", "text"],
+    ["p_idempotency_key", "uuid"],
+    ["p_request_fingerprint", "text"],
+  ],
+  vendor_finance_reverse_entry: [
+    ["p_auth_subject", "uuid"],
+    ["p_app_user_id", "uuid"],
+    ["p_entry_id", "uuid"],
+    ["p_effective_date", "date"],
+    ["p_reason", "text"],
+    ["p_idempotency_key", "uuid"],
+    ["p_request_fingerprint", "text"],
+  ],
+  vendor_finance_preview_opening_batch: [
+    ["p_auth_subject", "uuid"],
+    ["p_app_user_id", "uuid"],
+    ["p_project_id", "text"],
+    ["p_cutoff_date", "date"],
+    ["p_items", "jsonb"],
+  ],
+  vendor_finance_apply_opening_batch: [
+    ["p_auth_subject", "uuid"],
+    ["p_app_user_id", "uuid"],
+    ["p_project_id", "text"],
+    ["p_cutoff_date", "date"],
+    ["p_items", "jsonb"],
+    ["p_reason", "text"],
+    ["p_idempotency_key", "uuid"],
+    ["p_request_fingerprint", "text"],
+  ],
+  vendor_finance_create_reconciliation: [
+    ["p_auth_subject", "uuid"],
+    ["p_app_user_id", "uuid"],
+    ["p_vendor_id", "text"],
+    ["p_project_id", "text"],
+    ["p_accountant_user_id", "uuid"],
+    ["p_as_of_date", "date"],
+    ["p_confirmed_balance_minor", "text"],
+    ["p_reason", "text"],
+    ["p_idempotency_key", "uuid"],
+    ["p_request_fingerprint", "text"],
+  ],
+  vendor_finance_get_monthly_report: [
+    ["p_auth_subject", "uuid"],
+    ["p_app_user_id", "uuid"],
+    ["p_month", "text"],
+    ["p_project_id", "text"],
+    ["p_accountant_user_id", "uuid"],
+    ["p_vendor_id", "text"],
+  ],
+  vendor_finance_list_project_accountants_admin: [
+    ["p_auth_subject", "uuid"],
+    ["p_app_user_id", "uuid"],
+    ["p_search", "text"],
+    ["p_include_history", "boolean"],
+    ["p_page", "integer"],
+    ["p_page_size", "integer"],
+  ],
+  vendor_finance_assign_project_accountant_admin: [
+    ["p_auth_subject", "uuid"],
+    ["p_app_user_id", "uuid"],
+    ["p_project_id", "text"],
+    ["p_accountant_user_id", "uuid"],
+    ["p_expected_version", "integer"],
+    ["p_valid_from", "date"],
+    ["p_reason", "text"],
+    ["p_idempotency_key", "uuid"],
+    ["p_request_fingerprint", "text"],
+  ],
+  vendor_finance_end_project_accountant_admin: [
+    ["p_auth_subject", "uuid"],
+    ["p_app_user_id", "uuid"],
+    ["p_assignment_id", "uuid"],
+    ["p_expected_version", "integer"],
+    ["p_valid_to", "date"],
+    ["p_reason", "text"],
+    ["p_idempotency_key", "uuid"],
+    ["p_request_fingerprint", "text"],
+  ],
+  vendor_finance_list_project_vendors_admin: [
+    ["p_auth_subject", "uuid"],
+    ["p_app_user_id", "uuid"],
+    ["p_project_id", "text"],
+    ["p_search", "text"],
+    ["p_only_linked", "boolean"],
+    ["p_page", "integer"],
+    ["p_page_size", "integer"],
+  ],
+  vendor_finance_set_project_vendor_link_admin: [
+    ["p_auth_subject", "uuid"],
+    ["p_app_user_id", "uuid"],
+    ["p_project_id", "text"],
+    ["p_vendor_id", "text"],
+    ["p_active", "boolean"],
+    ["p_expected_version", "integer"],
+    ["p_reason", "text"],
+    ["p_idempotency_key", "uuid"],
+    ["p_request_fingerprint", "text"],
+  ],
+  vendor_finance_list_global_roles_admin: [
+    ["p_auth_subject", "uuid"],
+    ["p_app_user_id", "uuid"],
+    ["p_search", "text"],
+    ["p_include_history", "boolean"],
+    ["p_page", "integer"],
+    ["p_page_size", "integer"],
+  ],
+  vendor_finance_assign_global_role_admin: [
+    ["p_auth_subject", "uuid"],
+    ["p_app_user_id", "uuid"],
+    ["p_target_user_id", "uuid"],
+    ["p_role_code", "text"],
+    ["p_expected_version", "integer"],
+    ["p_valid_from", "date"],
+    ["p_reason", "text"],
+    ["p_idempotency_key", "uuid"],
+    ["p_request_fingerprint", "text"],
+  ],
+  vendor_finance_end_global_role_admin: [
+    ["p_auth_subject", "uuid"],
+    ["p_app_user_id", "uuid"],
+    ["p_role_grant_id", "uuid"],
+    ["p_expected_version", "integer"],
+    ["p_valid_to", "date"],
+    ["p_reason", "text"],
+    ["p_idempotency_key", "uuid"],
+    ["p_request_fingerprint", "text"],
+  ],
+  vendor_finance_reserve_evidence: [
+    ["p_auth_subject", "uuid"],
+    ["p_app_user_id", "uuid"],
+    ["p_target_kind", "text"],
+    ["p_target_id", "uuid"],
+    ["p_mime_type", "text"],
+    ["p_size_bytes", "integer"],
+    ["p_checksum_sha256", "text"],
+    ["p_ttl_seconds", "integer"],
+    ["p_idempotency_key", "uuid"],
+    ["p_request_fingerprint", "text"],
+  ],
+  vendor_finance_complete_evidence: [
+    ["p_auth_subject", "uuid"],
+    ["p_app_user_id", "uuid"],
+    ["p_evidence_id", "uuid"],
+    ["p_outcome", "text"],
+    ["p_failure_code", "text"],
+  ],
+  vendor_finance_get_evidence_download: [
+    ["p_auth_subject", "uuid"],
+    ["p_app_user_id", "uuid"],
+    ["p_evidence_id", "uuid"],
+  ],
+  vendor_finance_mark_evidence_cleaned: [
+    ["p_auth_subject", "uuid"],
+    ["p_app_user_id", "uuid"],
+    ["p_evidence_id", "uuid"],
+  ],
+};
+
+function createPgliteVfinRepo(db) {
+  return createVendorFinanceRepository(async (fnName, params) => {
+    const spec = VFIN_02_RPC_BINDINGS[fnName];
+    assert.ok(spec, `Unbound RPC in PGlite adapter: ${fnName}`);
+    const placeholders = spec.map(([, pgType], idx) => `$${idx + 1}::${pgType}`).join(", ");
+    const values = spec.map(([paramName, pgType]) => {
+      const val = params[paramName];
+      if (val === undefined || val === null) return null;
+      return pgType === "jsonb" ? JSON.stringify(val) : val;
+    });
+    try {
+      const { rows } = await db.query(
+        `select public.${fnName}(${placeholders}) as data`,
+        values,
+      );
+      return { data: rows[0]?.data ?? null, error: null };
+    } catch (err) {
+      return {
+        data: null,
+        error: {
+          code: err.code ?? null,
+          message: err.message ?? String(err),
+          details: err.detail ?? null,
+        },
+      };
+    }
+  });
+}
+
+test("(#1) VFIN-02 migration rolls back atomically on failure and produces LF/CRLF-identical SHA-256 checksum", async () => {
+  const { db, targetMigration } = await createPreVfin02Database();
+  try {
+    const checksum = migrationChecksum(targetMigration.sql);
+    assert.match(checksum, /^[0-9a-f]{64}$/);
+    assert.equal(
+      migrationChecksum(targetMigration.sql.replace(/\n/g, "\r\n")),
+      checksum,
+      "checksum must be identical across LF and CRLF checkouts",
+    );
+
+    const failingBody = `${migrationSqlForTransaction(targetMigration.sql)}\nselect 1 / 0;\n`;
+    await assert.rejects(
+      async () => {
+        await db.exec("begin;");
+        try {
+          await db.exec(failingBody);
+          await db.exec("commit;");
+        } catch (err) {
+          await db.exec("rollback;");
+          throw err;
+        }
+      },
+      (err) => err.code === "22012",
+    );
+
+    const { rows: leakedTables } = await db.query(
+      `select tablename from pg_tables
+        where schemaname = 'public'
+          and tablename in (
+            'vendor_finance_project_accountants',
+            'vendor_finance_project_vendors',
+            'vendor_finance_global_roles',
+            'vendor_finance_subledger_heads'
+          )`,
+    );
+    assert.equal(leakedTables.length, 0, "failed transaction must leave zero VFIN-02 tables");
+  } finally {
+    await db.close();
+  }
+});
+
+test("(#2) Full VFIN-02 acceptance: legacy isolation, controlled governance, non-netting sub-ledgers, 4-role matrix, cash-holder record-on-behalf, accountant handover, monthly debt report & ACLs", async () => {
+  const { db, targetMigration, restMigrations } = await createPreVfin02Database();
+  try {
+    // -------------------------------------------------------------------------
+    // 1. Seed canonical actors, projects, vendors, and PRE-EXISTING VFIN-01
+    //    ledger rows BEFORE applying VFIN-02 migration!
+    // -------------------------------------------------------------------------
+    await db.query(
+      `insert into public.teams (team_id, code, display_name, active)
+       values ($1::uuid, 'TD_VFIN02_ALPHA', 'Nhóm Tuyển Dụng Alpha', true),
+              ('99500000-0000-4000-8000-00000000000f'::uuid, '__system_vendor__', 'System Vendor Internal', true)
+       on conflict (code) do nothing`,
+      [TEAM_ALPHA],
+    );
+
+    for (const actor of [
+      FULL_ADMIN,
+      ACCT_A,
+      ACCT_B,
+      CASH_HOLDER_VIEW,
+      CASH_HOLDER_BEHALF,
+      BOD_RECONCILER,
+      BOD_VIEWER,
+      TEAM_LEADER,
+      STAFF_MEMBER,
+    ]) {
+      await db.query("insert into auth.users (id) values ($1::uuid)", [actor.auth]);
+      await db.query(
+        `insert into public.direct_entry_app_users (app_user_id, auth_subject, enabled, display_name)
+         values ($1::uuid, $2::uuid, true, $3)`,
+        [actor.app, actor.auth, actor.name],
+      );
+    }
+
+    // Canonical Full Admin grants
+    await db.query(
+      `insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from, is_current)
+       values ($1::uuid, 'entry_admin', '2026-01-01', true),
+              ($1::uuid, 'recruiter_master_manage', '2026-01-01', true),
+              ($1::uuid, 'team_master_manage', '2026-01-01', true),
+              ($1::uuid, 'catalog_master_manage', '2026-01-01', true)`,
+      [FULL_ADMIN.app],
+    );
+    await db.query(
+      `insert into public.direct_entry_scope_grants (app_user_id, scope_kind, valid_from, is_current)
+       values ($1::uuid, 'all', '2026-01-01', true)`,
+      [FULL_ADMIN.app],
+    );
+
+    // Staff & Team Leader baseline grants (non-finance domains)
+    await db.query(
+      `insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from, is_current)
+       values ($1::uuid, 'entry_own', '2026-01-01', true)`,
+      [STAFF_MEMBER.app],
+    );
+    await db.query(
+      `insert into public.direct_entry_scope_grants (app_user_id, scope_kind, valid_from, is_current)
+       values ($1::uuid, 'own', '2026-01-01', true)`,
+      [STAFF_MEMBER.app],
+    );
+
+    for (const person of [ACCT_A, ACCT_B, TEAM_LEADER, STAFF_MEMBER]) {
+      await db.query(
+        `insert into public.recruiters (recruiter_id, display_name, personnel_code, personnel_position, active)
+         values ($1::uuid, $2, $3, 'STAFF', true)`,
+        [person.recruiter, person.name, person.code],
+      );
+      await db.query(
+        `insert into public.recruiter_provider_memberships (recruiter_id, provider_type, valid_from, is_current)
+         values ($1::uuid, 'hrp', '2026-01-01', true)`,
+        [person.recruiter],
+      );
+      if (person === TEAM_LEADER || person === STAFF_MEMBER) {
+        await db.query(
+          `insert into public.recruiter_team_memberships (recruiter_id, team_id, valid_from, is_current)
+           values ($1::uuid, $2::uuid, '2026-01-01', true)`,
+          [person.recruiter, TEAM_ALPHA],
+        );
+      }
+      await db.query(
+        `insert into public.direct_entry_app_user_recruiter_links (app_user_id, recruiter_id, verified, valid_from, is_current)
+         values ($1::uuid, $2::uuid, true, '2026-01-01', true)`,
+        [person.app, person.recruiter],
+      );
+    }
+
+    await db.query(
+      `select public.direct_entry_designate_team_leader(
+         $1::uuid, $2::uuid, $3::uuid, $4::uuid, '2026-01-15'::date, 1, 'Designate TL', 'vfin02_tl_1'
+       )`,
+      [FULL_ADMIN.auth, FULL_ADMIN.app, TEAM_ALPHA, TEAM_LEADER.app],
+    );
+
+    // Canonical Projects (`PRJ_1` and `PRJ_2`)
+    await db.query(
+      `insert into public.direct_entry_projects (project_id, display_name, active, version)
+       values ($1, 'Dự Án Miền Bắc (PRJ-1)', true, 1),
+              ($2, 'Dự Án Miền Nam (PRJ-2)', true, 1)`,
+      [PRJ_1, PRJ_2],
+    );
+    await db.query(
+      `select public.direct_entry_grant_project_team_scope(
+         $1::uuid, $2::uuid, $3, $4::uuid, 0, '2026-01-15'::date, 'Grant PRJ_1 Scope', 'vfin02_pts_1'
+       )`,
+      [FULL_ADMIN.auth, FULL_ADMIN.app, PRJ_1, TEAM_ALPHA],
+    );
+
+    // Assign ACCT_A and ACCT_B to canonical `ACCOUNTING` department
+    for (const acct of [ACCT_A, ACCT_B]) {
+      const reason = `Bổ nhiệm ${acct.name} vào phòng Kế toán`;
+      await db.query(
+        `select public.org_department_assign_accounting_member(
+           $1::uuid, $2::uuid, $3::uuid, 0, '2026-01-01'::date, $4::text, $5::uuid, $6::text
+         )`,
+        [
+          FULL_ADMIN.auth,
+          FULL_ADMIN.app,
+          acct.app,
+          reason,
+          nextUuid(),
+          computeAssignAccountingMemberFingerprint({
+            actor_app_user_id: FULL_ADMIN.app,
+            account_ref: acct.app,
+            expected_pair_version: 0,
+            effective_from: "2026-01-01",
+            reason,
+          }),
+        ],
+      );
+    }
+
+    // Create canonical Vendors
+    for (const [vid, vname] of [
+      ["VND_SHARED", "Công ty Cung Ứng Chung Bắc Nam"],
+      ["VND_OPPOSITE", "Công ty Đối Dấu Phải Trả & Dư Ứng"],
+      ["VND_LEGACY", "Công ty Dữ Liệu Lịch Sử VFIN-01"],
+      ["VND_UNLINKED", "Công ty Chưa Khai Báo Quan Hệ Dự Án"],
+    ]) {
+      await db.query(
+        `select public.direct_entry_create_vendor(
+           $1::uuid, $2::uuid, 0, $3::text, $4::text, '2026-01-01'::date, 'Tạo NCC chuẩn', $5::text
+         )`,
+        [FULL_ADMIN.auth, FULL_ADMIN.app, vid, vname, nextUuid()],
+      );
+    }
+
+    // Seed pre-existing VFIN-01 legacy entry on `VND_LEGACY` & `VND_SHARED` BEFORE VFIN-02!
+    const legReason1 = "Công nợ lịch sử trước VFIN-02 (chưa gắn dự án)";
+    await db.query(
+      `select public.vendor_finance_record_entry(
+         $1::uuid, $2::uuid, 'VND_LEGACY', 'DEBT_RECORDED', '15000000',
+         '2026-09-20'::date, $3::text, $4::uuid, $5::text
+       )`,
+      [
+        ACCT_A.auth,
+        ACCT_A.app,
+        legReason1,
+        nextUuid(),
+        computeRecordEntryFingerprint({
+          vendor_id: "VND_LEGACY",
+          entry_type: "DEBT_RECORDED",
+          amount_minor: "15000000",
+          effective_date: "2026-09-20",
+          reason: legReason1,
+        }),
+      ],
+    );
+
+    const legSharedReason = "Khoản cũ VFIN-01 trên VND_SHARED trước khi có phân sổ dự án";
+    await db.query(
+      `select public.vendor_finance_record_entry(
+         $1::uuid, $2::uuid, 'VND_SHARED', 'DEBT_RECORDED', '2000000',
+         '2026-10-01'::date, $3::text, $4::uuid, $5::text
+       )`,
+      [
+        ACCT_A.auth,
+        ACCT_A.app,
+        legSharedReason,
+        nextUuid(),
+        computeRecordEntryFingerprint({
+          vendor_id: "VND_SHARED",
+          entry_type: "DEBT_RECORDED",
+          amount_minor: "2000000",
+          effective_date: "2026-10-01",
+          reason: legSharedReason,
+        }),
+      ],
+    );
+
+    const preVfin02Snapshot = await captureUntouchedSnapshot(db);
+
+    // -------------------------------------------------------------------------
+    // 2. Apply VFIN-02 migration (and any subsequent migrations)
+    // -------------------------------------------------------------------------
+    await db.exec(targetMigration.sql);
+    for (const m of restMigrations) {
+      await db.exec(m.sql);
+    }
+
+    const postVfin02Snapshot = await captureUntouchedSnapshot(db);
+    assert.deepEqual(
+      postVfin02Snapshot,
+      preVfin02Snapshot,
+      "VFIN-02 migration must have zero drift on teams, recruiters, Team Leader, project-team scopes, scope grants, and org_departments",
+    );
+
+    const repo = createPgliteVfinRepo(db);
+
+    // -------------------------------------------------------------------------
+    // 3. Verify Legacy Isolation (`LEGACY_UNALLOCATED`) Immediately Post-Migration
+    // -------------------------------------------------------------------------
+    const { rows: legacyRows } = await db.query(
+      `select vendor_id, ledger_scope, project_id, responsible_accountant_user_id,
+              amount_minor::text as amount_minor, balance_after_minor::text as balance_after_minor
+         from public.vendor_finance_entries
+        order by vendor_id`,
+    );
+    assert.deepEqual(legacyRows, [
+      {
+        vendor_id: "VND_LEGACY",
+        ledger_scope: "LEGACY_UNALLOCATED",
+        project_id: null,
+        responsible_accountant_user_id: null,
+        amount_minor: "15000000",
+        balance_after_minor: "15000000",
+      },
+      {
+        vendor_id: "VND_SHARED",
+        ledger_scope: "LEGACY_UNALLOCATED",
+        project_id: null,
+        responsible_accountant_user_id: null,
+        amount_minor: "2000000",
+        balance_after_minor: "2000000",
+      },
+    ]);
+
+    // Project-scoped accountant ACCT_A (before project assignment) has PROJECT_SCOPED visibility
+    // and MUST NOT see LEGACY_UNALLOCATED rows even if ACCT_A originally entered them in VFIN-01!
+    const acctAInitialAccess = await repo.getActorAccess({
+      auth_subject: ACCT_A.auth,
+      app_user_id: ACCT_A.app,
+    });
+    assert.equal(acctAInitialAccess.ok, true);
+    assert.equal(acctAInitialAccess.data.visibility_scope, "PROJECT_SCOPED");
+    assert.equal(acctAInitialAccess.data.record_scope, "ASSIGNED_PROJECTS");
+    assert.equal(acctAInitialAccess.data.reconcile_scope, "ASSIGNED_PROJECTS");
+    assert.equal(acctAInitialAccess.data.active_assigned_project_count, 0);
+    assert.equal(acctAInitialAccess.data.can_manage_project_assignments, false);
+
+    const acctAInitialVendors = await repo.listVendors({
+      auth_subject: ACCT_A.auth,
+      app_user_id: ACCT_A.app,
+      search: null,
+      active: "all",
+      balance_filter: "all",
+      project_id: null,
+      accountant_ref: null,
+      ledger_scope: "all",
+      page: 1,
+      page_size: 25,
+    });
+    assert.equal(acctAInitialVendors.ok, true);
+    assert.equal(
+      acctAInitialVendors.data.vendors.length,
+      0,
+      "unassigned project accountant must see 0 vendors and 0 legacy rows",
+    );
+
+    // -------------------------------------------------------------------------
+    // 4. Governance & Controlled Relationships by Canonical Full Admin
+    // -------------------------------------------------------------------------
+    // Non-admins are denied governance access
+    for (const nonAdmin of [ACCT_A, TEAM_LEADER, STAFF_MEMBER]) {
+      const deniedGov = await repo.listProjectAccountantsAdmin({
+        auth_subject: nonAdmin.auth,
+        app_user_id: nonAdmin.app,
+        search: null,
+        include_history: true,
+        page: 1,
+        page_size: 25,
+      });
+      assert.equal(deniedGov.ok, false);
+    }
+
+    // Assign ACCT_A -> PRJ_1 (`valid_from = 2026-10-01`)
+    const assignAReason = "Phân công Kế toán A phụ trách sổ thu/chi PRJ_1";
+    const assignARes = await repo.assignProjectAccountantAdmin({
+      auth_subject: FULL_ADMIN.auth,
+      app_user_id: FULL_ADMIN.app,
+      project_id: PRJ_1,
+      accountant_ref: ACCT_A.app,
+      expected_version: 0,
+      valid_from: "2026-10-01",
+      reason: assignAReason,
+      idempotency_key: nextUuid(),
+      request_fingerprint: computeAssignProjectAccountantFingerprint({
+        project_id: PRJ_1,
+        accountant_ref: ACCT_A.app,
+        valid_from: "2026-10-01",
+        expected_version: 0,
+        reason: assignAReason,
+      }),
+    });
+    assert.equal(assignARes.ok, true, JSON.stringify(assignARes));
+    assert.equal(assignARes.data.project_id, PRJ_1);
+    assert.equal(assignARes.data.version, 1);
+
+    // Invariant: 1 project = 1 active responsible accountant at a time!
+    // Attempting to assign ACCT_B to PRJ_1 while ACCT_A is active MUST fail!
+    const dupAssignReason = "Thử gán trùng kế toán thứ 2 cho cùng dự án PRJ_1";
+    const dupAssignRes = await repo.assignProjectAccountantAdmin({
+      auth_subject: FULL_ADMIN.auth,
+      app_user_id: FULL_ADMIN.app,
+      project_id: PRJ_1,
+      accountant_ref: ACCT_B.app,
+      expected_version: 1,
+      valid_from: "2026-10-05",
+      reason: dupAssignReason,
+      idempotency_key: nextUuid(),
+      request_fingerprint: computeAssignProjectAccountantFingerprint({
+        project_id: PRJ_1,
+        accountant_ref: ACCT_B.app,
+        valid_from: "2026-10-05",
+        expected_version: 1,
+        reason: dupAssignReason,
+      }),
+    });
+    assert.equal(dupAssignRes.ok, false);
+    assert.equal(dupAssignRes.code, "VENDOR_FINANCE_PROJECT_ALREADY_ASSIGNED");
+
+    // Assign ACCT_B -> PRJ_2 (`valid_from = 2026-10-01`)
+    const assignBReason = "Phân công Kế toán B phụ trách sổ thu/chi PRJ_2";
+    const assignBRes = await repo.assignProjectAccountantAdmin({
+      auth_subject: FULL_ADMIN.auth,
+      app_user_id: FULL_ADMIN.app,
+      project_id: PRJ_2,
+      accountant_ref: ACCT_B.app,
+      expected_version: 0,
+      valid_from: "2026-10-01",
+      reason: assignBReason,
+      idempotency_key: nextUuid(),
+      request_fingerprint: computeAssignProjectAccountantFingerprint({
+        project_id: PRJ_2,
+        accountant_ref: ACCT_B.app,
+        valid_from: "2026-10-01",
+        expected_version: 0,
+        reason: assignBReason,
+      }),
+    });
+    assert.equal(assignBRes.ok, true);
+
+    // Controlled Project <-> Vendor Links (`VND_SHARED` & `VND_OPPOSITE` linked to BOTH PRJ_1 & PRJ_2)
+    for (const [prj, vid] of [
+      [PRJ_1, "VND_SHARED"],
+      [PRJ_2, "VND_SHARED"],
+      [PRJ_1, "VND_OPPOSITE"],
+      [PRJ_2, "VND_OPPOSITE"],
+    ]) {
+      const linkReason = `Khai báo quan hệ hợp lệ ${vid} <-> ${prj}`;
+      const linkRes = await repo.setProjectVendorLinkAdmin({
+        auth_subject: FULL_ADMIN.auth,
+        app_user_id: FULL_ADMIN.app,
+        project_id: prj,
+        vendor_id: vid,
+        active: true,
+        expected_version: 0,
+        reason: linkReason,
+        idempotency_key: nextUuid(),
+        request_fingerprint: computeSetProjectVendorLinkFingerprint({
+          project_id: prj,
+          vendor_id: vid,
+          active: true,
+          expected_version: 0,
+          reason: linkReason,
+        }),
+      });
+      assert.equal(linkRes.ok, true, JSON.stringify(linkRes));
+      assert.equal(linkRes.data.active, true);
+    }
+
+    // Designate Global VFIN Roles:
+    // - CASH_HOLDER_VIEW -> CASH_HOLDER (view + reconcile globally, NO record)
+    // - CASH_HOLDER_BEHALF -> CASH_HOLDER_RECORD_BEHALF (view + reconcile + record on behalf globally)
+    // - BOD_RECONCILER -> GLOBAL_RECONCILER (BoD view + narrow reconcile globally, NO record)
+    // - BOD_VIEWER -> GLOBAL_VIEWER (BoD view-only globally)
+    for (const [person, roleCode] of [
+      [CASH_HOLDER_VIEW, "CASH_HOLDER"],
+      [CASH_HOLDER_BEHALF, "CASH_HOLDER_RECORD_BEHALF"],
+      [BOD_RECONCILER, "GLOBAL_RECONCILER"],
+      [BOD_VIEWER, "GLOBAL_VIEWER"],
+    ]) {
+      const roleReason = `Chỉ định vai trò ${roleCode} cho ${person.name}`;
+      const roleRes = await repo.assignGlobalRoleAdmin({
+        auth_subject: FULL_ADMIN.auth,
+        app_user_id: FULL_ADMIN.app,
+        account_ref: person.app,
+        role_code: roleCode,
+        expected_version: 0,
+        valid_from: "2026-10-01",
+        reason: roleReason,
+        idempotency_key: nextUuid(),
+        request_fingerprint: computeAssignGlobalRoleFingerprint({
+          account_ref: person.app,
+          role_code: roleCode,
+          valid_from: "2026-10-01",
+          expected_version: 0,
+          reason: roleReason,
+        }),
+      });
+      assert.equal(roleRes.ok, true, JSON.stringify(roleRes));
+      assert.equal(roleRes.data.role_code, roleCode);
+    }
+
+    // Verify Governance Read projections work cleanly
+    const adminAssignList = await repo.listProjectAccountantsAdmin({
+      auth_subject: FULL_ADMIN.auth,
+      app_user_id: FULL_ADMIN.app,
+      search: null,
+      include_history: true,
+      page: 1,
+      page_size: 25,
+    });
+    assert.equal(adminAssignList.ok, true, JSON.stringify(adminAssignList));
+    assert.equal(adminAssignList.data.projects.length, 2);
+
+    const adminLinksList = await repo.listProjectVendorsAdmin({
+      auth_subject: FULL_ADMIN.auth,
+      app_user_id: FULL_ADMIN.app,
+      project_id: PRJ_1,
+      search: null,
+      only_linked: true,
+      page: 1,
+      page_size: 25,
+    });
+    assert.equal(adminLinksList.ok, true, JSON.stringify(adminLinksList));
+    assert.deepEqual(
+      adminLinksList.data.vendors.map((v) => v.vendor_id).sort(),
+      ["VND_OPPOSITE", "VND_SHARED"],
+    );
+
+    const adminRolesList = await repo.listGlobalRolesAdmin({
+      auth_subject: FULL_ADMIN.auth,
+      app_user_id: FULL_ADMIN.app,
+      search: null,
+      include_history: true,
+      page: 1,
+      page_size: 25,
+    });
+    assert.equal(adminRolesList.ok, true, JSON.stringify(adminRolesList));
+    assert.equal(adminRolesList.data.roles.length, 4);
+
+    // -------------------------------------------------------------------------
+    // 5. Verify 4-Role Actor Access & Scoped Context Options
+    // -------------------------------------------------------------------------
+    const accessA = await repo.getActorAccess({ auth_subject: ACCT_A.auth, app_user_id: ACCT_A.app });
+    assert.equal(accessA.ok, true);
+    assert.deepEqual(
+      {
+        can_view: accessA.data.can_view,
+        can_record: accessA.data.can_record,
+        can_reconcile: accessA.data.can_reconcile,
+        can_manage: accessA.data.can_manage_project_assignments,
+        vis: accessA.data.visibility_scope,
+        rec: accessA.data.record_scope,
+        recon: accessA.data.reconcile_scope,
+        active_assigned_project_count: accessA.data.active_assigned_project_count,
+      },
+      {
+        can_view: true,
+        can_record: true,
+        can_reconcile: true,
+        can_manage: false,
+        vis: "PROJECT_SCOPED",
+        rec: "ASSIGNED_PROJECTS",
+        recon: "ASSIGNED_PROJECTS",
+        active_assigned_project_count: 1,
+      },
+    );
+
+    // ACCT_A context options must expose ONLY PRJ_1 and ONLY linked vendors of PRJ_1
+    const ctxA = await repo.listContextOptions({ auth_subject: ACCT_A.auth, app_user_id: ACCT_A.app });
+    assert.equal(ctxA.ok, true, JSON.stringify(ctxA));
+    assert.deepEqual(
+      ctxA.data.projects.map((p) => p.project_id),
+      [PRJ_1],
+    );
+    assert.deepEqual(
+      ctxA.data.projects[0].linked_vendors.map((v) => v.vendor_id).sort(),
+      ["VND_OPPOSITE", "VND_SHARED"],
+    );
+
+    // Cash-Holder (view + reconcile, no record)
+    const accessCashView = await repo.getActorAccess({
+      auth_subject: CASH_HOLDER_VIEW.auth,
+      app_user_id: CASH_HOLDER_VIEW.app,
+    });
+    assert.equal(accessCashView.ok, true);
+    assert.equal(accessCashView.data.visibility_scope, "ALL");
+    assert.equal(accessCashView.data.reconcile_scope, "ALL");
+    assert.equal(accessCashView.data.record_scope, "NONE");
+    assert.equal(accessCashView.data.can_reconcile, true);
+    assert.equal(accessCashView.data.can_record, false);
+
+    // Cash-Holder Record-on-Behalf
+    const accessCashBehalf = await repo.getActorAccess({
+      auth_subject: CASH_HOLDER_BEHALF.auth,
+      app_user_id: CASH_HOLDER_BEHALF.app,
+    });
+    assert.equal(accessCashBehalf.ok, true);
+    assert.equal(accessCashBehalf.data.visibility_scope, "ALL");
+    assert.equal(accessCashBehalf.data.reconcile_scope, "ALL");
+    assert.equal(accessCashBehalf.data.record_scope, "ALL");
+    assert.equal(accessCashBehalf.data.can_record, true);
+
+    // BoD Narrow Reconciler (can_reconcile = true WITHOUT can_record!)
+    const accessBodRecon = await repo.getActorAccess({
+      auth_subject: BOD_RECONCILER.auth,
+      app_user_id: BOD_RECONCILER.app,
+    });
+    assert.equal(accessBodRecon.ok, true);
+    assert.equal(accessBodRecon.data.visibility_scope, "ALL");
+    assert.equal(accessBodRecon.data.reconcile_scope, "ALL");
+    assert.equal(accessBodRecon.data.record_scope, "NONE");
+    assert.equal(accessBodRecon.data.can_reconcile, true);
+    assert.equal(accessBodRecon.data.can_record, false);
+
+    // BoD Global Viewer (strictly read-only)
+    const accessBodView = await repo.getActorAccess({
+      auth_subject: BOD_VIEWER.auth,
+      app_user_id: BOD_VIEWER.app,
+    });
+    assert.equal(accessBodView.ok, true);
+    assert.equal(accessBodView.data.can_view, true);
+    assert.equal(accessBodView.data.can_reconcile, false);
+    assert.equal(accessBodView.data.can_record, false);
+
+    // Team Leader & Staff remain denied in VFIN
+    for (const deniedActor of [TEAM_LEADER, STAFF_MEMBER]) {
+      const deniedAcc = await repo.getActorAccess({
+        auth_subject: deniedActor.auth,
+        app_user_id: deniedActor.app,
+      });
+      assert.equal(deniedAcc.ok, true);
+      assert.equal(deniedAcc.data.allowed, false);
+      assert.equal(deniedAcc.data.can_view, false);
+    }
+
+    // -------------------------------------------------------------------------
+    // 6. Controlled Vendor–Project Link Enforcement (Unlinked Rejected)
+    // -------------------------------------------------------------------------
+    const unlinkedReason = "Thử ghi nhận vào Vendor chưa gắn dự án PRJ_1";
+    const unlinkedRec = await repo.recordEntry({
+      auth_subject: ACCT_A.auth,
+      app_user_id: ACCT_A.app,
+      vendor_id: "VND_UNLINKED",
+      project_id: PRJ_1,
+      entry_type: "DEBT_RECORDED",
+      amount_minor: "1000000",
+      effective_date: "2026-10-05",
+      reason: unlinkedReason,
+      idempotency_key: nextUuid(),
+      request_fingerprint: computeRecordEntryFingerprint({
+        project_id: PRJ_1,
+        vendor_id: "VND_UNLINKED",
+        entry_type: "DEBT_RECORDED",
+        amount_minor: "1000000",
+        effective_date: "2026-10-05",
+        reason: unlinkedReason,
+      }),
+    });
+    assert.equal(unlinkedRec.ok, false);
+    assert.equal(unlinkedRec.code, "VENDOR_FINANCE_PROJECT_VENDOR_UNLINKED");
+
+    // Opening batch mixing a linked vendor and an unlinked vendor rolls back whole batch!
+    const mixedItems = [
+      { vendor_id: "VND_SHARED", entry_type: "OPENING_PAYABLE", amount_minor: "5000000" },
+      { vendor_id: "VND_UNLINKED", entry_type: "OPENING_PAYABLE", amount_minor: "3000000" },
+    ];
+    const mixedOpenReason = "Thử mở đầu kỳ có dòng chưa khai báo liên kết dự án";
+    const mixedOpenRes = await repo.applyOpeningBatch({
+      auth_subject: ACCT_A.auth,
+      app_user_id: ACCT_A.app,
+      project_id: PRJ_1,
+      cutoff_date: "2026-10-01",
+      items: mixedItems,
+      reason: mixedOpenReason,
+      idempotency_key: nextUuid(),
+      request_fingerprint: computeApplyOpeningBatchFingerprint({
+        project_id: PRJ_1,
+        cutoff_date: "2026-10-01",
+        items: mixedItems,
+        reason: mixedOpenReason,
+      }),
+    });
+    assert.equal(mixedOpenRes.ok, false);
+    assert.equal(mixedOpenRes.code, "VENDOR_FINANCE_PROJECT_VENDOR_UNLINKED");
+
+    // -------------------------------------------------------------------------
+    // 7. Hierarchy `Company -> Accountant -> Project -> Vendor` & ZERO Netting
+    // -------------------------------------------------------------------------
+    // Masterplan concrete example:
+    // - ACCT_A on PRJ_1 records 10,000,000 payable for VND_SHARED
+    // - ACCT_B on PRJ_2 records 20,000,000 payable for VND_SHARED
+    const recA1Reason = "Phí cung ứng nhân sự tháng 10 dự án Miền Bắc";
+    const recA1 = await repo.recordEntry({
+      auth_subject: ACCT_A.auth,
+      app_user_id: ACCT_A.app,
+      vendor_id: "VND_SHARED",
+      project_id: PRJ_1,
+      entry_type: "DEBT_RECORDED",
+      amount_minor: "10000000",
+      effective_date: "2026-10-05",
+      reason: recA1Reason,
+      idempotency_key: nextUuid(),
+      request_fingerprint: computeRecordEntryFingerprint({
+        project_id: PRJ_1,
+        vendor_id: "VND_SHARED",
+        entry_type: "DEBT_RECORDED",
+        amount_minor: "10000000",
+        effective_date: "2026-10-05",
+        reason: recA1Reason,
+      }),
+    });
+    assert.equal(recA1.ok, true, JSON.stringify(recA1));
+    assert.equal(recA1.data.entry.ledger_scope, "PROJECT_ACCOUNTANT");
+    assert.equal(recA1.data.entry.project_id, PRJ_1);
+    assert.equal(recA1.data.entry.accountant_ref, ACCT_A.app);
+    assert.equal(recA1.data.entry.created_by_display_name, ACCT_A.name);
+    assert.equal(recA1.data.entry.vendor_sequence, 1);
+    assert.equal(recA1.data.entry.balance_after_minor, "10000000");
+
+    // ACCT_A attempting to record on PRJ_2 MUST be rejected (`VENDOR_FINANCE_PROJECT_ACCESS_DENIED`)
+    const crossReason = "Kế toán A thử ghi trái phép sang PRJ_2";
+    const crossWrite = await repo.recordEntry({
+      auth_subject: ACCT_A.auth,
+      app_user_id: ACCT_A.app,
+      vendor_id: "VND_SHARED",
+      project_id: PRJ_2,
+      entry_type: "DEBT_RECORDED",
+      amount_minor: "1000000",
+      effective_date: "2026-10-05",
+      reason: crossReason,
+      idempotency_key: nextUuid(),
+      request_fingerprint: computeRecordEntryFingerprint({
+        project_id: PRJ_2,
+        vendor_id: "VND_SHARED",
+        entry_type: "DEBT_RECORDED",
+        amount_minor: "1000000",
+        effective_date: "2026-10-05",
+        reason: crossReason,
+      }),
+    });
+    assert.equal(crossWrite.ok, false);
+    assert.equal(crossWrite.code, "VENDOR_FINANCE_PROJECT_ACCESS_DENIED");
+
+    // ACCT_B records 20,000,000 payable for VND_SHARED on PRJ_2
+    const recB1Reason = "Phí cung ứng nhân sự tháng 10 dự án Miền Nam";
+    const recB1 = await repo.recordEntry({
+      auth_subject: ACCT_B.auth,
+      app_user_id: ACCT_B.app,
+      vendor_id: "VND_SHARED",
+      project_id: PRJ_2,
+      entry_type: "DEBT_RECORDED",
+      amount_minor: "20000000",
+      effective_date: "2026-10-06",
+      reason: recB1Reason,
+      idempotency_key: nextUuid(),
+      request_fingerprint: computeRecordEntryFingerprint({
+        project_id: PRJ_2,
+        vendor_id: "VND_SHARED",
+        entry_type: "DEBT_RECORDED",
+        amount_minor: "20000000",
+        effective_date: "2026-10-06",
+        reason: recB1Reason,
+      }),
+    });
+    assert.equal(recB1.ok, true, JSON.stringify(recB1));
+    assert.equal(recB1.data.entry.vendor_sequence, 1);
+    assert.equal(recB1.data.entry.balance_after_minor, "20000000");
+
+    // Opposite-sign sub-ledgers on `VND_OPPOSITE` via Opening Balance Batch:
+    // - PRJ_1 (ACCT_A): OPENING_PAYABLE = +10,000,000
+    // - PRJ_2 (ACCT_B): OPENING_ADVANCE = -4,000,000
+    const openAItems = [{ vendor_id: "VND_OPPOSITE", entry_type: "OPENING_PAYABLE", amount_minor: "10000000" }];
+    const openAReason = "Khởi tạo số dư đầu kỳ PRJ_1 cho VND_OPPOSITE";
+    const previewOpenA = await repo.previewOpeningBatch({
+      auth_subject: ACCT_A.auth,
+      app_user_id: ACCT_A.app,
+      project_id: PRJ_1,
+      cutoff_date: "2026-10-01",
+      items: openAItems,
+    });
+    assert.equal(previewOpenA.ok, true, JSON.stringify(previewOpenA));
+    assert.equal(previewOpenA.data.project_id, PRJ_1);
+    assert.equal(previewOpenA.data.accountant_ref, ACCT_A.app);
+    assert.equal(previewOpenA.data.total_payable_minor, "10000000");
+
+    const applyOpenA = await repo.applyOpeningBatch({
+      auth_subject: ACCT_A.auth,
+      app_user_id: ACCT_A.app,
+      project_id: PRJ_1,
+      cutoff_date: "2026-10-01",
+      items: openAItems,
+      reason: openAReason,
+      idempotency_key: nextUuid(),
+      request_fingerprint: computeApplyOpeningBatchFingerprint({
+        project_id: PRJ_1,
+        cutoff_date: "2026-10-01",
+        items: openAItems,
+        reason: openAReason,
+      }),
+    });
+    assert.equal(applyOpenA.ok, true, JSON.stringify(applyOpenA));
+
+    const openBItems = [{ vendor_id: "VND_OPPOSITE", entry_type: "OPENING_ADVANCE", amount_minor: "4000000" }];
+    const openBReason = "Khởi tạo dư ứng đầu kỳ PRJ_2 cho VND_OPPOSITE (cùng NCC khác dự án vẫn cho phép!)";
+    const applyOpenB = await repo.applyOpeningBatch({
+      auth_subject: ACCT_B.auth,
+      app_user_id: ACCT_B.app,
+      project_id: PRJ_2,
+      cutoff_date: "2026-10-01",
+      items: openBItems,
+      reason: openBReason,
+      idempotency_key: nextUuid(),
+      request_fingerprint: computeApplyOpeningBatchFingerprint({
+        project_id: PRJ_2,
+        cutoff_date: "2026-10-01",
+        items: openBItems,
+        reason: openBReason,
+      }),
+    });
+    assert.equal(applyOpenB.ok, true, JSON.stringify(applyOpenB));
+
+    // Verify ZERO CROSS-NETTING on `VND_OPPOSITE` when viewed globally by BoD!
+    // MUST NOT net +10,000,000 and -4,000,000 into +6,000,000!
+    const bodListVendors = await repo.listVendors({
+      auth_subject: BOD_VIEWER.auth,
+      app_user_id: BOD_VIEWER.app,
+      search: "VND_OPPOSITE",
+      active: "all",
+      balance_filter: "all",
+      project_id: null,
+      accountant_ref: null,
+      ledger_scope: "all",
+      page: 1,
+      page_size: 25,
+    });
+    assert.equal(bodListVendors.ok, true, JSON.stringify(bodListVendors));
+    const oppositeListItem = bodListVendors.data.vendors.find((v) => v.vendor_id === "VND_OPPOSITE");
+    assert.ok(oppositeListItem);
+    assert.equal(oppositeListItem.balance_direction, "MULTI_LEDGER");
+    assert.equal(oppositeListItem.current_balance_minor, "0"); // Sentinel when MULTI_LEDGER; payable & advance kept separate!
+    assert.equal(oppositeListItem.payable_total_minor, "10000000");
+    assert.equal(oppositeListItem.advance_total_minor, "4000000");
+    assert.equal(oppositeListItem.sub_ledgers.length, 2);
+
+    const bodOppositeDetail = await repo.getVendor({
+      auth_subject: BOD_VIEWER.auth,
+      app_user_id: BOD_VIEWER.app,
+      vendor_id: "VND_OPPOSITE",
+      project_id: null,
+      accountant_ref: null,
+      ledger_scope: null,
+    });
+    assert.equal(bodOppositeDetail.ok, true, JSON.stringify(bodOppositeDetail));
+    assert.notEqual(
+      bodOppositeDetail.data.vendor.current_balance_minor,
+      "6000000",
+      "getVendor must NEVER net +10M payable and -4M advance into +6M",
+    );
+    assert.equal(bodOppositeDetail.data.selected_sub_ledger?.project_id, PRJ_1);
+    assert.equal(bodOppositeDetail.data.vendor.current_balance_minor, "10000000");
+    assert.equal(bodOppositeDetail.data.vendor.balance_direction, "PAYABLE");
+    assert.equal(bodOppositeDetail.data.sub_ledgers.length, 2);
+
+    const bodOppositePrj2Detail = await repo.getVendor({
+      auth_subject: BOD_VIEWER.auth,
+      app_user_id: BOD_VIEWER.app,
+      vendor_id: "VND_OPPOSITE",
+      project_id: PRJ_2,
+      accountant_ref: ACCT_B.app,
+      ledger_scope: "PROJECT_ACCOUNTANT",
+    });
+    assert.equal(bodOppositePrj2Detail.ok, true, JSON.stringify(bodOppositePrj2Detail));
+    assert.equal(bodOppositePrj2Detail.data.selected_sub_ledger?.project_id, PRJ_2);
+    assert.equal(bodOppositePrj2Detail.data.vendor.current_balance_minor, "-4000000");
+    assert.equal(bodOppositePrj2Detail.data.vendor.balance_direction, "ADVANCE");
+
+    // Meanwhile ACCT_A sees ONLY ACCT_A's PRJ_1 sub-ledger (10,000,000 PAYABLE)
+    // and ZERO rows of ACCT_B's PRJ_2 or `LEGACY_UNALLOCATED`!
+    const acctASharedDetail = await repo.getVendor({
+      auth_subject: ACCT_A.auth,
+      app_user_id: ACCT_A.app,
+      vendor_id: "VND_SHARED",
+      project_id: null,
+      accountant_ref: null,
+      ledger_scope: null,
+    });
+    assert.equal(acctASharedDetail.ok, true, JSON.stringify(acctASharedDetail));
+    assert.equal(acctASharedDetail.data.vendor.balance_direction, "PAYABLE");
+    assert.equal(acctASharedDetail.data.vendor.current_balance_minor, "10000000");
+    assert.equal(acctASharedDetail.data.sub_ledgers.length, 1);
+    assert.equal(acctASharedDetail.data.sub_ledgers[0].project_id, PRJ_1);
+    assert.equal(acctASharedDetail.data.sub_ledgers[0].accountant_ref, ACCT_A.app);
+
+    // ACCT_A cannot fetch ACCT_B's entry by ID (`getEntry` fails closed)
+    const acctAGetBEntry = await repo.getEntry({
+      auth_subject: ACCT_A.auth,
+      app_user_id: ACCT_A.app,
+      entry_id: recB1.data.entry.entry_id,
+    });
+    assert.equal(acctAGetBEntry.ok, false);
+
+    // -------------------------------------------------------------------------
+    // 8. Cash-Holder Record-on-Behalf Invariant & Narrow BoD Reconciler
+    // -------------------------------------------------------------------------
+    // CASH_HOLDER_VIEW cannot record money entries
+    const cashViewDeniedReason = "Cầm tiền chỉ theo dõi đối soát thử ghi sổ";
+    const cashViewRec = await repo.recordEntry({
+      auth_subject: CASH_HOLDER_VIEW.auth,
+      app_user_id: CASH_HOLDER_VIEW.app,
+      vendor_id: "VND_SHARED",
+      project_id: PRJ_1,
+      entry_type: "PAYMENT_RECORDED",
+      amount_minor: "1000000",
+      effective_date: "2026-10-08",
+      reason: cashViewDeniedReason,
+      idempotency_key: nextUuid(),
+      request_fingerprint: computeRecordEntryFingerprint({
+        project_id: PRJ_1,
+        vendor_id: "VND_SHARED",
+        entry_type: "PAYMENT_RECORDED",
+        amount_minor: "1000000",
+        effective_date: "2026-10-08",
+        reason: cashViewDeniedReason,
+      }),
+    });
+    assert.equal(cashViewRec.ok, false);
+    assert.equal(cashViewRec.code, "VENDOR_FINANCE_RECORD_DENIED");
+
+    // CASH_HOLDER_BEHALF records 3,000,000 payment on PRJ_1 on behalf of ACCT_A:
+    // Ownership (`accountant_ref` / `responsible_accountant_user_id`) MUST remain ACCT_A,
+    // while `created_by_user_id` is CASH_HOLDER_BEHALF!
+    const behalfReason = "Kế toán cầm tiền chi trả hộ sổ PRJ_1 đợt 1";
+    const behalfRec = await repo.recordEntry({
+      auth_subject: CASH_HOLDER_BEHALF.auth,
+      app_user_id: CASH_HOLDER_BEHALF.app,
+      vendor_id: "VND_SHARED",
+      project_id: PRJ_1,
+      entry_type: "PAYMENT_RECORDED",
+      amount_minor: "3000000",
+      effective_date: "2026-10-08",
+      reason: behalfReason,
+      idempotency_key: nextUuid(),
+      request_fingerprint: computeRecordEntryFingerprint({
+        project_id: PRJ_1,
+        vendor_id: "VND_SHARED",
+        entry_type: "PAYMENT_RECORDED",
+        amount_minor: "3000000",
+        effective_date: "2026-10-08",
+        reason: behalfReason,
+      }),
+    });
+    assert.equal(behalfRec.ok, true, JSON.stringify(behalfRec));
+    assert.equal(
+      behalfRec.data.entry.accountant_ref,
+      ACCT_A.app,
+      "record-on-behalf MUST keep ownership on PRJ_1's active accountant ACCT_A (never Cash-Holder's personal book)",
+    );
+    assert.equal(
+      behalfRec.data.entry.created_by_display_name,
+      CASH_HOLDER_BEHALF.name,
+      "created_by must accurately audit the Cash-Holder who entered the transaction",
+    );
+    const {
+      rows: [behalfDbRow],
+    } = await db.query(
+      `select responsible_accountant_user_id::text as owner_id, created_by_user_id::text as creator_id
+         from public.vendor_finance_entries
+        where entry_id = $1::uuid`,
+      [behalfRec.data.entry.entry_id],
+    );
+    assert.deepEqual(behalfDbRow, {
+      owner_id: ACCT_A.app,
+      creator_id: CASH_HOLDER_BEHALF.app,
+    });
+    assert.equal(behalfRec.data.entry.vendor_sequence, 2);
+    assert.equal(behalfRec.data.entry.balance_before_minor, "10000000");
+    assert.equal(behalfRec.data.entry.balance_delta_minor, "-3000000");
+    assert.equal(behalfRec.data.entry.balance_after_minor, "7000000");
+
+    // Narrow BoD Reconciler (`BOD_RECONCILER`):
+    // - Rejected on `recordEntry` (`VENDOR_FINANCE_RECORD_DENIED`)
+    // - Permitted on `createReconciliation` for `(VND_SHARED, PRJ_1, ACCT_A)` independently!
+    const bodRecDeniedReason = "BoD đối soát thử ghi bút toán tiền";
+    const bodRecDenied = await repo.recordEntry({
+      auth_subject: BOD_RECONCILER.auth,
+      app_user_id: BOD_RECONCILER.app,
+      vendor_id: "VND_SHARED",
+      project_id: PRJ_1,
+      entry_type: "PAYMENT_RECORDED",
+      amount_minor: "500000",
+      effective_date: "2026-10-09",
+      reason: bodRecDeniedReason,
+      idempotency_key: nextUuid(),
+      request_fingerprint: computeRecordEntryFingerprint({
+        project_id: PRJ_1,
+        vendor_id: "VND_SHARED",
+        entry_type: "PAYMENT_RECORDED",
+        amount_minor: "500000",
+        effective_date: "2026-10-09",
+        reason: bodRecDeniedReason,
+      }),
+    });
+    assert.equal(bodRecDenied.ok, false);
+    assert.equal(bodRecDenied.code, "VENDOR_FINANCE_RECORD_DENIED");
+
+    const reconP1Reason = "BoD đối soát cuối tuần sổ PRJ_1 của Kế toán A";
+    const reconP1 = await repo.createReconciliation({
+      auth_subject: BOD_RECONCILER.auth,
+      app_user_id: BOD_RECONCILER.app,
+      vendor_id: "VND_SHARED",
+      project_id: PRJ_1,
+      accountant_ref: ACCT_A.app,
+      as_of_date: "2026-10-10",
+      confirmed_balance_minor: "7000000",
+      reason: reconP1Reason,
+      idempotency_key: nextUuid(),
+      request_fingerprint: computeCreateReconciliationFingerprint({
+        project_id: PRJ_1,
+        accountant_ref: ACCT_A.app,
+        vendor_id: "VND_SHARED",
+        as_of_date: "2026-10-10",
+        confirmed_balance_minor: "7000000",
+        reason: reconP1Reason,
+      }),
+    });
+    assert.equal(reconP1.ok, true, JSON.stringify(reconP1));
+    assert.equal(reconP1.data.reconciliation.system_balance_minor, "7000000");
+    assert.equal(reconP1.data.reconciliation.difference_minor, "0");
+    assert.equal(reconP1.data.reconciliation.project_id, PRJ_1);
+    assert.equal(reconP1.data.reconciliation.accountant_ref, ACCT_A.app);
+    assert.equal(reconP1.data.reconciliation.created_by_display_name, BOD_RECONCILER.name);
+
+    // BOD_VIEWER (view-only) MUST be denied on `createReconciliation`
+    const bodViewReconReason = "BoD chỉ xem thử tạo đối soát";
+    const bodViewRecon = await repo.createReconciliation({
+      auth_subject: BOD_VIEWER.auth,
+      app_user_id: BOD_VIEWER.app,
+      vendor_id: "VND_SHARED",
+      project_id: PRJ_1,
+      accountant_ref: ACCT_A.app,
+      as_of_date: "2026-10-10",
+      confirmed_balance_minor: "7000000",
+      reason: bodViewReconReason,
+      idempotency_key: nextUuid(),
+      request_fingerprint: computeCreateReconciliationFingerprint({
+        project_id: PRJ_1,
+        accountant_ref: ACCT_A.app,
+        vendor_id: "VND_SHARED",
+        as_of_date: "2026-10-10",
+        confirmed_balance_minor: "7000000",
+        reason: bodViewReconReason,
+      }),
+    });
+    assert.equal(bodViewRecon.ok, false);
+    assert.equal(bodViewRecon.code, "VENDOR_FINANCE_RECONCILE_DENIED");
+
+    // -------------------------------------------------------------------------
+    // 9. Project Accountant Handover (`ACCT_A -> ACCT_B` on `PRJ_1`)
+    // -------------------------------------------------------------------------
+    const endAReason = "Bàn giao dự án PRJ_1 từ Kế toán A sang Kế toán B từ 15/10/2026";
+    const endARes = await repo.endProjectAccountantAdmin({
+      auth_subject: FULL_ADMIN.auth,
+      app_user_id: FULL_ADMIN.app,
+      assignment_id: assignARes.data.assignment_id,
+      expected_version: 1,
+      valid_to: "2026-10-15",
+      reason: endAReason,
+      idempotency_key: nextUuid(),
+      request_fingerprint: computeEndProjectAccountantFingerprint({
+        assignment_id: assignARes.data.assignment_id,
+        expected_version: 1,
+        valid_to: "2026-10-15",
+        reason: endAReason,
+      }),
+    });
+    assert.equal(endARes.ok, true, JSON.stringify(endARes));
+    assert.equal(endARes.data.valid_to, "2026-10-15");
+
+    const handoverBReason = "Phân công Kế toán B tiếp nhận phụ trách dự án PRJ_1";
+    const handoverBRes = await repo.assignProjectAccountantAdmin({
+      auth_subject: FULL_ADMIN.auth,
+      app_user_id: FULL_ADMIN.app,
+      project_id: PRJ_1,
+      accountant_ref: ACCT_B.app,
+      expected_version: 1,
+      valid_from: "2026-10-15",
+      reason: handoverBReason,
+      idempotency_key: nextUuid(),
+      request_fingerprint: computeAssignProjectAccountantFingerprint({
+        project_id: PRJ_1,
+        accountant_ref: ACCT_B.app,
+        valid_from: "2026-10-15",
+        expected_version: 1,
+        reason: handoverBReason,
+      }),
+    });
+    assert.equal(handoverBRes.ok, true, JSON.stringify(handoverBRes));
+    assert.equal(handoverBRes.data.version, 2);
+
+    // ACCT_B records 5,000,000 payroll on PRJ_1 after handover:
+    // Creates a NEW independent sub-ledger `(VND_SHARED, PRJ_1, ACCT_B)` starting at sequence 1!
+    const recBHandoverReason = "Lương công nhân đợt 2 trên PRJ_1 do Kế toán B phụ trách";
+    const recBHandover = await repo.recordEntry({
+      auth_subject: ACCT_B.auth,
+      app_user_id: ACCT_B.app,
+      vendor_id: "VND_SHARED",
+      project_id: PRJ_1,
+      entry_type: "PAYROLL_RECORDED",
+      amount_minor: "5000000",
+      effective_date: "2026-10-18",
+      reason: recBHandoverReason,
+      idempotency_key: nextUuid(),
+      request_fingerprint: computeRecordEntryFingerprint({
+        project_id: PRJ_1,
+        vendor_id: "VND_SHARED",
+        entry_type: "PAYROLL_RECORDED",
+        amount_minor: "5000000",
+        effective_date: "2026-10-18",
+        reason: recBHandoverReason,
+      }),
+    });
+    assert.equal(recBHandover.ok, true, JSON.stringify(recBHandover));
+    assert.equal(recBHandover.data.entry.accountant_ref, ACCT_B.app);
+    assert.equal(recBHandover.data.entry.vendor_sequence, 1);
+    assert.equal(recBHandover.data.entry.balance_after_minor, "5000000");
+
+    // Former project accountant ACCT_A (still active in ACCOUNTING):
+    // - Retains read-only visibility of `(VND_SHARED, PRJ_1, ACCT_A)` = 7,000,000
+    // - Sees ZERO rows of `(VND_SHARED, PRJ_1, ACCT_B)` or `(VND_SHARED, PRJ_2, ACCT_B)`
+    // - Cannot record new entries on PRJ_1 (`active_assigned_project_count = 0`, `VENDOR_FINANCE_PROJECT_ACCESS_DENIED`)
+    const accessAAfterHandover = await repo.getActorAccess({
+      auth_subject: ACCT_A.auth,
+      app_user_id: ACCT_A.app,
+    });
+    assert.equal(accessAAfterHandover.ok, true);
+    assert.equal(accessAAfterHandover.data.can_view, true);
+    assert.equal(accessAAfterHandover.data.active_assigned_project_count, 0);
+
+    const aWriteAfterHandoverReason = "Kế toán A thử ghi sổ sau khi đã bàn giao PRJ_1";
+    const aWriteAfterHandover = await repo.recordEntry({
+      auth_subject: ACCT_A.auth,
+      app_user_id: ACCT_A.app,
+      vendor_id: "VND_SHARED",
+      project_id: PRJ_1,
+      entry_type: "DEBT_RECORDED",
+      amount_minor: "100000",
+      effective_date: "2026-10-19",
+      reason: aWriteAfterHandoverReason,
+      idempotency_key: nextUuid(),
+      request_fingerprint: computeRecordEntryFingerprint({
+        project_id: PRJ_1,
+        vendor_id: "VND_SHARED",
+        entry_type: "DEBT_RECORDED",
+        amount_minor: "100000",
+        effective_date: "2026-10-19",
+        reason: aWriteAfterHandoverReason,
+      }),
+    });
+    assert.equal(aWriteAfterHandover.ok, false);
+    assert.equal(aWriteAfterHandover.code, "VENDOR_FINANCE_PROJECT_ACCESS_DENIED");
+
+    const detailAAfterHandover = await repo.getVendor({
+      auth_subject: ACCT_A.auth,
+      app_user_id: ACCT_A.app,
+      vendor_id: "VND_SHARED",
+      project_id: null,
+      accountant_ref: null,
+      ledger_scope: null,
+    });
+    assert.equal(detailAAfterHandover.ok, true, JSON.stringify(detailAAfterHandover));
+    assert.equal(detailAAfterHandover.data.vendor.current_balance_minor, "7000000");
+    assert.equal(detailAAfterHandover.data.sub_ledgers.length, 1);
+    assert.equal(detailAAfterHandover.data.sub_ledgers[0].is_active_assignment, false);
+    assert.equal(detailAAfterHandover.data.sub_ledgers[0].can_record_entry, false);
+
+    const entriesAAfterHandover = await repo.listVendorEntries({
+      auth_subject: ACCT_A.auth,
+      app_user_id: ACCT_A.app,
+      vendor_id: "VND_SHARED",
+      before_sequence: null,
+      entry_type: null,
+      page_size: 25,
+      project_id: PRJ_1,
+      accountant_ref: null,
+      ledger_scope: null,
+      month: "2026-10",
+    });
+    assert.equal(entriesAAfterHandover.ok, true);
+    assert.equal(entriesAAfterHandover.data.entries.length, 2);
+    for (const e of entriesAAfterHandover.data.entries) {
+      assert.equal(e.accountant_ref, ACCT_A.app);
+    }
+
+    // Reversal preserves the target entry's `(project_id, responsible_accountant_user_id)` sub-ledger!
+    const adjReason = "Điều chỉnh tăng phí phát sinh thêm trên PRJ_2";
+    const adjEntry = await repo.recordEntry({
+      auth_subject: ACCT_B.auth,
+      app_user_id: ACCT_B.app,
+      vendor_id: "VND_SHARED",
+      project_id: PRJ_2,
+      entry_type: "ADJUSTMENT_INCREASE",
+      amount_minor: "1500000",
+      effective_date: "2026-10-19",
+      reason: adjReason,
+      idempotency_key: nextUuid(),
+      request_fingerprint: computeRecordEntryFingerprint({
+        project_id: PRJ_2,
+        vendor_id: "VND_SHARED",
+        entry_type: "ADJUSTMENT_INCREASE",
+        amount_minor: "1500000",
+        effective_date: "2026-10-19",
+        reason: adjReason,
+      }),
+    });
+    assert.equal(adjEntry.ok, true);
+    assert.equal(adjEntry.data.entry.balance_after_minor, "21500000");
+
+    const revReason = "Hoàn tác điều chỉnh nhầm số tiền trên PRJ_2";
+    const revEntry = await repo.reverseEntry({
+      auth_subject: CASH_HOLDER_BEHALF.auth,
+      app_user_id: CASH_HOLDER_BEHALF.app,
+      entry_id: adjEntry.data.entry.entry_id,
+      effective_date: "2026-10-19",
+      reason: revReason,
+      idempotency_key: nextUuid(),
+      request_fingerprint: computeReverseEntryFingerprint({
+        entry_id: adjEntry.data.entry.entry_id,
+        effective_date: "2026-10-19",
+        reason: revReason,
+      }),
+    });
+    assert.equal(revEntry.ok, true, JSON.stringify(revEntry));
+    assert.equal(revEntry.data.reversal_entry.project_id, PRJ_2);
+    assert.equal(revEntry.data.reversal_entry.accountant_ref, ACCT_B.app);
+    assert.equal(revEntry.data.reversal_entry.created_by_display_name, CASH_HOLDER_BEHALF.name);
+    assert.equal(revEntry.data.reversal_entry.balance_after_minor, "20000000");
+
+    // -------------------------------------------------------------------------
+    // 10. Project & Monthly Debt Report (`getMonthlyReport` + `month=YYYY-MM`)
+    // -------------------------------------------------------------------------
+    const bodReport = await repo.getMonthlyReport({
+      auth_subject: BOD_RECONCILER.auth,
+      app_user_id: BOD_RECONCILER.app,
+      month: "2026-10",
+      project_id: null,
+      accountant_ref: null,
+      vendor_id: null,
+    });
+    assert.equal(bodReport.ok, true, JSON.stringify(bodReport));
+    assert.equal(bodReport.data.filters.month, "2026-10");
+    assert.equal(bodReport.data.totals.project_revenue_status, "MISSING_CANONICAL_SOURCE");
+    assert.equal(bodReport.data.totals.project_revenue_minor, null);
+
+    // Every project×accountant summary MUST report `MISSING_CANONICAL_SOURCE` and `null` revenue (never fake `0`!)
+    for (const ps of bodReport.data.project_accountant_summaries) {
+      assert.equal(ps.project_revenue_status, "MISSING_CANONICAL_SOURCE");
+      assert.equal(ps.project_revenue_minor, null);
+    }
+
+    // Verify `VND_SHARED` has 3 distinct project×accountant rows in `rows`
+    // (`(PRJ_1, ACCT_A)` = 7,000,000; `(PRJ_1, ACCT_B)` = 5,000,000; `(PRJ_2, ACCT_B)` = 20,000,000)
+    // and 1 isolated `legacy_unallocated_rows` item (`2,000,000`), NEVER merged or netted!
+    const sharedReportRows = bodReport.data.rows
+      .filter((r) => r.vendor_id === "VND_SHARED")
+      .map((r) => ({
+        project_id: r.project_id,
+        accountant: r.accountant_ref,
+        closing_balance_minor: r.closing_balance_minor,
+        paid_in_month_minor: r.paid_in_month_minor,
+      }))
+      .sort((a, b) =>
+        `${a.project_id}:${a.accountant}`.localeCompare(`${b.project_id}:${b.accountant}`),
+      );
+    assert.deepEqual(sharedReportRows, [
+      {
+        project_id: PRJ_1,
+        accountant: ACCT_A.app,
+        closing_balance_minor: "7000000",
+        paid_in_month_minor: "3000000",
+      },
+      {
+        project_id: PRJ_1,
+        accountant: ACCT_B.app,
+        closing_balance_minor: "5000000",
+        paid_in_month_minor: "0",
+      },
+      {
+        project_id: PRJ_2,
+        accountant: ACCT_B.app,
+        closing_balance_minor: "20000000",
+        paid_in_month_minor: "0",
+      },
+    ]);
+
+    // Verify `VND_OPPOSITE` closing payable (10M) and closing advance (4M) stay un-netted in totals!
+    // Total closing payable across project sub-ledgers = 7M + 5M + 20M (VND_SHARED) + 10M (VND_OPPOSITE) = 42,000,000
+    // Total closing advance across project sub-ledgers = 4,000,000 (VND_OPPOSITE on PRJ_2)
+    assert.equal(bodReport.data.totals.closing_payable_minor, "42000000");
+    assert.equal(bodReport.data.totals.closing_advance_minor, "4000000");
+
+    // Legacy rows stay isolated in `legacy_unallocated_rows` (`VND_LEGACY` 15M + `VND_SHARED` 2M)
+    assert.deepEqual(
+      bodReport.data.legacy_unallocated_rows
+        .map((r) => ({ vendor_id: r.vendor_id, closing: r.closing_balance_minor }))
+        .sort((a, b) => a.vendor_id.localeCompare(b.vendor_id)),
+      [
+        { vendor_id: "VND_LEGACY", closing: "15000000" },
+        { vendor_id: "VND_SHARED", closing: "2000000" },
+      ],
+    );
+
+    // Project-scoped report for ACCT_A shows ONLY ACCT_A's sub-ledgers and ZERO legacy rows
+    const acctAReport = await repo.getMonthlyReport({
+      auth_subject: ACCT_A.auth,
+      app_user_id: ACCT_A.app,
+      month: "2026-10",
+      project_id: null,
+      accountant_ref: null,
+      vendor_id: null,
+    });
+    assert.equal(acctAReport.ok, true);
+    assert.equal(acctAReport.data.legacy_unallocated_rows.length, 0);
+    for (const r of acctAReport.data.rows) {
+      assert.equal(r.accountant_ref, ACCT_A.app);
+    }
+
+    // -------------------------------------------------------------------------
+    // 10b. Project-Scoped Evidence Lifecycle + Global Role Termination
+    // -------------------------------------------------------------------------
+    const sampleChecksum = "a".repeat(64);
+    const prj2EntryId = recB1.data.entry.entry_id;
+
+    // ACCT_A (unassigned to PRJ_2) CANNOT reserve evidence on PRJ_2's entry
+    const evDenied = await repo.reserveEvidence({
+      auth_subject: ACCT_A.auth,
+      app_user_id: ACCT_A.app,
+      target_kind: "ENTRY",
+      target_id: prj2EntryId,
+      mime_type: "image/png",
+      size_bytes: 2048,
+      checksum_sha256: sampleChecksum,
+      idempotency_key: nextUuid(),
+      request_fingerprint: computeReserveEvidenceFingerprint({
+        target_kind: "ENTRY",
+        target_id: prj2EntryId,
+        mime_type: "image/png",
+        size_bytes: 2048,
+        checksum_sha256: sampleChecksum,
+      }),
+    });
+    assert.ok(!evDenied.ok, "ACCT_A must be denied evidence reservation on PRJ_2");
+    assert.ok(
+      evDenied.code === "VENDOR_FINANCE_ENTRY_NOT_FOUND" ||
+        evDenied.code === "VENDOR_FINANCE_PROJECT_ACCESS_DENIED",
+      `Unexpected denial code: ${evDenied.code}`,
+    );
+
+    // CASH_HOLDER_BEHALF reserves & finalizes evidence on PRJ_2 entry; ACCT_B & BoD can download, ACCT_A cannot
+    const evReserve = await repo.reserveEvidence({
+      auth_subject: CASH_HOLDER_BEHALF.auth,
+      app_user_id: CASH_HOLDER_BEHALF.app,
+      target_kind: "ENTRY",
+      target_id: prj2EntryId,
+      mime_type: "image/png",
+      size_bytes: 2048,
+      checksum_sha256: sampleChecksum,
+      idempotency_key: nextUuid(),
+      request_fingerprint: computeReserveEvidenceFingerprint({
+        target_kind: "ENTRY",
+        target_id: prj2EntryId,
+        mime_type: "image/png",
+        size_bytes: 2048,
+        checksum_sha256: sampleChecksum,
+      }),
+    });
+    assert.equal(evReserve.ok, true, JSON.stringify(evReserve));
+    const reservedEvidenceId = evReserve.data.reservation.evidence_id;
+
+    const evFinal = await repo.finalizeEvidenceReady({
+      auth_subject: CASH_HOLDER_BEHALF.auth,
+      app_user_id: CASH_HOLDER_BEHALF.app,
+      evidence_id: reservedEvidenceId,
+    });
+    assert.equal(evFinal.ok, true, JSON.stringify(evFinal));
+    assert.equal(evFinal.data.evidence.status, "READY");
+
+    const evDlAcctA = await repo.getEvidenceDownload({
+      auth_subject: ACCT_A.auth,
+      app_user_id: ACCT_A.app,
+      evidence_id: reservedEvidenceId,
+    });
+    assert.ok(!evDlAcctA.ok, "ACCT_A must not download PRJ_2 evidence");
+    assert.ok(
+      evDlAcctA.code === "VENDOR_FINANCE_EVIDENCE_NOT_FOUND" ||
+        evDlAcctA.code === "VENDOR_FINANCE_ACCESS_DENIED" ||
+        evDlAcctA.code === "VENDOR_FINANCE_PROJECT_ACCESS_DENIED",
+      `Unexpected denial code: ${evDlAcctA.code}`,
+    );
+
+    for (const allowedReader of [ACCT_B, BOD_RECONCILER]) {
+      const evDlOk = await repo.getEvidenceDownload({
+        auth_subject: allowedReader.auth,
+        app_user_id: allowedReader.app,
+        evidence_id: reservedEvidenceId,
+      });
+      assert.equal(evDlOk.ok, true, JSON.stringify(evDlOk));
+      assert.equal(evDlOk.data.checksum_sha256, sampleChecksum);
+    }
+
+    // End CASH_HOLDER_VIEW global role via Full Admin -> falls back to PROJECT_SCOPED (0 assigned projects)
+    const cashViewRoleRow = adminRolesList.data.roles.find(
+      (r) => r.account.account_ref === CASH_HOLDER_VIEW.app && r.state === "ACTIVE",
+    );
+    assert.ok(cashViewRoleRow, "Expected active CASH_HOLDER role row");
+    const endGlobalReason = "Kết thúc phân công cầm tiền tạm thời cho nhân sự đối soát";
+    const endGlobalRes = await repo.endGlobalRoleAdmin({
+      auth_subject: FULL_ADMIN.auth,
+      app_user_id: FULL_ADMIN.app,
+      role_grant_id: cashViewRoleRow.role_grant_id,
+      expected_version: cashViewRoleRow.version,
+      valid_to: adminRolesList.data.authorization_date,
+      reason: endGlobalReason,
+      idempotency_key: nextUuid(),
+      request_fingerprint: computeEndGlobalRoleFingerprint({
+        role_grant_id: cashViewRoleRow.role_grant_id,
+        expected_version: cashViewRoleRow.version,
+        valid_to: adminRolesList.data.authorization_date,
+        reason: endGlobalReason,
+      }),
+    });
+    assert.equal(endGlobalRes.ok, true, JSON.stringify(endGlobalRes));
+    const accessCashViewAfterEnd = await repo.getActorAccess({
+      auth_subject: CASH_HOLDER_VIEW.auth,
+      app_user_id: CASH_HOLDER_VIEW.app,
+    });
+    assert.equal(accessCashViewAfterEnd.ok, true);
+    assert.equal(accessCashViewAfterEnd.data.allowed, false);
+    assert.equal(accessCashViewAfterEnd.data.visibility_scope, "NONE");
+    assert.equal(accessCashViewAfterEnd.data.reconcile_scope, "NONE");
+    assert.equal(accessCashViewAfterEnd.data.can_reconcile, false);
+
+    // Untouched tables remain 100% unchanged after all VFIN-02 governance & ledger operations
+    const finalUntouchedSnapshot = await captureUntouchedSnapshot(db);
+    assert.deepEqual(
+      finalUntouchedSnapshot,
+      preVfin02Snapshot,
+      "All VFIN-02 governance & ledger mutations must leave untouched tables 100% unchanged",
+    );
+
+    // -------------------------------------------------------------------------
+    // 11. Forced RLS, Zero Direct Table Grants & Exact 25-RPC Allowlist
+    // -------------------------------------------------------------------------
+    const { rows: tableSec } = await db.query(
+      `select c.relname,
+              c.relrowsecurity,
+              c.relforcerowsecurity,
+              (select count(*)::int from pg_policy p where p.polrelid = c.oid) as policy_count,
+              has_table_privilege('anon', c.oid, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') as anon_priv,
+              has_table_privilege('authenticated', c.oid, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') as auth_priv,
+              has_table_privilege('service_role', c.oid, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') as svc_priv
+         from pg_class c
+         join pg_namespace n on n.oid = c.relnamespace
+        where n.nspname = 'public' and c.relname like 'vendor_finance_%' and c.relkind = 'r'
+        order by c.relname`,
+    );
+    assert.ok(tableSec.length >= 10, `expected >= 10 vendor_finance_* tables, got ${tableSec.length}`);
+    for (const row of tableSec) {
+      assert.equal(row.relrowsecurity, true, `${row.relname} must enable RLS`);
+      assert.equal(row.relforcerowsecurity, true, `${row.relname} must force RLS`);
+      assert.equal(row.policy_count, 0, `${row.relname} must have 0 permissive policies`);
+      assert.equal(row.anon_priv, false, `${row.relname} anon priv`);
+      assert.equal(row.auth_priv, false, `${row.relname} authenticated priv`);
+      assert.equal(row.svc_priv, false, `${row.relname} service_role direct table priv`);
+    }
+
+    const { rows: rpcAcl } = await db.query(
+      `select format('public.%I(%s)', p.proname, oidvectortypes(p.proargtypes)) as sig,
+              has_function_privilege('public', p.oid, 'EXECUTE') as pub_exec,
+              has_function_privilege('anon', p.oid, 'EXECUTE') as anon_exec,
+              has_function_privilege('authenticated', p.oid, 'EXECUTE') as auth_exec,
+              has_function_privilege('service_role', p.oid, 'EXECUTE') as svc_exec
+         from pg_proc p
+         join pg_namespace n on n.oid = p.pronamespace
+        where n.nspname = 'public' and p.proname like 'vendor_finance%'
+        order by 1`,
+    );
+    const allowlistSet = new Set(VFIN_02_PROJECT_LEDGERS_RPC_SIGNATURES);
+    const grantedSvc = [];
+    for (const r of rpcAcl) {
+      assert.equal(r.pub_exec, false, `PUBLIC must not execute ${r.sig}`);
+      assert.equal(r.anon_exec, false, `anon must not execute ${r.sig}`);
+      assert.equal(r.auth_exec, false, `authenticated must not execute ${r.sig}`);
+      if (r.svc_exec) {
+        grantedSvc.push(r.sig);
+      }
+    }
+    assert.deepEqual(grantedSvc.sort(), [...allowlistSet].sort());
+  } finally {
+    await db.close();
+  }
+});

@@ -134,11 +134,12 @@ async function applyMigrations(client) {
   const names = (await readdir(MIGRATION_DIR))
     .filter((name) => name.endsWith(".sql"))
     .sort();
+  const targetIndex = names.indexOf(VFIN_01_BACKEND_MIGRATION_NAME);
   assert.ok(
-    names.includes(VFIN_01_BACKEND_MIGRATION_NAME),
+    targetIndex >= 0,
     `migration inventory must include ${VFIN_01_BACKEND_MIGRATION_NAME}`,
   );
-  for (const name of names) {
+  for (const name of names.slice(0, targetIndex + 1)) {
     await client.query(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
 }

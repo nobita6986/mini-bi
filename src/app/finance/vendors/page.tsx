@@ -12,6 +12,12 @@ export default async function FinanceVendorsPage() {
   return renderVendorFinancePageGate({
     requiredMode: "view",
     resolveNextPath: () => "/finance/vendors",
-    render: ({ canRecord }) => <VendorFinanceListView initialCanRecord={canRecord} />,
+    render: ({ canRecord, canReconcile, canManageProjectAssignments }) => (
+      <VendorFinanceListView
+        initialCanRecord={canRecord}
+        initialCanReconcile={canReconcile}
+        initialCanManageProjectAssignments={canManageProjectAssignments}
+      />
+    ),
   });
 }

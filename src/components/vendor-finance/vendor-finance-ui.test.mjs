@@ -17,6 +17,8 @@ const financeVendorsPage = read("../../app/finance/vendors/page.tsx");
 const financeOpeningPage = read("../../app/finance/opening-balance/page.tsx");
 const financeVendorDetailPage = read("../../app/finance/vendors/[vendorId]/page.tsx");
 const financeDocumentPage = read("../../app/finance/documents/[entryId]/page.tsx");
+const financeReportsPage = read("../../app/finance/reports/page.tsx");
+const financeProjectAssignmentsPage = read("../../app/finance/project-assignments/page.tsx");
 
 const uiModel = read("../../lib/vendor-finance/ui-model.ts");
 const listView = read("./vendor-finance-list-view.tsx");
@@ -25,6 +27,8 @@ const openingWizard = read("./opening-balance-wizard.tsx");
 const entryDialogs = read("./vendor-finance-entry-dialogs.tsx");
 const evidenceDialogs = read("./vendor-finance-evidence-dialog.tsx");
 const documentView = read("./vendor-finance-document-view.tsx");
+const monthlyReportView = read("./vendor-finance-monthly-report-view.tsx");
+const governanceView = read("./vendor-finance-governance-view.tsx");
 const documentCss = read("./vendor-finance-document.module.css");
 
 test("Navigation & AppShell register Tài chính (/finance) with server capability predicate, feature gate, and print-hidden header", () => {
@@ -62,6 +66,8 @@ test("/finance/** routes enforce server-side renderVendorFinancePageGate with vi
     financeOpeningPage,
     financeVendorDetailPage,
     financeDocumentPage,
+    financeReportsPage,
+    financeProjectAssignmentsPage,
   ]) {
     assert.match(pageSrc, /export const dynamic = "force-dynamic"/);
     assert.match(pageSrc, /renderVendorFinancePageGate\(/);
@@ -69,11 +75,14 @@ test("/finance/** routes enforce server-side renderVendorFinancePageGate with vi
 
   // Opening balance wizard route is strictly gated by `requiredMode: "record"` (blocks BoD / view-only on direct URL)
   assert.match(financeOpeningPage, /requiredMode:\s*"record"/);
+  // Project assignments & global roles governance route is strictly gated by `requiredMode: "admin"`
+  assert.match(financeProjectAssignmentsPage, /requiredMode:\s*"admin"/);
   for (const viewPageSrc of [
     financeIndexPage,
     financeVendorsPage,
     financeVendorDetailPage,
     financeDocumentPage,
+    financeReportsPage,
   ]) {
     assert.match(viewPageSrc, /requiredMode:\s*"view"/);
   }
@@ -119,9 +128,31 @@ test("Vendor List & Detail views implement KPIs, debounced search, pagination, v
   assert.match(detailView, /vendor\.totals\.advance_recorded_minor/);
   assert.match(detailView, /canRecord && entry\.can_reverse/);
   assert.match(detailView, /canRecord && entry\.can_attach_evidence/);
-  assert.match(detailView, /canRecord && rec\.can_attach_evidence/);
+  assert.match(detailView, /canReconcile && rec\.can_attach_evidence/);
   assert.match(detailView, /vendor && canReconcile/);
   assert.match(detailView, /vendor && canRecord && allowedEntryTypes\.length > 0/);
+  assert.match(detailView, /vfin-subledger-switcher/);
+});
+
+test("VFIN-02: Monthly project debt report & Full Admin governance views enforce non-netted sub-ledgers, MISSING_CANONICAL_SOURCE revenue disclosure, and OCC/idempotent admin dialogs", () => {
+  assert.match(monthlyReportView, /PROJECT_REVENUE_MISSING_SOURCE_LABEL_VI/);
+  assert.match(monthlyReportView, /PROJECT_REVENUE_MISSING_SOURCE_NOTE_VI/);
+  assert.match(monthlyReportView, /parseMonthlyReportEnvelope\(/);
+  assert.match(monthlyReportView, /buildMonthlyReportUrl\(/);
+  assert.match(monthlyReportView, /buildVendorEntriesUrl\(/);
+  assert.match(monthlyReportView, /CursorLoadMore/);
+  assert.doesNotMatch(monthlyReportView, /method:\s*"(POST|PUT|PATCH|DELETE)"/);
+
+  assert.match(governanceView, /role="tablist"/);
+  assert.match(governanceView, /vfin-governance-panel-assignments/);
+  assert.match(governanceView, /vfin-governance-panel-vendors/);
+  assert.match(governanceView, /vfin-governance-panel-global-roles/);
+  assert.match(governanceView, /buildAssignProjectAccountantRequest\(/);
+  assert.match(governanceView, /buildEndProjectAccountantRequest\(/);
+  assert.match(governanceView, /buildSetProjectVendorLinkRequest\(/);
+  assert.match(governanceView, /buildAssignGlobalRoleRequest\(/);
+  assert.match(governanceView, /buildEndGlobalRoleRequest\(/);
+  assert.doesNotMatch(governanceView, /type="checkbox"/);
 });
 
 test("Entry, Reversal, Reconciliation, Evidence, and Opening Balance Wizard honor two-phase evidence commit, non-auto-adjustment, and atomic batch rules", () => {
@@ -196,6 +227,8 @@ test("Client Vendor Finance modules contain zero browser Supabase calls, zero pe
     ["vendor-finance-entry-dialogs.tsx", entryDialogs],
     ["vendor-finance-evidence-dialog.tsx", evidenceDialogs],
     ["vendor-finance-document-view.tsx", documentView],
+    ["vendor-finance-monthly-report-view.tsx", monthlyReportView],
+    ["vendor-finance-governance-view.tsx", governanceView],
   ];
 
   for (const [name, src] of clientFiles) {

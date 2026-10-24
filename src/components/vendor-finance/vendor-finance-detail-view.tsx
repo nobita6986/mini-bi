@@ -2,11 +2,13 @@
 
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import {
   ArrowLeft,
   Eye,
   FileSpreadsheet,
   ImagePlus,
+  Layers,
   Plus,
   Printer,
   RefreshCw,
@@ -33,10 +35,13 @@ import { OffsetPager } from "@/components/ui/offset-pager";
 import { PageHeader, PageShell } from "@/components/ui/page-shell";
 import type {
   NormalVendorFinanceEntryType,
+  VendorFinanceActorContextOptionsResponse,
+  VendorFinanceDetailSubLedger,
   VendorFinanceEntryProjection,
   VendorFinanceEntryType,
   VendorFinanceEvidenceSummary,
   VendorFinanceEvidenceTargetKind,
+  VendorFinanceLedgerScope,
   VendorFinanceReconciliationProjection,
   VendorFinanceReconciliationsPageResponse,
   VendorFinanceVendorDetailResponse,
@@ -44,6 +49,7 @@ import type {
 import {
   buildVendorDetailUrl,
   buildVendorEntriesUrl,
+  buildVendorFinanceContextUrl,
   buildVendorReconciliationsUrl,
   classifyVendorFinanceError,
   ENTRY_TYPE_LABELS_VI,
@@ -52,8 +58,11 @@ import {
   formatVendorBalancePresentation,
   formatVietnamDateLabel,
   formatVndMinor,
+  isCanonicalUiProjectId,
+  isUuidString,
   parseVendorDetailEnvelope,
   parseVendorEntriesPageEnvelope,
+  parseVendorFinanceContextEnvelope,
   parseVendorReconciliationsPageEnvelope,
   VFIN_UI_ENTRY_TYPES,
 } from "@/lib/vendor-finance/ui-model";
@@ -73,13 +82,49 @@ const RECONCILIATIONS_PAGE_SIZE = 15;
 
 type DetailTab = "ledger" | "reconciliations";
 
+type SelectedScopeFilter = {
+  ledgerScope: VendorFinanceLedgerScope | null;
+  projectId: string | null;
+  accountantRef: string | null;
+};
+
+function parseInitialScopeFilter(searchParams: URLSearchParams): SelectedScopeFilter {
+  const rawScope = searchParams.get("ledgerScope");
+  const rawProject = searchParams.get("projectId");
+  const rawAccountant = searchParams.get("accountantRef");
+
+  if (rawScope === "LEGACY_UNALLOCATED") {
+    return { ledgerScope: "LEGACY_UNALLOCATED", projectId: null, accountantRef: null };
+  }
+  const projectId = rawProject && isCanonicalUiProjectId(rawProject) ? rawProject : null;
+  const accountantRef =
+    rawAccountant && isUuidString(rawAccountant) ? rawAccountant.toLowerCase() : null;
+  if (rawScope === "PROJECT_ACCOUNTANT" || projectId || accountantRef) {
+    return {
+      ledgerScope: "PROJECT_ACCOUNTANT",
+      projectId,
+      accountantRef,
+    };
+  }
+  return { ledgerScope: null, projectId: null, accountantRef: null };
+}
+
+function subLedgerKey(sub: VendorFinanceDetailSubLedger): string {
+  return `${sub.ledger_scope}:${sub.project_id ?? "legacy"}:${sub.accountant_ref ?? "none"}`;
+}
+
 export function VendorFinanceDetailView({
   vendorId,
   initialCanRecord = false,
+  initialCanReconcile = false,
+  initialCanManageProjectAssignments = false,
 }: {
   vendorId: string;
   initialCanRecord?: boolean;
+  initialCanReconcile?: boolean;
+  initialCanManageProjectAssignments?: boolean;
 }) {
+  const searchParams = useSearchParams();
   const entryTypeFilterId = useId();
   const ledgerTabId = useId();
   const recTabId = useId();
@@ -88,8 +133,15 @@ export function VendorFinanceDetailView({
   const ledgerTabRef = useRef<HTMLButtonElement | null>(null);
   const recTabRef = useRef<HTMLButtonElement | null>(null);
 
+  const [scopeFilter, setScopeFilter] = useState<SelectedScopeFilter>(() =>
+    parseInitialScopeFilter(searchParams),
+  );
   const [activeTab, setActiveTab] = useState<DetailTab>("ledger");
   const [refreshNonce, setRefreshNonce] = useState(0);
+
+  // Context options (recordable projects + linked vendors)
+  const [contextData, setContextData] =
+    useState<VendorFinanceActorContextOptionsResponse | null>(null);
 
   // Vendor detail summary state
   const [detail, setDetail] = useState<VendorFinanceVendorDetailResponse | null>(null);
@@ -130,7 +182,40 @@ export function VendorFinanceDetailView({
 
   const triggerReloadAll = () => setRefreshNonce((n) => n + 1);
 
-  // 1. Load Vendor Detail Summary
+  // 0. Load Actor Context Options
+  useEffect(() => {
+    let cancelled = false;
+    const controller = new AbortController();
+
+    async function loadContext() {
+      await Promise.resolve();
+      if (cancelled) return;
+      try {
+        const res = await fetch(buildVendorFinanceContextUrl(), {
+          method: "GET",
+          signal: controller.signal,
+          cache: "no-store",
+        });
+        if (!res.ok || cancelled) return;
+        const json: unknown = await res.json().catch(() => null);
+        if (cancelled) return;
+        const parsed = parseVendorFinanceContextEnvelope(json);
+        if (parsed) {
+          setContextData(parsed);
+        }
+      } catch {
+        // Supplementary context
+      }
+    }
+
+    void loadContext();
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [refreshNonce]);
+
+  // 1. Load Vendor Detail Summary (with sub-ledger scope)
   useEffect(() => {
     let cancelled = false;
     const controller = new AbortController();
@@ -142,11 +227,18 @@ export function VendorFinanceDetailView({
       setDetailError(null);
 
       try {
-        const res = await fetch(buildVendorDetailUrl(vendorId), {
-          method: "GET",
-          signal: controller.signal,
-          cache: "no-store",
-        });
+        const res = await fetch(
+          buildVendorDetailUrl(vendorId, {
+            ledger_scope: scopeFilter.ledgerScope,
+            project_id: scopeFilter.projectId,
+            accountant_ref: scopeFilter.accountantRef,
+          }),
+          {
+            method: "GET",
+            signal: controller.signal,
+            cache: "no-store",
+          },
+        );
         const json: unknown = await res.json().catch(() => null);
         if (cancelled) return;
 
@@ -179,9 +271,9 @@ export function VendorFinanceDetailView({
       cancelled = true;
       controller.abort();
     };
-  }, [vendorId, refreshNonce]);
+  }, [vendorId, scopeFilter, refreshNonce]);
 
-  // 2. Load First Page of Ledger Entries
+  // 2. Load First Page of Ledger Entries (strictly bound to current scopeFilter)
   useEffect(() => {
     let cancelled = false;
     const controller = new AbortController();
@@ -196,6 +288,9 @@ export function VendorFinanceDetailView({
         const url = buildVendorEntriesUrl(vendorId, {
           entry_type: entryTypeFilter || null,
           page_size: ENTRIES_PAGE_SIZE,
+          ledger_scope: scopeFilter.ledgerScope,
+          project_id: scopeFilter.projectId,
+          accountant_ref: scopeFilter.accountantRef,
         });
         const res = await fetch(url, {
           method: "GET",
@@ -237,9 +332,9 @@ export function VendorFinanceDetailView({
       cancelled = true;
       controller.abort();
     };
-  }, [vendorId, entryTypeFilter, refreshNonce]);
+  }, [vendorId, scopeFilter, entryTypeFilter, refreshNonce]);
 
-  // 3. Load Reconciliations Page
+  // 3. Load Reconciliations Page (strictly bound to current scopeFilter)
   useEffect(() => {
     let cancelled = false;
     const controller = new AbortController();
@@ -254,6 +349,9 @@ export function VendorFinanceDetailView({
         const url = buildVendorReconciliationsUrl(vendorId, {
           page: recPage,
           page_size: RECONCILIATIONS_PAGE_SIZE,
+          ledger_scope: scopeFilter.ledgerScope,
+          project_id: scopeFilter.projectId,
+          accountant_ref: scopeFilter.accountantRef,
         });
         const res = await fetch(url, {
           method: "GET",
@@ -293,7 +391,7 @@ export function VendorFinanceDetailView({
       cancelled = true;
       controller.abort();
     };
-  }, [vendorId, recPage, refreshNonce]);
+  }, [vendorId, scopeFilter, recPage, refreshNonce]);
 
   const handleLoadMoreEntries = async () => {
     if (!nextCursor || loadingMoreEntries) return;
@@ -305,6 +403,9 @@ export function VendorFinanceDetailView({
         cursor: nextCursor,
         entry_type: entryTypeFilter || null,
         page_size: ENTRIES_PAGE_SIZE,
+        ledger_scope: scopeFilter.ledgerScope,
+        project_id: scopeFilter.projectId,
+        accountant_ref: scopeFilter.accountantRef,
       });
       const res = await fetch(url, { method: "GET", cache: "no-store" });
       const json: unknown = await res.json().catch(() => null);
@@ -363,11 +464,47 @@ export function VendorFinanceDetailView({
     }
   };
 
+  const handleSelectSubLedger = (sub: VendorFinanceDetailSubLedger | null) => {
+    setRecPage(1);
+    if (!sub) {
+      setScopeFilter({ ledgerScope: null, projectId: null, accountantRef: null });
+      return;
+    }
+    setScopeFilter({
+      ledgerScope: sub.ledger_scope,
+      projectId: sub.project_id,
+      accountantRef: sub.accountant_ref,
+    });
+  };
+
   const vendor = detail?.vendor ?? null;
+  const subLedgers = detail?.sub_ledgers ?? [];
+  const selectedSubLedger = detail?.selected_sub_ledger ?? null;
   const allowedActions = detail?.allowed_actions ?? null;
   const canRecord = allowedActions ? allowedActions.can_record : initialCanRecord;
-  const canReconcile = allowedActions ? allowedActions.can_reconcile : false;
+  const canReconcile = allowedActions ? allowedActions.can_reconcile : initialCanReconcile;
+  const canManageProjectAssignments = allowedActions
+    ? allowedActions.can_manage_project_assignments
+    : initialCanManageProjectAssignments;
   const allowedEntryTypes = allowedActions?.allowed_entry_types ?? [];
+
+  // Projects where current actor can record for this specific vendor
+  const recordableProjectsForVendor = (contextData?.projects ?? []).filter(
+    (p) =>
+      p.can_record_for_project &&
+      p.has_active_accountant &&
+      p.linked_vendors.some((lv) => lv.vendor_id === vendorId),
+  );
+
+  // Sub-ledgers where current actor can reconcile
+  const reconcilableSubLedgers = subLedgers.filter(
+    (s) => s.ledger_scope === "PROJECT_ACCOUNTANT" && s.can_reconcile && s.project_id !== null,
+  );
+
+  const openingTargetProjectId =
+    selectedSubLedger?.eligible_for_opening && selectedSubLedger.project_id
+      ? selectedSubLedger.project_id
+      : subLedgers.find((s) => s.eligible_for_opening && s.project_id)?.project_id ?? null;
 
   const balancePresentation = vendor
     ? formatVendorBalancePresentation({
@@ -375,6 +512,7 @@ export function VendorFinanceDetailView({
         balance_direction: vendor.balance_direction,
         entry_count: vendor.entry_count,
         has_opening_entry: vendor.has_opening_entry,
+        sub_ledger_count: subLedgers.length,
       })
     : null;
 
@@ -382,7 +520,7 @@ export function VendorFinanceDetailView({
 
   return (
     <PageShell dataTestId="vfin-vendor-detail-page">
-      <div>
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <Link
           href="/finance/vendors"
           className="inline-flex min-h-11 sm:min-h-8 items-center gap-1.5 text-xs font-medium text-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 rounded"
@@ -390,6 +528,14 @@ export function VendorFinanceDetailView({
           <ArrowLeft className="h-3.5 w-3.5" aria-hidden />
           Danh sách tài chính Vendor
         </Link>
+        {canManageProjectAssignments ? (
+          <Link
+            href="/finance/project-assignments"
+            className="text-xs font-medium text-primary hover:underline"
+          >
+            Quản lý phân công dự án & liên kết Vendor →
+          </Link>
+        ) : null}
       </div>
 
       <PageHeader
@@ -409,12 +555,12 @@ export function VendorFinanceDetailView({
             ) : null}
             {!canRecord ? (
               <StatusBadge tone="info" dataTestId="vfin-detail-view-only-badge">
-                Chế độ chỉ xem
+                {canReconcile ? "Xem & Đối soát (Không ghi sổ)" : "Chế độ chỉ xem"}
               </StatusBadge>
             ) : null}
           </div>
         }
-        description="Sổ cái bất biến (append-only), đối soát theo ngày, ảnh bằng chứng xác thực và chứng từ in nội bộ."
+        description="Sổ cái bất biến (append-only) tách riêng theo từng cặp Dự án × Kế toán phụ trách; không bù trừ số dư giữa các dự án hoặc kế toán khác nhau."
         actions={
           <>
             <Button
@@ -428,7 +574,11 @@ export function VendorFinanceDetailView({
 
             {vendor && vendor.eligible_for_opening && canRecord ? (
               <Link
-                href={`/finance/opening-balance?vendorId=${encodeURIComponent(vendor.vendor_id)}`}
+                href={
+                  openingTargetProjectId
+                    ? `/finance/opening-balance?projectId=${encodeURIComponent(openingTargetProjectId)}&vendorId=${encodeURIComponent(vendor.vendor_id)}`
+                    : `/finance/opening-balance?vendorId=${encodeURIComponent(vendor.vendor_id)}`
+                }
                 className={buttonClasses({ variant: "soft", size: "md" })}
               >
                 <FileSpreadsheet className="h-4 w-4" aria-hidden />
@@ -439,6 +589,7 @@ export function VendorFinanceDetailView({
             {vendor && canReconcile ? (
               <Button
                 variant="secondary"
+                disabled={reconcilableSubLedgers.length === 0}
                 data-testid="vfin-open-reconcile-btn"
                 onClick={() => setReconcileDialogOpen(true)}
               >
@@ -487,6 +638,104 @@ export function VendorFinanceDetailView({
         </Alert>
       ) : null}
 
+      {/* =====================================================================
+          SUB-LEDGER SWITCHER (Dự án × Kế toán phụ trách — Không bù trừ chéo)
+         ===================================================================== */}
+      {subLedgers.length > 0 ? (
+        <Card className="p-4">
+          <div data-testid="vfin-subledger-switcher" className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Layers className="h-4 w-4 text-primary" aria-hidden />
+              <h2 className="text-sm font-semibold text-foreground">
+                Sổ chi tiết theo Dự án × Kế toán phụ trách ({subLedgers.length} sổ độc lập)
+              </h2>
+            </div>
+            <p className="text-xs text-muted">
+              Chọn từng sổ để xem đúng số dư, lịch sử chứng từ và đối soát riêng của kế toán phụ
+              trách.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
+            {subLedgers.length > 1 ? (
+              <button
+                type="button"
+                onClick={() => handleSelectSubLedger(null)}
+                className={`rounded-xl border p-3 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 ${
+                  selectedSubLedger === null
+                    ? "border-primary bg-primary/10"
+                    : "border-border bg-surface hover:border-primary/40"
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-semibold text-foreground">
+                    Tất cả sổ trong phạm vi xem
+                  </span>
+                  <StatusBadge tone="info">{subLedgers.length} sổ riêng</StatusBadge>
+                </div>
+                <p className="mt-1 text-xs text-muted">
+                  Xem dòng thời gian chung — không gộp số dư giữa các kế toán/dự án
+                </p>
+              </button>
+            ) : null}
+
+            {subLedgers.map((sub) => {
+              const isSelected =
+                selectedSubLedger !== null &&
+                subLedgerKey(selectedSubLedger) === subLedgerKey(sub);
+              const subPresentation = formatVendorBalancePresentation({
+                current_balance_minor: sub.current_balance_minor,
+                balance_direction: sub.balance_direction,
+                entry_count: sub.entry_count,
+                has_opening_entry: sub.has_opening_entry,
+              });
+              return (
+                <button
+                  key={subLedgerKey(sub)}
+                  type="button"
+                  onClick={() => handleSelectSubLedger(sub)}
+                  className={`rounded-xl border p-3 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 ${
+                    isSelected
+                      ? "border-primary bg-primary/10"
+                      : "border-border bg-surface hover:border-primary/40"
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <p className="text-xs font-semibold text-foreground">
+                        {sub.ledger_scope === "LEGACY_UNALLOCATED"
+                          ? "Sổ lịch sử VFIN-01 (Chỉ đọc)"
+                          : `${sub.project_display_name ?? sub.project_id}`}
+                      </p>
+                      <p className="text-[11px] text-muted">
+                        {sub.ledger_scope === "LEGACY_UNALLOCATED"
+                          ? "Bút toán trước khi phân tách dự án"
+                          : `Kế toán sổ: ${sub.responsible_accountant_display_name ?? "—"}${
+                              sub.is_active_assignment ? "" : " (Sổ bàn giao cũ)"
+                            }`}
+                      </p>
+                    </div>
+                    <StatusBadge tone={subPresentation.tone}>
+                      {subPresentation.statusLabel}
+                    </StatusBadge>
+                  </div>
+                  <div className="mt-2 flex items-baseline justify-between gap-2 border-t border-border/60 pt-1.5">
+                    <span className="font-mono text-sm font-bold tabular-nums text-foreground">
+                      {subPresentation.signedText}
+                    </span>
+                    <span className="font-mono text-[11px] text-muted">
+                      {sub.entry_count} bút toán
+                    </span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+          </div>
+        </Card>
+      ) : null}
+
       {/* Summary KPI Cards */}
       <section
         aria-label="Tổng hợp số dư và lũy kế theo nhóm giao dịch"
@@ -495,7 +744,13 @@ export function VendorFinanceDetailView({
       >
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
           <Card className="p-4 border-primary/25 bg-surface">
-            <p className="text-xs font-medium text-muted">Số dư hiện tại</p>
+            <p className="text-xs font-medium text-muted">
+              {selectedSubLedger
+                ? selectedSubLedger.ledger_scope === "LEGACY_UNALLOCATED"
+                  ? "Số dư sổ lịch sử VFIN-01"
+                  : `Số dư sổ ${selectedSubLedger.project_display_name ?? selectedSubLedger.project_id}`
+                : "Trạng thái số dư các sổ"}
+            </p>
             <p
               data-testid="vfin-detail-current-balance"
               className="mt-1.5 font-mono text-xl font-semibold tabular-nums text-foreground"
@@ -503,7 +758,11 @@ export function VendorFinanceDetailView({
               {balancePresentation ? balancePresentation.signedText : "—"}
             </p>
             <p className="mt-1 text-xs text-muted">
-              {vendor ? `${vendor.entry_count} bút toán trong sổ cái` : "Đang tải…"}
+              {selectedSubLedger && selectedSubLedger.responsible_accountant_display_name
+                ? `KT phụ trách: ${selectedSubLedger.responsible_accountant_display_name}`
+                : vendor
+                  ? `${vendor.entry_count} bút toán trong phạm vi đang xem`
+                  : "Đang tải…"}
             </p>
           </Card>
 
@@ -720,12 +979,12 @@ export function VendorFinanceDetailView({
         ) : entries.length === 0 ? (
           <Card className="p-8 text-center space-y-2">
             <p className="text-sm font-medium text-foreground">
-              Chưa có bút toán nào phù hợp trong sổ cái của Vendor này.
+              Chưa có bút toán nào phù hợp trong sổ đang chọn.
             </p>
             <p className="text-xs text-muted">
               {canRecord
-                ? "Bạn có thể khởi tạo số dư đầu kỳ (nếu chưa mở kỳ) hoặc ghi nhận khoản tiền mới."
-                : "Khi Phòng Kế toán ghi nhận giao dịch, lịch sử sổ cái sẽ hiển thị tại đây."}
+                ? "Bạn có thể khởi tạo số dư đầu kỳ cho sổ dự án (nếu chưa mở kỳ) hoặc ghi nhận khoản tiền mới."
+                : "Khi kế toán ghi nhận giao dịch vào sổ dự án, lịch sử sổ cái sẽ hiển thị tại đây."}
             </p>
           </Card>
         ) : (
@@ -748,7 +1007,7 @@ export function VendorFinanceDetailView({
               <thead className={DATA_TABLE_HEAD_CLASS}>
                 <tr>
                   <th scope="col" className={DATA_TABLE_TH_CLASS}>
-                    Chứng từ / #Seq
+                    Chứng từ / Sổ dự án
                   </th>
                   <th scope="col" className={DATA_TABLE_TH_CLASS}>
                     Ngày hiệu lực
@@ -760,7 +1019,7 @@ export function VendorFinanceDetailView({
                     Biến động (VND)
                   </th>
                   <th scope="col" className={`${DATA_TABLE_TH_CLASS} text-right`}>
-                    Số dư sau GD
+                    Số dư sổ sau GD
                   </th>
                   <th scope="col" className={DATA_TABLE_TH_CLASS}>
                     Bằng chứng
@@ -774,6 +1033,10 @@ export function VendorFinanceDetailView({
                 {entries.map((entry) => {
                   const isReversed = entry.reversed_by_entry_id !== null;
                   const isReversal = entry.entry_type === "REVERSAL";
+                  const recordedOnBehalf =
+                    entry.responsible_accountant_display_name !== null &&
+                    entry.created_by_display_name !== entry.responsible_accountant_display_name;
+
                   return (
                     <tr key={entry.entry_id} className={DATA_TABLE_ROW_CLASS}>
                       <td data-card-header="true" className={DATA_TABLE_TD_CLASS}>
@@ -784,8 +1047,14 @@ export function VendorFinanceDetailView({
                           >
                             {entry.document_no}
                           </Link>
-                          <p className="font-mono text-xs text-muted">
-                            #{entry.vendor_sequence} · {entry.created_by_display_name}
+                          <p className="text-xs font-medium text-foreground">
+                            {entry.ledger_scope === "LEGACY_UNALLOCATED"
+                              ? "Sổ lịch sử VFIN-01"
+                              : `${entry.project_display_name_snapshot ?? entry.project_id} · KT: ${entry.responsible_accountant_display_name ?? "—"}`}
+                          </p>
+                          <p className="font-mono text-[11px] text-muted">
+                            #{entry.vendor_sequence} · Người nhập: {entry.created_by_display_name}
+                            {recordedOnBehalf ? " (Ghi hộ)" : ""}
                           </p>
                         </div>
                       </td>
@@ -835,7 +1104,7 @@ export function VendorFinanceDetailView({
                       </td>
 
                       <td
-                        data-label="Số dư sau GD"
+                        data-label="Số dư sổ sau GD"
                         className={`${DATA_TABLE_TD_CLASS} text-right font-mono tabular-nums`}
                       >
                         <div className="space-y-0.5">
@@ -934,9 +1203,9 @@ export function VendorFinanceDetailView({
         data-ui-panel-motion="true"
         className="space-y-4"
       >
-        <Alert tone="info" title="Nguyên tắc đối soát công nợ theo ngày">
+        <Alert tone="info" title="Nguyên tắc đối soát công nợ theo sổ dự án">
           <p>
-            Biên bản đối soát lưu lại <strong>Số dư hệ thống</strong>,{" "}
+            Biên bản đối soát lưu lại <strong>Số dư hệ thống của đúng sổ Dự án × Kế toán</strong>,{" "}
             <strong>Số dư Vendor xác nhận</strong> và <strong>Chênh lệch</strong> tại ngày chốt; hệ
             thống không tự động tạo bút toán điều chỉnh vào sổ cái.
           </p>
@@ -950,6 +1219,12 @@ export function VendorFinanceDetailView({
                 <span className="font-mono">
                   {formatVietnamDateLabel(vendor.latest_reconciliation.as_of_date)}
                 </span>
+                {vendor.latest_reconciliation.project_display_name_snapshot ? (
+                  <span className="ml-2 text-xs font-normal text-muted">
+                    ({vendor.latest_reconciliation.project_display_name_snapshot} · KT:{" "}
+                    {vendor.latest_reconciliation.responsible_accountant_display_name ?? "—"})
+                  </span>
+                ) : null}
               </p>
               <StatusBadge
                 tone={vendor.latest_reconciliation.difference_minor === "0" ? "success" : "warning"}
@@ -1001,9 +1276,9 @@ export function VendorFinanceDetailView({
         ) : recData && recData.reconciliations.length === 0 ? (
           <Card className="p-8 text-center space-y-3">
             <p className="text-sm font-medium text-foreground">
-              Chưa có biên bản đối soát nào cho Vendor này.
+              Chưa có biên bản đối soát nào trong phạm vi sổ đang xem.
             </p>
-            {canReconcile ? (
+            {canReconcile && reconcilableSubLedgers.length > 0 ? (
               <div className="flex justify-center">
                 <Button variant="primary" onClick={() => setReconcileDialogOpen(true)}>
                   <Scale className="h-4 w-4" aria-hidden />
@@ -1032,7 +1307,7 @@ export function VendorFinanceDetailView({
               <thead className={DATA_TABLE_HEAD_CLASS}>
                 <tr>
                   <th scope="col" className={DATA_TABLE_TH_CLASS}>
-                    Ngày đối soát
+                    Ngày đối soát & Sổ dự án
                   </th>
                   <th scope="col" className={`${DATA_TABLE_TH_CLASS} text-right`}>
                     Số dư hệ thống
@@ -1061,7 +1336,12 @@ export function VendorFinanceDetailView({
                           <p className="font-mono font-semibold text-foreground">
                             {formatVietnamDateLabel(rec.as_of_date)}
                           </p>
-                          <p className="font-mono text-xs text-muted">
+                          <p className="text-xs font-medium text-foreground">
+                            {rec.ledger_scope === "LEGACY_UNALLOCATED"
+                              ? "Sổ lịch sử VFIN-01"
+                              : `${rec.project_display_name_snapshot ?? rec.project_id} · KT: ${rec.responsible_accountant_display_name ?? "—"}`}
+                          </p>
+                          <p className="font-mono text-[11px] text-muted">
                             Đến bút toán #{rec.ledger_sequence_at_reconciliation}
                           </p>
                         </div>
@@ -1099,7 +1379,8 @@ export function VendorFinanceDetailView({
                         <div className="space-y-0.5 max-w-md text-xs">
                           <p className="text-foreground break-words">{rec.reason}</p>
                           <p className="text-muted">
-                            {rec.created_by_display_name} · {formatTimestampVi(rec.created_at)}
+                            Người đối soát: {rec.created_by_display_name} ·{" "}
+                            {formatTimestampVi(rec.created_at)}
                           </p>
                         </div>
                       </td>
@@ -1123,7 +1404,7 @@ export function VendorFinanceDetailView({
                               <Eye className="h-3.5 w-3.5" aria-hidden />
                               Xem ảnh
                             </Button>
-                          ) : canRecord && rec.can_attach_evidence ? (
+                          ) : canReconcile && rec.can_attach_evidence ? (
                             <Button
                               variant="soft"
                               size="sm"
@@ -1160,6 +1441,8 @@ export function VendorFinanceDetailView({
           vendorId={vendor.vendor_id}
           vendorDisplayName={vendor.display_name}
           vendorActive={vendor.active}
+          recordableProjects={recordableProjectsForVendor}
+          initialProjectId={selectedSubLedger?.project_id ?? scopeFilter.projectId}
           defaultDate={detail?.authorization_date ?? ""}
           allowedEntryTypes={allowedEntryTypes}
           initialEntryType={recordInitialType}
@@ -1185,7 +1468,12 @@ export function VendorFinanceDetailView({
           onOpenChange={setReconcileDialogOpen}
           vendorId={vendor.vendor_id}
           vendorDisplayName={vendor.display_name}
-          currentSystemBalanceMinor={vendor.current_balance_minor}
+          reconcilableSubLedgers={reconcilableSubLedgers}
+          initialSubLedgerKey={
+            selectedSubLedger && selectedSubLedger.project_id
+              ? `${selectedSubLedger.project_id}:${selectedSubLedger.accountant_ref ?? ""}`
+              : null
+          }
           defaultAsOfDate={detail?.authorization_date ?? ""}
           onDataChanged={triggerReloadAll}
         />

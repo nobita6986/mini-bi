@@ -18,6 +18,7 @@ const POSTGRES_TEST_FILES = new Set([
   "scripts/attendance-wp1-concurrency.test.mjs",
   "scripts/org-shell-01-departments-concurrency.test.mjs",
   "scripts/vfin-01-concurrency.test.mjs",
+  "scripts/vfin-02-project-ledgers-concurrency.test.mjs",
 ]);
 // shortcut: weights come from the latest successful main CI run; refresh when shard times drift.
 const TEST_WEIGHTS = {
@@ -86,6 +87,7 @@ const TEST_WEIGHTS = {
   "test:org-shell-01-ui": 2.0,
   "test:vfin-01": 12.0,
   "test:vfin-01-ui": 2.5,
+  "test:vfin-02": 14.0,
 };
 
 const target = process.argv[2];

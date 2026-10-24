@@ -15,13 +15,18 @@ import { isRealCalendarDate } from "../analytics/identity/identity-shared.mjs";
 import type { ActorResolution } from "../auth/direct-entry-v2.ts";
 import type { DirectEntryPageDecision } from "../auth/direct-entry-page-access.ts";
 import {
+  vendorFinanceAdminNavPredicate,
   vendorFinanceNavPredicate,
   vendorFinanceRecordNavPredicate,
   type NavActorProjection,
 } from "../navigation/registry-capability.ts";
 import type {
   ApplyOpeningBatchBody,
+  AssignGlobalRoleBody,
+  AssignProjectAccountantBody,
   CreateVendorReconciliationBody,
+  EndGlobalRoleBody,
+  EndProjectAccountantBody,
   NormalVendorFinanceEntryType,
   OpeningBatchItemInput,
   OpeningVendorFinanceEntryType,
@@ -29,12 +34,24 @@ import type {
   RecordVendorFinanceEntryBody,
   ReserveVendorFinanceEvidenceBody,
   ReverseVendorFinanceEntryBody,
+  SetProjectVendorLinkBody,
+  VendorFinanceAccountSummary,
   VendorFinanceActiveFilter,
+  VendorFinanceActorContextOptionsResponse,
+  VendorFinanceAdminGrantState,
+  VendorFinanceAssignGlobalRoleResponse,
+  VendorFinanceAssignProjectAccountantResponse,
   VendorFinanceBalanceDirection,
   VendorFinanceBalanceFilter,
   VendorFinanceCategoryTotals,
   VendorFinanceCompanySummary,
+  VendorFinanceContextAccountantOption,
+  VendorFinanceContextLinkedVendorOption,
+  VendorFinanceContextProjectOption,
+  VendorFinanceDetailSubLedger,
   VendorFinanceDocumentKind,
+  VendorFinanceEndGlobalRoleResponse,
+  VendorFinanceEndProjectAccountantResponse,
   VendorFinanceEntriesPageResponse,
   VendorFinanceEntryProjection,
   VendorFinanceEntryType,
@@ -45,15 +62,35 @@ import type {
   VendorFinanceEvidenceReserveResponse,
   VendorFinanceEvidenceSummary,
   VendorFinanceEvidenceTargetKind,
+  VendorFinanceGlobalRoleCandidateItem,
+  VendorFinanceGlobalRoleCode,
+  VendorFinanceGlobalRoleGrantItem,
+  VendorFinanceLedgerScope,
+  VendorFinanceLedgerScopeFilter,
+  VendorFinanceListBalanceDirection,
+  VendorFinanceListGlobalRolesAdminResponse,
   VendorFinanceListItem,
+  VendorFinanceListProjectAccountantsAdminResponse,
+  VendorFinanceListProjectVendorsAdminResponse,
+  VendorFinanceListSubLedgerItem,
+  VendorFinanceMonthlyLegacyRow,
+  VendorFinanceMonthlyReportAccountantSummary,
+  VendorFinanceMonthlyReportResponse,
+  VendorFinanceMonthlyReportRow,
   VendorFinanceOpeningApplyResponse,
   VendorFinanceOpeningPreviewItem,
   VendorFinanceOpeningPreviewResponse,
+  VendorFinanceProjectAccountantAssignmentItem,
+  VendorFinanceProjectAccountantsAdminProject,
+  VendorFinanceProjectVendorAdminItem,
   VendorFinanceReconciliationProjection,
   VendorFinanceReconciliationsPageResponse,
+  VendorFinanceSetProjectVendorLinkResponse,
   VendorFinanceSingleEntryResponse,
   VendorFinanceVendorDetailResponse,
   VendorFinanceVendorListResponse,
+  VendorFinanceVisibilityScope,
+  VendorFinanceWriteScope,
 } from "./vendor-finance-contract.ts";
 
 // -----------------------------------------------------------------------------
@@ -187,17 +224,63 @@ export const BALANCE_FILTER_LABELS_VI: Readonly<Record<VendorFinanceBalanceFilte
   uninitialized: "Chưa khởi tạo đầu kỳ",
 };
 
+export const VFIN_UI_LEDGER_SCOPE_FILTERS = [
+  "all",
+  "PROJECT_ACCOUNTANT",
+  "LEGACY_UNALLOCATED",
+] as const satisfies readonly VendorFinanceLedgerScopeFilter[];
+
+export const LEDGER_SCOPE_FILTER_LABELS_VI: Readonly<
+  Record<VendorFinanceLedgerScopeFilter, string>
+> = {
+  all: "Tất cả phạm vi sổ",
+  PROJECT_ACCOUNTANT: "Sổ dự án theo kế toán phụ trách",
+  LEGACY_UNALLOCATED: "Sổ lịch sử VFIN-01 (chưa gắn dự án)",
+};
+
+export const VFIN_UI_GLOBAL_ROLE_CODES = [
+  "CASH_HOLDER",
+  "CASH_HOLDER_RECORD_BEHALF",
+  "GLOBAL_RECONCILER",
+  "GLOBAL_VIEWER",
+] as const satisfies readonly VendorFinanceGlobalRoleCode[];
+
+export const GLOBAL_ROLE_LABELS_VI: Readonly<Record<VendorFinanceGlobalRoleCode, string>> = {
+  CASH_HOLDER: "Kế toán cầm tiền (Xem & đối soát toàn cục)",
+  CASH_HOLDER_RECORD_BEHALF:
+    "Kế toán cầm tiền — Được ghi nhận hộ vào sổ kế toán dự án",
+  GLOBAL_RECONCILER: "BoD / Kiểm soát đối soát toàn cục (Không ghi sổ)",
+  GLOBAL_VIEWER: "Xem báo cáo toàn cục (Chỉ xem)",
+};
+
+export const ADMIN_GRANT_STATE_LABELS_VI: Readonly<
+  Record<VendorFinanceAdminGrantState, { label: string; tone: UiBadgeTone }>
+> = {
+  ACTIVE: { label: "Đang hiệu lực", tone: "success" },
+  SCHEDULED: { label: "Sắp hiệu lực", tone: "info" },
+  ENDED: { label: "Đã kết thúc", tone: "neutral" },
+  CANCELLED: { label: "Đã hủy trước hiệu lực", tone: "warning" },
+};
+
+export const PROJECT_REVENUE_MISSING_SOURCE_LABEL_VI =
+  "Chưa có nguồn chuẩn" as const;
+
+export const PROJECT_REVENUE_MISSING_SOURCE_NOTE_VI =
+  "Hệ thống hiện chưa có bảng doanh thu dự án chuẩn. Cột doanh thu dự án được giữ ở trạng thái Chưa có nguồn chuẩn thay vì suy diễn hoặc ghi 0 ₫ giả." as const;
+
 export type UiBadgeTone = "success" | "warning" | "danger" | "info" | "neutral" | "primary";
 
 const UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const VENDOR_ID_REGEX = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/;
+const PROJECT_ID_REGEX = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/;
+const CALENDAR_MONTH_REGEX = /^([0-9]{4})-(0[1-9]|1[0-2])$/;
 const DOCUMENT_NO_REGEX = /^VFIN-[0-9]{4}-[0-9]{6,}$/;
 const POSITIVE_DECIMAL_REGEX = /^[1-9][0-9]{0,18}$/;
 const SIGNED_DECIMAL_REGEX = /^-?(?:0|[1-9][0-9]{0,18})$/;
 const GROUPED_THOUSANDS_INTEGER_REGEX = /^-?[1-9][0-9]{0,2}(?:([.,\s])[0-9]{3})+$/;
 const SHA256_HEX_REGEX = /^[0-9a-f]{64}$/i;
-const CURSOR_TOKEN_REGEX = /^[A-Za-z0-9_-]{4,512}$/;
+const CURSOR_TOKEN_REGEX = /^[A-Za-z0-9_-]{4,768}$/;
 const FORBIDDEN_TEXT_CONTROL_CHARS = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/;
 const FORBIDDEN_SINGLE_LINE_CONTROL_CHARS = /[\x00-\x1F\x7F]/;
 
@@ -205,12 +288,18 @@ const FORBIDDEN_SINGLE_LINE_CONTROL_CHARS = /[\x00-\x1F\x7F]/;
 // 2. Server Page Gate Pure Decision (`decideVendorFinancePageAccess`)
 // -----------------------------------------------------------------------------
 export type VendorFinanceServerAccessResult =
-  | { ok: true; can_view: boolean; can_record: boolean }
+  | {
+      ok: true;
+      can_view: boolean;
+      can_record: boolean;
+      can_reconcile?: boolean;
+      can_manage_project_assignments?: boolean;
+    }
   | { ok: false; code: string };
 
 export function decideVendorFinancePageAccess(input: {
   enabledFlag: string | undefined;
-  requiredMode: "view" | "record";
+  requiredMode: "view" | "record" | "admin";
   actor: ActorResolution | null;
   serverAccess?: VendorFinanceServerAccessResult | null;
 }): DirectEntryPageDecision {
@@ -236,6 +325,20 @@ export function decideVendorFinancePageAccess(input: {
     scopes: actor.actor.scopes.map((scope) => ({ kind: scope.kind })),
   };
 
+  if (input.requiredMode === "admin") {
+    if (vendorFinanceAdminNavPredicate(baseProjection)) {
+      return "ALLOW";
+    }
+    const serverAccess = input.serverAccess;
+    if (serverAccess && !serverAccess.ok && serverAccess.code === "ACTOR_NOT_AVAILABLE") {
+      return "ACCOUNT_UNAVAILABLE";
+    }
+    if (serverAccess && serverAccess.ok && serverAccess.can_manage_project_assignments) {
+      return "ALLOW";
+    }
+    return "ACCESS_DENIED";
+  }
+
   if (vendorFinanceRecordNavPredicate(baseProjection)) {
     return "ALLOW";
   }
@@ -253,7 +356,9 @@ export function decideVendorFinancePageAccess(input: {
     }
     if (
       serverAccess.code === "VENDOR_FINANCE_ACCESS_DENIED" ||
-      serverAccess.code === "VENDOR_FINANCE_RECORD_DENIED"
+      serverAccess.code === "VENDOR_FINANCE_RECORD_DENIED" ||
+      serverAccess.code === "VENDOR_FINANCE_RECONCILE_DENIED" ||
+      serverAccess.code === "VENDOR_FINANCE_ADMIN_DENIED"
     ) {
       return "ACCESS_DENIED";
     }
@@ -264,6 +369,8 @@ export function decideVendorFinancePageAccess(input: {
     ...baseProjection,
     hasVendorFinanceAccess: serverAccess.can_view,
     hasVendorFinanceRecordAccess: serverAccess.can_view && serverAccess.can_record,
+    hasVendorFinanceReconcileAccess:
+      serverAccess.can_view && Boolean(serverAccess.can_reconcile),
   };
 
   const allowed =
@@ -356,15 +463,28 @@ export function formatAbsoluteVndMinor(canonical: string): string {
 
 export function formatVendorBalancePresentation(input: {
   current_balance_minor: string;
-  balance_direction: VendorFinanceBalanceDirection;
+  balance_direction: VendorFinanceListBalanceDirection;
   entry_count: number;
   has_opening_entry: boolean;
+  sub_ledger_count?: number;
 }): {
   amountText: string;
   signedText: string;
   statusLabel: string;
   tone: UiBadgeTone;
 } {
+  if (input.balance_direction === "MULTI_LEDGER") {
+    const countLabel =
+      typeof input.sub_ledger_count === "number" && input.sub_ledger_count > 1
+        ? `${input.sub_ledger_count} sổ dự án riêng`
+        : "Nhiều sổ dự án riêng";
+    return {
+      amountText: countLabel,
+      signedText: countLabel,
+      statusLabel: "Nhiều sổ dự án (không bù trừ)",
+      tone: "primary",
+    };
+  }
   if (!input.has_opening_entry && input.entry_count === 0) {
     return {
       amountText: "0 ₫",
@@ -556,14 +676,25 @@ export function isCanonicalUiVendorId(value: unknown): value is string {
   );
 }
 
+export function isCanonicalUiProjectId(value: unknown): value is string {
+  return typeof value === "string" && PROJECT_ID_REGEX.test(value);
+}
+
 export function isUuidString(value: unknown): value is string {
   return typeof value === "string" && UUID_REGEX.test(value);
+}
+
+export function buildVendorFinanceContextUrl(): string {
+  return "/api/vendor-finance/context";
 }
 
 export function buildVendorListUrl(params?: {
   search?: string | null;
   active?: VendorFinanceActiveFilter;
   balance_filter?: VendorFinanceBalanceFilter;
+  project_id?: string | null;
+  accountant_ref?: string | null;
+  ledger_scope?: VendorFinanceLedgerScopeFilter;
   page?: number;
   page_size?: number;
 }): string {
@@ -580,6 +711,15 @@ export function buildVendorListUrl(params?: {
   if (params?.balance_filter && params.balance_filter !== "all") {
     sp.set("balance_filter", params.balance_filter);
   }
+  if (params?.project_id && isCanonicalUiProjectId(params.project_id)) {
+    sp.set("project_id", params.project_id);
+  }
+  if (params?.accountant_ref && isUuidString(params.accountant_ref)) {
+    sp.set("accountant_ref", params.accountant_ref.toLowerCase());
+  }
+  if (params?.ledger_scope && params.ledger_scope !== "all") {
+    sp.set("ledger_scope", params.ledger_scope);
+  }
   if (params?.page && Number.isSafeInteger(params.page) && params.page > 1) {
     sp.set("page", String(params.page));
   }
@@ -590,8 +730,27 @@ export function buildVendorListUrl(params?: {
   return qs ? `/api/vendor-finance/vendors?${qs}` : "/api/vendor-finance/vendors";
 }
 
-export function buildVendorDetailUrl(vendorId: string): string {
-  return `/api/vendor-finance/vendors/${encodeURIComponent(vendorId)}`;
+export function buildVendorDetailUrl(
+  vendorId: string,
+  params?: {
+    project_id?: string | null;
+    accountant_ref?: string | null;
+    ledger_scope?: VendorFinanceLedgerScope | null;
+  },
+): string {
+  const sp = new URLSearchParams();
+  if (params?.ledger_scope) {
+    sp.set("ledger_scope", params.ledger_scope);
+  }
+  if (params?.project_id && isCanonicalUiProjectId(params.project_id)) {
+    sp.set("project_id", params.project_id);
+  }
+  if (params?.accountant_ref && isUuidString(params.accountant_ref)) {
+    sp.set("accountant_ref", params.accountant_ref.toLowerCase());
+  }
+  const qs = sp.toString();
+  const base = `/api/vendor-finance/vendors/${encodeURIComponent(vendorId)}`;
+  return qs ? `${base}?${qs}` : base;
 }
 
 export function buildVendorEntriesUrl(
@@ -600,6 +759,10 @@ export function buildVendorEntriesUrl(
     cursor?: string | null;
     entry_type?: VendorFinanceEntryType | null;
     page_size?: number;
+    project_id?: string | null;
+    accountant_ref?: string | null;
+    ledger_scope?: VendorFinanceLedgerScope | null;
+    month?: string | null;
   },
 ): string {
   const sp = new URLSearchParams();
@@ -608,6 +771,18 @@ export function buildVendorEntriesUrl(
   }
   if (params?.entry_type) {
     sp.set("entry_type", params.entry_type);
+  }
+  if (params?.ledger_scope) {
+    sp.set("ledger_scope", params.ledger_scope);
+  }
+  if (params?.project_id && isCanonicalUiProjectId(params.project_id)) {
+    sp.set("project_id", params.project_id);
+  }
+  if (params?.accountant_ref && isUuidString(params.accountant_ref)) {
+    sp.set("accountant_ref", params.accountant_ref.toLowerCase());
+  }
+  if (params?.month && CALENDAR_MONTH_REGEX.test(params.month)) {
+    sp.set("month", params.month);
   }
   if (params?.page_size && Number.isSafeInteger(params.page_size)) {
     sp.set("page_size", String(params.page_size));
@@ -638,9 +813,21 @@ export function buildVendorReconciliationsUrl(
   params?: {
     page?: number;
     page_size?: number;
+    project_id?: string | null;
+    accountant_ref?: string | null;
+    ledger_scope?: VendorFinanceLedgerScope | null;
   },
 ): string {
   const sp = new URLSearchParams();
+  if (params?.ledger_scope) {
+    sp.set("ledger_scope", params.ledger_scope);
+  }
+  if (params?.project_id && isCanonicalUiProjectId(params.project_id)) {
+    sp.set("project_id", params.project_id);
+  }
+  if (params?.accountant_ref && isUuidString(params.accountant_ref)) {
+    sp.set("accountant_ref", params.accountant_ref.toLowerCase());
+  }
   if (params?.page && Number.isSafeInteger(params.page) && params.page > 1) {
     sp.set("page", String(params.page));
   }
@@ -650,6 +837,117 @@ export function buildVendorReconciliationsUrl(
   const qs = sp.toString();
   const base = `/api/vendor-finance/vendors/${encodeURIComponent(vendorId)}/reconciliations`;
   return qs ? `${base}?${qs}` : base;
+}
+
+export function buildMonthlyReportUrl(params: {
+  month: string;
+  project_id?: string | null;
+  accountant_ref?: string | null;
+  vendor_id?: string | null;
+}): string {
+  const sp = new URLSearchParams();
+  sp.set("month", params.month.trim());
+  if (params.project_id && isCanonicalUiProjectId(params.project_id)) {
+    sp.set("project_id", params.project_id);
+  }
+  if (params.accountant_ref && isUuidString(params.accountant_ref)) {
+    sp.set("accountant_ref", params.accountant_ref.toLowerCase());
+  }
+  if (params.vendor_id && isCanonicalUiVendorId(params.vendor_id)) {
+    sp.set("vendor_id", params.vendor_id);
+  }
+  return `/api/vendor-finance/reports/monthly?${sp.toString()}`;
+}
+
+export function buildAdminProjectAccountantsUrl(params?: {
+  search?: string | null;
+  include_history?: boolean;
+  page?: number;
+  page_size?: number;
+}): string {
+  const sp = new URLSearchParams();
+  if (params?.search !== undefined && params.search !== null) {
+    const trimmed = params.search.trim();
+    if (trimmed.length > 0) {
+      sp.set("search", trimmed.slice(0, VFIN_UI_MAX_SEARCH_LENGTH));
+    }
+  }
+  if (params?.include_history) {
+    sp.set("include_history", "true");
+  }
+  if (params?.page && Number.isSafeInteger(params.page) && params.page > 1) {
+    sp.set("page", String(params.page));
+  }
+  if (params?.page_size && Number.isSafeInteger(params.page_size)) {
+    sp.set("page_size", String(params.page_size));
+  }
+  const qs = sp.toString();
+  return qs
+    ? `/api/vendor-finance/admin/project-accountants?${qs}`
+    : "/api/vendor-finance/admin/project-accountants";
+}
+
+export function buildAdminEndProjectAccountantUrl(assignmentId: string): string {
+  return `/api/vendor-finance/admin/project-accountants/${encodeURIComponent(assignmentId)}/end`;
+}
+
+export function buildAdminProjectVendorsUrl(params: {
+  project_id: string;
+  search?: string | null;
+  only_linked?: boolean;
+  page?: number;
+  page_size?: number;
+}): string {
+  const sp = new URLSearchParams();
+  sp.set("project_id", params.project_id);
+  if (params.search !== undefined && params.search !== null) {
+    const trimmed = params.search.trim();
+    if (trimmed.length > 0) {
+      sp.set("search", trimmed.slice(0, VFIN_UI_MAX_SEARCH_LENGTH));
+    }
+  }
+  if (params.only_linked) {
+    sp.set("only_linked", "true");
+  }
+  if (params.page && Number.isSafeInteger(params.page) && params.page > 1) {
+    sp.set("page", String(params.page));
+  }
+  if (params.page_size && Number.isSafeInteger(params.page_size)) {
+    sp.set("page_size", String(params.page_size));
+  }
+  return `/api/vendor-finance/admin/project-vendors?${sp.toString()}`;
+}
+
+export function buildAdminGlobalRolesUrl(params?: {
+  search?: string | null;
+  include_history?: boolean;
+  page?: number;
+  page_size?: number;
+}): string {
+  const sp = new URLSearchParams();
+  if (params?.search !== undefined && params.search !== null) {
+    const trimmed = params.search.trim();
+    if (trimmed.length > 0) {
+      sp.set("search", trimmed.slice(0, VFIN_UI_MAX_SEARCH_LENGTH));
+    }
+  }
+  if (params?.include_history) {
+    sp.set("include_history", "true");
+  }
+  if (params?.page && Number.isSafeInteger(params.page) && params.page > 1) {
+    sp.set("page", String(params.page));
+  }
+  if (params?.page_size && Number.isSafeInteger(params.page_size)) {
+    sp.set("page_size", String(params.page_size));
+  }
+  const qs = sp.toString();
+  return qs
+    ? `/api/vendor-finance/admin/global-roles?${qs}`
+    : "/api/vendor-finance/admin/global-roles";
+}
+
+export function buildAdminEndGlobalRoleUrl(roleGrantId: string): string {
+  return `/api/vendor-finance/admin/global-roles/${encodeURIComponent(roleGrantId)}/end`;
 }
 
 export function buildReserveEvidenceUrl(): string {
@@ -683,6 +981,20 @@ export function validateUiCalendarDate(
     return { ok: false, message: "Năm của ngày hiệu lực phải nằm trong khoảng 1970–2999." };
   }
   return { ok: true, date: trimmed };
+}
+
+export function validateUiCalendarMonth(
+  raw: string,
+): { ok: true; month: string } | { ok: false; message: string } {
+  const trimmed = raw.trim();
+  if (!CALENDAR_MONTH_REGEX.test(trimmed)) {
+    return { ok: false, message: "Kỳ báo cáo tháng không hợp lệ (định dạng YYYY-MM)." };
+  }
+  const year = Number(trimmed.slice(0, 4));
+  if (!Number.isInteger(year) || year < 1970 || year > 2999) {
+    return { ok: false, message: "Năm của kỳ báo cáo tháng phải nằm trong khoảng 1970–2999." };
+  }
+  return { ok: true, month: trimmed };
 }
 
 export function validateUiReasonText(
@@ -727,6 +1039,7 @@ export type BuiltJsonRequest<TBody> = {
 };
 
 export function buildRecordEntryRequest(input: {
+  project_id: string;
   entry_type: string;
   amount_input: string;
   effective_date: string;
@@ -736,6 +1049,10 @@ export function buildRecordEntryRequest(input: {
 }):
   | { ok: true; request: BuiltJsonRequest<RecordVendorFinanceEntryBody> }
   | { ok: false; message: string } {
+  const trimmedProject = input.project_id.trim();
+  if (!isCanonicalUiProjectId(trimmedProject)) {
+    return { ok: false, message: "Vui lòng chọn dự án hợp lệ để ghi nhận bút toán." };
+  }
   if (!(VFIN_UI_NORMAL_ENTRY_TYPES as readonly string[]).includes(input.entry_type)) {
     return { ok: false, message: "Loại bút toán không hợp lệ." };
   }
@@ -770,6 +1087,7 @@ export function buildRecordEntryRequest(input: {
         "Idempotency-Key": idem,
       },
       body: {
+        project_id: trimmedProject,
         entry_type: entryType,
         amount_minor: amount.canonical,
         effective_date: effectiveDate.date,
@@ -913,6 +1231,7 @@ function normalizeOpeningDraftItems(
 }
 
 export function buildOpeningPreviewRequest(input: {
+  project_id: string;
   cutoff_date: string;
   rows: readonly OpeningDraftRowInput[];
 }):
@@ -923,6 +1242,10 @@ export function buildOpeningPreviewRequest(input: {
       zero_count: number;
     }
   | { ok: false; message: string; invalid_vendor_id?: string } {
+  const trimmedProject = input.project_id.trim();
+  if (!isCanonicalUiProjectId(trimmedProject)) {
+    return { ok: false, message: "Vui lòng chọn dự án hợp lệ để khởi tạo công nợ đầu kỳ." };
+  }
   const cutoffDate = validateUiCalendarDate(input.cutoff_date);
   if (!cutoffDate.ok) {
     return { ok: false, message: "Ngày chốt số dư đầu kỳ (cutoff date) không hợp lệ." };
@@ -938,6 +1261,7 @@ export function buildOpeningPreviewRequest(input: {
     request: {
       headers: { "Content-Type": "application/json" },
       body: {
+        project_id: trimmedProject,
         cutoff_date: cutoffDate.date,
         items: normalized.items,
       },
@@ -946,6 +1270,7 @@ export function buildOpeningPreviewRequest(input: {
 }
 
 export function buildOpeningApplyRequest(input: {
+  project_id: string;
   cutoff_date: string;
   rows: readonly OpeningDraftRowInput[];
   reason: string;
@@ -954,6 +1279,7 @@ export function buildOpeningApplyRequest(input: {
   | { ok: true; request: BuiltJsonRequest<ApplyOpeningBatchBody> }
   | { ok: false; message: string; invalid_vendor_id?: string } {
   const previewBuilt = buildOpeningPreviewRequest({
+    project_id: input.project_id,
     cutoff_date: input.cutoff_date,
     rows: input.rows,
   });
@@ -976,6 +1302,7 @@ export function buildOpeningApplyRequest(input: {
         "Idempotency-Key": idem,
       },
       body: {
+        project_id: previewBuilt.request.body.project_id,
         cutoff_date: previewBuilt.request.body.cutoff_date,
         items: previewBuilt.request.body.items,
         reason: reason.reason,
@@ -986,6 +1313,8 @@ export function buildOpeningApplyRequest(input: {
 }
 
 export function buildCreateReconciliationRequest(input: {
+  project_id: string;
+  accountant_ref?: string | null;
   as_of_date: string;
   confirmed_balance_input: string;
   reason: string;
@@ -993,9 +1322,20 @@ export function buildCreateReconciliationRequest(input: {
 }):
   | { ok: true; request: BuiltJsonRequest<CreateVendorReconciliationBody> }
   | { ok: false; message: string } {
+  const trimmedProject = input.project_id.trim();
+  if (!isCanonicalUiProjectId(trimmedProject)) {
+    return { ok: false, message: "Vui lòng chọn dự án hợp lệ để đối soát số dư." };
+  }
+  let accountantRef: string | null = null;
+  if (typeof input.accountant_ref === "string" && input.accountant_ref.trim().length > 0) {
+    if (!isUuidString(input.accountant_ref.trim())) {
+      return { ok: false, message: "Kế toán phụ trách sổ được chọn không hợp lệ." };
+    }
+    accountantRef = input.accountant_ref.trim().toLowerCase();
+  }
   const asOfDate = validateUiCalendarDate(input.as_of_date);
   if (!asOfDate.ok) {
-    return { ok: false, message: "Ngày chốt đối soát không hợp lệ." };
+    return { ok: false, message: asOfDate.message };
   }
   const confirmed = normalizeSignedVndInput(input.confirmed_balance_input);
   if (!confirmed.ok) {
@@ -1017,6 +1357,8 @@ export function buildCreateReconciliationRequest(input: {
         "Idempotency-Key": idem,
       },
       body: {
+        project_id: trimmedProject,
+        accountant_ref: accountantRef,
         as_of_date: asOfDate.date,
         confirmed_balance_minor: confirmed.canonical,
         reason: reason.reason,
@@ -1024,6 +1366,204 @@ export function buildCreateReconciliationRequest(input: {
       },
     },
   };
+}
+
+export function buildAssignProjectAccountantRequest(input: {
+  project_id: string;
+  accountant_ref: string;
+  valid_from?: string | null;
+  expected_version: number;
+  reason: string;
+  idempotency_key: string;
+}):
+  | { ok: true; request: BuiltJsonRequest<AssignProjectAccountantBody> }
+  | { ok: false; message: string } {
+  const trimmedProject = input.project_id.trim();
+  if (!isCanonicalUiProjectId(trimmedProject)) {
+    return { ok: false, message: "Mã dự án không hợp lệ." };
+  }
+  if (!isUuidString(input.accountant_ref)) {
+    return { ok: false, message: "Vui lòng chọn kế toán phụ trách thuộc Phòng Kế toán." };
+  }
+  let validFrom: string | null = null;
+  if (typeof input.valid_from === "string" && input.valid_from.trim().length > 0) {
+    const parsedDate = validateUiCalendarDate(input.valid_from);
+    if (!parsedDate.ok) return { ok: false, message: parsedDate.message };
+    validFrom = parsedDate.date;
+  }
+  if (!Number.isSafeInteger(input.expected_version) || input.expected_version < 0) {
+    return { ok: false, message: "Phiên bản phân công (OCC) không hợp lệ." };
+  }
+  const reason = validateUiReasonText(input.reason);
+  if (!reason.ok) return { ok: false, message: reason.message };
+  if (!isUuidString(input.idempotency_key)) {
+    return { ok: false, message: "Mã chống gửi trùng (Idempotency-Key) không hợp lệ." };
+  }
+  const idem = input.idempotency_key.toLowerCase();
+  return {
+    ok: true,
+    request: {
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": idem,
+      },
+      body: {
+        project_id: trimmedProject,
+        accountant_ref: input.accountant_ref.toLowerCase(),
+        valid_from: validFrom,
+        expected_version: input.expected_version,
+        reason: reason.reason,
+        idempotency_key: idem,
+      },
+    },
+  };
+}
+
+export function buildEndProjectAccountantRequest(input: {
+  expected_version: number;
+  valid_to?: string | null;
+  reason: string;
+  idempotency_key: string;
+}):
+  | { ok: true; request: BuiltJsonRequest<EndProjectAccountantBody> }
+  | { ok: false; message: string } {
+  if (!Number.isSafeInteger(input.expected_version) || input.expected_version < 1) {
+    return { ok: false, message: "Phiên bản phân công (OCC) không hợp lệ." };
+  }
+  let validTo: string | null = null;
+  if (typeof input.valid_to === "string" && input.valid_to.trim().length > 0) {
+    const parsedDate = validateUiCalendarDate(input.valid_to);
+    if (!parsedDate.ok) return { ok: false, message: parsedDate.message };
+    validTo = parsedDate.date;
+  }
+  const reason = validateUiReasonText(input.reason);
+  if (!reason.ok) return { ok: false, message: reason.message };
+  if (!isUuidString(input.idempotency_key)) {
+    return { ok: false, message: "Mã chống gửi trùng (Idempotency-Key) không hợp lệ." };
+  }
+  const idem = input.idempotency_key.toLowerCase();
+  return {
+    ok: true,
+    request: {
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": idem,
+      },
+      body: {
+        expected_version: input.expected_version,
+        valid_to: validTo,
+        reason: reason.reason,
+        idempotency_key: idem,
+      },
+    },
+  };
+}
+
+export function buildSetProjectVendorLinkRequest(input: {
+  project_id: string;
+  vendor_id: string;
+  active: boolean;
+  expected_version: number;
+  reason: string;
+  idempotency_key: string;
+}):
+  | { ok: true; request: BuiltJsonRequest<SetProjectVendorLinkBody> }
+  | { ok: false; message: string } {
+  const trimmedProject = input.project_id.trim();
+  if (!isCanonicalUiProjectId(trimmedProject)) {
+    return { ok: false, message: "Vui lòng chọn dự án hợp lệ." };
+  }
+  const trimmedVendor = input.vendor_id.trim();
+  if (!isCanonicalUiVendorId(trimmedVendor)) {
+    return { ok: false, message: "Mã Vendor không hợp lệ." };
+  }
+  if (!Number.isSafeInteger(input.expected_version) || input.expected_version < 0) {
+    return { ok: false, message: "Phiên bản liên kết (OCC) không hợp lệ." };
+  }
+  const reason = validateUiReasonText(input.reason);
+  if (!reason.ok) return { ok: false, message: reason.message };
+  if (!isUuidString(input.idempotency_key)) {
+    return { ok: false, message: "Mã chống gửi trùng (Idempotency-Key) không hợp lệ." };
+  }
+  const idem = input.idempotency_key.toLowerCase();
+  return {
+    ok: true,
+    request: {
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": idem,
+      },
+      body: {
+        project_id: trimmedProject,
+        vendor_id: trimmedVendor,
+        active: Boolean(input.active),
+        expected_version: input.expected_version,
+        reason: reason.reason,
+        idempotency_key: idem,
+      },
+    },
+  };
+}
+
+export function buildAssignGlobalRoleRequest(input: {
+  account_ref: string;
+  role_code: string;
+  valid_from?: string | null;
+  expected_version: number;
+  reason: string;
+  idempotency_key: string;
+}):
+  | { ok: true; request: BuiltJsonRequest<AssignGlobalRoleBody> }
+  | { ok: false; message: string } {
+  if (!isUuidString(input.account_ref)) {
+    return { ok: false, message: "Vui lòng chọn tài khoản hợp lệ để cấp vai trò." };
+  }
+  if (!(VFIN_UI_GLOBAL_ROLE_CODES as readonly string[]).includes(input.role_code)) {
+    return { ok: false, message: "Mã vai trò tài chính toàn cục không hợp lệ." };
+  }
+  let validFrom: string | null = null;
+  if (typeof input.valid_from === "string" && input.valid_from.trim().length > 0) {
+    const parsedDate = validateUiCalendarDate(input.valid_from);
+    if (!parsedDate.ok) return { ok: false, message: parsedDate.message };
+    validFrom = parsedDate.date;
+  }
+  if (!Number.isSafeInteger(input.expected_version) || input.expected_version < 0) {
+    return { ok: false, message: "Phiên bản cấp vai trò (OCC) không hợp lệ." };
+  }
+  const reason = validateUiReasonText(input.reason);
+  if (!reason.ok) return { ok: false, message: reason.message };
+  if (!isUuidString(input.idempotency_key)) {
+    return { ok: false, message: "Mã chống gửi trùng (Idempotency-Key) không hợp lệ." };
+  }
+  const idem = input.idempotency_key.toLowerCase();
+  return {
+    ok: true,
+    request: {
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": idem,
+      },
+      body: {
+        account_ref: input.account_ref.toLowerCase(),
+        role_code: input.role_code as VendorFinanceGlobalRoleCode,
+        valid_from: validFrom,
+        expected_version: input.expected_version,
+        reason: reason.reason,
+        idempotency_key: idem,
+      },
+    },
+  };
+}
+
+export function buildEndGlobalRoleRequest(input: {
+  expected_version: number;
+  valid_to?: string | null;
+  reason: string;
+  idempotency_key: string;
+}):
+  | { ok: true; request: BuiltJsonRequest<EndGlobalRoleBody> }
+  | { ok: false; message: string } {
+  return buildEndProjectAccountantRequest(input);
 }
 
 export function buildReserveEvidenceRequest(input: {
@@ -1212,6 +1752,247 @@ export function parseEvidenceSummaryProjection(value: unknown): VendorFinanceEvi
   };
 }
 
+function nullableBoolVal(value: unknown): boolean | null | undefined {
+  return value === null ? null : (boolVal(value) ?? undefined);
+}
+
+function projectIdStr(value: unknown): string | null {
+  return isCanonicalUiProjectId(value) ? value : null;
+}
+
+function nullableProjectIdStr(value: unknown): string | null | undefined {
+  return value === null ? null : (projectIdStr(value) ?? undefined);
+}
+
+function ledgerScopeVal(value: unknown): VendorFinanceLedgerScope | null {
+  return value === "PROJECT_ACCOUNTANT" || value === "LEGACY_UNALLOCATED" ? value : null;
+}
+
+function visibilityScopeVal(value: unknown): VendorFinanceVisibilityScope | null {
+  return value === "ALL" || value === "PROJECT_SCOPED" || value === "NONE" ? value : null;
+}
+
+function writeScopeVal(value: unknown): VendorFinanceWriteScope | null {
+  return value === "ALL" || value === "ASSIGNED_PROJECTS" || value === "NONE" ? value : null;
+}
+
+function balanceDirectionVal(value: unknown): VendorFinanceBalanceDirection | null {
+  return value === "PAYABLE" || value === "BALANCED" || value === "ADVANCE" ? value : null;
+}
+
+function listBalanceDirectionVal(value: unknown): VendorFinanceListBalanceDirection | null {
+  return value === "PAYABLE" ||
+    value === "BALANCED" ||
+    value === "ADVANCE" ||
+    value === "MULTI_LEDGER"
+    ? value
+    : null;
+}
+
+function parseAccountSummaryProjection(value: unknown): VendorFinanceAccountSummary | null {
+  if (
+    !isRecord(value) ||
+    !exactKeys(value, [
+      "account_ref",
+      "display_name",
+      "login_id",
+      "personnel_code",
+      "account_enabled",
+    ])
+  ) {
+    return null;
+  }
+  const accountRef = uuidStr(value.account_ref);
+  const displayName = nonEmptyStr(value.display_name);
+  const loginId = nullableStr(value.login_id);
+  const personnelCode = nullableStr(value.personnel_code);
+  const accountEnabled = boolVal(value.account_enabled);
+  if (
+    accountRef === null ||
+    displayName === null ||
+    loginId === undefined ||
+    personnelCode === undefined ||
+    accountEnabled === null
+  ) {
+    return null;
+  }
+  return {
+    account_ref: accountRef,
+    display_name: displayName,
+    login_id: loginId,
+    personnel_code: personnelCode,
+    account_enabled: accountEnabled,
+  };
+}
+
+export function parseVendorFinanceContextEnvelope(
+  envelope: unknown,
+): VendorFinanceActorContextOptionsResponse | null {
+  const data = unwrapOkDataEnvelope(envelope);
+  if (
+    !isRecord(data) ||
+    !exactKeys(data, [
+      "authorization_date",
+      "allowed_actions",
+      "has_legacy_unallocated",
+      "projects",
+      "accountants",
+    ]) ||
+    !isRecord(data.allowed_actions) ||
+    !exactKeys(data.allowed_actions, [
+      "visibility_scope",
+      "record_scope",
+      "reconcile_scope",
+      "can_view",
+      "can_record",
+      "can_reconcile",
+      "can_manage_project_assignments",
+    ]) ||
+    !Array.isArray(data.projects) ||
+    !Array.isArray(data.accountants)
+  ) {
+    return null;
+  }
+
+  const authorizationDate = dateStr(data.authorization_date);
+  const visibilityScope = visibilityScopeVal(data.allowed_actions.visibility_scope);
+  const recordScope = writeScopeVal(data.allowed_actions.record_scope);
+  const reconcileScope = writeScopeVal(data.allowed_actions.reconcile_scope);
+  const canView = boolVal(data.allowed_actions.can_view);
+  const canRecord = boolVal(data.allowed_actions.can_record);
+  const canReconcile = boolVal(data.allowed_actions.can_reconcile);
+  const canManage = boolVal(data.allowed_actions.can_manage_project_assignments);
+  const hasLegacy = boolVal(data.has_legacy_unallocated);
+
+  if (
+    authorizationDate === null ||
+    visibilityScope === null ||
+    recordScope === null ||
+    reconcileScope === null ||
+    canView !== true ||
+    canRecord === null ||
+    canReconcile === null ||
+    canManage === null ||
+    hasLegacy === null
+  ) {
+    return null;
+  }
+
+  const projects: VendorFinanceContextProjectOption[] = [];
+  for (const rawProject of data.projects) {
+    if (
+      !isRecord(rawProject) ||
+      !exactKeys(rawProject, [
+        "project_id",
+        "display_name",
+        "active",
+        "active_accountant_ref",
+        "active_accountant_display_name",
+        "has_active_accountant",
+        "can_record_for_project",
+        "can_reconcile_for_project",
+        "linked_vendors",
+      ]) ||
+      !Array.isArray(rawProject.linked_vendors)
+    ) {
+      return null;
+    }
+    const projectId = projectIdStr(rawProject.project_id);
+    const displayName = nonEmptyStr(rawProject.display_name);
+    const active = boolVal(rawProject.active);
+    const activeAccountantRef = nullableUuidStr(rawProject.active_accountant_ref);
+    const activeAccountantName = nullableStr(rawProject.active_accountant_display_name);
+    const hasActiveAccountant = boolVal(rawProject.has_active_accountant);
+    const canRecordForProject = boolVal(rawProject.can_record_for_project);
+    const canReconcileForProject = boolVal(rawProject.can_reconcile_for_project);
+
+    if (
+      projectId === null ||
+      displayName === null ||
+      active === null ||
+      activeAccountantRef === undefined ||
+      activeAccountantName === undefined ||
+      hasActiveAccountant === null ||
+      canRecordForProject === null ||
+      canReconcileForProject === null
+    ) {
+      return null;
+    }
+
+    const linkedVendors: VendorFinanceContextLinkedVendorOption[] = [];
+    for (const rawVendor of rawProject.linked_vendors) {
+      if (
+        !isRecord(rawVendor) ||
+        !exactKeys(rawVendor, ["vendor_id", "display_name", "vendor_active", "link_active"])
+      ) {
+        return null;
+      }
+      const vendorId = isCanonicalUiVendorId(rawVendor.vendor_id) ? rawVendor.vendor_id : null;
+      const vDisplayName = nonEmptyStr(rawVendor.display_name);
+      const vendorActive = boolVal(rawVendor.vendor_active);
+      const linkActive = boolVal(rawVendor.link_active);
+      if (
+        vendorId === null ||
+        vDisplayName === null ||
+        vendorActive === null ||
+        linkActive === null
+      ) {
+        return null;
+      }
+      linkedVendors.push({
+        vendor_id: vendorId,
+        display_name: vDisplayName,
+        vendor_active: vendorActive,
+        link_active: linkActive,
+      });
+    }
+
+    projects.push({
+      project_id: projectId,
+      display_name: displayName,
+      active,
+      active_accountant_ref: activeAccountantRef,
+      active_accountant_display_name: activeAccountantName,
+      has_active_accountant: hasActiveAccountant,
+      can_record_for_project: canRecordForProject,
+      can_reconcile_for_project: canReconcileForProject,
+      linked_vendors: linkedVendors,
+    });
+  }
+
+  const accountants: VendorFinanceContextAccountantOption[] = [];
+  for (const rawAccountant of data.accountants) {
+    if (!isRecord(rawAccountant) || !exactKeys(rawAccountant, ["accountant_ref", "display_name"])) {
+      return null;
+    }
+    const accountantRef = uuidStr(rawAccountant.accountant_ref);
+    const displayName = nonEmptyStr(rawAccountant.display_name);
+    if (accountantRef === null || displayName === null) {
+      return null;
+    }
+    accountants.push({
+      accountant_ref: accountantRef,
+      display_name: displayName,
+    });
+  }
+
+  return {
+    authorization_date: authorizationDate,
+    allowed_actions: {
+      visibility_scope: visibilityScope,
+      record_scope: recordScope,
+      reconcile_scope: reconcileScope,
+      can_view: true,
+      can_record: canRecord,
+      can_reconcile: canReconcile,
+      can_manage_project_assignments: canManage,
+    },
+    has_legacy_unallocated: hasLegacy,
+    projects,
+    accountants,
+  };
+}
+
 export function parseEntryProjection(value: unknown): VendorFinanceEntryProjection | null {
   if (
     !isRecord(value) ||
@@ -1220,7 +2001,13 @@ export function parseEntryProjection(value: unknown): VendorFinanceEntryProjecti
       "vendor_id",
       "vendor_display_name_snapshot",
       "vendor_active",
+      "ledger_scope",
+      "project_id",
+      "project_display_name_snapshot",
+      "accountant_ref",
+      "responsible_accountant_display_name",
       "vendor_sequence",
+      "cursor_sequence",
       "document_no",
       "document_kind",
       "document_title_vi",
@@ -1250,7 +2037,13 @@ export function parseEntryProjection(value: unknown): VendorFinanceEntryProjecti
   const vendorId = isCanonicalUiVendorId(value.vendor_id) ? value.vendor_id : null;
   const vendorDisplayNameSnapshot = nonEmptyStr(value.vendor_display_name_snapshot);
   const vendorActive = boolVal(value.vendor_active);
+  const ledgerScope = ledgerScopeVal(value.ledger_scope);
+  const projectId = nullableProjectIdStr(value.project_id);
+  const projectDisplayNameSnapshot = nullableStr(value.project_display_name_snapshot);
+  const accountantRef = nullableUuidStr(value.accountant_ref);
+  const responsibleAccountantDisplayName = nullableStr(value.responsible_accountant_display_name);
   const vendorSequence = posInt(value.vendor_sequence);
+  const cursorSequence = posInt(value.cursor_sequence);
   const documentNo =
     typeof value.document_no === "string" && DOCUMENT_NO_REGEX.test(value.document_no)
       ? value.document_no
@@ -1292,7 +2085,13 @@ export function parseEntryProjection(value: unknown): VendorFinanceEntryProjecti
     vendorId === null ||
     vendorDisplayNameSnapshot === null ||
     vendorActive === null ||
+    ledgerScope === null ||
+    projectId === undefined ||
+    projectDisplayNameSnapshot === undefined ||
+    accountantRef === undefined ||
+    responsibleAccountantDisplayName === undefined ||
     vendorSequence === null ||
+    cursorSequence === null ||
     documentNo === null ||
     documentKind === null ||
     documentTitleVi === null ||
@@ -1318,6 +2117,22 @@ export function parseEntryProjection(value: unknown): VendorFinanceEntryProjecti
     return null;
   }
 
+  if (
+    ledgerScope === "PROJECT_ACCOUNTANT" &&
+    (projectId === null ||
+      projectDisplayNameSnapshot === null ||
+      accountantRef === null ||
+      responsibleAccountantDisplayName === null)
+  ) {
+    return null;
+  }
+  if (
+    ledgerScope === "LEGACY_UNALLOCATED" &&
+    (projectId !== null || accountantRef !== null)
+  ) {
+    return null;
+  }
+
   if (BigInt(balanceBeforeMinor) + BigInt(balanceDeltaMinor) !== BigInt(balanceAfterMinor)) {
     return null;
   }
@@ -1327,7 +2142,13 @@ export function parseEntryProjection(value: unknown): VendorFinanceEntryProjecti
     vendor_id: vendorId,
     vendor_display_name_snapshot: vendorDisplayNameSnapshot,
     vendor_active: vendorActive,
+    ledger_scope: ledgerScope,
+    project_id: projectId,
+    project_display_name_snapshot: projectDisplayNameSnapshot,
+    accountant_ref: accountantRef,
+    responsible_accountant_display_name: responsibleAccountantDisplayName,
     vendor_sequence: vendorSequence,
+    cursor_sequence: cursorSequence,
     document_no: documentNo,
     document_kind: documentKind,
     document_title_vi: documentTitleVi,
@@ -1360,6 +2181,11 @@ export function parseReconciliationProjection(
     !exactKeys(value, [
       "reconciliation_id",
       "vendor_id",
+      "ledger_scope",
+      "project_id",
+      "project_display_name_snapshot",
+      "accountant_ref",
+      "responsible_accountant_display_name",
       "as_of_date",
       "system_balance_minor",
       "confirmed_balance_minor",
@@ -1376,6 +2202,11 @@ export function parseReconciliationProjection(
   }
   const reconciliationId = uuidStr(value.reconciliation_id);
   const vendorId = isCanonicalUiVendorId(value.vendor_id) ? value.vendor_id : null;
+  const ledgerScope = ledgerScopeVal(value.ledger_scope);
+  const projectId = nullableProjectIdStr(value.project_id);
+  const projectDisplayNameSnapshot = nullableStr(value.project_display_name_snapshot);
+  const accountantRef = nullableUuidStr(value.accountant_ref);
+  const responsibleAccountantDisplayName = nullableStr(value.responsible_accountant_display_name);
   const asOfDate = dateStr(value.as_of_date);
   const systemBalanceMinor = signedMoneyStr(value.system_balance_minor);
   const confirmedBalanceMinor = signedMoneyStr(value.confirmed_balance_minor);
@@ -1390,6 +2221,11 @@ export function parseReconciliationProjection(
   if (
     reconciliationId === null ||
     vendorId === null ||
+    ledgerScope === null ||
+    projectId === undefined ||
+    projectDisplayNameSnapshot === undefined ||
+    accountantRef === undefined ||
+    responsibleAccountantDisplayName === undefined ||
     asOfDate === null ||
     systemBalanceMinor === null ||
     confirmedBalanceMinor === null ||
@@ -1404,6 +2240,22 @@ export function parseReconciliationProjection(
     return null;
   }
 
+  if (
+    ledgerScope === "PROJECT_ACCOUNTANT" &&
+    (projectId === null ||
+      projectDisplayNameSnapshot === null ||
+      accountantRef === null ||
+      responsibleAccountantDisplayName === null)
+  ) {
+    return null;
+  }
+  if (
+    ledgerScope === "LEGACY_UNALLOCATED" &&
+    (projectId !== null || accountantRef !== null)
+  ) {
+    return null;
+  }
+
   if (BigInt(confirmedBalanceMinor) - BigInt(systemBalanceMinor) !== BigInt(differenceMinor)) {
     return null;
   }
@@ -1411,6 +2263,11 @@ export function parseReconciliationProjection(
   return {
     reconciliation_id: reconciliationId,
     vendor_id: vendorId,
+    ledger_scope: ledgerScope,
+    project_id: projectId,
+    project_display_name_snapshot: projectDisplayNameSnapshot,
+    accountant_ref: accountantRef,
+    responsible_accountant_display_name: responsibleAccountantDisplayName,
     as_of_date: asOfDate,
     system_balance_minor: systemBalanceMinor,
     confirmed_balance_minor: confirmedBalanceMinor,
@@ -1421,6 +2278,68 @@ export function parseReconciliationProjection(
     evidence,
     created_by_display_name: createdByDisplayName,
     created_at: createdAt,
+  };
+}
+
+function parseListSubLedgerItem(value: unknown): VendorFinanceListSubLedgerItem | null {
+  if (
+    !isRecord(value) ||
+    !exactKeys(value, [
+      "ledger_scope",
+      "project_id",
+      "project_display_name",
+      "accountant_ref",
+      "responsible_accountant_display_name",
+      "current_balance_minor",
+      "balance_direction",
+      "entry_count",
+      "has_opening_entry",
+      "eligible_for_opening",
+      "last_reconciled_as_of_date",
+    ])
+  ) {
+    return null;
+  }
+  const ledgerScope = ledgerScopeVal(value.ledger_scope);
+  const projectId = nullableProjectIdStr(value.project_id);
+  const projectDisplayName = nullableStr(value.project_display_name);
+  const accountantRef = nullableUuidStr(value.accountant_ref);
+  const responsibleName = nullableStr(value.responsible_accountant_display_name);
+  const currentBalance = signedMoneyStr(value.current_balance_minor);
+  const direction = balanceDirectionVal(value.balance_direction);
+  const entryCount = nonNegInt(value.entry_count);
+  const hasOpening = boolVal(value.has_opening_entry);
+  const eligible = boolVal(value.eligible_for_opening);
+  const lastReconciled = nullableDateStr(value.last_reconciled_as_of_date);
+
+  if (
+    ledgerScope === null ||
+    projectId === undefined ||
+    projectDisplayName === undefined ||
+    accountantRef === undefined ||
+    responsibleName === undefined ||
+    currentBalance === null ||
+    direction === null ||
+    entryCount === null ||
+    hasOpening === null ||
+    eligible === null ||
+    lastReconciled === undefined
+  ) {
+    return null;
+  }
+
+  return {
+    ledger_scope: ledgerScope,
+    project_id: projectId,
+    project_display_name: projectDisplayName,
+    accountant_ref: accountantRef,
+    responsible_accountant_display_name: responsibleName,
+    current_balance_minor: currentBalance,
+    balance_direction: direction,
+    entry_count: entryCount,
+    has_opening_entry: hasOpening,
+    eligible_for_opening: eligible,
+    last_reconciled_as_of_date: lastReconciled,
   };
 }
 
@@ -1440,7 +2359,14 @@ export function parseVendorListEnvelope(envelope: unknown): VendorFinanceVendorL
       "vendors",
     ]) ||
     !isRecord(data.allowed_actions) ||
-    !exactKeys(data.allowed_actions, ["can_view", "can_record"]) ||
+    !exactKeys(data.allowed_actions, [
+      "visibility_scope",
+      "can_view",
+      "can_record",
+      "can_reconcile",
+      "can_manage_project_assignments",
+      "active_assigned_project_count",
+    ]) ||
     !isRecord(data.summary) ||
     !exactKeys(data.summary, [
       "total_payable_minor",
@@ -1451,17 +2377,30 @@ export function parseVendorListEnvelope(envelope: unknown): VendorFinanceVendorL
       "vendors_with_nonzero_balance_count",
       "total_vendor_count",
       "uninitialized_vendor_count",
+      "sub_ledger_count",
     ]) ||
     !isRecord(data.filters) ||
-    !exactKeys(data.filters, ["search", "active", "balance_filter"]) ||
+    !exactKeys(data.filters, [
+      "search",
+      "active",
+      "balance_filter",
+      "project_id",
+      "accountant_ref",
+      "ledger_scope",
+    ]) ||
     !Array.isArray(data.vendors)
   ) {
     return null;
   }
 
   const authorizationDate = dateStr(data.authorization_date);
+  const visibilityScope = visibilityScopeVal(data.allowed_actions.visibility_scope);
   const canView = boolVal(data.allowed_actions.can_view);
   const canRecord = boolVal(data.allowed_actions.can_record);
+  const canReconcile = boolVal(data.allowed_actions.can_reconcile);
+  const canManage = boolVal(data.allowed_actions.can_manage_project_assignments);
+  const activeAssignedCount = nonNegInt(data.allowed_actions.active_assigned_project_count);
+
   const totalPayable = nonNegativeMoneyStr(data.summary.total_payable_minor);
   const totalAdvance = nonNegativeMoneyStr(data.summary.total_advance_minor);
   const netBalance = signedMoneyStr(data.summary.net_balance_minor);
@@ -1470,10 +2409,14 @@ export function parseVendorListEnvelope(envelope: unknown): VendorFinanceVendorL
   const nonzeroCount = nonNegInt(data.summary.vendors_with_nonzero_balance_count);
   const totalVendorCount = nonNegInt(data.summary.total_vendor_count);
   const uninitializedCount = nonNegInt(data.summary.uninitialized_vendor_count);
+  const subLedgerCount = nonNegInt(data.summary.sub_ledger_count);
 
   const search = nullableStr(data.filters.search);
   const active = data.filters.active;
   const balanceFilter = data.filters.balance_filter;
+  const filterProjectId = nullableProjectIdStr(data.filters.project_id);
+  const filterAccountantRef = nullableUuidStr(data.filters.accountant_ref);
+  const filterLedgerScope = data.filters.ledger_scope;
   const page = posInt(data.page);
   const pageSize = posInt(data.page_size);
   const total = nonNegInt(data.total);
@@ -1481,8 +2424,12 @@ export function parseVendorListEnvelope(envelope: unknown): VendorFinanceVendorL
 
   if (
     authorizationDate === null ||
+    visibilityScope === null ||
     canView !== true ||
     canRecord === null ||
+    canReconcile === null ||
+    canManage === null ||
+    activeAssignedCount === null ||
     totalPayable === null ||
     totalAdvance === null ||
     netBalance === null ||
@@ -1491,6 +2438,7 @@ export function parseVendorListEnvelope(envelope: unknown): VendorFinanceVendorL
     nonzeroCount === null ||
     totalVendorCount === null ||
     uninitializedCount === null ||
+    subLedgerCount === null ||
     search === undefined ||
     (active !== "all" && active !== "active" && active !== "inactive") ||
     (balanceFilter !== "all" &&
@@ -1498,6 +2446,11 @@ export function parseVendorListEnvelope(envelope: unknown): VendorFinanceVendorL
       balanceFilter !== "advance" &&
       balanceFilter !== "nonzero" &&
       balanceFilter !== "uninitialized") ||
+    filterProjectId === undefined ||
+    filterAccountantRef === undefined ||
+    (filterLedgerScope !== "all" &&
+      filterLedgerScope !== "PROJECT_ACCOUNTANT" &&
+      filterLedgerScope !== "LEGACY_UNALLOCATED") ||
     page === null ||
     pageSize === null ||
     total === null ||
@@ -1514,6 +2467,9 @@ export function parseVendorListEnvelope(envelope: unknown): VendorFinanceVendorL
         "vendor_id",
         "display_name",
         "active",
+        "sub_ledger_count",
+        "payable_total_minor",
+        "advance_total_minor",
         "current_balance_minor",
         "balance_direction",
         "entry_count",
@@ -1522,15 +2478,20 @@ export function parseVendorListEnvelope(envelope: unknown): VendorFinanceVendorL
         "last_effective_date",
         "last_entry_at",
         "last_reconciled_as_of_date",
-      ])
+        "sub_ledgers",
+      ]) ||
+      !Array.isArray(item.sub_ledgers)
     ) {
       return null;
     }
     const vendorId = isCanonicalUiVendorId(item.vendor_id) ? item.vendor_id : null;
     const displayName = nonEmptyStr(item.display_name);
     const itemActive = boolVal(item.active);
+    const itemSubLedgerCount = nonNegInt(item.sub_ledger_count);
+    const payableTotal = nonNegativeMoneyStr(item.payable_total_minor);
+    const advanceTotal = nonNegativeMoneyStr(item.advance_total_minor);
     const currentBalance = signedMoneyStr(item.current_balance_minor);
-    const direction = item.balance_direction;
+    const direction = listBalanceDirectionVal(item.balance_direction);
     const entryCount = nonNegInt(item.entry_count);
     const hasOpening = boolVal(item.has_opening_entry);
     const eligible = boolVal(item.eligible_for_opening);
@@ -1542,8 +2503,11 @@ export function parseVendorListEnvelope(envelope: unknown): VendorFinanceVendorL
       vendorId === null ||
       displayName === null ||
       itemActive === null ||
+      itemSubLedgerCount === null ||
+      payableTotal === null ||
+      advanceTotal === null ||
       currentBalance === null ||
-      (direction !== "PAYABLE" && direction !== "BALANCED" && direction !== "ADVANCE") ||
+      direction === null ||
       entryCount === null ||
       hasOpening === null ||
       eligible === null ||
@@ -1553,10 +2517,21 @@ export function parseVendorListEnvelope(envelope: unknown): VendorFinanceVendorL
     ) {
       return null;
     }
+
+    const subLedgers: VendorFinanceListSubLedgerItem[] = [];
+    for (const rawSub of item.sub_ledgers) {
+      const parsedSub = parseListSubLedgerItem(rawSub);
+      if (!parsedSub) return null;
+      subLedgers.push(parsedSub);
+    }
+
     vendors.push({
       vendor_id: vendorId,
       display_name: displayName,
       active: itemActive,
+      sub_ledger_count: itemSubLedgerCount,
+      payable_total_minor: payableTotal,
+      advance_total_minor: advanceTotal,
       current_balance_minor: currentBalance,
       balance_direction: direction,
       entry_count: entryCount,
@@ -1565,6 +2540,7 @@ export function parseVendorListEnvelope(envelope: unknown): VendorFinanceVendorL
       last_effective_date: lastEffectiveDate,
       last_entry_at: lastEntryAt,
       last_reconciled_as_of_date: lastReconciled,
+      sub_ledgers: subLedgers,
     });
   }
 
@@ -1577,18 +2553,115 @@ export function parseVendorListEnvelope(envelope: unknown): VendorFinanceVendorL
     vendors_with_nonzero_balance_count: nonzeroCount,
     total_vendor_count: totalVendorCount,
     uninitialized_vendor_count: uninitializedCount,
+    sub_ledger_count: subLedgerCount,
   };
 
   return {
     authorization_date: authorizationDate,
-    allowed_actions: { can_view: true, can_record: canRecord },
+    allowed_actions: {
+      visibility_scope: visibilityScope,
+      can_view: true,
+      can_record: canRecord,
+      can_reconcile: canReconcile,
+      can_manage_project_assignments: canManage,
+      active_assigned_project_count: activeAssignedCount,
+    },
     summary,
-    filters: { search, active, balance_filter: balanceFilter },
+    filters: {
+      search,
+      active,
+      balance_filter: balanceFilter,
+      project_id: filterProjectId,
+      accountant_ref: filterAccountantRef,
+      ledger_scope: filterLedgerScope,
+    },
     page,
     page_size: pageSize,
     total,
     has_more: hasMore,
     vendors,
+  };
+}
+
+function parseDetailSubLedgerProjection(value: unknown): VendorFinanceDetailSubLedger | null {
+  if (
+    !isRecord(value) ||
+    !exactKeys(value, [
+      "ledger_scope",
+      "project_id",
+      "project_display_name",
+      "project_active",
+      "accountant_ref",
+      "responsible_accountant_display_name",
+      "link_active",
+      "is_active_assignment",
+      "current_balance_minor",
+      "balance_direction",
+      "latest_sequence",
+      "entry_count",
+      "has_opening_entry",
+      "eligible_for_opening",
+      "can_record_entry",
+      "can_reconcile",
+    ])
+  ) {
+    return null;
+  }
+  const ledgerScope = ledgerScopeVal(value.ledger_scope);
+  const projectId = nullableProjectIdStr(value.project_id);
+  const projectDisplayName = nullableStr(value.project_display_name);
+  const projectActive = nullableBoolVal(value.project_active);
+  const accountantRef = nullableUuidStr(value.accountant_ref);
+  const responsibleName = nullableStr(value.responsible_accountant_display_name);
+  const linkActive = nullableBoolVal(value.link_active);
+  const isActiveAssignment = boolVal(value.is_active_assignment);
+  const currentBalance = signedMoneyStr(value.current_balance_minor);
+  const direction = balanceDirectionVal(value.balance_direction);
+  const latestSeq = nonNegInt(value.latest_sequence);
+  const entryCount = nonNegInt(value.entry_count);
+  const hasOpening = boolVal(value.has_opening_entry);
+  const eligible = boolVal(value.eligible_for_opening);
+  const canRecordEntry = boolVal(value.can_record_entry);
+  const canReconcile = boolVal(value.can_reconcile);
+
+  if (
+    ledgerScope === null ||
+    projectId === undefined ||
+    projectDisplayName === undefined ||
+    projectActive === undefined ||
+    accountantRef === undefined ||
+    responsibleName === undefined ||
+    linkActive === undefined ||
+    isActiveAssignment === null ||
+    currentBalance === null ||
+    direction === null ||
+    latestSeq === null ||
+    entryCount === null ||
+    hasOpening === null ||
+    eligible === null ||
+    canRecordEntry === null ||
+    canReconcile === null
+  ) {
+    return null;
+  }
+
+  return {
+    ledger_scope: ledgerScope,
+    project_id: projectId,
+    project_display_name: projectDisplayName,
+    project_active: projectActive,
+    accountant_ref: accountantRef,
+    responsible_accountant_display_name: responsibleName,
+    link_active: linkActive,
+    is_active_assignment: isActiveAssignment,
+    current_balance_minor: currentBalance,
+    balance_direction: direction,
+    latest_sequence: latestSeq,
+    entry_count: entryCount,
+    has_opening_entry: hasOpening,
+    eligible_for_opening: eligible,
+    can_record_entry: canRecordEntry,
+    can_reconcile: canReconcile,
   };
 }
 
@@ -1598,15 +2671,24 @@ export function parseVendorDetailEnvelope(
   const data = unwrapOkDataEnvelope(envelope);
   if (
     !isRecord(data) ||
-    !exactKeys(data, ["authorization_date", "allowed_actions", "vendor"]) ||
+    !exactKeys(data, [
+      "authorization_date",
+      "allowed_actions",
+      "selected_sub_ledger",
+      "sub_ledgers",
+      "vendor",
+    ]) ||
     !isRecord(data.allowed_actions) ||
     !exactKeys(data.allowed_actions, [
+      "visibility_scope",
       "can_view",
       "can_record",
       "can_reconcile",
+      "can_manage_project_assignments",
       "allowed_entry_types",
     ]) ||
     !Array.isArray(data.allowed_actions.allowed_entry_types) ||
+    !Array.isArray(data.sub_ledgers) ||
     !isRecord(data.vendor) ||
     !exactKeys(data.vendor, [
       "vendor_id",
@@ -1640,9 +2722,11 @@ export function parseVendorDetailEnvelope(
   }
 
   const authorizationDate = dateStr(data.authorization_date);
+  const visibilityScope = visibilityScopeVal(data.allowed_actions.visibility_scope);
   const canView = boolVal(data.allowed_actions.can_view);
   const canRecord = boolVal(data.allowed_actions.can_record);
   const canReconcile = boolVal(data.allowed_actions.can_reconcile);
+  const canManage = boolVal(data.allowed_actions.can_manage_project_assignments);
   const allowedEntryTypes: NormalVendorFinanceEntryType[] = [];
   for (const rawType of data.allowed_actions.allowed_entry_types) {
     if (
@@ -1654,12 +2738,27 @@ export function parseVendorDetailEnvelope(
     allowedEntryTypes.push(rawType as NormalVendorFinanceEntryType);
   }
 
+  const selectedSubLedger =
+    data.selected_sub_ledger === null
+      ? null
+      : parseDetailSubLedgerProjection(data.selected_sub_ledger);
+  if (data.selected_sub_ledger !== null && selectedSubLedger === null) {
+    return null;
+  }
+
+  const subLedgers: VendorFinanceDetailSubLedger[] = [];
+  for (const rawSub of data.sub_ledgers) {
+    const parsedSub = parseDetailSubLedgerProjection(rawSub);
+    if (!parsedSub) return null;
+    subLedgers.push(parsedSub);
+  }
+
   const v = data.vendor;
   const vendorId = isCanonicalUiVendorId(v.vendor_id) ? v.vendor_id : null;
   const displayName = nonEmptyStr(v.display_name);
   const active = boolVal(v.active);
   const currentBalance = signedMoneyStr(v.current_balance_minor);
-  const direction = v.balance_direction;
+  const direction = listBalanceDirectionVal(v.balance_direction);
   const latestSeq = nonNegInt(v.latest_sequence);
   const entryCount = nonNegInt(v.entry_count);
   const hasOpening = boolVal(v.has_opening_entry);
@@ -1690,14 +2789,16 @@ export function parseVendorDetailEnvelope(
 
   if (
     authorizationDate === null ||
+    visibilityScope === null ||
     canView !== true ||
     canRecord === null ||
     canReconcile === null ||
+    canManage === null ||
     vendorId === null ||
     displayName === null ||
     active === null ||
     currentBalance === null ||
-    (direction !== "PAYABLE" && direction !== "BALANCED" && direction !== "ADVANCE") ||
+    direction === null ||
     latestSeq === null ||
     entryCount === null ||
     hasOpening === null ||
@@ -1731,11 +2832,15 @@ export function parseVendorDetailEnvelope(
   return {
     authorization_date: authorizationDate,
     allowed_actions: {
+      visibility_scope: visibilityScope,
       can_view: true,
       can_record: canRecord,
       can_reconcile: canReconcile,
+      can_manage_project_assignments: canManage,
       allowed_entry_types: allowedEntryTypes,
     },
+    selected_sub_ledger: selectedSubLedger,
+    sub_ledgers: subLedgers,
     vendor: {
       vendor_id: vendorId,
       display_name: displayName,
@@ -1820,20 +2925,31 @@ export function parseSingleEntryEnvelope(
     !isRecord(data) ||
     !exactKeys(data, ["authorization_date", "allowed_actions", "entry"]) ||
     !isRecord(data.allowed_actions) ||
-    !exactKeys(data.allowed_actions, ["can_view", "can_record"])
+    !exactKeys(data.allowed_actions, ["visibility_scope", "can_view", "can_record"])
   ) {
     return null;
   }
   const authorizationDate = dateStr(data.authorization_date);
+  const visibilityScope = visibilityScopeVal(data.allowed_actions.visibility_scope);
   const canView = boolVal(data.allowed_actions.can_view);
   const canRecord = boolVal(data.allowed_actions.can_record);
   const entry = parseEntryProjection(data.entry);
-  if (authorizationDate === null || canView !== true || canRecord === null || entry === null) {
+  if (
+    authorizationDate === null ||
+    visibilityScope === null ||
+    canView !== true ||
+    canRecord === null ||
+    entry === null
+  ) {
     return null;
   }
   return {
     authorization_date: authorizationDate,
-    allowed_actions: { can_view: true, can_record: canRecord },
+    allowed_actions: {
+      visibility_scope: visibilityScope,
+      can_view: true,
+      can_record: canRecord,
+    },
     entry,
   };
 }
@@ -1875,6 +2991,10 @@ export function parseOpeningPreviewEnvelope(
     !isRecord(data) ||
     !exactKeys(data, [
       "authorization_date",
+      "project_id",
+      "project_display_name",
+      "accountant_ref",
+      "responsible_accountant_display_name",
       "cutoff_date",
       "vendor_count",
       "skipped_zero_count",
@@ -1888,6 +3008,10 @@ export function parseOpeningPreviewEnvelope(
     return null;
   }
   const authorizationDate = dateStr(data.authorization_date);
+  const projectId = projectIdStr(data.project_id);
+  const projectDisplayName = nonEmptyStr(data.project_display_name);
+  const accountantRef = uuidStr(data.accountant_ref);
+  const responsibleAccountantName = nonEmptyStr(data.responsible_accountant_display_name);
   const cutoffDate = dateStr(data.cutoff_date);
   const vendorCount = posInt(data.vendor_count);
   const skippedZero = nonNegInt(data.skipped_zero_count);
@@ -1896,6 +3020,10 @@ export function parseOpeningPreviewEnvelope(
   const netBalance = signedMoneyStr(data.net_balance_minor);
   if (
     authorizationDate === null ||
+    projectId === null ||
+    projectDisplayName === null ||
+    accountantRef === null ||
+    responsibleAccountantName === null ||
     cutoffDate === null ||
     vendorCount === null ||
     skippedZero === null ||
@@ -1953,6 +3081,10 @@ export function parseOpeningPreviewEnvelope(
 
   return {
     authorization_date: authorizationDate,
+    project_id: projectId,
+    project_display_name: projectDisplayName,
+    accountant_ref: accountantRef,
+    responsible_accountant_display_name: responsibleAccountantName,
     cutoff_date: cutoffDate,
     vendor_count: vendorCount,
     skipped_zero_count: skippedZero,
@@ -1973,6 +3105,11 @@ export function parseOpeningApplyEnvelope(
     !isRecord(data.batch) ||
     !exactKeys(data.batch, [
       "batch_id",
+      "ledger_scope",
+      "project_id",
+      "project_display_name_snapshot",
+      "accountant_ref",
+      "responsible_accountant_display_name",
       "cutoff_date",
       "vendor_count",
       "skipped_zero_count",
@@ -1990,6 +3127,11 @@ export function parseOpeningApplyEnvelope(
 
   const b = data.batch;
   const batchId = uuidStr(b.batch_id);
+  const ledgerScope = ledgerScopeVal(b.ledger_scope);
+  const projectId = nullableProjectIdStr(b.project_id);
+  const projectDisplayNameSnapshot = nullableStr(b.project_display_name_snapshot);
+  const accountantRef = nullableUuidStr(b.accountant_ref);
+  const responsibleAccountantName = nullableStr(b.responsible_accountant_display_name);
   const cutoffDate = dateStr(b.cutoff_date);
   const vendorCount = posInt(b.vendor_count);
   const skippedZero = nonNegInt(b.skipped_zero_count);
@@ -2003,6 +3145,11 @@ export function parseOpeningApplyEnvelope(
 
   if (
     batchId === null ||
+    ledgerScope === null ||
+    projectId === undefined ||
+    projectDisplayNameSnapshot === undefined ||
+    accountantRef === undefined ||
+    responsibleAccountantName === undefined ||
     cutoffDate === null ||
     vendorCount === null ||
     skippedZero === null ||
@@ -2028,6 +3175,11 @@ export function parseOpeningApplyEnvelope(
   return {
     batch: {
       batch_id: batchId,
+      ledger_scope: ledgerScope,
+      project_id: projectId,
+      project_display_name_snapshot: projectDisplayNameSnapshot,
+      accountant_ref: accountantRef,
+      responsible_accountant_display_name: responsibleAccountantName,
       cutoff_date: cutoffDate,
       vendor_count: vendorCount,
       skipped_zero_count: skippedZero,
@@ -2104,6 +3256,965 @@ export function parseCreateReconciliationEnvelope(
   const replayed = boolVal(data.replayed);
   if (!reconciliation || replayed === null) return null;
   return { reconciliation, replayed };
+}
+
+export function parseMonthlyReportEnvelope(
+  envelope: unknown,
+): VendorFinanceMonthlyReportResponse | null {
+  const data = unwrapOkDataEnvelope(envelope);
+  if (
+    !isRecord(data) ||
+    !exactKeys(data, [
+      "authorization_date",
+      "allowed_actions",
+      "filters",
+      "totals",
+      "project_accountant_summaries",
+      "rows",
+      "legacy_unallocated_rows",
+    ]) ||
+    !isRecord(data.allowed_actions) ||
+    !exactKeys(data.allowed_actions, [
+      "visibility_scope",
+      "can_view",
+      "can_record",
+      "can_reconcile",
+      "can_manage_project_assignments",
+    ]) ||
+    !isRecord(data.filters) ||
+    !exactKeys(data.filters, ["month", "project_id", "accountant_ref", "vendor_id"]) ||
+    !isRecord(data.totals) ||
+    !exactKeys(data.totals, [
+      "project_revenue_status",
+      "project_revenue_minor",
+      "project_accountant_book_count",
+      "sub_ledger_count",
+      "obligations_in_month_minor",
+      "paid_in_month_minor",
+      "advanced_in_month_minor",
+      "paid_and_advanced_in_month_minor",
+      "closing_payable_minor",
+      "closing_advance_minor",
+    ]) ||
+    !Array.isArray(data.project_accountant_summaries) ||
+    !Array.isArray(data.rows) ||
+    !Array.isArray(data.legacy_unallocated_rows)
+  ) {
+    return null;
+  }
+
+  const authorizationDate = dateStr(data.authorization_date);
+  const visibilityScope = visibilityScopeVal(data.allowed_actions.visibility_scope);
+  const canView = boolVal(data.allowed_actions.can_view);
+  const canRecord = boolVal(data.allowed_actions.can_record);
+  const canReconcile = boolVal(data.allowed_actions.can_reconcile);
+  const canManage = boolVal(data.allowed_actions.can_manage_project_assignments);
+
+  const monthCheck =
+    typeof data.filters.month === "string" ? validateUiCalendarMonth(data.filters.month) : null;
+  const filterProjectId = nullableProjectIdStr(data.filters.project_id);
+  const filterAccountantRef = nullableUuidStr(data.filters.accountant_ref);
+  const filterVendorId =
+    data.filters.vendor_id === null
+      ? null
+      : isCanonicalUiVendorId(data.filters.vendor_id)
+        ? data.filters.vendor_id
+        : undefined;
+
+  const t = data.totals;
+  const bookCount = nonNegInt(t.project_accountant_book_count);
+  const subLedgerCount = nonNegInt(t.sub_ledger_count);
+  const obligations = nonNegativeMoneyStr(t.obligations_in_month_minor);
+  const paid = nonNegativeMoneyStr(t.paid_in_month_minor);
+  const advanced = nonNegativeMoneyStr(t.advanced_in_month_minor);
+  const paidAndAdvanced = nonNegativeMoneyStr(t.paid_and_advanced_in_month_minor);
+  const closingPayable = nonNegativeMoneyStr(t.closing_payable_minor);
+  const closingAdvance = nonNegativeMoneyStr(t.closing_advance_minor);
+
+  if (
+    authorizationDate === null ||
+    visibilityScope === null ||
+    canView !== true ||
+    canRecord === null ||
+    canReconcile === null ||
+    canManage === null ||
+    !monthCheck ||
+    !monthCheck.ok ||
+    filterProjectId === undefined ||
+    filterAccountantRef === undefined ||
+    filterVendorId === undefined ||
+    t.project_revenue_status !== "MISSING_CANONICAL_SOURCE" ||
+    t.project_revenue_minor !== null ||
+    bookCount === null ||
+    subLedgerCount === null ||
+    obligations === null ||
+    paid === null ||
+    advanced === null ||
+    paidAndAdvanced === null ||
+    closingPayable === null ||
+    closingAdvance === null
+  ) {
+    return null;
+  }
+
+  const summaries: VendorFinanceMonthlyReportAccountantSummary[] = [];
+  for (const rawSum of data.project_accountant_summaries) {
+    if (
+      !isRecord(rawSum) ||
+      !exactKeys(rawSum, [
+        "project_id",
+        "project_display_name",
+        "project_active",
+        "accountant_ref",
+        "responsible_accountant_display_name",
+        "is_currently_assigned",
+        "project_revenue_status",
+        "project_revenue_minor",
+        "vendor_count",
+        "obligations_in_month_minor",
+        "paid_in_month_minor",
+        "advanced_in_month_minor",
+        "paid_and_advanced_in_month_minor",
+        "closing_payable_minor",
+        "closing_advance_minor",
+        "in_month_entry_count",
+      ])
+    ) {
+      return null;
+    }
+    const pId = projectIdStr(rawSum.project_id);
+    const pName = nonEmptyStr(rawSum.project_display_name);
+    const pActive = boolVal(rawSum.project_active);
+    const aRef = uuidStr(rawSum.accountant_ref);
+    const aName = nonEmptyStr(rawSum.responsible_accountant_display_name);
+    const isAssigned = boolVal(rawSum.is_currently_assigned);
+    const vCount = nonNegInt(rawSum.vendor_count);
+    const sObl = nonNegativeMoneyStr(rawSum.obligations_in_month_minor);
+    const sPaid = nonNegativeMoneyStr(rawSum.paid_in_month_minor);
+    const sAdv = nonNegativeMoneyStr(rawSum.advanced_in_month_minor);
+    const sPaidAdv = nonNegativeMoneyStr(rawSum.paid_and_advanced_in_month_minor);
+    const sClosePay = nonNegativeMoneyStr(rawSum.closing_payable_minor);
+    const sCloseAdv = nonNegativeMoneyStr(rawSum.closing_advance_minor);
+    const sInMonthCount = nonNegInt(rawSum.in_month_entry_count);
+
+    if (
+      pId === null ||
+      pName === null ||
+      pActive === null ||
+      aRef === null ||
+      aName === null ||
+      isAssigned === null ||
+      rawSum.project_revenue_status !== "MISSING_CANONICAL_SOURCE" ||
+      rawSum.project_revenue_minor !== null ||
+      vCount === null ||
+      sObl === null ||
+      sPaid === null ||
+      sAdv === null ||
+      sPaidAdv === null ||
+      sClosePay === null ||
+      sCloseAdv === null ||
+      sInMonthCount === null
+    ) {
+      return null;
+    }
+    summaries.push({
+      project_id: pId,
+      project_display_name: pName,
+      project_active: pActive,
+      accountant_ref: aRef,
+      responsible_accountant_display_name: aName,
+      is_currently_assigned: isAssigned,
+      project_revenue_status: "MISSING_CANONICAL_SOURCE",
+      project_revenue_minor: null,
+      vendor_count: vCount,
+      obligations_in_month_minor: sObl,
+      paid_in_month_minor: sPaid,
+      advanced_in_month_minor: sAdv,
+      paid_and_advanced_in_month_minor: sPaidAdv,
+      closing_payable_minor: sClosePay,
+      closing_advance_minor: sCloseAdv,
+      in_month_entry_count: sInMonthCount,
+    });
+  }
+
+  const rows: VendorFinanceMonthlyReportRow[] = [];
+  for (const rawRow of data.rows) {
+    if (
+      !isRecord(rawRow) ||
+      !exactKeys(rawRow, [
+        "project_id",
+        "project_display_name",
+        "project_active",
+        "accountant_ref",
+        "responsible_accountant_display_name",
+        "is_currently_assigned",
+        "vendor_id",
+        "vendor_display_name",
+        "vendor_active",
+        "link_active",
+        "project_revenue_status",
+        "project_revenue_minor",
+        "balance_before_month_minor",
+        "opening_payable_in_month_minor",
+        "opening_advance_in_month_minor",
+        "obligations_in_month_minor",
+        "paid_in_month_minor",
+        "advanced_in_month_minor",
+        "paid_and_advanced_in_month_minor",
+        "net_change_in_month_minor",
+        "closing_balance_minor",
+        "closing_direction",
+        "closing_payable_minor",
+        "closing_advance_minor",
+        "current_balance_minor",
+        "in_month_entry_count",
+        "total_entry_count",
+      ])
+    ) {
+      return null;
+    }
+    const pId = projectIdStr(rawRow.project_id);
+    const pName = nonEmptyStr(rawRow.project_display_name);
+    const pActive = boolVal(rawRow.project_active);
+    const aRef = uuidStr(rawRow.accountant_ref);
+    const aName = nonEmptyStr(rawRow.responsible_accountant_display_name);
+    const isAssigned = boolVal(rawRow.is_currently_assigned);
+    const vId = isCanonicalUiVendorId(rawRow.vendor_id) ? rawRow.vendor_id : null;
+    const vName = nonEmptyStr(rawRow.vendor_display_name);
+    const vActive = boolVal(rawRow.vendor_active);
+    const lActive = boolVal(rawRow.link_active);
+    const balBefore = signedMoneyStr(rawRow.balance_before_month_minor);
+    const openPay = nonNegativeMoneyStr(rawRow.opening_payable_in_month_minor);
+    const openAdv = nonNegativeMoneyStr(rawRow.opening_advance_in_month_minor);
+    const rObl = nonNegativeMoneyStr(rawRow.obligations_in_month_minor);
+    const rPaid = nonNegativeMoneyStr(rawRow.paid_in_month_minor);
+    const rAdv = nonNegativeMoneyStr(rawRow.advanced_in_month_minor);
+    const rPaidAdv = nonNegativeMoneyStr(rawRow.paid_and_advanced_in_month_minor);
+    const netChange = signedMoneyStr(rawRow.net_change_in_month_minor);
+    const closingBal = signedMoneyStr(rawRow.closing_balance_minor);
+    const closingDir = balanceDirectionVal(rawRow.closing_direction);
+    const closePay = nonNegativeMoneyStr(rawRow.closing_payable_minor);
+    const closeAdv = nonNegativeMoneyStr(rawRow.closing_advance_minor);
+    const currBal = signedMoneyStr(rawRow.current_balance_minor);
+    const inMonthCount = nonNegInt(rawRow.in_month_entry_count);
+    const totalCount = nonNegInt(rawRow.total_entry_count);
+
+    if (
+      pId === null ||
+      pName === null ||
+      pActive === null ||
+      aRef === null ||
+      aName === null ||
+      isAssigned === null ||
+      vId === null ||
+      vName === null ||
+      vActive === null ||
+      lActive === null ||
+      rawRow.project_revenue_status !== "MISSING_CANONICAL_SOURCE" ||
+      rawRow.project_revenue_minor !== null ||
+      balBefore === null ||
+      openPay === null ||
+      openAdv === null ||
+      rObl === null ||
+      rPaid === null ||
+      rAdv === null ||
+      rPaidAdv === null ||
+      netChange === null ||
+      closingBal === null ||
+      closingDir === null ||
+      closePay === null ||
+      closeAdv === null ||
+      currBal === null ||
+      inMonthCount === null ||
+      totalCount === null
+    ) {
+      return null;
+    }
+
+    if (BigInt(balBefore) + BigInt(netChange) !== BigInt(closingBal)) {
+      return null;
+    }
+
+    rows.push({
+      project_id: pId,
+      project_display_name: pName,
+      project_active: pActive,
+      accountant_ref: aRef,
+      responsible_accountant_display_name: aName,
+      is_currently_assigned: isAssigned,
+      vendor_id: vId,
+      vendor_display_name: vName,
+      vendor_active: vActive,
+      link_active: lActive,
+      project_revenue_status: "MISSING_CANONICAL_SOURCE",
+      project_revenue_minor: null,
+      balance_before_month_minor: balBefore,
+      opening_payable_in_month_minor: openPay,
+      opening_advance_in_month_minor: openAdv,
+      obligations_in_month_minor: rObl,
+      paid_in_month_minor: rPaid,
+      advanced_in_month_minor: rAdv,
+      paid_and_advanced_in_month_minor: rPaidAdv,
+      net_change_in_month_minor: netChange,
+      closing_balance_minor: closingBal,
+      closing_direction: closingDir,
+      closing_payable_minor: closePay,
+      closing_advance_minor: closeAdv,
+      current_balance_minor: currBal,
+      in_month_entry_count: inMonthCount,
+      total_entry_count: totalCount,
+    });
+  }
+
+  const legacyRows: VendorFinanceMonthlyLegacyRow[] = [];
+  for (const rawLeg of data.legacy_unallocated_rows) {
+    if (
+      !isRecord(rawLeg) ||
+      !exactKeys(rawLeg, [
+        "vendor_id",
+        "vendor_display_name",
+        "vendor_active",
+        "balance_before_month_minor",
+        "obligations_in_month_minor",
+        "paid_and_advanced_in_month_minor",
+        "closing_balance_minor",
+        "closing_direction",
+        "in_month_entry_count",
+      ])
+    ) {
+      return null;
+    }
+    const vId = isCanonicalUiVendorId(rawLeg.vendor_id) ? rawLeg.vendor_id : null;
+    const vName = nonEmptyStr(rawLeg.vendor_display_name);
+    const vActive = boolVal(rawLeg.vendor_active);
+    const balBefore = signedMoneyStr(rawLeg.balance_before_month_minor);
+    const lObl = nonNegativeMoneyStr(rawLeg.obligations_in_month_minor);
+    const lPaidAdv = nonNegativeMoneyStr(rawLeg.paid_and_advanced_in_month_minor);
+    const closeBal = signedMoneyStr(rawLeg.closing_balance_minor);
+    const closeDir = balanceDirectionVal(rawLeg.closing_direction);
+    const inMonthCount = nonNegInt(rawLeg.in_month_entry_count);
+
+    if (
+      vId === null ||
+      vName === null ||
+      vActive === null ||
+      balBefore === null ||
+      lObl === null ||
+      lPaidAdv === null ||
+      closeBal === null ||
+      closeDir === null ||
+      inMonthCount === null
+    ) {
+      return null;
+    }
+
+    legacyRows.push({
+      vendor_id: vId,
+      vendor_display_name: vName,
+      vendor_active: vActive,
+      balance_before_month_minor: balBefore,
+      obligations_in_month_minor: lObl,
+      paid_and_advanced_in_month_minor: lPaidAdv,
+      closing_balance_minor: closeBal,
+      closing_direction: closeDir,
+      in_month_entry_count: inMonthCount,
+    });
+  }
+
+  return {
+    authorization_date: authorizationDate,
+    allowed_actions: {
+      visibility_scope: visibilityScope,
+      can_view: true,
+      can_record: canRecord,
+      can_reconcile: canReconcile,
+      can_manage_project_assignments: canManage,
+    },
+    filters: {
+      month: monthCheck.month,
+      project_id: filterProjectId,
+      accountant_ref: filterAccountantRef,
+      vendor_id: filterVendorId,
+    },
+    totals: {
+      project_revenue_status: "MISSING_CANONICAL_SOURCE",
+      project_revenue_minor: null,
+      project_accountant_book_count: bookCount,
+      sub_ledger_count: subLedgerCount,
+      obligations_in_month_minor: obligations,
+      paid_in_month_minor: paid,
+      advanced_in_month_minor: advanced,
+      paid_and_advanced_in_month_minor: paidAndAdvanced,
+      closing_payable_minor: closingPayable,
+      closing_advance_minor: closingAdvance,
+    },
+    project_accountant_summaries: summaries,
+    rows,
+    legacy_unallocated_rows: legacyRows,
+  };
+}
+
+function adminGrantStateVal(value: unknown): VendorFinanceAdminGrantState | null {
+  return value === "ACTIVE" ||
+    value === "SCHEDULED" ||
+    value === "ENDED" ||
+    value === "CANCELLED"
+    ? value
+    : null;
+}
+
+function parseProjectAccountantAssignmentItem(
+  value: unknown,
+): VendorFinanceProjectAccountantAssignmentItem | null {
+  if (
+    !isRecord(value) ||
+    !exactKeys(value, [
+      "assignment_id",
+      "project_id",
+      "version",
+      "accountant",
+      "accountant_in_accounting_department",
+      "valid_from",
+      "valid_to",
+      "state",
+      "assign_reason",
+      "end_reason",
+      "created_at",
+    ])
+  ) {
+    return null;
+  }
+  const assignmentId = uuidStr(value.assignment_id);
+  const projectId = projectIdStr(value.project_id);
+  const version = posInt(value.version);
+  const accountant = parseAccountSummaryProjection(value.accountant);
+  const inDept = boolVal(value.accountant_in_accounting_department);
+  const validFrom = dateStr(value.valid_from);
+  const validTo = nullableDateStr(value.valid_to);
+  const state = adminGrantStateVal(value.state);
+  const assignReason = nonEmptyStr(value.assign_reason);
+  const endReason = nullableStr(value.end_reason);
+  const createdAt = nonEmptyStr(value.created_at);
+
+  if (
+    assignmentId === null ||
+    projectId === null ||
+    version === null ||
+    accountant === null ||
+    inDept === null ||
+    validFrom === null ||
+    validTo === undefined ||
+    state === null ||
+    assignReason === null ||
+    endReason === undefined ||
+    createdAt === null
+  ) {
+    return null;
+  }
+
+  return {
+    assignment_id: assignmentId,
+    project_id: projectId,
+    version,
+    accountant,
+    accountant_in_accounting_department: inDept,
+    valid_from: validFrom,
+    valid_to: validTo,
+    state,
+    assign_reason: assignReason,
+    end_reason: endReason,
+    created_at: createdAt,
+  };
+}
+
+export function parseAdminProjectAccountantsEnvelope(
+  envelope: unknown,
+): VendorFinanceListProjectAccountantsAdminResponse | null {
+  const data = unwrapOkDataEnvelope(envelope);
+  if (
+    !isRecord(data) ||
+    !exactKeys(data, [
+      "authorization_date",
+      "eligible_accountants",
+      "page",
+      "page_size",
+      "total",
+      "has_more",
+      "projects",
+    ]) ||
+    !Array.isArray(data.eligible_accountants) ||
+    !Array.isArray(data.projects)
+  ) {
+    return null;
+  }
+
+  const authorizationDate = dateStr(data.authorization_date);
+  const page = posInt(data.page);
+  const pageSize = posInt(data.page_size);
+  const total = nonNegInt(data.total);
+  const hasMore = boolVal(data.has_more);
+  if (
+    authorizationDate === null ||
+    page === null ||
+    pageSize === null ||
+    total === null ||
+    hasMore === null
+  ) {
+    return null;
+  }
+
+  const eligibleAccountants: VendorFinanceAccountSummary[] = [];
+  for (const rawAcc of data.eligible_accountants) {
+    const acc = parseAccountSummaryProjection(rawAcc);
+    if (!acc) return null;
+    eligibleAccountants.push(acc);
+  }
+
+  const projects: VendorFinanceProjectAccountantsAdminProject[] = [];
+  for (const rawProj of data.projects) {
+    if (
+      !isRecord(rawProj) ||
+      !exactKeys(rawProj, [
+        "project_id",
+        "display_name",
+        "active",
+        "next_version",
+        "linked_active_vendor_count",
+        "current_assignment",
+        "assignments",
+      ]) ||
+      !Array.isArray(rawProj.assignments)
+    ) {
+      return null;
+    }
+    const projectId = projectIdStr(rawProj.project_id);
+    const displayName = nonEmptyStr(rawProj.display_name);
+    const active = boolVal(rawProj.active);
+    const nextVersion = posInt(rawProj.next_version);
+    const linkedActiveCount = nonNegInt(rawProj.linked_active_vendor_count);
+    const currentAssignment =
+      rawProj.current_assignment === null
+        ? null
+        : parseProjectAccountantAssignmentItem(rawProj.current_assignment);
+    if (
+      projectId === null ||
+      displayName === null ||
+      active === null ||
+      nextVersion === null ||
+      linkedActiveCount === null ||
+      (rawProj.current_assignment !== null && currentAssignment === null)
+    ) {
+      return null;
+    }
+
+    const assignments: VendorFinanceProjectAccountantAssignmentItem[] = [];
+    for (const rawAsgn of rawProj.assignments) {
+      const asgn = parseProjectAccountantAssignmentItem(rawAsgn);
+      if (!asgn || asgn.project_id !== projectId) return null;
+      assignments.push(asgn);
+    }
+
+    projects.push({
+      project_id: projectId,
+      display_name: displayName,
+      active,
+      next_version: nextVersion,
+      linked_active_vendor_count: linkedActiveCount,
+      current_assignment: currentAssignment,
+      assignments,
+    });
+  }
+
+  return {
+    authorization_date: authorizationDate,
+    eligible_accountants: eligibleAccountants,
+    page,
+    page_size: pageSize,
+    total,
+    has_more: hasMore,
+    projects,
+  };
+}
+
+export function parseAssignProjectAccountantEnvelope(
+  envelope: unknown,
+): VendorFinanceAssignProjectAccountantResponse | null {
+  const data = unwrapOkDataEnvelope(envelope);
+  if (
+    !isRecord(data) ||
+    !exactKeys(data, ["assignment_id", "project_id", "version", "replayed"])
+  ) {
+    return null;
+  }
+  const assignmentId = uuidStr(data.assignment_id);
+  const projectId = projectIdStr(data.project_id);
+  const version = posInt(data.version);
+  const replayed = boolVal(data.replayed);
+  if (assignmentId === null || projectId === null || version === null || replayed === null) {
+    return null;
+  }
+  return {
+    assignment_id: assignmentId,
+    project_id: projectId,
+    version,
+    replayed,
+  };
+}
+
+export function parseEndProjectAccountantEnvelope(
+  envelope: unknown,
+): VendorFinanceEndProjectAccountantResponse | null {
+  const data = unwrapOkDataEnvelope(envelope);
+  if (
+    !isRecord(data) ||
+    !exactKeys(data, ["assignment_id", "project_id", "valid_to", "replayed"])
+  ) {
+    return null;
+  }
+  const assignmentId = uuidStr(data.assignment_id);
+  const projectId = projectIdStr(data.project_id);
+  const validTo = dateStr(data.valid_to);
+  const replayed = boolVal(data.replayed);
+  if (assignmentId === null || projectId === null || validTo === null || replayed === null) {
+    return null;
+  }
+  return {
+    assignment_id: assignmentId,
+    project_id: projectId,
+    valid_to: validTo,
+    replayed,
+  };
+}
+
+export function parseAdminProjectVendorsEnvelope(
+  envelope: unknown,
+): VendorFinanceListProjectVendorsAdminResponse | null {
+  const data = unwrapOkDataEnvelope(envelope);
+  if (
+    !isRecord(data) ||
+    !exactKeys(data, [
+      "authorization_date",
+      "project_id",
+      "project_display_name",
+      "project_active",
+      "page",
+      "page_size",
+      "total",
+      "has_more",
+      "vendors",
+    ]) ||
+    !Array.isArray(data.vendors)
+  ) {
+    return null;
+  }
+
+  const authorizationDate = dateStr(data.authorization_date);
+  const projectId = projectIdStr(data.project_id);
+  const projectDisplayName = nonEmptyStr(data.project_display_name);
+  const projectActive = boolVal(data.project_active);
+  const page = posInt(data.page);
+  const pageSize = posInt(data.page_size);
+  const total = nonNegInt(data.total);
+  const hasMore = boolVal(data.has_more);
+
+  if (
+    authorizationDate === null ||
+    projectId === null ||
+    projectDisplayName === null ||
+    projectActive === null ||
+    page === null ||
+    pageSize === null ||
+    total === null ||
+    hasMore === null
+  ) {
+    return null;
+  }
+
+  const vendors: VendorFinanceProjectVendorAdminItem[] = [];
+  for (const rawVendor of data.vendors) {
+    if (
+      !isRecord(rawVendor) ||
+      !exactKeys(rawVendor, [
+        "vendor_id",
+        "display_name",
+        "vendor_active",
+        "linked",
+        "link_active",
+        "link_version",
+        "updated_at",
+      ])
+    ) {
+      return null;
+    }
+    const vendorId = isCanonicalUiVendorId(rawVendor.vendor_id) ? rawVendor.vendor_id : null;
+    const displayName = nonEmptyStr(rawVendor.display_name);
+    const vendorActive = boolVal(rawVendor.vendor_active);
+    const linked = boolVal(rawVendor.linked);
+    const linkActive = boolVal(rawVendor.link_active);
+    const linkVersion = nonNegInt(rawVendor.link_version);
+    const updatedAt = nullableStr(rawVendor.updated_at);
+    if (
+      vendorId === null ||
+      displayName === null ||
+      vendorActive === null ||
+      linked === null ||
+      linkActive === null ||
+      linkVersion === null ||
+      updatedAt === undefined
+    ) {
+      return null;
+    }
+    vendors.push({
+      vendor_id: vendorId,
+      display_name: displayName,
+      vendor_active: vendorActive,
+      linked,
+      link_active: linkActive,
+      link_version: linkVersion,
+      updated_at: updatedAt,
+    });
+  }
+
+  return {
+    authorization_date: authorizationDate,
+    project_id: projectId,
+    project_display_name: projectDisplayName,
+    project_active: projectActive,
+    page,
+    page_size: pageSize,
+    total,
+    has_more: hasMore,
+    vendors,
+  };
+}
+
+export function parseSetProjectVendorLinkEnvelope(
+  envelope: unknown,
+): VendorFinanceSetProjectVendorLinkResponse | null {
+  const data = unwrapOkDataEnvelope(envelope);
+  if (
+    !isRecord(data) ||
+    !exactKeys(data, ["link_id", "project_id", "vendor_id", "active", "version", "replayed"])
+  ) {
+    return null;
+  }
+  const linkId = uuidStr(data.link_id);
+  const projectId = projectIdStr(data.project_id);
+  const vendorId = isCanonicalUiVendorId(data.vendor_id) ? data.vendor_id : null;
+  const active = boolVal(data.active);
+  const version = posInt(data.version);
+  const replayed = boolVal(data.replayed);
+  if (
+    linkId === null ||
+    projectId === null ||
+    vendorId === null ||
+    active === null ||
+    version === null ||
+    replayed === null
+  ) {
+    return null;
+  }
+  return {
+    link_id: linkId,
+    project_id: projectId,
+    vendor_id: vendorId,
+    active,
+    version,
+    replayed,
+  };
+}
+
+export function parseAdminGlobalRolesEnvelope(
+  envelope: unknown,
+): VendorFinanceListGlobalRolesAdminResponse | null {
+  const data = unwrapOkDataEnvelope(envelope);
+  if (
+    !isRecord(data) ||
+    !exactKeys(data, [
+      "authorization_date",
+      "page",
+      "page_size",
+      "total",
+      "has_more",
+      "roles",
+      "candidates",
+    ]) ||
+    !Array.isArray(data.roles) ||
+    !Array.isArray(data.candidates)
+  ) {
+    return null;
+  }
+
+  const authorizationDate = dateStr(data.authorization_date);
+  const page = posInt(data.page);
+  const pageSize = posInt(data.page_size);
+  const total = nonNegInt(data.total);
+  const hasMore = boolVal(data.has_more);
+  if (
+    authorizationDate === null ||
+    page === null ||
+    pageSize === null ||
+    total === null ||
+    hasMore === null
+  ) {
+    return null;
+  }
+
+  const roles: VendorFinanceGlobalRoleGrantItem[] = [];
+  for (const rawRole of data.roles) {
+    if (
+      !isRecord(rawRole) ||
+      !exactKeys(rawRole, [
+        "role_grant_id",
+        "account",
+        "role_code",
+        "version",
+        "valid_from",
+        "valid_to",
+        "state",
+        "grant_reason",
+        "end_reason",
+        "created_at",
+      ])
+    ) {
+      return null;
+    }
+    const roleGrantId = uuidStr(rawRole.role_grant_id);
+    const account = parseAccountSummaryProjection(rawRole.account);
+    const roleCode =
+      typeof rawRole.role_code === "string" &&
+      (VFIN_UI_GLOBAL_ROLE_CODES as readonly string[]).includes(rawRole.role_code)
+        ? (rawRole.role_code as VendorFinanceGlobalRoleCode)
+        : null;
+    const version = posInt(rawRole.version);
+    const validFrom = dateStr(rawRole.valid_from);
+    const validTo = nullableDateStr(rawRole.valid_to);
+    const state = adminGrantStateVal(rawRole.state);
+    const grantReason = nonEmptyStr(rawRole.grant_reason);
+    const endReason = nullableStr(rawRole.end_reason);
+    const createdAt = nonEmptyStr(rawRole.created_at);
+
+    if (
+      roleGrantId === null ||
+      account === null ||
+      roleCode === null ||
+      version === null ||
+      validFrom === null ||
+      validTo === undefined ||
+      state === null ||
+      grantReason === null ||
+      endReason === undefined ||
+      createdAt === null
+    ) {
+      return null;
+    }
+
+    roles.push({
+      role_grant_id: roleGrantId,
+      account,
+      role_code: roleCode,
+      version,
+      valid_from: validFrom,
+      valid_to: validTo,
+      state,
+      grant_reason: grantReason,
+      end_reason: endReason,
+      created_at: createdAt,
+    });
+  }
+
+  const candidates: VendorFinanceGlobalRoleCandidateItem[] = [];
+  for (const rawCand of data.candidates) {
+    if (
+      !isRecord(rawCand) ||
+      !exactKeys(rawCand, ["account", "next_version", "has_open_role"])
+    ) {
+      return null;
+    }
+    const account = parseAccountSummaryProjection(rawCand.account);
+    const nextVersion = posInt(rawCand.next_version);
+    const hasOpenRole = boolVal(rawCand.has_open_role);
+    if (account === null || nextVersion === null || hasOpenRole === null) {
+      return null;
+    }
+    candidates.push({
+      account,
+      next_version: nextVersion,
+      has_open_role: hasOpenRole,
+    });
+  }
+
+  return {
+    authorization_date: authorizationDate,
+    page,
+    page_size: pageSize,
+    total,
+    has_more: hasMore,
+    roles,
+    candidates,
+  };
+}
+
+export function parseAssignGlobalRoleEnvelope(
+  envelope: unknown,
+): VendorFinanceAssignGlobalRoleResponse | null {
+  const data = unwrapOkDataEnvelope(envelope);
+  if (
+    !isRecord(data) ||
+    !exactKeys(data, ["role_grant_id", "account_ref", "role_code", "version", "replayed"])
+  ) {
+    return null;
+  }
+  const roleGrantId = uuidStr(data.role_grant_id);
+  const accountRef = uuidStr(data.account_ref);
+  const roleCode =
+    typeof data.role_code === "string" &&
+    (VFIN_UI_GLOBAL_ROLE_CODES as readonly string[]).includes(data.role_code)
+      ? (data.role_code as VendorFinanceGlobalRoleCode)
+      : null;
+  const version = posInt(data.version);
+  const replayed = boolVal(data.replayed);
+  if (
+    roleGrantId === null ||
+    accountRef === null ||
+    roleCode === null ||
+    version === null ||
+    replayed === null
+  ) {
+    return null;
+  }
+  return {
+    role_grant_id: roleGrantId,
+    account_ref: accountRef,
+    role_code: roleCode,
+    version,
+    replayed,
+  };
+}
+
+export function parseEndGlobalRoleEnvelope(
+  envelope: unknown,
+): VendorFinanceEndGlobalRoleResponse | null {
+  const data = unwrapOkDataEnvelope(envelope);
+  if (
+    !isRecord(data) ||
+    !exactKeys(data, ["role_grant_id", "account_ref", "valid_to", "replayed"])
+  ) {
+    return null;
+  }
+  const roleGrantId = uuidStr(data.role_grant_id);
+  const accountRef = uuidStr(data.account_ref);
+  const validTo = dateStr(data.valid_to);
+  const replayed = boolVal(data.replayed);
+  if (roleGrantId === null || accountRef === null || validTo === null || replayed === null) {
+    return null;
+  }
+  return {
+    role_grant_id: roleGrantId,
+    account_ref: accountRef,
+    valid_to: validTo,
+    replayed,
+  };
 }
 
 export function parseEvidenceReserveEnvelope(
@@ -2363,8 +4474,159 @@ export function classifyVendorFinanceError(
       return {
         code,
         message:
-          "Tài khoản của bạn chỉ có quyền xem, không có quyền ghi nhận, hoàn tác hoặc đối soát tài chính Vendor.",
+          "Tài khoản của bạn không có quyền ghi nhận hoặc hoàn tác bút toán tài chính Vendor cho dự án này.",
         shouldRotateIdempotencyKey: false,
+        isWholeBatchRollback: false,
+      };
+    case "VENDOR_FINANCE_RECONCILE_DENIED":
+      return {
+        code,
+        message: "Tài khoản của bạn không có quyền lập kỳ đối soát công nợ trên sổ dự án này.",
+        shouldRotateIdempotencyKey: false,
+        isWholeBatchRollback: false,
+      };
+    case "VENDOR_FINANCE_ADMIN_DENIED":
+      return {
+        code,
+        message: "Chỉ Quản trị viên toàn quyền (Full Admin) mới được quản lý phân công dự án và vai trò toàn cục.",
+        shouldRotateIdempotencyKey: false,
+        isWholeBatchRollback: false,
+      };
+    case "VENDOR_FINANCE_PROJECT_ACCESS_DENIED":
+      return {
+        code,
+        message:
+          "Bạn chỉ được xem hoặc thao tác trên sổ của các dự án do bạn trực tiếp phụ trách.",
+        shouldRotateIdempotencyKey: false,
+        isWholeBatchRollback: true,
+      };
+    case "VENDOR_FINANCE_PROJECT_INVALID":
+    case "VENDOR_FINANCE_PROJECT_NOT_FOUND":
+      return {
+        code,
+        message: "Không tìm thấy dự án hợp lệ trong danh mục chuẩn.",
+        shouldRotateIdempotencyKey: true,
+        isWholeBatchRollback: true,
+      };
+    case "VENDOR_FINANCE_PROJECT_INACTIVE":
+      return {
+        code,
+        message: "Dự án đã ngừng hoạt động, không thể phân công mới hoặc khởi tạo công nợ đầu kỳ.",
+        shouldRotateIdempotencyKey: true,
+        isWholeBatchRollback: true,
+      };
+    case "VENDOR_FINANCE_PROJECT_UNASSIGNED":
+      return {
+        code,
+        message:
+          "Dự án này hiện chưa có kế toán phụ trách đang hiệu lực. Vui lòng liên hệ Full Admin phân công kế toán dự án trước khi ghi nhận.",
+        shouldRotateIdempotencyKey: true,
+        isWholeBatchRollback: true,
+      };
+    case "VENDOR_FINANCE_PROJECT_ACCOUNTANT_INACTIVE":
+      return {
+        code,
+        message:
+          "Kế toán phụ trách dự án hiện không còn hiệu lực tại Phòng Kế toán. Vui lòng liên hệ Full Admin bàn giao kế toán dự án.",
+        shouldRotateIdempotencyKey: true,
+        isWholeBatchRollback: true,
+      };
+    case "VENDOR_FINANCE_PROJECT_ALREADY_ASSIGNED":
+    case "VENDOR_FINANCE_PROJECT_ASSIGNMENT_OVERLAP":
+      return {
+        code,
+        message:
+          "Dự án đã có kế toán phụ trách đang hiệu lực hoặc bị chồng lấn khoảng ngày hiệu lực. Mỗi dự án chỉ có một kế toán chính tại một thời điểm.",
+        shouldRotateIdempotencyKey: true,
+        isWholeBatchRollback: false,
+      };
+    case "VENDOR_FINANCE_PROJECT_VENDOR_UNLINKED":
+      return {
+        code,
+        message:
+          "Vendor chưa được liên kết hợp lệ với dự án đã chọn. Toàn bộ thao tác đã bị từ chối.",
+        shouldRotateIdempotencyKey: true,
+        isWholeBatchRollback: true,
+      };
+    case "VENDOR_FINANCE_PROJECT_VENDOR_INACTIVE":
+      return {
+        code,
+        message:
+          "Liên kết giữa Vendor và dự án này đã ngừng hiệu lực; chỉ được ghi nhận tất toán hoặc điều chỉnh theo quy định.",
+        shouldRotateIdempotencyKey: true,
+        isWholeBatchRollback: true,
+      };
+    case "VENDOR_FINANCE_SUBLEDGER_NOT_FOUND":
+      return {
+        code,
+        message: "Không tìm thấy sổ chi tiết (Dự án × Kế toán phụ trách × Vendor) phù hợp.",
+        shouldRotateIdempotencyKey: true,
+        isWholeBatchRollback: false,
+      };
+    case "VENDOR_FINANCE_ASSIGNMENT_INVALID":
+    case "VENDOR_FINANCE_ASSIGNMENT_NOT_FOUND":
+      return {
+        code,
+        message: "Thông tin phân công kế toán dự án không hợp lệ hoặc không tồn tại.",
+        shouldRotateIdempotencyKey: true,
+        isWholeBatchRollback: false,
+      };
+    case "VENDOR_FINANCE_ASSIGNMENT_VERSION_CONFLICT":
+      return {
+        code,
+        message:
+          "Phân công kế toán dự án vừa được cập nhật bởi thao tác khác. Vui lòng tải lại danh sách mới nhất trước khi thực hiện lại.",
+        shouldRotateIdempotencyKey: true,
+        isWholeBatchRollback: false,
+      };
+    case "VENDOR_FINANCE_LINK_INVALID":
+    case "VENDOR_FINANCE_LINK_TARGET_INACTIVE":
+      return {
+        code,
+        message:
+          "Thông tin liên kết Dự án – Vendor không hợp lệ hoặc dự án/Vendor đã ngừng hoạt động.",
+        shouldRotateIdempotencyKey: true,
+        isWholeBatchRollback: false,
+      };
+    case "VENDOR_FINANCE_LINK_VERSION_CONFLICT":
+      return {
+        code,
+        message:
+          "Liên kết Dự án – Vendor vừa thay đổi phiên bản. Vui lòng tải lại dữ liệu trước khi thử lại.",
+        shouldRotateIdempotencyKey: true,
+        isWholeBatchRollback: false,
+      };
+    case "VENDOR_FINANCE_GLOBAL_ROLE_INVALID":
+    case "VENDOR_FINANCE_GLOBAL_ROLE_NOT_FOUND":
+      return {
+        code,
+        message: "Thông tin vai trò toàn cục không hợp lệ hoặc không tồn tại.",
+        shouldRotateIdempotencyKey: true,
+        isWholeBatchRollback: false,
+      };
+    case "VENDOR_FINANCE_GLOBAL_ROLE_ALREADY_ASSIGNED":
+    case "VENDOR_FINANCE_GLOBAL_ROLE_OVERLAP":
+      return {
+        code,
+        message:
+          "Tài khoản này đang có vai trò toàn cục hiệu lực hoặc bị trùng khoảng ngày hiệu lực.",
+        shouldRotateIdempotencyKey: true,
+        isWholeBatchRollback: false,
+      };
+    case "VENDOR_FINANCE_GLOBAL_ROLE_VERSION_CONFLICT":
+      return {
+        code,
+        message:
+          "Vai trò toàn cục của tài khoản này vừa thay đổi phiên bản. Vui lòng tải lại danh sách trước khi thử lại.",
+        shouldRotateIdempotencyKey: true,
+        isWholeBatchRollback: false,
+      };
+    case "VENDOR_FINANCE_ACCOUNT_NOT_ELIGIBLE":
+      return {
+        code,
+        message:
+          "Tài khoản được chọn không đủ điều kiện (phải đang kích hoạt; đối với kế toán dự án và kế toán cầm tiền phải là thành viên Phòng Kế toán đang hiệu lực).",
+        shouldRotateIdempotencyKey: true,
         isWholeBatchRollback: false,
       };
     case "IDEMPOTENCY_KEY_INVALID":

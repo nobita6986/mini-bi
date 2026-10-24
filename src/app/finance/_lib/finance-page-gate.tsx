@@ -7,6 +7,7 @@ import { connection } from "next/server";
 import { AccessDenied, AccountUnavailable } from "@/components/auth/access-denied";
 import { TemporaryUnavailable } from "@/components/auth/temporary-unavailable";
 import {
+  adminAuthorityNavPredicate,
   vendorFinanceNavPredicate,
   vendorFinanceRecordNavPredicate,
   type NavActorProjection,
@@ -32,6 +33,8 @@ const resolveVendorFinanceServerAccess = cache(
         ok: true,
         can_view: result.data.can_view,
         can_record: result.data.can_record,
+        can_reconcile: result.data.can_reconcile,
+        can_manage_project_assignments: result.data.can_manage_project_assignments,
       };
     } catch {
       return { ok: false, code: "VENDOR_FINANCE_UNAVAILABLE" };
@@ -40,9 +43,13 @@ const resolveVendorFinanceServerAccess = cache(
 );
 
 export async function renderVendorFinancePageGate(input: {
-  requiredMode: "view" | "record";
+  requiredMode: "view" | "record" | "admin";
   resolveNextPath: () => string | Promise<string>;
-  render: (context: { canRecord: boolean }) => ReactNode | Promise<ReactNode>;
+  render: (context: {
+    canRecord: boolean;
+    canReconcile: boolean;
+    canManageProjectAssignments: boolean;
+  }) => ReactNode | Promise<ReactNode>;
 }): Promise<ReactNode> {
   await connection();
   const enabledFlag = process.env.DIRECT_ENTRY_API_ENABLED;
@@ -54,6 +61,8 @@ export async function renderVendorFinancePageGate(input: {
 
   let serverAccess: VendorFinanceServerAccessResult | null = null;
   let canRecord = false;
+  let canReconcile = false;
+  let canManageProjectAssignments = false;
 
   if (actor?.ok) {
     const baseProjection: NavActorProjection = {
@@ -61,9 +70,28 @@ export async function renderVendorFinancePageGate(input: {
       scopes: actor.actor.scopes.map((scope) => ({ kind: scope.kind })),
     };
 
-    if (vendorFinanceRecordNavPredicate(baseProjection)) {
+    if (adminAuthorityNavPredicate(baseProjection)) {
       canRecord = true;
-      serverAccess = { ok: true, can_view: true, can_record: true };
+      canReconcile = true;
+      canManageProjectAssignments = true;
+      serverAccess = {
+        ok: true,
+        can_view: true,
+        can_record: true,
+        can_reconcile: true,
+        can_manage_project_assignments: true,
+      };
+    } else if (vendorFinanceRecordNavPredicate(baseProjection)) {
+      canRecord = true;
+      canReconcile = true;
+      canManageProjectAssignments = false;
+      serverAccess = {
+        ok: true,
+        can_view: true,
+        can_record: true,
+        can_reconcile: true,
+        can_manage_project_assignments: false,
+      };
     } else {
       serverAccess = await resolveVendorFinanceServerAccess(
         actor.actor.auth_subject,
@@ -71,14 +99,24 @@ export async function renderVendorFinancePageGate(input: {
       );
       if (serverAccess.ok) {
         canRecord = serverAccess.can_view && serverAccess.can_record;
+        canReconcile = serverAccess.can_view && Boolean(serverAccess.can_reconcile);
+        canManageProjectAssignments =
+          serverAccess.can_view && Boolean(serverAccess.can_manage_project_assignments);
       } else if (
         input.requiredMode === "view" &&
         vendorFinanceNavPredicate(baseProjection) &&
         serverAccess.code !== "ACTOR_NOT_AVAILABLE"
       ) {
-        // Direct `vendor_finance_view @ all` (e.g. BoD view-only) already satisfies view predicate.
-        serverAccess = { ok: true, can_view: true, can_record: false };
+        serverAccess = {
+          ok: true,
+          can_view: true,
+          can_record: false,
+          can_reconcile: false,
+          can_manage_project_assignments: false,
+        };
         canRecord = false;
+        canReconcile = false;
+        canManageProjectAssignments = false;
       }
     }
   }
@@ -104,6 +142,6 @@ export async function renderVendorFinancePageGate(input: {
     case "ACCESS_DENIED":
       return <AccessDenied />;
     case "ALLOW":
-      return input.render({ canRecord });
+      return input.render({ canRecord, canReconcile, canManageProjectAssignments });
   }
 }

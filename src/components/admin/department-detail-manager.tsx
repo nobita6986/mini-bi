@@ -1052,6 +1052,14 @@ function AccountingDepartmentMembershipsSection({
               Làm mới
             </Button>
             {canManage ? (
+              <Link
+                href="/finance/project-assignments"
+                className={buttonClasses({ variant: "secondary", size: "md" })}
+              >
+                Phân công dự án &amp; vai trò toàn cục
+              </Link>
+            ) : null}
+            {canManage ? (
               <Button variant="primary" size="md" onClick={openAssignDialog}>
                 Gán thành viên
               </Button>
