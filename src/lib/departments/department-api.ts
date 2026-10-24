@@ -42,6 +42,10 @@ function departmentError(code: DepartmentErrorCode): Response {
   return failJson(code, departmentHttpStatusForError(code));
 }
 
+function directEntryFeatureGate(enabledFlag: string | undefined): Response | null {
+  return enabledFlag === "true" ? null : failJson("NOT_FOUND", 404);
+}
+
 function hasDisallowedAuthorityHeaders(request: Request): boolean {
   for (const headerName of DISALLOWED_AUTHORITY_HEADERS) {
     if (request.headers.get(headerName) !== null) {
@@ -173,8 +177,12 @@ async function readBoundedJsonBody(
 
 export async function listDepartmentsAdmin(
   request: Request,
+  enabledFlag: string | undefined,
   dependencies: DepartmentAdminApiDependencies,
 ): Promise<Response> {
+  const gate = directEntryFeatureGate(enabledFlag);
+  if (gate) return gate;
+
   if (hasDisallowedAuthorityHeaders(request)) {
     return departmentError("DEPARTMENT_QUERY_INVALID");
   }
@@ -210,8 +218,12 @@ export async function listDepartmentsAdmin(
 export async function getDepartmentAdmin(
   request: Request,
   departmentId: string,
+  enabledFlag: string | undefined,
   dependencies: DepartmentAdminApiDependencies,
 ): Promise<Response> {
+  const gate = directEntryFeatureGate(enabledFlag);
+  if (gate) return gate;
+
   if (hasDisallowedAuthorityHeaders(request)) {
     return departmentError("DEPARTMENT_QUERY_INVALID");
   }
@@ -247,8 +259,12 @@ export async function getDepartmentAdmin(
 
 export async function listAccountingMembershipsAdmin(
   request: Request,
+  enabledFlag: string | undefined,
   dependencies: DepartmentAdminApiDependencies,
 ): Promise<Response> {
+  const gate = directEntryFeatureGate(enabledFlag);
+  if (gate) return gate;
+
   if (hasDisallowedAuthorityHeaders(request)) {
     return departmentError("DEPARTMENT_QUERY_INVALID");
   }
@@ -287,8 +303,12 @@ export async function listAccountingMembershipsAdmin(
 
 export async function listAccountingCandidatesAdmin(
   request: Request,
+  enabledFlag: string | undefined,
   dependencies: DepartmentAdminApiDependencies,
 ): Promise<Response> {
+  const gate = directEntryFeatureGate(enabledFlag);
+  if (gate) return gate;
+
   if (hasDisallowedAuthorityHeaders(request)) {
     return departmentError("DEPARTMENT_QUERY_INVALID");
   }
@@ -326,8 +346,12 @@ export async function listAccountingCandidatesAdmin(
 
 export async function assignAccountingMemberAdmin(
   request: Request,
+  enabledFlag: string | undefined,
   dependencies: DepartmentAdminApiDependencies,
 ): Promise<Response> {
+  const gate = directEntryFeatureGate(enabledFlag);
+  if (gate) return gate;
+
   if (!isSameOriginAuthRequest(request)) {
     return departmentError("CSRF_REJECTED");
   }
@@ -401,8 +425,12 @@ export async function assignAccountingMemberAdmin(
 export async function endAccountingMemberAdmin(
   request: Request,
   membershipId: string,
+  enabledFlag: string | undefined,
   dependencies: DepartmentAdminApiDependencies,
 ): Promise<Response> {
+  const gate = directEntryFeatureGate(enabledFlag);
+  if (gate) return gate;
+
   if (!isSameOriginAuthRequest(request)) {
     return departmentError("CSRF_REJECTED");
   }
@@ -476,8 +504,12 @@ export async function endAccountingMemberAdmin(
 
 export async function listRecruitmentTeamsAdmin(
   request: Request,
+  enabledFlag: string | undefined,
   dependencies: DepartmentAdminApiDependencies,
 ): Promise<Response> {
+  const gate = directEntryFeatureGate(enabledFlag);
+  if (gate) return gate;
+
   if (hasDisallowedAuthorityHeaders(request)) {
     return departmentError("DEPARTMENT_QUERY_INVALID");
   }
