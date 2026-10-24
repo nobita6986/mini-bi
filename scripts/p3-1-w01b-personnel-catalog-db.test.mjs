@@ -832,7 +832,7 @@ test("migration #68 remains unique and the F2 capability vocabulary has 29 token
     + " where n.nspname = 'public' and t.relname = 'direct_entry_capability_grants'"
     + " and c.conname = 'direct_entry_capability_grants_capability_check'");
   const tokens = [...String(rows[0].definition).matchAll(/'([^']+)'::text/g)].map((m) => m[1]);
-  assert.equal(tokens.length, 29, "the capability vocabulary includes W01A, F1, and F2 tokens");
+  assert.equal(tokens.length, 31, "the capability vocabulary includes W01A, F1, F2, and VFIN-01 tokens");
   assert.ok(tokens.includes("catalog_master_manage"));
   assert.ok(tokens.includes("team_manager_assign"));
 

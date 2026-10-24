@@ -29,6 +29,8 @@ export type NavActorProjection = {
   effective_report_review_scopes?: readonly { kind: "all" | "team"; team_id?: string | null; label?: string }[];
   hasHistoricalChangeRequests?: boolean;
   hasWorkReportObligations?: boolean;
+  hasVendorFinanceAccess?: boolean;
+  hasVendorFinanceRecordAccess?: boolean;
 };
 
 /** Predicate phụ thuộc entry — registry.ts có metadata `capability`. */
@@ -224,12 +226,37 @@ export const workforceOffboardingNavPredicate: NavCapabilityPredicate = (actor) 
   (actor.capabilities.includes("team_manager_assign") &&
     actor.scopes.some((scope) => scope.kind === "team"));
 
+/**
+ * VFIN-01: Vendor Finance navigation predicate (fail-closed).
+ * Accepts:
+ *  1. Canonical Full Admin (`entry_admin` + `recruiter_master_manage` + `team_master_manage` @ `all`);
+ *  2. Server-probed active membership in immutable `system_key = 'ACCOUNTING'` department
+ *     (`hasVendorFinanceAccess === true` / `hasVendorFinanceRecordAccess === true`, never synthesized into actor grants);
+ *  3. Direct VFIN capability grant (`vendor_finance_view` | `vendor_finance_record`) with effective `all` scope.
+ * `catalog_master_manage`, `team_manager_assign`, `entry_admin` alone, Work Reports capabilities,
+ * and retired `payment_view` / `payment_edit` never open Vendor Finance.
+ */
+export const vendorFinanceNavPredicate: NavCapabilityPredicate = (actor) =>
+  adminAuthorityNavPredicate(actor) ||
+  actor.hasVendorFinanceAccess === true ||
+  actor.hasVendorFinanceRecordAccess === true ||
+  (actor.scopes.some((scope) => scope.kind === "all") &&
+    (actor.capabilities.includes("vendor_finance_view") ||
+      actor.capabilities.includes("vendor_finance_record")));
+
+/** VFIN-01: Record/mutation predicate (excludes BoD view-only `vendor_finance_view`). */
+export const vendorFinanceRecordNavPredicate: NavCapabilityPredicate = (actor) =>
+  adminAuthorityNavPredicate(actor) ||
+  actor.hasVendorFinanceRecordAccess === true ||
+  (actor.scopes.some((scope) => scope.kind === "all") &&
+    actor.capabilities.includes("vendor_finance_record"));
+
 /** Bảng ánh xạ `entry.capability` metadata → predicate tương ứng. */
 export const NAV_CAPABILITY_PREDICATES: Readonly<Record<string, NavCapabilityPredicate>> = {
   any: () => true,
   owner: adminAuthorityNavPredicate,
   admin_area: adminPanelNavPredicate,
-  finance: () => false, // P3 chưa có entry finance; fail-closed.
+  finance: vendorFinanceNavPredicate,
   hrp: directEntryNavPredicate,
   entry_own: directEntryNavPredicate,
   entry_team: directEntryNavPredicate,

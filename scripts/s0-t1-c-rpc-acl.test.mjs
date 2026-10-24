@@ -43,6 +43,8 @@ import {
   HF_OFFBOARDING_SUPPRESSION_AND_ATTENDANCE_FILTER_RPC_SIGNATURES,
   ORG_SHELL_01_DEPARTMENTS_MIGRATION_NAME,
   ORG_SHELL_01_DEPARTMENTS_RPC_SIGNATURES,
+  VFIN_01_BACKEND_MIGRATION_NAME,
+  VFIN_01_BACKEND_RPC_SIGNATURES,
   OFFBOARDING_REPORT_MIGRATION_NAME,
   OFFBOARDING_REPORT_RPC_SIGNATURES,
   migrationChecksum,
@@ -59,7 +61,7 @@ const R1_2_MIGRATION = "20261021100000_r1_2_worker_management_uat_fixes.sql";
 const R2_1_MIGRATION = "20261021120000_r2_1_change_request_queues_and_project_team_guard.sql";
 const R1_2_SERVICE_RPC =
   "public.direct_entry_list_workers(uuid, uuid, text, text, uuid, text, text, integer, text)";
-const TARGET_PATTERN = "^(direct_entry_|work_report_|attendance_|org_department_|ai_report_|ai_provider_config_|recruitment_|(expand|replace|reject|upsert)_daily_recruitment|record_recruitment_source_failure_|set_updated_at$)";
+const TARGET_PATTERN = "^(direct_entry_|work_report_|attendance_|org_department_|vendor_finance_|ai_report_|ai_provider_config_|recruitment_|(expand|replace|reject|upsert)_daily_recruitment|record_recruitment_source_failure_|set_updated_at$)";
 
 function binary(name) {
   const binDir = process.env.P3_1_W02A_PG_BIN
@@ -682,6 +684,32 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
         /revoke all on function public\.org_department__internal_resolve_vfin_default_authority\(uuid, uuid, date\)\s+from public, anon, authenticated, service_role;/i,
         "ORG-SHELL-01 internal VFIN default authority primitive revokes EXECUTE from all roles including service_role",
       );
+      const vfin01Migration = await readFile(
+        path.join(MIGRATION_DIR, VFIN_01_BACKEND_MIGRATION_NAME),
+        "utf8",
+      );
+      const vfin01Normalized = vfin01Migration
+        .replace(/\s+/g, " ")
+        .replace(/\(\s+/g, "(")
+        .replace(/\s+\)/g, ")")
+        .toLowerCase();
+      for (const sig of VFIN_01_BACKEND_RPC_SIGNATURES) {
+        const sigGrant = `grant execute on function ${sig.toLowerCase()} to service_role;`;
+        const sigRevoke = `revoke all on function ${sig.toLowerCase()} from public, anon, authenticated, service_role;`;
+        assert.ok(
+          vfin01Normalized.includes(sigGrant),
+          `VFIN-01 RPC ${sig} is explicitly granted only to service_role`,
+        );
+        assert.ok(
+          vfin01Normalized.includes(sigRevoke),
+          `VFIN-01 RPC ${sig} revokes client and inherited EXECUTE before granting service_role`,
+        );
+      }
+      assert.match(
+        vfin01Migration,
+        /revoke all on function public\.vendor_finance__internal_resolve_authority\(uuid, uuid\)\s+from public, anon, authenticated, service_role;/i,
+        "VFIN-01 internal authority primitive revokes EXECUTE from all roles including service_role",
+      );
 
       expectedSignatures.push(R1_2_SERVICE_RPC, ...F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES,
         F1_WORK_REPORTS_ASSIGNMENT_OPTIONS_RPC_SIGNATURE,
@@ -697,7 +725,8 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
         ...OFFBOARDING_REPORT_RPC_SIGNATURES,
         ASYNC_DOCUMENTS_ATTENDANCE_PHOTO_RPC_SIGNATURE,
         ...HF_OFFBOARDING_SUPPRESSION_AND_ATTENDANCE_FILTER_RPC_SIGNATURES,
-        ...ORG_SHELL_01_DEPARTMENTS_RPC_SIGNATURES);
+        ...ORG_SHELL_01_DEPARTMENTS_RPC_SIGNATURES,
+        ...VFIN_01_BACKEND_RPC_SIGNATURES);
       assert.ok(expectedSignatures.length > 0, "the explicit server/invoker allowlist is not empty");
       assert.equal(new Set(expectedSignatures).size, expectedSignatures.length, "the allowlist has no duplicates");
       const { rows: resolvedExpected } = await client.query(
@@ -727,7 +756,8 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
           ...OFFBOARDING_REPORT_RPC_SIGNATURES,
           ASYNC_DOCUMENTS_ATTENDANCE_PHOTO_RPC_SIGNATURE,
           ...HF_OFFBOARDING_SUPPRESSION_AND_ATTENDANCE_FILTER_RPC_SIGNATURES,
-          ...ORG_SHELL_01_DEPARTMENTS_RPC_SIGNATURES].sort(),
+          ...ORG_SHELL_01_DEPARTMENTS_RPC_SIGNATURES,
+          ...VFIN_01_BACKEND_RPC_SIGNATURES].sort(),
         "only explicitly reviewed post-S0 RPCs add service_role grants after the S0 baseline",
       );
       const removedSourceService = sourceService
