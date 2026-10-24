@@ -122,3 +122,23 @@ test("summary exposes locked filters, compliance, metric, breakdown and source f
   for (const field of ["template_id", "version_id", "from", "to", "team_id", "assignee_id"]) assert.match(component, new RegExp(field));
   for (const field of ["due_count", "completed_count", "completion_rate", "late_submitted_count", "overdue_missing_count", "sum_value", "avg_value", "count_valid", "metric_contribution_value", "submission_id"]) assert.match(component, new RegExp(field));
 });
+
+test("summary uses server-scoped dropdown options without UUID text inputs, explains modes/KPIs, and gates source submissions on canViewSubmissions", () => {
+  assert.match(tabs, /<WorkReportAnalytics canViewSubmissions=\{canViewSubmissions\} \/>/);
+  assert.match(component, /\/api\/work-reports\/analytics\/options/);
+  assert.match(component, /AbortController/);
+  assert.match(component, /aria-label="Mẫu báo cáo"/);
+  assert.match(component, /aria-label="Phiên bản biểu mẫu"/);
+  assert.match(component, /aria-label="Team hành chính"/);
+  assert.match(component, /aria-label="Nhân viên"/);
+  assert.doesNotMatch(component, /aria-label="Mã mẫu"|aria-label="Mã phiên bản"|aria-label="Mã nhóm"|aria-label="Mã nhân viên"/);
+  assert.doesNotMatch(component, /Nhập mã mẫu rồi áp dụng bộ lọc/i);
+  assert.match(component, /Chốt \(Đã duyệt\)/);
+  assert.match(component, /Tạm tính \(Chờ duyệt\)/);
+  assert.match(component, /Cách xem số liệu tổng hợp/);
+  assert.match(component, /if \(!canViewSubmissions \|\| !filters\) return;/);
+  assert.match(component, /if \(!canViewSubmissions \|\| !item\.submission_id\) return;/);
+  assert.match(component, /ReportReadonlyContent/);
+  assert.match(component, /whitespace-pre-line break-words/);
+  assert.doesNotMatch(component, /JSON\.stringify/);
+});

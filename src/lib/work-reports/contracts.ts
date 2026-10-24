@@ -13,6 +13,7 @@ export const WORK_REPORT_FIELD_TYPES = [
 ] as const;
 
 export const WORK_REPORT_FREQUENCIES = ["DAILY", "WEEKLY", "MONTHLY", "ONCE"] as const;
+export const WORK_REPORT_ASSIGNMENT_TARGET_KINDS = ["USER", "TEAM", "USER_SET", "GROUP"] as const;
 export const WORK_REPORT_AGGREGATIONS = [
   "SUM",
   "AVG",
@@ -26,6 +27,7 @@ export const WORK_REPORT_AGGREGATIONS = [
 
 export type WorkReportFieldType = (typeof WORK_REPORT_FIELD_TYPES)[number];
 export type WorkReportFrequency = (typeof WORK_REPORT_FREQUENCIES)[number];
+export type WorkReportAssignmentTargetKind = (typeof WORK_REPORT_ASSIGNMENT_TARGET_KINDS)[number];
 export type WorkReportAggregation = (typeof WORK_REPORT_AGGREGATIONS)[number];
 export type WorkReportNullPolicy = "EXCLUDE_FROM_AVG" | "INCLUDE_AS_ZERO";
 export type WorkReportZeroPolicy = "INCLUDE_AS_ZERO" | "EXCLUDE";

@@ -54,3 +54,119 @@ test("assignment tracking calls the scoped service RPC and validates aggregate p
   const malformed = createAssignmentRepository(async () => ({ data: { items: [{ ...item, submitted_count: -1 }] }, error: null }));
   assert.deepEqual(await malformed.listAssignments({ ...actor, team_id: team }), { ok: false, kind: "unavailable" });
 });
+
+test("custom report group repository methods route to dedicated RPCs and validate group directory + GROUP assignments", async () => {
+  const groupId = "12121212-1212-4212-8212-121212121212";
+  const memberId = "34343434-3434-4434-8434-343434343434";
+  const calls = [];
+  const directory = {
+    scope_kind: "all",
+    groups: [
+      {
+        group_id: groupId,
+        display_name: "Nhóm Tổ trưởng",
+        description: "Liên Team",
+        active: true,
+        version: 1,
+        created_at: "2026-10-24T00:00:00Z",
+        updated_at: "2026-10-24T00:00:00Z",
+        assignment_count: 1,
+        members: [
+          {
+            app_user_id: memberId,
+            display_name: "Tổ trưởng A",
+            enabled: true,
+            team_id: team,
+            team_code: "TEAM_A",
+            team_display_name: "Team A",
+          },
+        ],
+      },
+    ],
+    eligible_users: [
+      {
+        app_user_id: memberId,
+        display_name: "Tổ trưởng A",
+        team_id: team,
+        team_code: "TEAM_A",
+        team_display_name: "Team A",
+      },
+    ],
+  };
+
+  const repository = createAssignmentRepository(async (name, args) => {
+    calls.push({ name, args });
+    if (name === "work_report_list_groups") return { data: directory, error: null };
+    if (name === "work_report_create_group") return { data: { group_id: groupId, version: 1 }, error: null };
+    if (name === "work_report_update_group") return { data: { group_id: groupId, version: 2 }, error: null };
+    if (name === "work_report_set_group_active") return { data: { group_id: groupId, active: false, version: 3 }, error: null };
+    if (name === "work_report_create_group_assignment") {
+      return { data: { assignment_id: "56565656-5656-4656-8656-565656565656", version: 1 }, error: null };
+    }
+    return { data: null, error: { code: "P0002" } };
+  });
+
+  assert.deepEqual(await repository.listGroups(actor), { ok: true, data: directory });
+  assert.deepEqual(
+    await repository.createGroup({
+      ...actor,
+      display_name: "Nhóm Tổ trưởng",
+      description: "Liên Team",
+      member_user_ids: [memberId],
+      idempotency_key: "grp-create-1",
+    }),
+    { ok: true, data: { group_id: groupId, version: 1 } },
+  );
+  assert.deepEqual(
+    await repository.updateGroup({
+      ...actor,
+      group_id: groupId,
+      expected_version: 1,
+      display_name: "Nhóm Tổ trưởng 2",
+      description: null,
+      member_user_ids: [memberId],
+      idempotency_key: "grp-update-1",
+    }),
+    { ok: true, data: { group_id: groupId, version: 2 } },
+  );
+  assert.deepEqual(
+    await repository.setGroupActive({
+      ...actor,
+      group_id: groupId,
+      expected_version: 2,
+      active: false,
+      idempotency_key: "grp-deact-1",
+    }),
+    { ok: true, data: { group_id: groupId, active: false, version: 3 } },
+  );
+  assert.deepEqual(
+    await repository.create({
+      ...actor,
+      template_id: template,
+      target_kind: "GROUP",
+      target_user_id: null,
+      target_team_id: null,
+      target_group_id: groupId,
+      target_user_ids: [],
+      frequency: "DAILY",
+      is_mandatory: true,
+      due_day_offset: 0,
+      due_time_local: "23:59:59",
+      exclude_sundays: false,
+      effective_from: "2026-10-24",
+      effective_to: null,
+      idempotency_key: "grp-assign-1",
+    }),
+    { ok: true, data: { assignment_id: "56565656-5656-4656-8656-565656565656", version: 1 } },
+  );
+  assert.deepEqual(
+    calls.map((c) => c.name),
+    [
+      "work_report_list_groups",
+      "work_report_create_group",
+      "work_report_update_group",
+      "work_report_set_group_active",
+      "work_report_create_group_assignment",
+    ],
+  );
+});

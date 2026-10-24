@@ -125,8 +125,19 @@ export function FormBuilder({ moduleNav }: { moduleNav?: ReactNode }) {
   async function saveDraft() {
     if (!editor) return;
     const key = crypto.randomUUID();
+    const normalizedSchema: WorkReportTemplateSchema = {
+      ...editor.schema,
+      sections: editor.schema.sections.map((section) => ({
+        ...section,
+        label: section.label.trim(),
+        fields: section.fields.map((field) => ({
+          ...field,
+          label: field.label.replace(/\r\n?/g, "\n").trim(),
+        })),
+      })),
+    };
     const base = { display_name: editor.display_name, description: editor.description.trim() || null,
-      default_frequency: editor.default_frequency, schema_json: editor.schema, idempotency_key: key };
+      default_frequency: editor.default_frequency, schema_json: normalizedSchema, idempotency_key: key };
     setSaving(true);
     try {
       if (editor.template && editor.draftVersionId) {
@@ -205,7 +216,7 @@ export function FormBuilder({ moduleNav }: { moduleNav?: ReactNode }) {
             <Button size="sm" variant="danger-outline" disabled={editor.schema.sections.length === 1} onClick={() => setEditor({ ...editor, schema: { ...editor.schema, sections: editor.schema.sections.filter((_, index) => index !== sectionIndex) } })}>Xóa nhóm</Button>
           </div>
           {section.fields.map((field, fieldIndex) => <div key={`${section.section_key}-${field.field_key}`} className="grid gap-2 rounded-lg bg-muted/5 p-3 md:grid-cols-12">
-            <label className="space-y-1 text-xs md:col-span-3">Nhãn<input className={inputClass} value={field.label} onChange={(event) => patchField(sectionIndex, fieldIndex, (current) => ({ ...current, label: event.target.value, field_key: keyFromLabel(event.target.value, current.field_key), metric_spec: current.is_metric && current.metric_spec ? { ...current.metric_spec, metric_key: keyFromLabel(event.target.value, current.field_key), compatible_group: `${keyFromLabel(event.target.value, current.field_key)}_v1` } : current.metric_spec }))} /></label>
+            <label className="space-y-1 text-xs md:col-span-3">Nhãn<textarea aria-label="Nhãn trường" className={`${inputClass} min-h-[4.25rem] resize-y`} rows={2} maxLength={256} value={field.label} onChange={(event) => patchField(sectionIndex, fieldIndex, (current) => ({ ...current, label: event.target.value.replace(/\r\n?/g, "\n") }))} /></label>
             <label className="space-y-1 text-xs md:col-span-3">Kiểu trường<select className={inputClass} value={field.field_type} onChange={(event) => patchField(sectionIndex, fieldIndex, (current) => ({ ...createWorkReportField(event.target.value as WorkReportFieldType, section.section_key, nextFieldIndex()), field_key: current.field_key, sort_order: current.sort_order, label: current.label, description: current.description, required: current.required }))}>{allWorkReportFieldTypes.map((type) => <option key={type} value={type}>{workReportFieldTypeLabels[type]}</option>)}</select></label>
             <label className="flex min-h-10 items-center gap-2 self-end text-sm md:col-span-2"><input type="checkbox" checked={field.required} onChange={(event) => patchField(sectionIndex, fieldIndex, (current) => ({ ...current, required: event.target.checked }))} />Bắt buộc</label>
             <label className="flex min-h-10 items-center gap-2 self-end text-sm md:col-span-2"><input type="checkbox" checked={field.is_metric} disabled={!isWorkReportMetricFieldType(field.field_type)} onChange={(event) => patchField(sectionIndex, fieldIndex, (current) => setWorkReportFieldMetric(current, event.target.checked))} />Chỉ tiêu</label>
@@ -248,7 +259,7 @@ export function FormBuilder({ moduleNav }: { moduleNav?: ReactNode }) {
 }
 
 function PreviewField({ field }: { field: WorkReportField }) {
-  return <label className="block space-y-1 text-sm"><span>{field.label}{field.required ? " *" : ""}</span>
+  return <label className="block space-y-1 text-sm"><span className="block whitespace-pre-line break-words font-medium">{field.label}{field.required ? " *" : ""}</span>
     {field.field_type === "textarea" ? <textarea className={inputClass} rows={3} disabled placeholder={field.description ?? ""} /> :
       field.field_type === "boolean" ? <select className={inputClass} disabled><option>Chọn</option><option>Có</option><option>Không</option></select> :
         field.field_type === "single_select" || field.field_type === "multi_select" ? <select className={inputClass} disabled><option>Chọn</option>{(field.options ?? []).filter((option) => option.active).map((option) => <option key={option.option_key}>{option.label}</option>)}</select> :

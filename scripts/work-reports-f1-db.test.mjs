@@ -36,6 +36,7 @@ import {
   F1_5_WORK_REPORTS_ANALYTICS_RPC_SIGNATURES,
   F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES,
   F2_WORK_REPORTS_REVIEW_AND_DELEGATION_RPC_SIGNATURES,
+  HF_WORK_REPORTS_GROUPS_AND_ANALYTICS_OPTIONS_RPC_SIGNATURES,
   WORK_REPORTS_READER_CONTRACT_RPC_SIGNATURES,
 } from "./lib/migration-validation.mjs";
 import { AUTH_PROLOGUE } from "./lib/s04c-read-fixture.mjs";
@@ -47,6 +48,8 @@ const WORK_REPORT_TABLES = [
   "work_report_template_versions",
   "work_report_assignments",
   "work_report_assignment_targets",
+  "work_report_groups",
+  "work_report_group_members",
   "work_report_obligations",
   "work_report_submissions",
   "work_report_submission_revisions",
@@ -224,7 +227,8 @@ test("F1 schema, forced RLS, table privilege revocation and RPC allowlist match 
     [[...F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES, F1_WORK_REPORTS_ASSIGNMENT_OPTIONS_RPC_SIGNATURE,
       F1_WORK_REPORTS_ASSIGNMENT_TRACKING_RPC_SIGNATURE, ...F1_5_WORK_REPORTS_ANALYTICS_RPC_SIGNATURES,
       ...F2_WORK_REPORTS_REVIEW_AND_DELEGATION_RPC_SIGNATURES,
-      ...WORK_REPORTS_READER_CONTRACT_RPC_SIGNATURES]],
+      ...WORK_REPORTS_READER_CONTRACT_RPC_SIGNATURES,
+      ...HF_WORK_REPORTS_GROUPS_AND_ANALYTICS_OPTIONS_RPC_SIGNATURES]],
   );
   const serviceExec = fnRows.filter((r) => r.service_exec).map((r) => r.signature).sort();
   assert.deepEqual(serviceExec, expectedFnRows.map((r) => r.signature).sort());
@@ -1305,4 +1309,409 @@ test("F2 review, delegation, effective_report_review_scopes and finality lifecyc
   );
   assert.equal(reconRows[0].result.ok, true);
   assert.equal(reconRows[0].result.total_discrepancy_count, 0);
+});
+
+test("HF: multi-team custom report groups, multi-line labels, deduplication, historical immutability, and fail-closed out-of-scope transitions", async () => {
+  const QLDA_USER = {
+    auth: "10000000-0000-4000-8000-00000000f191",
+    app: "20000000-0000-4000-8000-00000000f191",
+    name: "Chuyên viên QLDA",
+  };
+  const STAFF_B2 = {
+    auth: "10000000-0000-4000-8000-00000000f192",
+    app: "20000000-0000-4000-8000-00000000f192",
+    recruiter: "30000000-0000-4000-8000-00000000f192",
+    name: "Staff B2",
+  };
+
+  for (const actor of [QLDA_USER, STAFF_B2]) {
+    await db.query("insert into auth.users (id) values ($1::uuid)", [actor.auth]);
+    await db.query(
+      `insert into public.direct_entry_app_users (app_user_id, auth_subject, display_name, enabled)
+       values ($1::uuid, $2::uuid, $3, true)`,
+      [actor.app, actor.auth, actor.name],
+    );
+  }
+  await db.query(
+    `insert into public.recruiters (recruiter_id, display_name, personnel_code, personnel_position, active)
+     values ($1::uuid, $2, 'NV_WR_B2', 'STAFF', true)`,
+    [STAFF_B2.recruiter, STAFF_B2.name],
+  );
+  await db.query(
+    `insert into public.recruiter_team_memberships (recruiter_id, team_id, valid_from, is_current)
+     values ($1::uuid, $2::uuid, '2026-01-01', true)`,
+    [STAFF_B2.recruiter, TEAM_B],
+  );
+  await db.query(
+    `insert into public.direct_entry_app_user_recruiter_links (app_user_id, recruiter_id, verified, valid_from, is_current)
+     values ($1::uuid, $2::uuid, true, '2026-01-01', true)`,
+    [STAFF_B2.app, STAFF_B2.recruiter],
+  );
+
+  // 1) Multi-line field label template: preserves \n, keeps field_key/metric_key/compatible_group intact, published immutable
+  const multilineSchema = structuredClone(RECRUITMENT_DAILY_TEMPLATE_SCHEMA);
+  multilineSchema.sections[0].fields[0].label = "Số cuộc gọi\n(trong ca trực)";
+  const multilineContract = buildWorkReportMetricContract(multilineSchema);
+
+  const { rows: tplRows } = await db.query(
+    `select public.work_report_create_template(
+       $1::uuid, $2::uuid, 'HF_CROSS_TEAM_DAILY', 'Báo cáo nhóm liên Team',
+       'Kiểm thử nhóm báo cáo tùy chỉnh và nhãn nhiều dòng', 'DAILY', $3::jsonb, $4::jsonb, $5
+     ) as result`,
+    [ADMIN.auth, ADMIN.app, JSON.stringify(multilineSchema), JSON.stringify(multilineContract), KEY("hf_tpl_create")],
+  );
+  const hfTplId = tplRows[0].result.template_id;
+  const hfDraftId = tplRows[0].result.draft_version_id;
+
+  await db.query(
+    `select public.work_report_publish_template($1::uuid, $2::uuid, $3::uuid, $4::uuid, 1, $5)`,
+    [ADMIN.auth, ADMIN.app, hfTplId, hfDraftId, KEY("hf_tpl_pub")],
+  );
+
+  const { rows: loadedTplRows } = await db.query(
+    `select public.work_report_get_template($1::uuid, $2::uuid, $3::uuid) as result`,
+    [ADMIN.auth, ADMIN.app, hfTplId],
+  );
+  const publishedVer = loadedTplRows[0].result.versions.find((v) => v.version_id === hfDraftId);
+  assert.equal(publishedVer.schema_json.sections[0].fields[0].label, "Số cuộc gọi\n(trong ca trực)");
+  assert.equal(publishedVer.schema_json.sections[0].fields[0].field_key, "calls_made");
+  assert.equal(publishedVer.metric_contract_json.metrics[0].metric_key, "calls_made");
+  assert.equal(publishedVer.metric_contract_json.metrics[0].compatible_group, "recruitment_daily_calls_made_v1");
+
+  // 2) LEADER_A (team A scope) sees ONLY Team A eligible users and is atomically denied if even 1 member is out of scope
+  const { rows: leaderGroupDir } = await db.query(
+    `select public.work_report_list_groups($1::uuid, $2::uuid) as result`,
+    [LEADER_A.auth, LEADER_A.app],
+  );
+  assert.equal(leaderGroupDir[0].result.scope_kind, "team");
+  const leaderEligibleIds = leaderGroupDir[0].result.eligible_users.map((u) => u.app_user_id);
+  assert.ok(leaderEligibleIds.includes(STAFF_A1.app));
+  assert.ok(leaderEligibleIds.includes(STAFF_A2.app));
+  assert.equal(leaderEligibleIds.includes(STAFF_B1.app), false, "no Team B user leaked to Leader A");
+  assert.equal(leaderEligibleIds.includes(QLDA_USER.app), false, "no unlinked QLDA user leaked to Leader A");
+  assert.equal(leaderEligibleIds.includes(DISABLED_USER.app), false, "disabled user excluded");
+
+  await assert.rejects(
+    db.query(
+      `select public.work_report_create_group($1::uuid, $2::uuid, 'Nhóm Trái Quyền', null, $3::uuid[], $4)`,
+      [LEADER_A.auth, LEADER_A.app, [STAFF_A1.app, STAFF_B1.app], KEY("hf_grp_leader_denied_b1")],
+    ),
+    (err) => err.code === "42501" && err.message.includes("WORK_REPORT_SCOPE_DENIED"),
+  );
+  await assert.rejects(
+    db.query(
+      `select public.work_report_create_group($1::uuid, $2::uuid, 'Nhóm Trái Quyền QLDA', null, $3::uuid[], $4)`,
+      [LEADER_A.auth, LEADER_A.app, [STAFF_A1.app, QLDA_USER.app], KEY("hf_grp_leader_denied_qlda")],
+    ),
+    (err) => err.code === "42501" && err.message.includes("WORK_REPORT_SCOPE_DENIED"),
+  );
+  await assert.rejects(
+    db.query(
+      `select public.work_report_create_group($1::uuid, $2::uuid, 'Nhóm Tài Khoản Vô Hiệu', null, $3::uuid[], $4)`,
+      [ADMIN.auth, ADMIN.app, [STAFF_A1.app, DISABLED_USER.app], KEY("hf_grp_disabled_member")],
+    ),
+    (err) => err.code === "22023" && err.message.includes("WORK_REPORT_GROUP_MEMBER_INELIGIBLE"),
+  );
+
+  const { rows: zeroGroupsAfterReject } = await db.query(
+    `select count(*)::int as n from public.work_report_groups`,
+  );
+  assert.equal(zeroGroupsAfterReject[0].n, 0, "atomic rejection created zero group rows");
+
+  // 3) ADMIN ('all' scope) creates cross-team group across TEAM_A + TEAM_B + QLDA_USER
+  const { rows: crossGroupRows } = await db.query(
+    `select public.work_report_create_group(
+       $1::uuid, $2::uuid, 'Nhóm Tuyển dụng & QLDA', 'Phối hợp xuyên Team A, Team B và QLDA', $3::uuid[], $4
+     ) as result`,
+    [ADMIN.auth, ADMIN.app, [STAFF_A1.app, STAFF_B1.app, QLDA_USER.app], KEY("hf_grp_cross_create")],
+  );
+  const crossGroupId = crossGroupRows[0].result.group_id;
+  assert.equal(crossGroupRows[0].result.version, 1);
+
+  // Physical DELETE of work_report_groups is strictly forbidden by trigger
+  await assert.rejects(
+    db.query(`delete from public.work_report_groups where group_id = $1::uuid`, [crossGroupId]),
+    (err) => err.code === "55000" && err.message.includes("work_report_groups is append-only"),
+  );
+
+  // LEADER_A must NOT see cross-team group or its out-of-scope members, and cannot mutate or assign it
+  const { rows: leaderAfterCross } = await db.query(
+    `select public.work_report_list_groups($1::uuid, $2::uuid) as result`,
+    [LEADER_A.auth, LEADER_A.app],
+  );
+  assert.equal(leaderAfterCross[0].result.groups.length, 0, "cross-team group hidden from single-team leader");
+
+  await assert.rejects(
+    db.query(
+      `select public.work_report_update_group($1::uuid, $2::uuid, $3::uuid, 1, 'Đổi tên trái phép', null, $4::uuid[], $5)`,
+      [LEADER_A.auth, LEADER_A.app, crossGroupId, [STAFF_A1.app], KEY("hf_grp_leader_upd_denied")],
+    ),
+    (err) => err.code === "42501" && err.message.includes("WORK_REPORT_SCOPE_DENIED"),
+  );
+  await assert.rejects(
+    db.query(
+      `select public.work_report_set_group_active($1::uuid, $2::uuid, $3::uuid, 1, false, $4)`,
+      [LEADER_A.auth, LEADER_A.app, crossGroupId, KEY("hf_grp_leader_deact_denied")],
+    ),
+    (err) => err.code === "42501" && err.message.includes("WORK_REPORT_SCOPE_DENIED"),
+  );
+  await assert.rejects(
+    db.query(
+      `select public.work_report_create_group_assignment(
+         $1::uuid, $2::uuid, $3::uuid, $4::uuid, 'DAILY', true, 0, '23:59:59'::time, false, '2099-12-01'::date, null, $5
+       )`,
+      [LEADER_A.auth, LEADER_A.app, hfTplId, crossGroupId, KEY("hf_grp_leader_assign_denied")],
+    ),
+    (err) => err.code === "42501" && err.message.includes("WORK_REPORT_SCOPE_DENIED"),
+  );
+
+  // 4) Assign template to crossGroupId AND create overlapping USER assignment for STAFF_A1 -> deduplicate obligations!
+  const { rows: crossAssignRows } = await db.query(
+    `select public.work_report_create_group_assignment(
+       $1::uuid, $2::uuid, $3::uuid, $4::uuid, 'DAILY', true, 0, '23:59:59'::time, false, '2099-12-01'::date, null, $5
+     ) as result`,
+    [ADMIN.auth, ADMIN.app, hfTplId, crossGroupId, KEY("hf_grp_assign_ok")],
+  );
+  const crossAssignId = crossAssignRows[0].result.assignment_id;
+
+  await db.query(
+    `select public.work_report_create_assignment(
+       $1::uuid, $2::uuid, $3::uuid, 'USER', $4::uuid, null, null,
+       'DAILY', true, 0, '23:59:59'::time, false, '2099-12-01'::date, null, $5
+     )`,
+    [LEADER_A.auth, LEADER_A.app, hfTplId, STAFF_A1.app, KEY("hf_overlap_user_a1")],
+  );
+
+  await db.query(
+    `select public.work_report_ensure_obligations_for_window($1::uuid, $2::uuid, '2099-12-01'::date)`,
+    [ADMIN.auth, ADMIN.app],
+  );
+
+  const { rows: p1Obligations } = await db.query(
+    `select obligation_id, assignee_app_user_id, snapshot_team_id, snapshot_group_id, snapshot_group_name
+       from public.work_report_obligations
+      where template_id = $1::uuid and period_key = '2099-12-01'
+      order by assignee_app_user_id`,
+    [hfTplId],
+  );
+  assert.equal(p1Obligations.length, 3, "STAFF_A1 deduplicated to 1 obligation alongside STAFF_B1 and QLDA_USER");
+  const p1B1 = p1Obligations.find((o) => o.assignee_app_user_id === STAFF_B1.app);
+  const p1Qlda = p1Obligations.find((o) => o.assignee_app_user_id === QLDA_USER.app);
+  assert.equal(p1B1.snapshot_team_id, TEAM_B);
+  assert.equal(p1B1.snapshot_group_id, crossGroupId);
+  assert.equal(p1B1.snapshot_group_name, "Nhóm Tuyển dụng & QLDA");
+  assert.equal(p1Qlda.snapshot_team_id, null);
+  assert.equal(p1Qlda.snapshot_group_id, crossGroupId);
+
+  // STAFF_B1 submits Period 1 obligation
+  await db.query(
+    `select public.work_report_submit($1::uuid, $2::uuid, $3::uuid, $4::jsonb, null, $5)`,
+    [
+      STAFF_B1.auth,
+      STAFF_B1.app,
+      p1B1.obligation_id,
+      JSON.stringify({ calls_made: 19, interested_candidates: 4, workers_started: 1, notes: "Kỳ 1 nhóm liên Team" }),
+      KEY("hf_sub_b1_p1"),
+    ],
+  );
+
+  // 5) Update group name + membership (remove STAFF_B1, add STAFF_B2) -> past obligations/snapshots immutable, future periods use new membership
+  const { rows: updGroupRows } = await db.query(
+    `select public.work_report_update_group(
+       $1::uuid, $2::uuid, $3::uuid, 1, 'Nhóm Tuyển dụng & QLDA (Mới)', 'Đã cập nhật thành viên', $4::uuid[], $5
+     ) as result`,
+    [ADMIN.auth, ADMIN.app, crossGroupId, [STAFF_A1.app, STAFF_B2.app, QLDA_USER.app], KEY("hf_grp_upd_members")],
+  );
+  assert.equal(updGroupRows[0].result.version, 2);
+
+  await db.query(
+    `select public.work_report_ensure_obligations_for_window($1::uuid, $2::uuid, '2099-12-02'::date)`,
+    [ADMIN.auth, ADMIN.app],
+  );
+
+  const { rows: p1B1AfterUpdate } = await db.query(
+    `select o.obligation_status, o.snapshot_team_id, o.snapshot_group_name, s.state
+       from public.work_report_obligations o
+       join public.work_report_submissions s on s.obligation_id = o.obligation_id
+      where o.obligation_id = $1::uuid`,
+    [p1B1.obligation_id],
+  );
+  assert.equal(p1B1AfterUpdate[0].obligation_status, "ACTIVE");
+  assert.equal(p1B1AfterUpdate[0].snapshot_team_id, TEAM_B);
+  assert.equal(p1B1AfterUpdate[0].snapshot_group_name, "Nhóm Tuyển dụng & QLDA", "past obligation snapshot_group_name stays immutable");
+  assert.equal(p1B1AfterUpdate[0].state, "COMPLETED");
+
+  const { rows: p2Obligations } = await db.query(
+    `select assignee_app_user_id, snapshot_group_name
+       from public.work_report_obligations
+      where template_id = $1::uuid and period_key = '2099-12-02'`,
+    [hfTplId],
+  );
+  const p2Assignees = p2Obligations.map((o) => o.assignee_app_user_id);
+  assert.equal(p2Assignees.includes(STAFF_B1.app), false, "removed member receives no new obligation in Period 2");
+  assert.equal(p2Assignees.includes(STAFF_B2.app), true, "added member receives obligation in Period 2");
+  assert.equal(
+    p2Obligations.find((o) => o.assignee_app_user_id === STAFF_B2.app).snapshot_group_name,
+    "Nhóm Tuyển dụng & QLDA (Mới)",
+  );
+
+  // 6) Deactivate group -> stops new obligations from group, blocks resuming PAUSED group assignment until reactivated
+  const { rows: deactGroupRows } = await db.query(
+    `select public.work_report_set_group_active($1::uuid, $2::uuid, $3::uuid, 2, false, $4) as result`,
+    [ADMIN.auth, ADMIN.app, crossGroupId, KEY("hf_grp_deact")],
+  );
+  assert.equal(deactGroupRows[0].result.active, false);
+
+  await db.query(
+    `select public.work_report_ensure_obligations_for_window($1::uuid, $2::uuid, '2099-12-03'::date)`,
+    [ADMIN.auth, ADMIN.app],
+  );
+  const { rows: p3Obligations } = await db.query(
+    `select assignee_app_user_id from public.work_report_obligations where template_id = $1::uuid and period_key = '2099-12-03'`,
+    [hfTplId],
+  );
+  assert.deepEqual(
+    p3Obligations.map((o) => o.assignee_app_user_id),
+    [STAFF_A1.app],
+    "deactivated group generates zero obligations while standalone USER assignment continues",
+  );
+
+  const { rows: pauseCrossRows } = await db.query(
+    `select public.work_report_set_assignment_state($1::uuid, $2::uuid, $3::uuid, 1, 'PAUSED', $4) as result`,
+    [ADMIN.auth, ADMIN.app, crossAssignId, KEY("hf_grp_assign_pause")],
+  );
+  assert.equal(pauseCrossRows[0].result.state, "PAUSED");
+
+  await assert.rejects(
+    db.query(
+      `select public.work_report_set_assignment_state($1::uuid, $2::uuid, $3::uuid, 2, 'ACTIVE', $4)`,
+      [ADMIN.auth, ADMIN.app, crossAssignId, KEY("hf_grp_assign_resume_blocked")],
+    ),
+    (err) => err.code === "22023" && err.message.includes("WORK_REPORT_GROUP_INACTIVE"),
+  );
+
+  // 7) Fail-closed out-of-scope transition when a Team A group's member transfers to Team B
+  const { rows: teamAGroupRows } = await db.query(
+    `select public.work_report_create_group(
+       $1::uuid, $2::uuid, 'Nhóm Tổ A Nội Bộ', null, $3::uuid[], $4
+     ) as result`,
+    [LEADER_A.auth, LEADER_A.app, [STAFF_A1.app, STAFF_A2.app], KEY("hf_grp_teama_create")],
+  );
+  const teamAGroupId = teamAGroupRows[0].result.group_id;
+
+  const { rows: tpl2Rows } = await db.query(
+    `select public.work_report_create_template(
+       $1::uuid, $2::uuid, 'HF_TEAM_A_GROUP_TPL', 'Báo cáo Tổ A',
+       null, 'DAILY', $3::jsonb, $4::jsonb, $5
+     ) as result`,
+    [ADMIN.auth, ADMIN.app, JSON.stringify(multilineSchema), JSON.stringify(multilineContract), KEY("hf_tpl2_create")],
+  );
+  const hfTpl2Id = tpl2Rows[0].result.template_id;
+  await db.query(
+    `select public.work_report_publish_template($1::uuid, $2::uuid, $3::uuid, $4::uuid, 1, $5)`,
+    [ADMIN.auth, ADMIN.app, hfTpl2Id, tpl2Rows[0].result.draft_version_id, KEY("hf_tpl2_pub")],
+  );
+
+  const { rows: leaderGroupAssignRows } = await db.query(
+    `select public.work_report_create_group_assignment(
+       $1::uuid, $2::uuid, $3::uuid, $4::uuid, 'DAILY', true, 0, '23:59:59'::time, false, '2099-12-04'::date, null, $5
+     ) as result`,
+    [LEADER_A.auth, LEADER_A.app, hfTpl2Id, teamAGroupId, KEY("hf_teama_grp_assign")],
+  );
+  const leaderGroupAssignId = leaderGroupAssignRows[0].result.assignment_id;
+
+  await db.query(
+    `select public.work_report_ensure_obligations_for_window($1::uuid, $2::uuid, '2099-12-04'::date)`,
+    [LEADER_A.auth, LEADER_A.app],
+  );
+  const { rows: dec04Obs } = await db.query(
+    `select count(*)::int as n from public.work_report_obligations where template_id = $1::uuid and period_key = '2099-12-04'`,
+    [hfTpl2Id],
+  );
+  assert.equal(dec04Obs[0].n, 2);
+
+  // Transfer STAFF_A2 from TEAM_A to TEAM_B -> group now spans TEAM_A + TEAM_B, exceeding LEADER_A's scope!
+  await db.query(
+    `update public.recruiter_team_memberships set is_current = false, valid_to = '2026-10-24'
+      where recruiter_id = $1::uuid and is_current`,
+    [STAFF_A2.recruiter],
+  );
+  await db.query(
+    `insert into public.recruiter_team_memberships (recruiter_id, team_id, valid_from, is_current)
+     values ($1::uuid, $2::uuid, '2026-10-24', true)`,
+    [STAFF_A2.recruiter, TEAM_B],
+  );
+
+  // LEADER_A must fail closed across list, group update/deactivate, assignment state change, and single-team materialization
+  const { rows: leaderGroupsAfterTransfer } = await db.query(
+    `select public.work_report_list_groups($1::uuid, $2::uuid) as result`,
+    [LEADER_A.auth, LEADER_A.app],
+  );
+  assert.equal(
+    leaderGroupsAfterTransfer[0].result.groups.some((g) => g.group_id === teamAGroupId),
+    false,
+    "out-of-scope group hidden from Leader A after member transfers to Team B",
+  );
+
+  const { rows: leaderTrackedAfterTransfer } = await db.query(
+    `select public.work_report_list_assignments($1::uuid, $2::uuid, null) as result`,
+    [LEADER_A.auth, LEADER_A.app],
+  );
+  assert.equal(
+    leaderTrackedAfterTransfer[0].result.items.some((a) => a.assignment_id === leaderGroupAssignId),
+    false,
+    "out-of-scope GROUP assignment hidden from Leader A tracking",
+  );
+
+  await assert.rejects(
+    db.query(
+      `select public.work_report_set_assignment_state($1::uuid, $2::uuid, $3::uuid, 1, 'PAUSED', $4)`,
+      [LEADER_A.auth, LEADER_A.app, leaderGroupAssignId, KEY("hf_transfer_pause_denied")],
+    ),
+    (err) => err.code === "42501" && err.message.includes("WORK_REPORT_SCOPE_DENIED"),
+  );
+  await assert.rejects(
+    db.query(
+      `select public.work_report_update_group($1::uuid, $2::uuid, $3::uuid, 1, 'Nhóm Tổ A', null, $4::uuid[], $5)`,
+      [LEADER_A.auth, LEADER_A.app, teamAGroupId, [STAFF_A1.app], KEY("hf_transfer_upd_denied")],
+    ),
+    (err) => err.code === "42501" && err.message.includes("WORK_REPORT_SCOPE_DENIED"),
+  );
+
+  // Leader A materializing 2099-12-05 skips the out-of-scope group assignment atomically (0 partial rows)
+  await db.query(
+    `select public.work_report_ensure_obligations_for_window($1::uuid, $2::uuid, '2099-12-05'::date)`,
+    [LEADER_A.auth, LEADER_A.app],
+  );
+  const { rows: dec05AfterLeader } = await db.query(
+    `select count(*)::int as n from public.work_report_obligations where template_id = $1::uuid and period_key = '2099-12-05'`,
+    [hfTpl2Id],
+  );
+  assert.equal(dec05AfterLeader[0].n, 0, "Leader A does not partially materialize out-of-scope group assignment");
+
+  // All-scope ADMIN materializes 2099-12-05 cleanly for both members with accurate team snapshots
+  await db.query(
+    `select public.work_report_ensure_obligations_for_window($1::uuid, $2::uuid, '2099-12-05'::date)`,
+    [ADMIN.auth, ADMIN.app],
+  );
+  const { rows: dec05AfterAdmin } = await db.query(
+    `select assignee_app_user_id, snapshot_team_id
+       from public.work_report_obligations
+      where template_id = $1::uuid and period_key = '2099-12-05'`,
+    [hfTpl2Id],
+  );
+  assert.equal(dec05AfterAdmin.length, 2);
+  assert.equal(dec05AfterAdmin.find((o) => o.assignee_app_user_id === STAFF_A1.app).snapshot_team_id, TEAM_A);
+  assert.equal(dec05AfterAdmin.find((o) => o.assignee_app_user_id === STAFF_A2.app).snapshot_team_id, TEAM_B);
+
+  // Restore STAFF_A2 back to TEAM_A
+  await db.query(
+    `delete from public.recruiter_team_memberships where recruiter_id = $1::uuid and team_id = $2::uuid`,
+    [STAFF_A2.recruiter, TEAM_B],
+  );
+  await db.query(
+    `update public.recruiter_team_memberships set is_current = true, valid_to = null
+      where recruiter_id = $1::uuid and team_id = $2::uuid`,
+    [STAFF_A2.recruiter, TEAM_A],
+  );
 });

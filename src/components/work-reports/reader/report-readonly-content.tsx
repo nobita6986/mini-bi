@@ -22,7 +22,7 @@ export function ReportReadonlyContent({
           {section.description ? <p className="text-sm text-muted">{section.description}</p> : null}
           {section.fields.map((field) => (
             <div key={field.field_key} className="space-y-1">
-              <p className="text-sm font-medium">{field.label}</p>
+              <p className="whitespace-pre-line break-words text-sm font-medium">{field.label}</p>
               <p className="whitespace-pre-wrap break-words text-sm text-muted">
                 {renderWorkReportFieldValue(field, payload[field.field_key])}
               </p>

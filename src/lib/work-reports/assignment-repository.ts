@@ -9,9 +9,10 @@ export type WorkReportActorRef = { auth_subject: string; app_user_id: string };
 
 export type AssignmentCreateInput = WorkReportActorRef & {
   template_id: string;
-  target_kind: "USER" | "TEAM" | "USER_SET";
+  target_kind: "USER" | "TEAM" | "USER_SET" | "GROUP";
   target_user_id: string | null;
   target_team_id: string | null;
+  target_group_id?: string | null;
   target_user_ids: string[];
   frequency: "DAILY" | "WEEKLY" | "MONTHLY" | "ONCE";
   is_mandatory: boolean;
@@ -37,12 +38,71 @@ export type WorkReportAssignmentOptions = {
   users: readonly { app_user_id: string; display_name: string }[];
 };
 
+export type WorkReportGroupMember = {
+  app_user_id: string;
+  display_name: string;
+  enabled: boolean;
+  team_id: string | null;
+  team_code: string | null;
+  team_display_name: string | null;
+};
+
+export type WorkReportGroupItem = {
+  group_id: string;
+  display_name: string;
+  description: string | null;
+  active: boolean;
+  version: number;
+  created_at: string;
+  updated_at: string;
+  assignment_count: number;
+  members: readonly WorkReportGroupMember[];
+};
+
+export type WorkReportEligibleGroupUser = {
+  app_user_id: string;
+  display_name: string;
+  team_id: string | null;
+  team_code: string | null;
+  team_display_name: string | null;
+};
+
+export type WorkReportGroupsDirectory = {
+  scope_kind: "all" | "team";
+  groups: readonly WorkReportGroupItem[];
+  eligible_users: readonly WorkReportEligibleGroupUser[];
+};
+
+export type GroupCreateInput = WorkReportActorRef & {
+  display_name: string;
+  description: string | null;
+  member_user_ids: string[];
+  idempotency_key: string;
+};
+
+export type GroupUpdateInput = WorkReportActorRef & {
+  group_id: string;
+  expected_version: number;
+  display_name: string;
+  description: string | null;
+  member_user_ids: string[];
+  idempotency_key: string;
+};
+
+export type GroupSetActiveInput = WorkReportActorRef & {
+  group_id: string;
+  expected_version: number;
+  active: boolean;
+  idempotency_key: string;
+};
+
 export type WorkReportAssignmentSummary = {
   assignment_id: string;
   template_id: string;
   template_code: string;
   template_name: string;
-  target_kind: "USER" | "TEAM" | "USER_SET";
+  target_kind: "USER" | "TEAM" | "USER_SET" | "GROUP";
+  target_group_id?: string | null;
   target_label: string;
   frequency: "DAILY" | "WEEKLY" | "MONTHLY" | "ONCE";
   is_mandatory: boolean;
@@ -62,6 +122,10 @@ export type WorkReportAssignmentSummary = {
 export type AssignmentRepository = {
   listOptions(input: WorkReportActorRef & { team_id: string | null }): Promise<WorkReportRpcOutcome<WorkReportAssignmentOptions>>;
   listAssignments(input: WorkReportActorRef & { team_id: string | null }): Promise<WorkReportRpcOutcome<WorkReportAssignmentSummary[]>>;
+  listGroups(input: WorkReportActorRef): Promise<WorkReportRpcOutcome<WorkReportGroupsDirectory>>;
+  createGroup(input: GroupCreateInput): Promise<WorkReportRpcOutcome<{ group_id: string; version: number }>>;
+  updateGroup(input: GroupUpdateInput): Promise<WorkReportRpcOutcome<{ group_id: string; version: number }>>;
+  setGroupActive(input: GroupSetActiveInput): Promise<WorkReportRpcOutcome<{ group_id: string; active: boolean; version: number }>>;
   create(input: AssignmentCreateInput): Promise<WorkReportRpcOutcome<{ assignment_id: string; version: number }>>;
   setState(input: WorkReportActorRef & {
     assignment_id: string; expected_version: number; state: "ACTIVE" | "PAUSED" | "REVOKED"; idempotency_key: string;
@@ -110,11 +174,68 @@ function assignmentOptions(value: unknown): value is WorkReportAssignmentOptions
       typeof item.display_name === "string");
 }
 
+function nullableUuid(value: unknown): value is string | null {
+  return value === null || (typeof value === "string" && UUID.test(value));
+}
+
+function nullableString(value: unknown): value is string | null {
+  return value === null || typeof value === "string";
+}
+
+function groupsDirectory(value: unknown): value is WorkReportGroupsDirectory {
+  if (
+    !record(value) ||
+    !["all", "team"].includes(String(value.scope_kind)) ||
+    !Array.isArray(value.groups) ||
+    !Array.isArray(value.eligible_users)
+  ) {
+    return false;
+  }
+  return (
+    value.groups.every(
+      (group) =>
+        record(group) &&
+        UUID.test(String(group.group_id)) &&
+        typeof group.display_name === "string" &&
+        nullableString(group.description) &&
+        typeof group.active === "boolean" &&
+        Number.isInteger(group.version) &&
+        Number(group.version) >= 1 &&
+        typeof group.created_at === "string" &&
+        typeof group.updated_at === "string" &&
+        Number.isInteger(group.assignment_count) &&
+        Number(group.assignment_count) >= 0 &&
+        Array.isArray(group.members) &&
+        group.members.every(
+          (member) =>
+            record(member) &&
+            UUID.test(String(member.app_user_id)) &&
+            typeof member.display_name === "string" &&
+            typeof member.enabled === "boolean" &&
+            nullableUuid(member.team_id) &&
+            nullableString(member.team_code) &&
+            nullableString(member.team_display_name),
+        ),
+    ) &&
+    value.eligible_users.every(
+      (user) =>
+        record(user) &&
+        UUID.test(String(user.app_user_id)) &&
+        typeof user.display_name === "string" &&
+        nullableUuid(user.team_id) &&
+        nullableString(user.team_code) &&
+        nullableString(user.team_display_name),
+    )
+  );
+}
+
 function assignmentList(value: unknown): value is { items: WorkReportAssignmentSummary[] } {
   return record(value) && Array.isArray(value.items) && value.items.every((item) => record(item) &&
     UUID.test(String(item.assignment_id)) && UUID.test(String(item.template_id)) &&
     typeof item.template_code === "string" && typeof item.template_name === "string" &&
-    ["USER", "TEAM", "USER_SET"].includes(String(item.target_kind)) && typeof item.target_label === "string" &&
+    ["USER", "TEAM", "USER_SET", "GROUP"].includes(String(item.target_kind)) &&
+    (item.target_group_id === undefined || nullableUuid(item.target_group_id)) &&
+    typeof item.target_label === "string" &&
     ["DAILY", "WEEKLY", "MONTHLY", "ONCE"].includes(String(item.frequency)) &&
     typeof item.is_mandatory === "boolean" && typeof item.effective_from === "string" &&
     (item.effective_to === null || typeof item.effective_to === "string") &&
@@ -154,18 +275,123 @@ export function createAssignmentRepository(rpc?: Rpc): AssignmentRepository {
         return { ok: false, kind: "unavailable" };
       }
     },
+    async listGroups(input) {
+      try {
+        const { data, error } = await invoke("work_report_list_groups", {
+          p_auth_subject: input.auth_subject,
+          p_app_user_id: input.app_user_id,
+        });
+        return outcome(data, error, groupsDirectory);
+      } catch {
+        console.error("[work-reports] group list RPC failed");
+        return { ok: false, kind: "unavailable" };
+      }
+    },
+    async createGroup(input) {
+      try {
+        const { data, error } = await invoke("work_report_create_group", {
+          p_auth_subject: input.auth_subject,
+          p_app_user_id: input.app_user_id,
+          p_display_name: input.display_name,
+          p_description: input.description,
+          p_member_user_ids: input.member_user_ids,
+          p_idempotency_key: input.idempotency_key,
+        });
+        return outcome(
+          data,
+          error,
+          (value): value is { group_id: string; version: number } =>
+            record(value) &&
+            typeof value.group_id === "string" &&
+            UUID.test(value.group_id) &&
+            Number.isInteger(value.version) &&
+            Number(value.version) >= 1,
+        );
+      } catch {
+        console.error("[work-reports] group create RPC failed");
+        return { ok: false, kind: "unavailable" };
+      }
+    },
+    async updateGroup(input) {
+      try {
+        const { data, error } = await invoke("work_report_update_group", {
+          p_auth_subject: input.auth_subject,
+          p_app_user_id: input.app_user_id,
+          p_group_id: input.group_id,
+          p_expected_version: input.expected_version,
+          p_display_name: input.display_name,
+          p_description: input.description,
+          p_member_user_ids: input.member_user_ids,
+          p_idempotency_key: input.idempotency_key,
+        });
+        return outcome(
+          data,
+          error,
+          (value): value is { group_id: string; version: number } =>
+            record(value) &&
+            typeof value.group_id === "string" &&
+            UUID.test(value.group_id) &&
+            Number.isInteger(value.version) &&
+            Number(value.version) >= 1,
+        );
+      } catch {
+        console.error("[work-reports] group update RPC failed");
+        return { ok: false, kind: "unavailable" };
+      }
+    },
+    async setGroupActive(input) {
+      try {
+        const { data, error } = await invoke("work_report_set_group_active", {
+          p_auth_subject: input.auth_subject,
+          p_app_user_id: input.app_user_id,
+          p_group_id: input.group_id,
+          p_expected_version: input.expected_version,
+          p_active: input.active,
+          p_idempotency_key: input.idempotency_key,
+        });
+        return outcome(
+          data,
+          error,
+          (value): value is { group_id: string; active: boolean; version: number } =>
+            record(value) &&
+            typeof value.group_id === "string" &&
+            UUID.test(value.group_id) &&
+            typeof value.active === "boolean" &&
+            Number.isInteger(value.version) &&
+            Number(value.version) >= 1,
+        );
+      } catch {
+        console.error("[work-reports] group active RPC failed");
+        return { ok: false, kind: "unavailable" };
+      }
+    },
     async create(input) {
       try {
-        const { data, error } = await invoke("work_report_create_assignment", {
-          p_auth_subject: input.auth_subject, p_app_user_id: input.app_user_id,
-          p_template_id: input.template_id, p_target_kind: input.target_kind,
-          p_target_user_id: input.target_user_id, p_target_team_id: input.target_team_id,
-          p_target_user_ids: input.target_user_ids.length ? input.target_user_ids : null,
-          p_frequency: input.frequency, p_is_mandatory: input.is_mandatory,
-          p_due_day_offset: input.due_day_offset, p_due_time_local: input.due_time_local,
-          p_exclude_sundays: input.exclude_sundays, p_effective_from: input.effective_from,
-          p_effective_to: input.effective_to, p_idempotency_key: input.idempotency_key,
-        });
+        const { data, error } = input.target_kind === "GROUP"
+          ? await invoke("work_report_create_group_assignment", {
+              p_auth_subject: input.auth_subject,
+              p_app_user_id: input.app_user_id,
+              p_template_id: input.template_id,
+              p_target_group_id: input.target_group_id ?? null,
+              p_frequency: input.frequency,
+              p_is_mandatory: input.is_mandatory,
+              p_due_day_offset: input.due_day_offset,
+              p_due_time_local: input.due_time_local,
+              p_exclude_sundays: input.exclude_sundays,
+              p_effective_from: input.effective_from,
+              p_effective_to: input.effective_to,
+              p_idempotency_key: input.idempotency_key,
+            })
+          : await invoke("work_report_create_assignment", {
+              p_auth_subject: input.auth_subject, p_app_user_id: input.app_user_id,
+              p_template_id: input.template_id, p_target_kind: input.target_kind,
+              p_target_user_id: input.target_user_id, p_target_team_id: input.target_team_id,
+              p_target_user_ids: input.target_user_ids.length ? input.target_user_ids : null,
+              p_frequency: input.frequency, p_is_mandatory: input.is_mandatory,
+              p_due_day_offset: input.due_day_offset, p_due_time_local: input.due_time_local,
+              p_exclude_sundays: input.exclude_sundays, p_effective_from: input.effective_from,
+              p_effective_to: input.effective_to, p_idempotency_key: input.idempotency_key,
+            });
         return outcome(data, error, (value): value is { assignment_id: string; version: number } =>
           record(value) && typeof value.assignment_id === "string" && UUID.test(value.assignment_id) && value.version === 1);
       } catch {

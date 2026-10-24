@@ -1048,7 +1048,8 @@ test("the vendor slot remains append-only and no earlier migration is touched", 
     !line.endsWith(wf03Migration) &&
     !line.endsWith(wf04Migration) &&
     !line.endsWith(wf04HotfixMigration) &&
-    !line.endsWith("20261025120000_vfin_01_vendor_finance_backend.sql")), [],
+    !line.endsWith("20261025120000_vfin_01_vendor_finance_backend.sql") &&
+    !line.endsWith("20261025150000_hf_work_reports_groups_and_analytics_options.sql")), [],
     "no earlier migration may be modified, deleted or renamed");
 
   const committed = spawnSync("git", ["show", `HEAD:supabase/migrations/${PREVIOUS_MIGRATION}`],

@@ -49,7 +49,7 @@ export function WorkReportAnalyticsTabs({ canViewSubmissions }: { canViewSubmiss
         id={tab === "submissions" ? "analytics-panel-submissions" : "analytics-panel-summary"}
         aria-labelledby={tab === "submissions" ? "analytics-tab-submissions" : "analytics-tab-summary"}
       >
-        {tab === "submissions" ? <ReadableSubmissions /> : <WorkReportAnalytics />}
+        {tab === "submissions" ? <ReadableSubmissions /> : <WorkReportAnalytics canViewSubmissions={canViewSubmissions} />}
       </div>
     </div>
   );

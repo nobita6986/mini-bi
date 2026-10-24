@@ -37,7 +37,7 @@ function exactKeys(value: Record<string, unknown>, allowed: readonly string[]): 
 }
 
 function validLabel(value: unknown): value is string {
-  return typeof value === "string" && value.trim().length >= 1 && value.trim().length <= 256;
+  return typeof value === "string" && value.length <= 256 && value.trim().length >= 1 && value.trim().length <= 256;
 }
 
 function validDescription(value: unknown): value is string | null {

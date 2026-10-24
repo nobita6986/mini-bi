@@ -129,7 +129,7 @@ export function WorkReportFormRenderer({ detail, onSaved }: { detail: WorkReport
       <legend className="px-1 font-medium">{section.label}</legend>
       {section.description ? <p className="text-sm text-muted">{section.description}</p> : null}
       {section.fields.map((field) => <div key={field.field_key} className="space-y-1.5">
-        <label htmlFor={field.field_key} className="text-sm font-medium">{field.label}{field.required ? " *" : ""}</label>
+        <label htmlFor={field.field_key} className="block whitespace-pre-line break-words text-sm font-medium">{field.label}{field.required ? " *" : ""}</label>
         {field.description ? <p className="text-xs text-muted">{field.description}</p> : null}
         {fieldControl(field, payload[field.field_key] ?? field.default_value, (value) => setPayload((current) => ({ ...current, [field.field_key]: value })), !canEdit || busy)}
       </div>)}

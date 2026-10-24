@@ -127,6 +127,16 @@ export const VFIN_01_BACKEND_RPC_SIGNATURES = Object.freeze([
   "public.vendor_finance_get_evidence_download(uuid, uuid, uuid)",
   "public.vendor_finance_mark_evidence_cleaned(uuid, uuid, uuid)",
 ]);
+export const HF_WORK_REPORTS_GROUPS_AND_ANALYTICS_OPTIONS_MIGRATION_NAME =
+  "20261025150000_hf_work_reports_groups_and_analytics_options.sql";
+export const HF_WORK_REPORTS_GROUPS_AND_ANALYTICS_OPTIONS_RPC_SIGNATURES = Object.freeze([
+  "public.work_report_list_groups(uuid, uuid)",
+  "public.work_report_create_group(uuid, uuid, text, text, uuid[], text)",
+  "public.work_report_update_group(uuid, uuid, uuid, integer, text, text, uuid[], text)",
+  "public.work_report_set_group_active(uuid, uuid, uuid, integer, boolean, text)",
+  "public.work_report_create_group_assignment(uuid, uuid, uuid, uuid, text, boolean, integer, time without time zone, boolean, date, date, text)",
+  "public.work_report_analytics_filter_options(uuid, uuid)",
+]);
 export const F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES = Object.freeze([
   "public.work_report_list_templates(uuid, uuid)",
   "public.work_report_get_template(uuid, uuid, uuid)",
@@ -350,7 +360,8 @@ export async function verifyS0T1CHistoricalCompatibility(
     hfOffboardingSuppressionAndAttendanceFilterApplied = false,
     attendanceSelfHistoryApplied = false,
     orgShell01DepartmentsApplied = false,
-    vfin01BackendApplied = false } = {},
+    vfin01BackendApplied = false,
+    hfWorkReportsGroupsAndAnalyticsOptionsApplied = false } = {},
 ) {
   const baseAllowlist = extractS0T1CAllowlistSignatures(migrationSql);
   if (baseAllowlist.length === 0) {
@@ -383,6 +394,9 @@ export async function verifyS0T1CHistoricalCompatibility(
     ...(attendanceSelfHistoryApplied ? ATTENDANCE_SELF_HISTORY_RPC_SIGNATURES : []),
     ...(orgShell01DepartmentsApplied ? ORG_SHELL_01_DEPARTMENTS_RPC_SIGNATURES : []),
     ...(vfin01BackendApplied ? VFIN_01_BACKEND_RPC_SIGNATURES : []),
+    ...(hfWorkReportsGroupsAndAnalyticsOptionsApplied
+      ? HF_WORK_REPORTS_GROUPS_AND_ANALYTICS_OPTIONS_RPC_SIGNATURES
+      : []),
   ];
 
   const { rows } = await client.query(
@@ -601,6 +615,8 @@ export async function verifyAppliedMigrationChecksum(
           appliedMap.has(ORG_SHELL_01_DEPARTMENTS_MIGRATION_NAME),
         vfin01BackendApplied:
           appliedMap.has(VFIN_01_BACKEND_MIGRATION_NAME),
+        hfWorkReportsGroupsAndAnalyticsOptionsApplied:
+          appliedMap.has(HF_WORK_REPORTS_GROUPS_AND_ANALYTICS_OPTIONS_MIGRATION_NAME),
       },
     );
     if (postconditions.ok) {

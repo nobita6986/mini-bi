@@ -1204,3 +1204,131 @@ test("contributions keyset pagination neither skips nor duplicates rows when a n
     (err) => err.code === "22023" && err.message.includes("WORK_REPORT_CURSOR_INVALID"),
   );
 });
+
+test("HF: work_report_analytics_filter_options supports analytics-only actors, enforces team vs all scope without leaking out-of-scope options, and stays separate from report_view", async () => {
+  const TEAM_A_ANALYTICS_ONLY = {
+    auth: "15000000-0000-4000-8000-000000000091",
+    app: "25000000-0000-4000-8000-000000000091",
+    name: "Team A Analytics Only Actor",
+  };
+  const REPORT_VIEW_ONLY = {
+    auth: "15000000-0000-4000-8000-000000000092",
+    app: "25000000-0000-4000-8000-000000000092",
+    name: "Report View Only Actor",
+  };
+
+  for (const actor of [TEAM_A_ANALYTICS_ONLY, REPORT_VIEW_ONLY]) {
+    await db.query("insert into auth.users (id) values ($1::uuid)", [actor.auth]);
+    await db.query(
+      `insert into public.direct_entry_app_users (app_user_id, auth_subject, display_name, enabled)
+       values ($1::uuid, $2::uuid, $3, true)`,
+      [actor.app, actor.auth, actor.name],
+    );
+  }
+
+  // Grant ONLY report_analytics_view @ team: TEAM_A (no report_view, no report_assign)
+  await db.query(
+    `insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from, is_current)
+     values ($1::uuid, 'report_analytics_view', '2026-01-01', true)`,
+    [TEAM_A_ANALYTICS_ONLY.app],
+  );
+  await db.query(
+    `insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from, is_current)
+     values ($1::uuid, 'team', $2::uuid, '2026-01-01', true)`,
+    [TEAM_A_ANALYTICS_ONLY.app, TEAM_A],
+  );
+
+  // Grant ONLY report_view @ all (no report_analytics_view)
+  await db.query(
+    `insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from, is_current)
+     values ($1::uuid, 'report_view', '2026-01-01', true)`,
+    [REPORT_VIEW_ONLY.app],
+  );
+  await db.query(
+    `insert into public.direct_entry_scope_grants (app_user_id, scope_kind, valid_from, is_current)
+     values ($1::uuid, 'all', '2026-01-01', true)`,
+    [REPORT_VIEW_ONLY.app],
+  );
+
+  // Create a Team-B-only template to prove TEAM_A_ANALYTICS_ONLY does NOT see out-of-scope templates
+  const bOnlySchema = structuredClone(RECRUITMENT_DAILY_TEMPLATE_SCHEMA);
+  const bOnlyContract = buildWorkReportMetricContract(bOnlySchema);
+  const { rows: bOnlyTplRows } = await db.query(
+    `select public.work_report_create_template(
+       $1::uuid, $2::uuid, 'TEAM_B_EXCLUSIVE_TPL', 'Báo cáo riêng Nhóm B',
+       null, 'DAILY', $3::jsonb, $4::jsonb, $5
+     ) as result`,
+    [BOD_ADMIN.auth, BOD_ADMIN.app, JSON.stringify(bOnlySchema), JSON.stringify(bOnlyContract), KEY("hf_b_only_tpl")],
+  );
+  const bOnlyTplId = bOnlyTplRows[0].result.template_id;
+  await db.query(
+    `select public.work_report_publish_template($1::uuid, $2::uuid, $3::uuid, $4::uuid, 1, $5)`,
+    [BOD_ADMIN.auth, BOD_ADMIN.app, bOnlyTplId, bOnlyTplRows[0].result.draft_version_id, KEY("hf_b_only_pub")],
+  );
+  await db.query(
+    `select public.work_report_create_assignment(
+       $1::uuid, $2::uuid, $3::uuid, 'TEAM', null, $4::uuid, null,
+       'DAILY', true, 0, '23:59:59'::time, false, '2026-01-01'::date, null, $5
+     )`,
+    [BOD_ADMIN.auth, BOD_ADMIN.app, bOnlyTplId, TEAM_B, KEY("hf_b_only_assign")],
+  );
+
+  // 1) TEAM_A_ANALYTICS_ONLY gets strictly TEAM_A options without report_view or report_assign
+  const { rows: teamAOptsRows } = await db.query(
+    `select public.work_report_analytics_filter_options($1::uuid, $2::uuid) as result`,
+    [TEAM_A_ANALYTICS_ONLY.auth, TEAM_A_ANALYTICS_ONLY.app],
+  );
+  const teamAOpts = teamAOptsRows[0].result;
+  assert.deepEqual(teamAOpts.effective_scope, { kind: "team", label: "Nhóm Tuyển Dụng A" });
+  assert.deepEqual(teamAOpts.teams.map((t) => t.team_id), [TEAM_A], "only TEAM_A returned");
+  assert.equal(
+    teamAOpts.templates.some((t) => t.template_id === bOnlyTplId),
+    false,
+    "Team-B-only template excluded from Team A analytics options",
+  );
+  const mainTplOpt = teamAOpts.templates.find((t) => t.template_code === "RECRUITMENT_DAILY_ANALYTICS");
+  assert.ok(mainTplOpt, "Team A template included with version numbers");
+  assert.ok(mainTplOpt.versions.every((v) => Number.isInteger(v.version_no) && v.version_no >= 1));
+  assert.equal(
+    teamAOpts.assignees.some((u) => u.app_user_id === STAFF_B1.app),
+    false,
+    "Team B staff never leaked in Team A analytics assignees",
+  );
+  assert.ok(teamAOpts.assignees.every((u) => u.team_ids.includes(TEAM_A)));
+
+  // And TEAM_A_ANALYTICS_ONLY still CANNOT read source submission content (strict capability separation)
+  const { rows: anySubRow } = await db.query(
+    `select submission_id from public.work_report_submissions limit 1`,
+  );
+  await assert.rejects(
+    db.query(`select public.work_report_get_submission($1::uuid, $2::uuid, $3::uuid)`, [
+      TEAM_A_ANALYTICS_ONLY.auth,
+      TEAM_A_ANALYTICS_ONLY.app,
+      anySubRow[0].submission_id,
+    ]),
+    (err) => err.code === "42501",
+  );
+
+  // 2) All-scope analytics-only actor & canonical Full Admin see both teams and Team-B template
+  for (const actor of [ANALYTICS_ONLY_USER, FULL_ADMIN_IMPLICIT]) {
+    const { rows } = await db.query(
+      `select public.work_report_analytics_filter_options($1::uuid, $2::uuid) as result`,
+      [actor.auth, actor.app],
+    );
+    assert.equal(rows[0].result.effective_scope.kind, "all");
+    const teamIds = rows[0].result.teams.map((t) => t.team_id);
+    assert.ok(teamIds.includes(TEAM_A) && teamIds.includes(TEAM_B));
+    assert.ok(rows[0].result.templates.some((t) => t.template_id === bOnlyTplId));
+  }
+
+  // 3) Actors with ONLY report_view or ONLY report_form_manage (without report_analytics_view) are denied 42501
+  for (const actor of [REPORT_VIEW_ONLY, FORM_ADMIN_ONLY]) {
+    await assert.rejects(
+      db.query(`select public.work_report_analytics_filter_options($1::uuid, $2::uuid)`, [
+        actor.auth,
+        actor.app,
+      ]),
+      (err) => err.code === "42501" && err.message.includes("WORK_REPORT_CAPABILITY_DENIED"),
+    );
+  }
+});
