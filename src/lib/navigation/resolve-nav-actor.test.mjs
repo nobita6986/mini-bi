@@ -156,3 +156,14 @@ test("Gap1-13: RSC actor resolver reads cookies without attempting a forbidden w
     /getDirectEntryActor\(createDirectEntryActorRepository\(\),\s*\{\s*cookieWriteMode:\s*["']read-only["'],?\s*\}\)/,
   );
 });
+
+test("VFIN-01: resolveVendorFinanceAccessForRequest is wrapped by React cache() and probes server-side Accounting access only when DIRECT_ENTRY_API_ENABLED is true", () => {
+  assert.match(
+    resolveNavActor,
+    /export\s+const\s+resolveVendorFinanceAccessForRequest\s*=\s*cache\(/,
+  );
+  assert.match(resolveNavActor, /process\.env\.DIRECT_ENTRY_API_ENABLED\s*===\s*["']true["']/);
+  assert.match(resolveNavActor, /!vendorFinanceRecordNavPredicate\(projection\)/);
+  assert.match(resolveNavActor, /projection\.hasVendorFinanceAccess\s*=\s*true/);
+  assert.match(resolveNavActor, /projection\.hasVendorFinanceRecordAccess\s*=\s*true/);
+});

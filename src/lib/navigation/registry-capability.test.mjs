@@ -35,6 +35,8 @@ const {
   workReportTemplateManagePredicate,
   workReportViewPredicate,
   workReportsNavPredicate,
+  vendorFinanceNavPredicate,
+  vendorFinanceRecordNavPredicate,
   resolveNavCapabilityPredicate,
 } = cap;
 const { CURRENT_NAV_ENTRIES, filterEntriesForActor } = reg;
@@ -140,6 +142,61 @@ test("W06-R1: worker operations audience matrix (reviewer/admin/PM/uploader)", (
 test("resolveNavCapabilityPredicate: token không xác định fail-closed", () => {
   assert.equal(resolveNavCapabilityPredicate("entry_own")(makeActor(["entry_own"])), true);
   assert.equal(resolveNavCapabilityPredicate("bogus_token")(makeActor(["entry_admin"])), false);
+});
+
+test("VFIN-01: vendorFinanceNavPredicate và vendorFinanceRecordNavPredicate fail-closed theo Full Admin, Phòng Kế toán server-probed và direct grant @ all", () => {
+  const all = [{ kind: "all", reference: "all" }];
+  const team = [{ kind: "team", reference: "team-1" }];
+  const own = [{ kind: "own", reference: "u-1" }];
+
+  const fullAdmin = makeActor(["entry_admin", "recruiter_master_manage", "team_master_manage"], all);
+  assert.equal(vendorFinanceNavPredicate(fullAdmin), true);
+  assert.equal(vendorFinanceRecordNavPredicate(fullAdmin), true);
+  assert.equal(resolveNavCapabilityPredicate("finance")(fullAdmin), true);
+
+  // Active Accounting department member (server-probed without mutating capabilities or scopes).
+  const accountingMember = {
+    capabilities: [],
+    scopes: own,
+    hasVendorFinanceAccess: true,
+    hasVendorFinanceRecordAccess: true,
+  };
+  assert.equal(vendorFinanceNavPredicate(accountingMember), true);
+  assert.equal(vendorFinanceRecordNavPredicate(accountingMember), true);
+  assert.equal(resolveNavCapabilityPredicate("finance")(accountingMember), true);
+  assert.equal(directEntryNavPredicate(accountingMember), false, "Accounting membership does not open Direct Entry");
+  assert.equal(adminAuthorityNavPredicate(accountingMember), false, "Accounting membership does not open Full Admin");
+  assert.equal(workReportsNavPredicate(accountingMember), false, "Accounting membership does not open Work Reports");
+
+  // BoD view-only direct grant (`vendor_finance_view` @ `all`).
+  const bodViewOnly = makeActor(["vendor_finance_view"], all);
+  assert.equal(vendorFinanceNavPredicate(bodViewOnly), true);
+  assert.equal(vendorFinanceRecordNavPredicate(bodViewOnly), false);
+  assert.equal(resolveNavCapabilityPredicate("finance")(bodViewOnly), true);
+
+  // Direct record grant (`vendor_finance_record` @ `all`).
+  const directRecorder = makeActor(["vendor_finance_record"], all);
+  assert.equal(vendorFinanceNavPredicate(directRecorder), true);
+  assert.equal(vendorFinanceRecordNavPredicate(directRecorder), true);
+
+  // Missing `all` scope -> denied even if direct capability is present.
+  assert.equal(vendorFinanceNavPredicate(makeActor(["vendor_finance_view"], team)), false);
+  assert.equal(vendorFinanceNavPredicate(makeActor(["vendor_finance_record"], own)), false);
+  assert.equal(vendorFinanceRecordNavPredicate(makeActor(["vendor_finance_record"], team)), false);
+
+  // Catalog operator, partial admin, Team Leader, PM, Staff, Work Reports, and retired payment tokens -> denied.
+  for (const denied of [
+    makeActor(["catalog_master_manage"], all),
+    makeActor(["entry_admin", "recruiter_master_manage"], all),
+    makeActor(["team_manager_assign", "report_view", "report_analytics_view", "report_assign", "report_review"], team),
+    makeActor(["change_request_create"], own),
+    makeActor(["entry_own"], own),
+    makeActor(["payment_view", "payment_edit"], all),
+  ]) {
+    assert.equal(vendorFinanceNavPredicate(denied), false);
+    assert.equal(vendorFinanceRecordNavPredicate(denied), false);
+    assert.equal(resolveNavCapabilityPredicate("finance")(denied), false);
+  }
 });
 
 test("Work Reports predicates enforce capability and compatible scope", () => {

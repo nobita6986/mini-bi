@@ -174,7 +174,9 @@ export type Capability =
   | "report_view"
   | "report_analytics_view"
   | "report_review"
-  | "report_delegate";
+  | "report_delegate"
+  | "vendor_finance_view"
+  | "vendor_finance_record";
 
 export type ValidationIssue = { code: string; path: string };
 export type ValidationResult =

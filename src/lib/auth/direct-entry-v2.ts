@@ -2,7 +2,7 @@ import { isRealCalendarDate } from "../analytics/identity/identity-shared.mjs";
 import type { TeamIdentity } from "../analytics/identity/contracts.ts";
 import type { ExplicitRecruiterLink } from "../contracts/direct-entry-v1.ts";
 
-export const DIRECT_ENTRY_AUTH_CONTRACT_VERSION = "direct-entry-auth/1.5" as const;
+export const DIRECT_ENTRY_AUTH_CONTRACT_VERSION = "direct-entry-auth/1.6" as const;
 
 export const CAPABILITIES = [
   "entry_create",
@@ -33,6 +33,9 @@ export const CAPABILITIES = [
   "report_analytics_view",
   "report_review",
   "report_delegate",
+  // VFIN-01: Vendor Finance direct-grant capability tokens (both require effective `all` scope).
+  "vendor_finance_view",
+  "vendor_finance_record",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
@@ -188,6 +191,7 @@ const REASON_REQUIRED_ACTIONS = new Set<AuthorizationAction>([
   "entry_restore",
   "catalog_master_manage",
   "team_manager_assign",
+  "vendor_finance_record",
 ]);
 const VERSION_REQUIRED_ACTIONS = new Set<AuthorizationAction>([
   "entry_admin",
@@ -210,6 +214,8 @@ const REQUIRED_SCOPE_KIND: Partial<Record<AuthorizationAction, ScopeKind>> = {
   catalog_master_manage: "all",
   team_manager_assign: "team",
   report_form_manage: "all",
+  vendor_finance_view: "all",
+  vendor_finance_record: "all",
 };
 const FORBIDDEN_CLIENT_FIELDS = new Set([
   "authsubject",

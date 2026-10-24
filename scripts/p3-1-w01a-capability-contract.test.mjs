@@ -48,10 +48,11 @@ const F1_WORK_REPORT_TOKENS = [
   "report_analytics_view",
 ];
 const F2_WORK_REPORT_TOKENS = ["report_review", "report_delegate"];
+const VFIN_TOKENS = ["vendor_finance_view", "vendor_finance_record"];
 const LEGACY_TOKEN_COUNT = 21;
 const RETIRED_TOKENS = ["pii_view", "pii_export", "payment_view", "payment_edit"];
-const TOKEN_COUNT = 29;
-const ACTIVE_TOKEN_COUNT = 25;
+const TOKEN_COUNT = 31;
+const ACTIVE_TOKEN_COUNT = 27;
 const UNKNOWN_TOKEN = "unknown_capability_probe";
 
 const AUTH_SUBJECT = "10000000-0000-4000-8000-00000000c001";
@@ -137,13 +138,14 @@ function resourceFor(kind) {
   };
 }
 
-test("the auth contract is versioned as direct-entry-auth/1.5 without retired capabilities", () => {
-  assert.equal(DIRECT_ENTRY_AUTH_CONTRACT_VERSION, "direct-entry-auth/1.5");
+test("the auth contract is versioned as direct-entry-auth/1.6 without retired capabilities", () => {
+  assert.equal(DIRECT_ENTRY_AUTH_CONTRACT_VERSION, "direct-entry-auth/1.6");
   assert.equal(CAPABILITIES.length, ACTIVE_TOKEN_COUNT);
   for (const token of RETIRED_TOKENS) assert.equal(CAPABILITIES.includes(token), false, token);
   for (const token of NEW_TOKENS) assert.ok(CAPABILITIES.includes(token), token);
   for (const token of F1_WORK_REPORT_TOKENS) assert.ok(CAPABILITIES.includes(token), token);
   for (const token of F2_WORK_REPORT_TOKENS) assert.ok(CAPABILITIES.includes(token), token);
+  for (const token of VFIN_TOKENS) assert.ok(CAPABILITIES.includes(token), token);
 });
 
 test("database preserves legacy grant storage while active SQL and TypeScript agree", async () => {
@@ -186,7 +188,8 @@ test("migration 67 is append-only: the frozen foundation vocabulary is untouched
         (token) =>
           !NEW_TOKENS.includes(token) &&
           !F1_WORK_REPORT_TOKENS.includes(token) &&
-          !F2_WORK_REPORT_TOKENS.includes(token),
+          !F2_WORK_REPORT_TOKENS.includes(token) &&
+          !VFIN_TOKENS.includes(token),
       )
       .concat(RETIRED_TOKENS)
       .sort(),
@@ -196,7 +199,7 @@ test("migration 67 is append-only: the frozen foundation vocabulary is untouched
   const schemaTokens = await schemaVocabulary(db);
   assert.deepEqual(
     schemaTokens.filter((token) => !foundationTokens.includes(token)).sort(),
-    [...NEW_TOKENS, ...F1_WORK_REPORT_TOKENS, ...F2_WORK_REPORT_TOKENS].sort(),
+    [...NEW_TOKENS, ...F1_WORK_REPORT_TOKENS, ...F2_WORK_REPORT_TOKENS, ...VFIN_TOKENS].sort(),
   );
   await db.close();
 });
@@ -399,4 +402,57 @@ test("client-supplied actor, capability and scope fields are still rejected", ()
     assert.equal(result.ok, false);
     assert.equal(result.code, "CLIENT_AUTHORITY_FIELD_FORBIDDEN");
   }
+});
+
+test("VFIN-01 tokens require effective all scope, reason on record, and never open Direct Entry or Full Admin", () => {
+  const vfinDirectActor = actor({
+    capabilities: ["vendor_finance_view", "vendor_finance_record"],
+    scopes: [ALL_SCOPE],
+  });
+  assert.equal(
+    authorizeDirectEntry({
+      actor: vfinDirectActor,
+      action: "vendor_finance_view",
+      timestamp: TIMESTAMP,
+      resource: resourceFor("all"),
+    }).allowed,
+    true,
+  );
+  assert.equal(
+    authorizeDirectEntry({
+      actor: vfinDirectActor,
+      action: "vendor_finance_record",
+      timestamp: TIMESTAMP,
+      resource: resourceFor("all"),
+    }).code,
+    "REASON_REQUIRED",
+  );
+  assert.equal(
+    authorizeDirectEntry({
+      actor: vfinDirectActor,
+      action: "vendor_finance_record",
+      timestamp: TIMESTAMP,
+      reason_ref: REASON_REF,
+      resource: resourceFor("all"),
+    }).allowed,
+    true,
+  );
+  assert.equal(
+    authorizeDirectEntry({
+      actor: actor({ capabilities: ["vendor_finance_view", "vendor_finance_record"], scopes: [TEAM_SCOPE] }),
+      action: "vendor_finance_view",
+      timestamp: TIMESTAMP,
+      resource: resourceFor("team"),
+    }).code,
+    "ACTION_SCOPE_MISMATCH",
+  );
+
+  const navProjected = {
+    capabilities: ["vendor_finance_view", "vendor_finance_record"],
+    scopes: [{ kind: "all" }],
+  };
+  assert.equal(directEntryNavPredicate(navProjected), false);
+  assert.equal(workerOperationsNavPredicate(navProjected), false);
+  assert.equal(projectAdminNavPredicate(navProjected), false);
+  assert.equal(adminAuthorityNavPredicate(navProjected), false);
 });

@@ -37,11 +37,13 @@ import { getDirectEntryActor } from "@/lib/auth/direct-entry-session";
 import { resolveSessionWithBoundedRetry } from "@/lib/auth/direct-entry-session-retry";
 import { createDirectEntryActorRepository } from "@/lib/direct-entry/actor-context-repository";
 import { createChangeRequestReadRepository } from "@/lib/direct-entry/change-request-read-repository";
+import { createVendorFinanceRepository } from "@/lib/vendor-finance/vendor-finance-repository";
 import { createSubmissionRepository } from "@/lib/work-reports/submission-repository";
 import type { ActorResolution } from "@/lib/auth/direct-entry-v2";
 import {
   changeRequestsNavPredicate,
   type NavActorProjection,
+  vendorFinanceRecordNavPredicate,
   workReportsNavPredicate,
 } from "@/lib/navigation/registry-capability";
 
@@ -95,6 +97,30 @@ export const resolveChangeRequestHistoricalAccessForRequest = cache(
   },
 );
 
+export const resolveVendorFinanceAccessForRequest = cache(
+  async (): Promise<{ can_view: boolean; can_record: boolean }> => {
+    const actor = await resolveActorForRequest();
+    if (!actor.ok) {
+      return { can_view: false, can_record: false };
+    }
+    try {
+      const access = await createVendorFinanceRepository().getActorAccess({
+        auth_subject: actor.actor.auth_subject,
+        app_user_id: actor.actor.app_user_id,
+      });
+      if (access.ok && access.data.can_view) {
+        return {
+          can_view: true,
+          can_record: access.data.can_record,
+        };
+      }
+    } catch {
+      // Fail closed without disrupting AppShell rendering.
+    }
+    return { can_view: false, can_record: false };
+  },
+);
+
 export const resolveNavActorForAppShell = cache(
   async (input: {
     directEntryEnabled: boolean;
@@ -122,6 +148,18 @@ export const resolveNavActorForAppShell = cache(
       });
       if (obligations.ok && obligations.data.length > 0) {
         projection.hasWorkReportObligations = true;
+      }
+    }
+    if (
+      process.env.DIRECT_ENTRY_API_ENABLED === "true" &&
+      !vendorFinanceRecordNavPredicate(projection)
+    ) {
+      const vfinAccess = await resolveVendorFinanceAccessForRequest();
+      if (vfinAccess.can_view) {
+        projection.hasVendorFinanceAccess = true;
+        if (vfinAccess.can_record) {
+          projection.hasVendorFinanceRecordAccess = true;
+        }
       }
     }
     if (input.directEntryEnabled && !changeRequestsNavPredicate(projection)) {
