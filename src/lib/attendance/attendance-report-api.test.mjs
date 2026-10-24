@@ -195,7 +195,7 @@ function makePutRequest(
 test("Attendance Report navigation, Admin shell, and page-gate matrix enforces Admin & canonical BoD only", () => {
   const allSections = ADMIN_SECTIONS.map(({ id, label, href }) => ({ id, label, href }));
   const catalogSections = allSections.filter(
-    ({ id }) => !["accounts", "project-team-scopes", "attendance"].includes(id),
+    ({ id }) => !["departments", "accounts", "project-team-scopes", "attendance"].includes(id),
   );
   const attendanceOnlySection = allSections.filter(({ id }) => id === "attendance");
 

@@ -56,12 +56,13 @@ test("one top-level /admin entry is independently authorized and is not a Direct
   }), false);
 });
 
-test("Admin internal navigation exposes mapping only to Full Admin", () => {
+test("Admin internal navigation exposes mapping and departments only to Full Admin", () => {
   assert.deepEqual(ADMIN_SECTIONS.map(({ id, href }) => ({ id, href })), [
     { id: "personnel", href: "/admin/catalog/personnel" },
     { id: "teams", href: "/admin/catalog/teams" },
     { id: "vendors", href: "/admin/catalog/vendors" },
     { id: "labor-types", href: "/admin/catalog/labor-types" },
+    { id: "departments", href: "/admin/departments" },
     { id: "accounts", href: "/admin/access/accounts" },
     { id: "project-team-scopes", href: "/admin/catalog/project-team-scopes" },
     { id: "attendance", href: "/admin/attendance" },
@@ -71,14 +72,15 @@ test("Admin internal navigation exposes mapping only to Full Admin", () => {
     { id: "teams", label: "Nhóm" },
     { id: "vendors", label: "Nhà cung cấp" },
     { id: "labor-types", label: "Loại hình lao động" },
+    { id: "departments", label: "Phòng ban" },
     { id: "accounts", label: "Tài khoản truy cập" },
     { id: "project-team-scopes", label: "Mapping Dự án ↔ Nhóm" },
     { id: "attendance", label: "Báo cáo chấm công" },
   ]);
   const serializableSections = ADMIN_SECTIONS.map(({ id, label, href }) => ({ id, label, href }));
-  const catalogOnly = serializableSections.filter(({ id }) => !["accounts", "project-team-scopes", "attendance"].includes(id));
+  const catalogOnly = serializableSections.filter(({ id }) => !["departments", "accounts", "project-team-scopes", "attendance"].includes(id));
   const attendanceOnly = serializableSections.filter(({ id }) => id === "attendance");
-  // Accounting (catalog operator) sees catalog sections, never accounts, project mappings, or attendance.
+  // Accounting (catalog operator) sees catalog sections, never departments, accounts, project mappings, or attendance.
   assert.deepEqual(visibleAdminSections(accountingCatalog), catalogOnly);
   // Canonical BoD (entry_privileged_edit @ all or report_analytics_view + report_view @ all) sees only Attendance Report.
   assert.deepEqual(visibleAdminSections({ capabilities: ["entry_privileged_edit"], scopes: [{ kind: "all" }] }), attendanceOnly);
@@ -104,6 +106,8 @@ test("catalog and access paths highlight exactly one internal tab", () => {
     ["/admin/catalog/vendors/record", "vendors"],
     ["/admin/catalog/labor-types", "labor-types"],
     ["/admin/catalog/labor-types/record", "labor-types"],
+    ["/admin/departments", "departments"],
+    ["/admin/departments/40000000-0000-4000-8000-000000000003", "departments"],
     ["/admin/access/accounts", "accounts"],
     ["/admin/access/accounts/record", "accounts"],
     ["/admin/catalog/project-team-scopes", "project-team-scopes"],
@@ -122,6 +126,8 @@ test("top-level Admin remains the active registry entry across catalog and acces
   assert.equal(findEntryByPath("/admin/catalog/teams/nested")?.id, "admin");
   assert.equal(findEntryByPath("/admin/catalog/vendors")?.id, "admin");
   assert.equal(findEntryByPath("/admin/catalog/labor-types")?.id, "admin");
+  assert.equal(findEntryByPath("/admin/departments")?.id, "admin");
+  assert.equal(findEntryByPath("/admin/departments/40000000-0000-4000-8000-000000000003")?.id, "admin");
   assert.equal(findEntryByPath("/admin/access/accounts")?.id, "admin");
   assert.equal(findEntryByPath("/admin/catalog/project-team-scopes")?.id, "admin");
 });

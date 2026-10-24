@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
+  decideAccountAccessPageAccess,
   decideAdminAreaAccess,
   decidePersonnelCatalogPageAccess,
 } from "../../lib/auth/direct-entry-page-access.ts";
@@ -69,4 +70,22 @@ test("/admin preserves its server gate then redirects straight to Personnel", ()
   assert.match(adminPage, /case "ALLOW":\s*redirect\("\/admin\/catalog\/personnel"\)/);
   assert.doesNotMatch(adminPage, /useEffect|useRouter/);
   assert.doesNotMatch(adminPage, /<h1[^>]*>Quản trị|Mở danh mục nhân sự|CardHeader|<Card/);
+});
+
+test("/admin/departments and /admin/departments/[departmentId] require Full Admin (decideAccountAccessPageAccess)", () => {
+  const full = actor(["entry_admin", "recruiter_master_manage", "team_master_manage"]);
+  const catalogOperator = actor(["catalog_master_manage"]);
+  assert.equal(decideAccountAccessPageAccess({ actor: full }), "ALLOW");
+  assert.equal(decideAccountAccessPageAccess({ actor: catalogOperator }), "ACCESS_DENIED");
+  assert.equal(decideAccountAccessPageAccess({ actor: actor(["entry_admin"]) }), "ACCESS_DENIED");
+
+  const departmentsPage = readFileSync(new URL("./departments/page.tsx", import.meta.url), "utf8");
+  const departmentDetailPage = readFileSync(
+    new URL("./departments/[departmentId]/page.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.match(departmentsPage, /resolveActorForRequest\(\)/);
+  assert.match(departmentsPage, /decideAccountAccessPageAccess\(\{ actor \}\)/);
+  assert.match(departmentDetailPage, /resolveActorForRequest\(\)/);
+  assert.match(departmentDetailPage, /decideAccountAccessPageAccess\(\{ actor \}\)/);
 });
