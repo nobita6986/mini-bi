@@ -31,6 +31,7 @@ export type NavActorProjection = {
   hasWorkReportObligations?: boolean;
   hasVendorFinanceAccess?: boolean;
   hasVendorFinanceRecordAccess?: boolean;
+  hasVendorFinanceReconcileAccess?: boolean;
 };
 
 /** Predicate phụ thuộc entry — registry.ts có metadata `capability`. */
@@ -227,11 +228,12 @@ export const workforceOffboardingNavPredicate: NavCapabilityPredicate = (actor) 
     actor.scopes.some((scope) => scope.kind === "team"));
 
 /**
- * VFIN-01: Vendor Finance navigation predicate (fail-closed).
+ * VFIN-01 / VFIN-02: Vendor Finance navigation predicate (fail-closed).
  * Accepts:
  *  1. Canonical Full Admin (`entry_admin` + `recruiter_master_manage` + `team_master_manage` @ `all`);
- *  2. Server-probed active membership in immutable `system_key = 'ACCOUNTING'` department
- *     (`hasVendorFinanceAccess === true` / `hasVendorFinanceRecordAccess === true`, never synthesized into actor grants);
+ *  2. Server-probed active membership in immutable `system_key = 'ACCOUNTING'` department or
+ *     narrow VFIN global role (`hasVendorFinanceAccess === true` / `hasVendorFinanceRecordAccess === true` /
+ *     `hasVendorFinanceReconcileAccess === true`, never synthesized into actor grants);
  *  3. Direct VFIN capability grant (`vendor_finance_view` | `vendor_finance_record`) with effective `all` scope.
  * `catalog_master_manage`, `team_manager_assign`, `entry_admin` alone, Work Reports capabilities,
  * and retired `payment_view` / `payment_edit` never open Vendor Finance.
@@ -240,16 +242,25 @@ export const vendorFinanceNavPredicate: NavCapabilityPredicate = (actor) =>
   adminAuthorityNavPredicate(actor) ||
   actor.hasVendorFinanceAccess === true ||
   actor.hasVendorFinanceRecordAccess === true ||
+  actor.hasVendorFinanceReconcileAccess === true ||
   (actor.scopes.some((scope) => scope.kind === "all") &&
     (actor.capabilities.includes("vendor_finance_view") ||
       actor.capabilities.includes("vendor_finance_record")));
 
-/** VFIN-01: Record/mutation predicate (excludes BoD view-only `vendor_finance_view`). */
+/** VFIN-01 / VFIN-02: Record/mutation predicate (excludes BoD view-only & narrow reconcilers). */
 export const vendorFinanceRecordNavPredicate: NavCapabilityPredicate = (actor) =>
   adminAuthorityNavPredicate(actor) ||
   actor.hasVendorFinanceRecordAccess === true ||
   (actor.scopes.some((scope) => scope.kind === "all") &&
     actor.capabilities.includes("vendor_finance_record"));
+
+/** VFIN-02: Narrow reconcile predicate (includes `GLOBAL_RECONCILER` and `CASH_HOLDER` without requiring `can_record`). */
+export const vendorFinanceReconcileNavPredicate: NavCapabilityPredicate = (actor) =>
+  vendorFinanceRecordNavPredicate(actor) ||
+  actor.hasVendorFinanceReconcileAccess === true;
+
+/** VFIN-02: Full Admin governance predicate for project accountant assignments, Vendor-Project links & global roles. */
+export const vendorFinanceAdminNavPredicate: NavCapabilityPredicate = adminAuthorityNavPredicate;
 
 /** Bảng ánh xạ `entry.capability` metadata → predicate tương ứng. */
 export const NAV_CAPABILITY_PREDICATES: Readonly<Record<string, NavCapabilityPredicate>> = {

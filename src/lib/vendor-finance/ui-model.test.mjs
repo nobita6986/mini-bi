@@ -13,24 +13,34 @@ import {
   VENDOR_FINANCE_EVIDENCE_MAX_BYTES,
   VENDOR_FINANCE_EVIDENCE_MIME_TYPES,
   VENDOR_FINANCE_EVIDENCE_TARGET_KINDS,
+  VENDOR_FINANCE_GLOBAL_ROLE_CODES,
   VENDOR_FINANCE_INTERNAL_DISCLAIMER_VI,
+  VENDOR_FINANCE_LEDGER_SCOPES,
   VENDOR_FINANCE_MAX_OPENING_BATCH_ITEMS,
   VENDOR_FINANCE_MAX_REASON_LENGTH,
   VENDOR_FINANCE_MAX_SEARCH_LENGTH,
   checkForbiddenVendorFinanceClientFields,
   encodeVendorEntriesCursor,
   parseApplyOpeningBatchBody,
+  parseAssignGlobalRoleBody,
+  parseAssignProjectAccountantBody,
   parseCreateVendorReconciliationBody,
+  parseEndGlobalRoleBody,
+  parseEndProjectAccountantBody,
   parseFinalizeVendorFinanceEvidenceBody,
+  parseGetVendorFinanceVendorDetailQuery,
   parseListVendorFinanceEntriesQuery,
   parseListVendorFinanceVendorsQuery,
   parseListVendorReconciliationsQuery,
+  parseMonthlyReportQuery,
   parsePreviewOpeningBatchBody,
   parseRecordVendorFinanceEntryBody,
   parseReserveVendorFinanceEvidenceBody,
   parseReverseVendorFinanceEntryBody,
+  parseSetProjectVendorLinkBody,
 } from "./vendor-finance-contract.ts";
 import {
+  PROJECT_REVENUE_MISSING_SOURCE_LABEL_VI,
   VFIN_UI_ACTIVE_FILTERS,
   VFIN_UI_BALANCE_FILTERS,
   VFIN_UI_CONTRACT_VERSION,
@@ -39,7 +49,9 @@ import {
   VFIN_UI_EVIDENCE_MAX_BYTES,
   VFIN_UI_EVIDENCE_MIME_TYPES,
   VFIN_UI_EVIDENCE_TARGET_KINDS,
+  VFIN_UI_GLOBAL_ROLE_CODES,
   VFIN_UI_INTERNAL_DISCLAIMER_VI,
+  VFIN_UI_LEDGER_SCOPE_FILTERS,
   VFIN_UI_MAX_OPENING_BATCH_ITEMS,
   VFIN_UI_MAX_REASON_LENGTH,
   VFIN_UI_MAX_SEARCH_LENGTH,
@@ -47,10 +59,20 @@ import {
   VFIN_UI_OPENING_ENTRY_TYPES,
   VFIN_UI_PG_BIGINT_MAX,
   VFIN_UI_PG_BIGINT_MIN,
+  buildAdminEndGlobalRoleUrl,
+  buildAdminEndProjectAccountantUrl,
+  buildAdminGlobalRolesUrl,
+  buildAdminProjectAccountantsUrl,
+  buildAdminProjectVendorsUrl,
+  buildAssignGlobalRoleRequest,
+  buildAssignProjectAccountantRequest,
   buildCreateReconciliationRequest,
   buildDownloadEvidenceUrl,
+  buildEndGlobalRoleRequest,
+  buildEndProjectAccountantRequest,
   buildFinalizeEvidenceRequest,
   buildFinalizeEvidenceUrl,
+  buildMonthlyReportUrl,
   buildOpeningApplyRequest,
   buildOpeningApplyUrl,
   buildOpeningPreviewRequest,
@@ -60,9 +82,11 @@ import {
   buildReserveEvidenceUrl,
   buildReverseEntryRequest,
   buildReverseEntryUrl,
+  buildSetProjectVendorLinkRequest,
   buildSingleEntryUrl,
   buildVendorDetailUrl,
   buildVendorEntriesUrl,
+  buildVendorFinanceContextUrl,
   buildVendorListUrl,
   buildVendorReconciliationsUrl,
   classifyVendorFinanceError,
@@ -74,21 +98,32 @@ import {
   formatVendorBalancePresentation,
   formatVietnamDateLabel,
   formatVndMinor,
+  isCanonicalUiProjectId,
   isCanonicalUiVendorId,
   normalizeNonNegativeVndInput,
   normalizePositiveVndInput,
   normalizeSignedVndInput,
+  parseAdminGlobalRolesEnvelope,
+  parseAdminProjectAccountantsEnvelope,
+  parseAdminProjectVendorsEnvelope,
+  parseAssignGlobalRoleEnvelope,
+  parseAssignProjectAccountantEnvelope,
   parseCreateReconciliationEnvelope,
+  parseEndGlobalRoleEnvelope,
+  parseEndProjectAccountantEnvelope,
   parseEvidenceDownloadEnvelope,
   parseEvidenceFinalizeEnvelope,
   parseEvidenceReserveEnvelope,
+  parseMonthlyReportEnvelope,
   parseOpeningApplyEnvelope,
   parseOpeningPreviewEnvelope,
   parseRecordEntryEnvelope,
   parseReverseEntryEnvelope,
+  parseSetProjectVendorLinkEnvelope,
   parseSingleEntryEnvelope,
   parseVendorDetailEnvelope,
   parseVendorEntriesPageEnvelope,
+  parseVendorFinanceContextEnvelope,
   parseVendorListEnvelope,
   parseVendorReconciliationsPageEnvelope,
   uploadEvidenceForCommittedTarget,
@@ -102,6 +137,11 @@ const EVIDENCE_ID = "44444444-4444-4444-8444-444444444444";
 const EVIDENCE_ID_2 = "55555555-5555-4555-8555-555555555555";
 const BATCH_ID = "66666666-6666-4666-8666-666666666666";
 const IDEMPOTENCY_KEY = "77777777-7777-4777-8777-777777777777";
+const ACCOUNTANT_A_REF = "88888888-8888-4888-8888-888888888888";
+const ASSIGNMENT_ID = "99999999-9999-4999-8999-999999999999";
+const LINK_ID = "abababab-abab-4bab-8bab-abababababab";
+const ROLE_GRANT_ID = "cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd";
+const PROJECT_ID = "PRJ-NORTH-01";
 const SAMPLE_SHA256 = "a".repeat(64);
 
 function makeActor({
@@ -138,7 +178,13 @@ function makeEntryProjection(overrides = {}) {
     vendor_id: "VND-001",
     vendor_display_name_snapshot: "Công ty TNHH Cung Ứng Nhân Lực Sao Việt",
     vendor_active: true,
+    ledger_scope: "PROJECT_ACCOUNTANT",
+    project_id: PROJECT_ID,
+    project_display_name_snapshot: "Dự án Tuyển dụng Miền Bắc",
+    accountant_ref: ACCOUNTANT_A_REF,
+    responsible_accountant_display_name: "Nguyễn Thị Kế Toán A",
     vendor_sequence: 3,
+    cursor_sequence: 3,
     document_no: "VFIN-2026-000003",
     document_kind: "PAYMENT_VOUCHER",
     document_title_vi: "Phiếu ghi nhận thanh toán Vendor",
@@ -157,7 +203,7 @@ function makeEntryProjection(overrides = {}) {
     can_reverse: true,
     can_attach_evidence: true,
     evidence: null,
-    created_by_display_name: "Nguyễn Thị Kế Toán",
+    created_by_display_name: "Nguyễn Thị Kế Toán A",
     created_at: "2026-10-25T09:00:00.000Z",
     internal_disclaimer: VENDOR_FINANCE_INTERNAL_DISCLAIMER_VI,
     ...overrides,
@@ -168,6 +214,11 @@ function makeReconciliationProjection(overrides = {}) {
   return {
     reconciliation_id: RECONCILIATION_ID,
     vendor_id: "VND-001",
+    ledger_scope: "PROJECT_ACCOUNTANT",
+    project_id: PROJECT_ID,
+    project_display_name_snapshot: "Dự án Tuyển dụng Miền Bắc",
+    accountant_ref: ACCOUNTANT_A_REF,
+    responsible_accountant_display_name: "Nguyễn Thị Kế Toán A",
     as_of_date: "2026-10-25",
     system_balance_minor: "10000000",
     confirmed_balance_minor: "10500000",
@@ -176,7 +227,7 @@ function makeReconciliationProjection(overrides = {}) {
     reason: "Đối chiếu biên bản cuối ngày với kế toán Vendor",
     can_attach_evidence: true,
     evidence: null,
-    created_by_display_name: "Nguyễn Thị Kế Toán",
+    created_by_display_name: "Nguyễn Thị Kế Toán A",
     created_at: "2026-10-25T10:00:00.000Z",
     ...overrides,
   };
@@ -212,6 +263,8 @@ test("browser-safe UI constants stay 100% synchronized with canonical backend co
   assert.deepEqual(VFIN_UI_DOCUMENT_KINDS, VENDOR_FINANCE_DOCUMENT_KINDS);
   assert.deepEqual(VFIN_UI_EVIDENCE_MIME_TYPES, VENDOR_FINANCE_EVIDENCE_MIME_TYPES);
   assert.deepEqual(VFIN_UI_EVIDENCE_TARGET_KINDS, VENDOR_FINANCE_EVIDENCE_TARGET_KINDS);
+  assert.deepEqual(VFIN_UI_LEDGER_SCOPE_FILTERS, ["all", ...VENDOR_FINANCE_LEDGER_SCOPES]);
+  assert.deepEqual([...VFIN_UI_GLOBAL_ROLE_CODES].sort(), [...VENDOR_FINANCE_GLOBAL_ROLE_CODES].sort());
   assert.deepEqual(VFIN_UI_ACTIVE_FILTERS, ["all", "active", "inactive"]);
   assert.deepEqual(VFIN_UI_BALANCE_FILTERS, [
     "all",
@@ -220,9 +273,10 @@ test("browser-safe UI constants stay 100% synchronized with canonical backend co
     "nonzero",
     "uninitialized",
   ]);
+  assert.equal(PROJECT_REVENUE_MISSING_SOURCE_LABEL_VI, "Chưa có nguồn chuẩn");
 });
 
-test("decideVendorFinancePageAccess enforces feature flag, authentication, view vs record authority, and fail-closed errors", () => {
+test("decideVendorFinancePageAccess enforces feature flag, authentication, view vs record vs admin authority, narrow reconciler, and fail-closed errors", () => {
   const fullAdmin = makeActor({
     capabilities: ["entry_admin", "recruiter_master_manage", "team_master_manage"],
     scopes: [{ kind: "all" }],
@@ -261,7 +315,7 @@ test("decideVendorFinancePageAccess enforces feature flag, authentication, view 
   assert.equal(
     decideVendorFinancePageAccess({
       enabledFlag: undefined,
-      requiredMode: "record",
+      requiredMode: "admin",
       actor: fullAdmin,
     }),
     "NOT_FOUND",
@@ -301,25 +355,41 @@ test("decideVendorFinancePageAccess enforces feature flag, authentication, view 
     "TEMPORARY_UNAVAILABLE",
   );
 
-  // Full Admin & direct vendor_finance_record @ all -> ALLOW on both view and record
-  for (const actor of [fullAdmin, directRecorder]) {
-    assert.equal(
-      decideVendorFinancePageAccess({ enabledFlag: "true", requiredMode: "view", actor }),
-      "ALLOW",
-    );
-    assert.equal(
-      decideVendorFinancePageAccess({ enabledFlag: "true", requiredMode: "record", actor }),
-      "ALLOW",
-    );
-  }
+  // Full Admin -> ALLOW on view, record, and admin
+  assert.equal(
+    decideVendorFinancePageAccess({ enabledFlag: "true", requiredMode: "view", actor: fullAdmin }),
+    "ALLOW",
+  );
+  assert.equal(
+    decideVendorFinancePageAccess({ enabledFlag: "true", requiredMode: "record", actor: fullAdmin }),
+    "ALLOW",
+  );
+  assert.equal(
+    decideVendorFinancePageAccess({ enabledFlag: "true", requiredMode: "admin", actor: fullAdmin }),
+    "ALLOW",
+  );
 
-  // Active Accounting Department member (resolved via server getActorAccess) -> ALLOW view & record
+  // Direct vendor_finance_record @ all -> ALLOW view & record, ACCESS_DENIED on admin
+  assert.equal(
+    decideVendorFinancePageAccess({ enabledFlag: "true", requiredMode: "view", actor: directRecorder }),
+    "ALLOW",
+  );
+  assert.equal(
+    decideVendorFinancePageAccess({ enabledFlag: "true", requiredMode: "record", actor: directRecorder }),
+    "ALLOW",
+  );
+  assert.equal(
+    decideVendorFinancePageAccess({ enabledFlag: "true", requiredMode: "admin", actor: directRecorder }),
+    "ACCESS_DENIED",
+  );
+
+  // Active Accounting Department member (Project Accountant) -> ALLOW view & record, ACCESS_DENIED admin
   assert.equal(
     decideVendorFinancePageAccess({
       enabledFlag: "true",
       requiredMode: "view",
       actor: accountingMember,
-      serverAccess: { ok: true, can_view: true, can_record: true },
+      serverAccess: { ok: true, can_view: true, can_record: true, can_reconcile: true },
     }),
     "ALLOW",
   );
@@ -328,12 +398,47 @@ test("decideVendorFinancePageAccess enforces feature flag, authentication, view 
       enabledFlag: "true",
       requiredMode: "record",
       actor: accountingMember,
-      serverAccess: { ok: true, can_view: true, can_record: true },
+      serverAccess: { ok: true, can_view: true, can_record: true, can_reconcile: true },
     }),
     "ALLOW",
   );
+  assert.equal(
+    decideVendorFinancePageAccess({
+      enabledFlag: "true",
+      requiredMode: "admin",
+      actor: accountingMember,
+      serverAccess: {
+        ok: true,
+        can_view: true,
+        can_record: true,
+        can_reconcile: true,
+        can_manage_project_assignments: false,
+      },
+    }),
+    "ACCESS_DENIED",
+  );
 
-  // BoD / View-only (`vendor_finance_view @ all`) -> ALLOW on view, ACCESS_DENIED on record (/finance/opening-balance)
+  // BoD narrow reconciler (`GLOBAL_RECONCILER`: can_view=true, can_reconcile=true, can_record=false) -> ALLOW view, ACCESS_DENIED record & admin
+  assert.equal(
+    decideVendorFinancePageAccess({
+      enabledFlag: "true",
+      requiredMode: "view",
+      actor: accountingMember,
+      serverAccess: { ok: true, can_view: true, can_record: false, can_reconcile: true },
+    }),
+    "ALLOW",
+  );
+  assert.equal(
+    decideVendorFinancePageAccess({
+      enabledFlag: "true",
+      requiredMode: "record",
+      actor: accountingMember,
+      serverAccess: { ok: true, can_view: true, can_record: false, can_reconcile: true },
+    }),
+    "ACCESS_DENIED",
+  );
+
+  // BoD / View-only (`vendor_finance_view @ all`) -> ALLOW on view, ACCESS_DENIED on record & admin
   assert.equal(
     decideVendorFinancePageAccess({
       enabledFlag: "true",
@@ -347,6 +452,15 @@ test("decideVendorFinancePageAccess enforces feature flag, authentication, view 
     decideVendorFinancePageAccess({
       enabledFlag: "true",
       requiredMode: "record",
+      actor: bodViewer,
+      serverAccess: { ok: true, can_view: true, can_record: false },
+    }),
+    "ACCESS_DENIED",
+  );
+  assert.equal(
+    decideVendorFinancePageAccess({
+      enabledFlag: "true",
+      requiredMode: "admin",
       actor: bodViewer,
       serverAccess: { ok: true, can_view: true, can_record: false },
     }),
@@ -396,8 +510,7 @@ test("decideVendorFinancePageAccess enforces feature flag, authentication, view 
   );
 });
 
-test("BigInt VND formatters and normalizers preserve exact digits beyond Number.MAX_SAFE_INTEGER and reject decimals", () => {
-  // Exact 64-bit integer precision (> 2^53 - 1 where JS Number loses precision)
+test("BigInt VND formatters, MULTI_LEDGER non-netting presentation, and normalizers preserve exact digits beyond Number.MAX_SAFE_INTEGER and reject decimals", () => {
   assert.equal(formatVndMinor("9007199254740993"), "9.007.199.254.740.993 ₫");
   assert.equal(formatVndMinor("9223372036854775807"), "9.223.372.036.854.775.807 ₫");
   assert.equal(formatVndMinor("-9223372036854775808"), "-9.223.372.036.854.775.808 ₫");
@@ -411,7 +524,24 @@ test("BigInt VND formatters and normalizers preserve exact digits beyond Number.
   assert.equal(formatSignedVndDelta("0"), "0 ₫");
   assert.equal(formatAbsoluteVndMinor("-9007199254740993"), "9.007.199.254.740.993 ₫");
 
-  // Balance presentation states
+  // MULTI_LEDGER balance presentation never nets/offsets across project books!
+  assert.deepEqual(
+    formatVendorBalancePresentation({
+      current_balance_minor: "0",
+      balance_direction: "MULTI_LEDGER",
+      entry_count: 4,
+      has_opening_entry: true,
+      sub_ledger_count: 2,
+    }),
+    {
+      amountText: "2 sổ dự án riêng",
+      signedText: "2 sổ dự án riêng",
+      statusLabel: "Nhiều sổ dự án (không bù trừ)",
+      tone: "primary",
+    },
+  );
+
+  // Standard single-subledger balance presentation states
   assert.deepEqual(
     formatVendorBalancePresentation({
       current_balance_minor: "0",
@@ -445,7 +575,7 @@ test("BigInt VND formatters and normalizers preserve exact digits beyond Number.
     "1.200.000 ₫",
   );
 
-  // Input normalization: plain digits + consistent thousand grouping accepted; decimals/floats rejected
+  // Input normalization
   assert.deepEqual(normalizePositiveVndInput(" 1.500.000 "), {
     ok: true,
     canonical: "1500000",
@@ -463,7 +593,6 @@ test("BigInt VND formatters and normalizers preserve exact digits beyond Number.
   }
   assert.equal(normalizePositiveVndInput("9223372036854775808").code, "VENDOR_FINANCE_AMOUNT_OVERFLOW");
 
-  // Non-negative input (opening balance): allows "0", rejects negative & decimals
   assert.deepEqual(normalizeNonNegativeVndInput("0"), {
     ok: true,
     canonical: "0",
@@ -472,7 +601,6 @@ test("BigInt VND formatters and normalizers preserve exact digits beyond Number.
   assert.equal(normalizeNonNegativeVndInput("-1").ok, false);
   assert.equal(normalizeNonNegativeVndInput("12.34").ok, false);
 
-  // Signed input (reconciliation): allows negative, zero, positive; rejects "-0" and decimals
   assert.deepEqual(normalizeSignedVndInput("-1.250.000"), {
     ok: true,
     canonical: "-1250000",
@@ -486,13 +614,11 @@ test("BigInt VND formatters and normalizers preserve exact digits beyond Number.
   assert.equal(normalizeSignedVndInput("-0").ok, false);
   assert.equal(normalizeSignedVndInput("-9223372036854775809").code, "VENDOR_FINANCE_AMOUNT_OVERFLOW");
 
-  // Reconciliation difference preview (`confirmed - system`) using BigInt
   assert.equal(
     computeReconciliationDifferencePreview("9007199254740991", "9007199254740995"),
     "4",
   );
   assert.equal(computeReconciliationDifferencePreview("10000000", "8500000"), "-1500000");
-  // Overflow when confirmed - system exceeds int8 max
   assert.equal(
     computeReconciliationDifferencePreview("-9223372036854775808", "9223372036854775807"),
     null,
@@ -500,15 +626,20 @@ test("BigInt VND formatters and normalizers preserve exact digits beyond Number.
   assert.equal(formatVietnamDateLabel("2026-10-25"), "25/10/2026");
 });
 
-test("URL and request builders round-trip cleanly through canonical VFIN-01 backend parsers with zero forbidden fields", () => {
+test("URL and request builders round-trip cleanly through canonical VFIN-02 backend parsers with zero forbidden fields", () => {
   assert.equal(isCanonicalUiVendorId("__system_vendor__"), false);
   assert.equal(isCanonicalUiVendorId("VND-001"), true);
+  assert.equal(isCanonicalUiProjectId(PROJECT_ID), true);
+  assert.equal(isCanonicalUiProjectId(" bad id "), false);
 
   // 1. Vendor list URL -> parseListVendorFinanceVendorsQuery
   const listUrl = buildVendorListUrl({
     search: "  Sao Việt  ",
     active: "active",
     balance_filter: "payable",
+    project_id: PROJECT_ID,
+    accountant_ref: ACCOUNTANT_A_REF.toUpperCase(),
+    ledger_scope: "PROJECT_ACCOUNTANT",
     page: 2,
     page_size: 25,
   });
@@ -521,16 +652,45 @@ test("URL and request builders round-trip cleanly through canonical VFIN-01 back
       search: "Sao Việt",
       active: "active",
       balance_filter: "payable",
+      project_id: PROJECT_ID,
+      accountant_ref: ACCOUNTANT_A_REF,
+      ledger_scope: "PROJECT_ACCOUNTANT",
       page: 2,
       page_size: 25,
     },
   });
 
-  // 2. Vendor entries URL (keyset cursor) -> parseListVendorFinanceEntriesQuery
-  const cursor = encodeVendorEntriesCursor({ vendor_id: "VND-001", before_sequence: 10 });
+  // 2. Vendor detail URL -> parseGetVendorFinanceVendorDetailQuery
+  const detailUrl = buildVendorDetailUrl("VND-001", {
+    project_id: PROJECT_ID,
+    accountant_ref: ACCOUNTANT_A_REF,
+    ledger_scope: "PROJECT_ACCOUNTANT",
+  });
+  assert.deepEqual(parseGetVendorFinanceVendorDetailQuery(new URL(`http://localhost${detailUrl}`)), {
+    ok: true,
+    value: {
+      project_id: PROJECT_ID,
+      accountant_ref: ACCOUNTANT_A_REF,
+      ledger_scope: "PROJECT_ACCOUNTANT",
+    },
+  });
+
+  // 3. Vendor entries URL (v2 scope-bound keyset cursor + month drill-down) -> parseListVendorFinanceEntriesQuery
+  const cursor = encodeVendorEntriesCursor({
+    vendor_id: "VND-001",
+    before_sequence: 10,
+    project_id: PROJECT_ID,
+    accountant_ref: ACCOUNTANT_A_REF,
+    ledger_scope: "PROJECT_ACCOUNTANT",
+    month: "2026-10",
+  });
   const entriesUrl = buildVendorEntriesUrl("VND-001", {
     cursor,
     entry_type: "PAYROLL_RECORDED",
+    project_id: PROJECT_ID,
+    accountant_ref: ACCOUNTANT_A_REF,
+    ledger_scope: "PROJECT_ACCOUNTANT",
+    month: "2026-10",
     page_size: 25,
   });
   const parsedEntriesQuery = parseListVendorFinanceEntriesQuery(
@@ -543,16 +703,49 @@ test("URL and request builders round-trip cleanly through canonical VFIN-01 back
       before_sequence: 10,
       entry_type: "PAYROLL_RECORDED",
       page_size: 25,
+      project_id: PROJECT_ID,
+      accountant_ref: ACCOUNTANT_A_REF,
+      ledger_scope: "PROJECT_ACCOUNTANT",
+      month: "2026-10",
     },
   });
 
-  // 3. Reconciliations URL -> parseListVendorReconciliationsQuery
-  const recUrl = buildVendorReconciliationsUrl("VND-001", { page: 3, page_size: 15 });
+  // 4. Reconciliations URL & Monthly report URL
+  const recUrl = buildVendorReconciliationsUrl("VND-001", {
+    page: 3,
+    page_size: 15,
+    project_id: PROJECT_ID,
+    accountant_ref: ACCOUNTANT_A_REF,
+    ledger_scope: "PROJECT_ACCOUNTANT",
+  });
   assert.deepEqual(parseListVendorReconciliationsQuery(new URL(`http://localhost${recUrl}`)), {
     ok: true,
-    value: { page: 3, page_size: 15 },
+    value: {
+      page: 3,
+      page_size: 15,
+      project_id: PROJECT_ID,
+      accountant_ref: ACCOUNTANT_A_REF,
+      ledger_scope: "PROJECT_ACCOUNTANT",
+    },
   });
 
+  const reportUrl = buildMonthlyReportUrl({
+    month: "2026-10",
+    project_id: PROJECT_ID,
+    accountant_ref: ACCOUNTANT_A_REF,
+    vendor_id: "VND-001",
+  });
+  assert.deepEqual(parseMonthlyReportQuery(new URL(`http://localhost${reportUrl}`)), {
+    ok: true,
+    value: {
+      month: "2026-10",
+      project_id: PROJECT_ID,
+      accountant_ref: ACCOUNTANT_A_REF,
+      vendor_id: "VND-001",
+    },
+  });
+
+  assert.equal(buildVendorFinanceContextUrl(), "/api/vendor-finance/context");
   assert.equal(buildVendorDetailUrl("VND-001"), "/api/vendor-finance/vendors/VND-001");
   assert.equal(buildSingleEntryUrl(ENTRY_ID), `/api/vendor-finance/entries/${ENTRY_ID}`);
   assert.equal(buildReverseEntryUrl(ENTRY_ID), `/api/vendor-finance/entries/${ENTRY_ID}/reverse`);
@@ -561,10 +754,25 @@ test("URL and request builders round-trip cleanly through canonical VFIN-01 back
   assert.equal(buildReserveEvidenceUrl(), "/api/vendor-finance/evidence/reserve");
   assert.equal(buildFinalizeEvidenceUrl(EVIDENCE_ID), `/api/vendor-finance/evidence/${EVIDENCE_ID}/finalize`);
   assert.equal(buildDownloadEvidenceUrl(EVIDENCE_ID), `/api/vendor-finance/evidence/${EVIDENCE_ID}/download`);
+  assert.equal(buildAdminProjectAccountantsUrl(), "/api/vendor-finance/admin/project-accountants");
+  assert.equal(
+    buildAdminEndProjectAccountantUrl(ASSIGNMENT_ID),
+    `/api/vendor-finance/admin/project-accountants/${ASSIGNMENT_ID}/end`,
+  );
+  assert.equal(
+    buildAdminProjectVendorsUrl({ project_id: PROJECT_ID, only_linked: true }),
+    `/api/vendor-finance/admin/project-vendors?project_id=${PROJECT_ID}&only_linked=true`,
+  );
+  assert.equal(buildAdminGlobalRolesUrl(), "/api/vendor-finance/admin/global-roles");
+  assert.equal(
+    buildAdminEndGlobalRoleUrl(ROLE_GRANT_ID),
+    `/api/vendor-finance/admin/global-roles/${ROLE_GRANT_ID}/end`,
+  );
 
-  // 4. Record entry request -> parseRecordVendorFinanceEntryBody (all 6 normal entry types)
+  // 5. Record entry request -> parseRecordVendorFinanceEntryBody (all 6 normal entry types + mandatory project_id)
   for (const type of VFIN_UI_NORMAL_ENTRY_TYPES) {
     const built = buildRecordEntryRequest({
+      project_id: PROJECT_ID,
       entry_type: type,
       amount_input: "12.500.000",
       effective_date: "2026-10-25",
@@ -581,6 +789,7 @@ test("URL and request builders round-trip cleanly through canonical VFIN-01 back
     assert.deepEqual(serverParsed, {
       ok: true,
       value: {
+        project_id: PROJECT_ID,
         entry_type: type,
         amount_minor: "12500000",
         effective_date: "2026-10-25",
@@ -590,9 +799,21 @@ test("URL and request builders round-trip cleanly through canonical VFIN-01 back
     });
   }
 
-  // Disallowed entry type for inactive vendor blocked before network call
+  // Disallowed entry type for inactive vendor or missing project blocked before network call
   assert.equal(
     buildRecordEntryRequest({
+      project_id: "",
+      entry_type: "PAYMENT_RECORDED",
+      amount_input: "1000000",
+      effective_date: "2026-10-25",
+      reason: "Thiếu dự án",
+      idempotency_key: IDEMPOTENCY_KEY,
+    }).ok,
+    false,
+  );
+  assert.equal(
+    buildRecordEntryRequest({
+      project_id: PROJECT_ID,
       entry_type: "DEBT_RECORDED",
       amount_input: "1000000",
       effective_date: "2026-10-25",
@@ -603,7 +824,7 @@ test("URL and request builders round-trip cleanly through canonical VFIN-01 back
     false,
   );
 
-  // 5. Reverse entry request -> parseReverseVendorFinanceEntryBody
+  // 6. Reverse entry request -> parseReverseVendorFinanceEntryBody
   const reverseBuilt = buildReverseEntryRequest({
     effective_date: "",
     reason: "Nhập nhầm số tiền đợt 1",
@@ -625,13 +846,14 @@ test("URL and request builders round-trip cleanly through canonical VFIN-01 back
     },
   );
 
-  // 6. Opening preview & apply requests -> parsePreviewOpeningBatchBody & parseApplyOpeningBatchBody
+  // 7. Opening preview & apply requests (require project_id) -> parsePreviewOpeningBatchBody & parseApplyOpeningBatchBody
   const openingRows = [
     { vendor_id: "VND-001", entry_type: "OPENING_PAYABLE", amount_input: "25.000.000" },
     { vendor_id: "VND-002", entry_type: "OPENING_ADVANCE", amount_input: "0" },
     { vendor_id: "VND-003", entry_type: "OPENING_ADVANCE", amount_input: "4000000" },
   ];
   const previewBuilt = buildOpeningPreviewRequest({
+    project_id: PROJECT_ID,
     cutoff_date: "2026-10-01",
     rows: openingRows,
   });
@@ -641,6 +863,7 @@ test("URL and request builders round-trip cleanly through canonical VFIN-01 back
   assert.equal(parsePreviewOpeningBatchBody(previewBuilt.request.body).ok, true);
 
   const applyBuilt = buildOpeningApplyRequest({
+    project_id: PROJECT_ID,
     cutoff_date: "2026-10-01",
     rows: openingRows,
     reason: "Chốt tồn đầu kỳ theo biên bản bàn giao",
@@ -658,12 +881,14 @@ test("URL and request builders round-trip cleanly through canonical VFIN-01 back
   // Opening validation: reject all-zero batch, duplicate vendor, __system_vendor__, > 200 items
   assert.equal(
     buildOpeningPreviewRequest({
+      project_id: PROJECT_ID,
       cutoff_date: "2026-10-01",
       rows: [{ vendor_id: "VND-001", entry_type: "OPENING_PAYABLE", amount_input: "0" }],
     }).ok,
     false,
   );
   const dupCheck = buildOpeningPreviewRequest({
+    project_id: PROJECT_ID,
     cutoff_date: "2026-10-01",
     rows: [
       { vendor_id: "VND-001", entry_type: "OPENING_PAYABLE", amount_input: "1000" },
@@ -674,6 +899,7 @@ test("URL and request builders round-trip cleanly through canonical VFIN-01 back
   assert.equal(dupCheck.invalid_vendor_id, "VND-001");
   assert.equal(
     buildOpeningPreviewRequest({
+      project_id: PROJECT_ID,
       cutoff_date: "2026-10-01",
       rows: [{ vendor_id: "__system_vendor__", entry_type: "OPENING_PAYABLE", amount_input: "1000" }],
     }).ok,
@@ -681,6 +907,7 @@ test("URL and request builders round-trip cleanly through canonical VFIN-01 back
   );
   assert.equal(
     buildOpeningPreviewRequest({
+      project_id: PROJECT_ID,
       cutoff_date: "2026-10-01",
       rows: Array.from({ length: 201 }, (_, idx) => ({
         vendor_id: `VND-${idx + 1}`,
@@ -691,8 +918,10 @@ test("URL and request builders round-trip cleanly through canonical VFIN-01 back
     false,
   );
 
-  // 7. Create reconciliation request -> parseCreateVendorReconciliationBody
+  // 8. Create reconciliation request -> parseCreateVendorReconciliationBody
   const recBuilt = buildCreateReconciliationRequest({
+    project_id: PROJECT_ID,
+    accountant_ref: ACCOUNTANT_A_REF.toUpperCase(),
     as_of_date: "2026-10-25",
     confirmed_balance_input: "-3.500.000",
     reason: "Vendor xác nhận đang giữ dư ứng 3.5tr",
@@ -707,6 +936,8 @@ test("URL and request builders round-trip cleanly through canonical VFIN-01 back
     {
       ok: true,
       value: {
+        project_id: PROJECT_ID,
+        accountant_ref: ACCOUNTANT_A_REF,
         as_of_date: "2026-10-25",
         confirmed_balance_minor: "-3500000",
         reason: "Vendor xác nhận đang giữ dư ứng 3.5tr",
@@ -715,7 +946,83 @@ test("URL and request builders round-trip cleanly through canonical VFIN-01 back
     },
   );
 
-  // 8. Reserve & finalize evidence requests -> server parsers
+  // 9. Admin governance requests -> backend parsers
+  const assignAcc = buildAssignProjectAccountantRequest({
+    project_id: PROJECT_ID,
+    accountant_ref: ACCOUNTANT_A_REF,
+    valid_from: "2026-10-25",
+    expected_version: 0,
+    reason: "Phân công kế toán dự án mới",
+    idempotency_key: IDEMPOTENCY_KEY,
+  });
+  assert.equal(assignAcc.ok, true);
+  assert.equal(
+    parseAssignProjectAccountantBody(
+      assignAcc.request.body,
+      assignAcc.request.headers["Idempotency-Key"],
+    ).ok,
+    true,
+  );
+
+  const endAcc = buildEndProjectAccountantRequest({
+    expected_version: 1,
+    valid_to: "2026-10-31",
+    reason: "Bàn giao dự án sang kế toán B",
+    idempotency_key: IDEMPOTENCY_KEY,
+  });
+  assert.equal(endAcc.ok, true);
+  assert.equal(
+    parseEndProjectAccountantBody(endAcc.request.body, endAcc.request.headers["Idempotency-Key"]).ok,
+    true,
+  );
+
+  const setLink = buildSetProjectVendorLinkRequest({
+    project_id: PROJECT_ID,
+    vendor_id: "VND-001",
+    active: true,
+    expected_version: 0,
+    reason: "Liên kết Vendor vào dự án theo hợp đồng",
+    idempotency_key: IDEMPOTENCY_KEY,
+  });
+  assert.equal(setLink.ok, true);
+  assert.equal(
+    parseSetProjectVendorLinkBody(
+      setLink.request.body,
+      setLink.request.headers["Idempotency-Key"],
+    ).ok,
+    true,
+  );
+
+  const assignRole = buildAssignGlobalRoleRequest({
+    account_ref: ACCOUNTANT_A_REF,
+    role_code: "GLOBAL_RECONCILER",
+    valid_from: "2026-10-25",
+    expected_version: 0,
+    reason: "Cấp quyền BoD đối soát toàn cục",
+    idempotency_key: IDEMPOTENCY_KEY,
+  });
+  assert.equal(assignRole.ok, true);
+  assert.equal(
+    parseAssignGlobalRoleBody(
+      assignRole.request.body,
+      assignRole.request.headers["Idempotency-Key"],
+    ).ok,
+    true,
+  );
+
+  const endRole = buildEndGlobalRoleRequest({
+    expected_version: 1,
+    valid_to: null,
+    reason: "Kết thúc quyền đối soát toàn cục",
+    idempotency_key: IDEMPOTENCY_KEY,
+  });
+  assert.equal(endRole.ok, true);
+  assert.equal(
+    parseEndGlobalRoleBody(endRole.request.body, endRole.request.headers["Idempotency-Key"]).ok,
+    true,
+  );
+
+  // 10. Reserve & finalize evidence requests -> server parsers
   const reserveBuilt = buildReserveEvidenceRequest({
     target_kind: "ENTRY",
     target_id: ENTRY_ID,
@@ -737,27 +1044,88 @@ test("URL and request builders round-trip cleanly through canonical VFIN-01 back
   });
 });
 
-test("HTTP response envelope parsers validate all 11 endpoint contracts and fail closed on tampered invariants or leaked fields", () => {
+test("HTTP response envelope parsers validate all 18 VFIN-02 endpoint contracts and fail closed on tampered invariants, fake revenue, or leaked fields", () => {
   const entry = makeEntryProjection({ evidence: makeEvidenceSummary() });
   const rec = makeReconciliationProjection({ evidence: makeEvidenceSummary() });
 
-  // 1. Vendor list envelope
+  // 0. Context options envelope
+  assert.ok(
+    parseVendorFinanceContextEnvelope({
+      ok: true,
+      data: {
+        authorization_date: "2026-10-25",
+        allowed_actions: {
+          visibility_scope: "PROJECT_SCOPED",
+          record_scope: "ASSIGNED_PROJECTS",
+          reconcile_scope: "ASSIGNED_PROJECTS",
+          can_view: true,
+          can_record: true,
+          can_reconcile: true,
+          can_manage_project_assignments: false,
+        },
+        has_legacy_unallocated: false,
+        projects: [
+          {
+            project_id: PROJECT_ID,
+            display_name: "Dự án Tuyển dụng Miền Bắc",
+            active: true,
+            active_accountant_ref: ACCOUNTANT_A_REF,
+            active_accountant_display_name: "Nguyễn Thị Kế Toán A",
+            has_active_accountant: true,
+            can_record_for_project: true,
+            can_reconcile_for_project: true,
+            linked_vendors: [
+              {
+                vendor_id: "VND-001",
+                display_name: "Sao Việt",
+                vendor_active: true,
+                link_active: true,
+              },
+            ],
+          },
+        ],
+        accountants: [
+          {
+            accountant_ref: ACCOUNTANT_A_REF,
+            display_name: "Nguyễn Thị Kế Toán A",
+          },
+        ],
+      },
+    }),
+  );
+
+  // 1. Vendor list envelope (with MULTI_LEDGER sub_ledgers)
   const validList = {
     ok: true,
     data: {
       authorization_date: "2026-10-25",
-      allowed_actions: { can_view: true, can_record: false },
-      summary: {
-        total_payable_minor: "10000000",
-        total_advance_minor: "2000000",
-        net_balance_minor: "8000000",
-        vendors_with_payable_count: 1,
-        vendors_with_advance_count: 1,
-        vendors_with_nonzero_balance_count: 2,
-        total_vendor_count: 3,
-        uninitialized_vendor_count: 1,
+      allowed_actions: {
+        visibility_scope: "ALL",
+        can_view: true,
+        can_record: false,
+        can_reconcile: true,
+        can_manage_project_assignments: false,
+        active_assigned_project_count: 0,
       },
-      filters: { search: null, active: "all", balance_filter: "all" },
+      summary: {
+        total_payable_minor: "30000000",
+        total_advance_minor: "0",
+        net_balance_minor: "30000000",
+        vendors_with_payable_count: 1,
+        vendors_with_advance_count: 0,
+        vendors_with_nonzero_balance_count: 1,
+        total_vendor_count: 1,
+        uninitialized_vendor_count: 0,
+        sub_ledger_count: 2,
+      },
+      filters: {
+        search: null,
+        active: "all",
+        balance_filter: "all",
+        project_id: null,
+        accountant_ref: null,
+        ledger_scope: "all",
+      },
       page: 1,
       page_size: 25,
       total: 1,
@@ -767,14 +1135,32 @@ test("HTTP response envelope parsers validate all 11 endpoint contracts and fail
           vendor_id: "VND-001",
           display_name: "Sao Việt",
           active: true,
-          current_balance_minor: "10000000",
-          balance_direction: "PAYABLE",
+          sub_ledger_count: 2,
+          payable_total_minor: "30000000",
+          advance_total_minor: "0",
+          current_balance_minor: "0",
+          balance_direction: "MULTI_LEDGER",
           entry_count: 3,
           has_opening_entry: true,
           eligible_for_opening: false,
           last_effective_date: "2026-10-25",
           last_entry_at: "2026-10-25T09:00:00.000Z",
           last_reconciled_as_of_date: "2026-10-25",
+          sub_ledgers: [
+            {
+              ledger_scope: "PROJECT_ACCOUNTANT",
+              project_id: PROJECT_ID,
+              project_display_name: "Dự án Tuyển dụng Miền Bắc",
+              accountant_ref: ACCOUNTANT_A_REF,
+              responsible_accountant_display_name: "Nguyễn Thị Kế Toán A",
+              current_balance_minor: "10000000",
+              balance_direction: "PAYABLE",
+              entry_count: 2,
+              has_opening_entry: true,
+              eligible_for_opening: false,
+              last_reconciled_as_of_date: "2026-10-25",
+            },
+          ],
         },
       ],
     },
@@ -783,16 +1169,38 @@ test("HTTP response envelope parsers validate all 11 endpoint contracts and fail
   assert.equal(parseVendorListEnvelope({ ...validList, extra: 1 }), null);
 
   // 2. Vendor detail envelope
+  const subLedgerDetail = {
+    ledger_scope: "PROJECT_ACCOUNTANT",
+    project_id: PROJECT_ID,
+    project_display_name: "Dự án Tuyển dụng Miền Bắc",
+    project_active: true,
+    accountant_ref: ACCOUNTANT_A_REF,
+    responsible_accountant_display_name: "Nguyễn Thị Kế Toán A",
+    link_active: true,
+    is_active_assignment: true,
+    current_balance_minor: "10000000",
+    balance_direction: "PAYABLE",
+    latest_sequence: 3,
+    entry_count: 3,
+    has_opening_entry: true,
+    eligible_for_opening: false,
+    can_record_entry: true,
+    can_reconcile: true,
+  };
   const validDetail = {
     ok: true,
     data: {
       authorization_date: "2026-10-25",
       allowed_actions: {
+        visibility_scope: "PROJECT_SCOPED",
         can_view: true,
         can_record: true,
         can_reconcile: true,
+        can_manage_project_assignments: false,
         allowed_entry_types: ["DEBT_RECORDED", "PAYMENT_RECORDED"],
       },
+      selected_sub_ledger: subLedgerDetail,
+      sub_ledgers: [subLedgerDetail],
       vendor: {
         vendor_id: "VND-001",
         display_name: "Sao Việt",
@@ -822,7 +1230,14 @@ test("HTTP response envelope parsers validate all 11 endpoint contracts and fail
   assert.ok(parseVendorDetailEnvelope(validDetail));
 
   // 3. Entries page envelope + keyset cursor invariant
-  const nextCursor = encodeVendorEntriesCursor({ vendor_id: "VND-001", before_sequence: 3 });
+  const nextCursor = encodeVendorEntriesCursor({
+    vendor_id: "VND-001",
+    before_sequence: 3,
+    project_id: PROJECT_ID,
+    accountant_ref: ACCOUNTANT_A_REF,
+    ledger_scope: "PROJECT_ACCOUNTANT",
+    month: null,
+  });
   assert.ok(
     parseVendorEntriesPageEnvelope({
       ok: true,
@@ -836,7 +1251,6 @@ test("HTTP response envelope parsers validate all 11 endpoint contracts and fail
       },
     }),
   );
-  // Fail closed when has_more=true but next_cursor=null
   assert.equal(
     parseVendorEntriesPageEnvelope({
       ok: true,
@@ -858,7 +1272,7 @@ test("HTTP response envelope parsers validate all 11 endpoint contracts and fail
       ok: true,
       data: {
         authorization_date: "2026-10-25",
-        allowed_actions: { can_view: true, can_record: false },
+        allowed_actions: { visibility_scope: "PROJECT_SCOPED", can_view: true, can_record: false },
         entry,
       },
     }),
@@ -871,6 +1285,7 @@ test("HTTP response envelope parsers validate all 11 endpoint contracts and fail
         reversal_entry: makeEntryProjection({
           entry_id: REVERSAL_ENTRY_ID,
           vendor_sequence: 4,
+          cursor_sequence: 4,
           document_no: "VFIN-2026-000004",
           entry_type: "REVERSAL",
           balance_before_minor: "10000000",
@@ -922,12 +1337,16 @@ test("HTTP response envelope parsers validate all 11 endpoint contracts and fail
     null,
   );
 
-  // 5. Opening preview & apply envelopes
+  // 5. Opening preview & apply envelopes (project-bound)
   assert.ok(
     parseOpeningPreviewEnvelope({
       ok: true,
       data: {
         authorization_date: "2026-10-25",
+        project_id: PROJECT_ID,
+        project_display_name: "Dự án Tuyển dụng Miền Bắc",
+        accountant_ref: ACCOUNTANT_A_REF,
+        responsible_accountant_display_name: "Nguyễn Thị Kế Toán A",
         cutoff_date: "2026-10-01",
         vendor_count: 1,
         skipped_zero_count: 1,
@@ -953,6 +1372,11 @@ test("HTTP response envelope parsers validate all 11 endpoint contracts and fail
       data: {
         batch: {
           batch_id: BATCH_ID,
+          ledger_scope: "PROJECT_ACCOUNTANT",
+          project_id: PROJECT_ID,
+          project_display_name_snapshot: "Dự án Tuyển dụng Miền Bắc",
+          accountant_ref: ACCOUNTANT_A_REF,
+          responsible_accountant_display_name: "Nguyễn Thị Kế Toán A",
           cutoff_date: "2026-10-01",
           vendor_count: 1,
           skipped_zero_count: 0,
@@ -960,7 +1384,7 @@ test("HTTP response envelope parsers validate all 11 endpoint contracts and fail
           total_advance_minor: "0",
           net_balance_minor: "15000000",
           reason: "Khởi tạo đầu kỳ",
-          created_by_display_name: "Nguyễn Thị Kế Toán",
+          created_by_display_name: "Nguyễn Thị Kế Toán A",
           created_at: "2026-10-25T08:00:00.000Z",
         },
         entries: [
@@ -1011,7 +1435,266 @@ test("HTTP response envelope parsers validate all 11 endpoint contracts and fail
     null,
   );
 
-  // 7. Evidence reserve, finalize & download envelopes + HTTPS enforcement
+  // 7. Monthly project debt report envelope + fail-closed check against fake revenue ("0")
+  const validMonthlyEnvelope = {
+    ok: true,
+    data: {
+      authorization_date: "2026-10-25",
+      allowed_actions: {
+        visibility_scope: "ALL",
+        can_view: true,
+        can_record: false,
+        can_reconcile: true,
+        can_manage_project_assignments: false,
+      },
+      filters: {
+        month: "2026-10",
+        project_id: null,
+        accountant_ref: null,
+        vendor_id: null,
+      },
+      totals: {
+        project_revenue_status: "MISSING_CANONICAL_SOURCE",
+        project_revenue_minor: null,
+        project_accountant_book_count: 1,
+        sub_ledger_count: 1,
+        obligations_in_month_minor: "15000000",
+        paid_in_month_minor: "5000000",
+        advanced_in_month_minor: "0",
+        paid_and_advanced_in_month_minor: "5000000",
+        closing_payable_minor: "10000000",
+        closing_advance_minor: "0",
+      },
+      project_accountant_summaries: [
+        {
+          project_id: PROJECT_ID,
+          project_display_name: "Dự án Tuyển dụng Miền Bắc",
+          project_active: true,
+          accountant_ref: ACCOUNTANT_A_REF,
+          responsible_accountant_display_name: "Nguyễn Thị Kế Toán A",
+          is_currently_assigned: true,
+          project_revenue_status: "MISSING_CANONICAL_SOURCE",
+          project_revenue_minor: null,
+          vendor_count: 1,
+          obligations_in_month_minor: "15000000",
+          paid_in_month_minor: "5000000",
+          advanced_in_month_minor: "0",
+          paid_and_advanced_in_month_minor: "5000000",
+          closing_payable_minor: "10000000",
+          closing_advance_minor: "0",
+          in_month_entry_count: 2,
+        },
+      ],
+      rows: [
+        {
+          project_id: PROJECT_ID,
+          project_display_name: "Dự án Tuyển dụng Miền Bắc",
+          project_active: true,
+          accountant_ref: ACCOUNTANT_A_REF,
+          responsible_accountant_display_name: "Nguyễn Thị Kế Toán A",
+          is_currently_assigned: true,
+          vendor_id: "VND-001",
+          vendor_display_name: "Sao Việt",
+          vendor_active: true,
+          link_active: true,
+          project_revenue_status: "MISSING_CANONICAL_SOURCE",
+          project_revenue_minor: null,
+          balance_before_month_minor: "0",
+          opening_payable_in_month_minor: "15000000",
+          opening_advance_in_month_minor: "0",
+          obligations_in_month_minor: "15000000",
+          paid_in_month_minor: "5000000",
+          advanced_in_month_minor: "0",
+          paid_and_advanced_in_month_minor: "5000000",
+          net_change_in_month_minor: "10000000",
+          closing_balance_minor: "10000000",
+          closing_direction: "PAYABLE",
+          closing_payable_minor: "10000000",
+          closing_advance_minor: "0",
+          current_balance_minor: "10000000",
+          in_month_entry_count: 2,
+          total_entry_count: 2,
+        },
+      ],
+      legacy_unallocated_rows: [],
+    },
+  };
+  assert.ok(parseMonthlyReportEnvelope(validMonthlyEnvelope));
+  assert.equal(
+    parseMonthlyReportEnvelope({
+      ok: true,
+      data: {
+        ...validMonthlyEnvelope.data,
+        totals: { ...validMonthlyEnvelope.data.totals, project_revenue_minor: "0" },
+      },
+    }),
+    null,
+  );
+
+  // 8. Admin governance envelopes (project accountants, vendor links, global roles)
+  const sampleAccount = {
+    account_ref: ACCOUNTANT_A_REF,
+    display_name: "Nguyễn Thị Kế Toán A",
+    login_id: "ketoan.a",
+    personnel_code: "KT001",
+    account_enabled: true,
+  };
+  const sampleAssignment = {
+    assignment_id: ASSIGNMENT_ID,
+    project_id: PROJECT_ID,
+    version: 1,
+    accountant: sampleAccount,
+    accountant_in_accounting_department: true,
+    valid_from: "2026-10-01",
+    valid_to: null,
+    state: "ACTIVE",
+    assign_reason: "Phân công đầu kỳ",
+    end_reason: null,
+    created_at: "2026-10-01T08:00:00.000Z",
+  };
+  assert.ok(
+    parseAdminProjectAccountantsEnvelope({
+      ok: true,
+      data: {
+        authorization_date: "2026-10-25",
+        eligible_accountants: [sampleAccount],
+        page: 1,
+        page_size: 25,
+        total: 1,
+        has_more: false,
+        projects: [
+          {
+            project_id: PROJECT_ID,
+            display_name: "Dự án Tuyển dụng Miền Bắc",
+            active: true,
+            next_version: 2,
+            linked_active_vendor_count: 1,
+            current_assignment: sampleAssignment,
+            assignments: [sampleAssignment],
+          },
+        ],
+      },
+    }),
+  );
+  assert.ok(
+    parseAssignProjectAccountantEnvelope({
+      ok: true,
+      data: {
+        assignment_id: ASSIGNMENT_ID,
+        project_id: PROJECT_ID,
+        version: 1,
+        replayed: false,
+      },
+    }),
+  );
+  assert.ok(
+    parseEndProjectAccountantEnvelope({
+      ok: true,
+      data: {
+        assignment_id: ASSIGNMENT_ID,
+        project_id: PROJECT_ID,
+        valid_to: "2026-10-31",
+        replayed: false,
+      },
+    }),
+  );
+  assert.ok(
+    parseAdminProjectVendorsEnvelope({
+      ok: true,
+      data: {
+        authorization_date: "2026-10-25",
+        project_id: PROJECT_ID,
+        project_display_name: "Dự án Tuyển dụng Miền Bắc",
+        project_active: true,
+        page: 1,
+        page_size: 25,
+        total: 1,
+        has_more: false,
+        vendors: [
+          {
+            vendor_id: "VND-001",
+            display_name: "Sao Việt",
+            vendor_active: true,
+            linked: true,
+            link_active: true,
+            link_version: 1,
+            updated_at: "2026-10-25T09:00:00.000Z",
+          },
+        ],
+      },
+    }),
+  );
+  assert.ok(
+    parseSetProjectVendorLinkEnvelope({
+      ok: true,
+      data: {
+        link_id: LINK_ID,
+        project_id: PROJECT_ID,
+        vendor_id: "VND-001",
+        active: true,
+        version: 1,
+        replayed: false,
+      },
+    }),
+  );
+  assert.ok(
+    parseAdminGlobalRolesEnvelope({
+      ok: true,
+      data: {
+        authorization_date: "2026-10-25",
+        page: 1,
+        page_size: 25,
+        total: 1,
+        has_more: false,
+        roles: [
+          {
+            role_grant_id: ROLE_GRANT_ID,
+            account: sampleAccount,
+            role_code: "GLOBAL_RECONCILER",
+            version: 1,
+            valid_from: "2026-10-01",
+            valid_to: null,
+            state: "ACTIVE",
+            grant_reason: "Cấp quyền BoD đối soát",
+            end_reason: null,
+            created_at: "2026-10-01T08:00:00.000Z",
+          },
+        ],
+        candidates: [
+          {
+            account: sampleAccount,
+            next_version: 2,
+            has_open_role: true,
+          },
+        ],
+      },
+    }),
+  );
+  assert.ok(
+    parseAssignGlobalRoleEnvelope({
+      ok: true,
+      data: {
+        role_grant_id: ROLE_GRANT_ID,
+        account_ref: ACCOUNTANT_A_REF,
+        role_code: "GLOBAL_RECONCILER",
+        version: 1,
+        replayed: false,
+      },
+    }),
+  );
+  assert.ok(
+    parseEndGlobalRoleEnvelope({
+      ok: true,
+      data: {
+        role_grant_id: ROLE_GRANT_ID,
+        account_ref: ACCOUNTANT_A_REF,
+        valid_to: "2026-10-31",
+        replayed: false,
+      },
+    }),
+  );
+
+  // 9. Evidence reserve, finalize & download envelopes + HTTPS enforcement
   assert.ok(
     parseEvidenceReserveEnvelope({
       ok: true,
@@ -1032,7 +1715,6 @@ test("HTTP response envelope parsers validate all 11 endpoint contracts and fail
       },
     }),
   );
-  // Plain http:// upload or download URL must fail closed
   assert.equal(
     parseEvidenceDownloadEnvelope({
       ok: true,
@@ -1083,7 +1765,7 @@ test("HTTP response envelope parsers validate all 11 endpoint contracts and fail
   );
 });
 
-test("classifyVendorFinanceError maps error codes to sanitized Vietnamese guidance without leaking internal strings", () => {
+test("classifyVendorFinanceError maps VFIN-01 and VFIN-02 error codes to sanitized Vietnamese guidance without leaking internal strings", () => {
   const batchConflict = classifyVendorFinanceError(
     {
       ok: false,
@@ -1097,6 +1779,21 @@ test("classifyVendorFinanceError maps error codes to sanitized Vietnamese guidan
   assert.equal(batchConflict.shouldRotateIdempotencyKey, true);
   assert.doesNotMatch(batchConflict.message, /Key \(vendor_id\)/);
 
+  const unlinked = classifyVendorFinanceError(
+    { ok: false, code: "VENDOR_FINANCE_PROJECT_VENDOR_UNLINKED" },
+    422,
+  );
+  assert.equal(unlinked.isWholeBatchRollback, true);
+  assert.equal(unlinked.shouldRotateIdempotencyKey, true);
+  assert.match(unlinked.message, /chưa được liên kết hợp lệ với dự án/);
+
+  const projectDenied = classifyVendorFinanceError(
+    { ok: false, code: "VENDOR_FINANCE_PROJECT_ACCESS_DENIED" },
+    403,
+  );
+  assert.equal(projectDenied.shouldRotateIdempotencyKey, false);
+  assert.match(projectDenied.message, /dự án do bạn trực tiếp phụ trách/);
+
   const storageTemp = classifyVendorFinanceError(
     { ok: false, code: "VENDOR_FINANCE_STORAGE_UNAVAILABLE" },
     503,
@@ -1109,7 +1806,7 @@ test("classifyVendorFinanceError maps error codes to sanitized Vietnamese guidan
     403,
   );
   assert.equal(recordDenied.shouldRotateIdempotencyKey, false);
-  assert.match(recordDenied.message, /chỉ có quyền xem/);
+  assert.match(recordDenied.message, /không có quyền ghi nhận/);
 });
 
 test("uploadEvidenceForCommittedTarget executes reserve -> PUT -> finalize and safely resumes PUT or finalize without ever calling money mutation endpoints", async () => {
@@ -1139,7 +1836,6 @@ test("uploadEvidenceForCommittedTarget executes reserve -> PUT -> finalize and s
   const presignedPutUrl = "https://r2.example.cloudflarestorage.com/vfin-evidence/put-1";
   const presignedPutUrl2 = "https://r2.example.cloudflarestorage.com/vfin-evidence/put-2";
 
-  // Scenario A: PUT fails transiently -> returns resumeState (`put_completed: false`) -> retry skips reserve and runs PUT -> finalize
   const callsA = [];
   let putAttemptA = 0;
   const fakeFetchA = async (url, init = {}) => {
@@ -1225,13 +1921,10 @@ test("uploadEvidenceForCommittedTarget executes reserve -> PUT -> finalize and s
   assert.deepEqual(callsA, [
     { url: "/api/vendor-finance/evidence/reserve", method: "POST" },
     { url: presignedPutUrl, method: "PUT" },
-    // Retry resumed directly at PUT -> finalize without re-calling reserve or /entries!
     { url: presignedPutUrl, method: "PUT" },
     { url: `/api/vendor-finance/evidence/${EVIDENCE_ID}/finalize`, method: "POST" },
   ]);
 
-  // Scenario B: PUT succeeds, finalize fails transiently -> retry calls ONLY finalize;
-  // then if reservation expired (409), runner falls back cleanly to fresh reserve -> PUT -> finalize!
   const callsB = [];
   let finalizeAttemptB = 0;
   const fakeFetchB = async (url, init = {}) => {
@@ -1316,7 +2009,6 @@ test("uploadEvidenceForCommittedTarget executes reserve -> PUT -> finalize and s
   assert.ok(firstB.resumeState);
   assert.equal(firstB.resumeState.put_completed, true);
 
-  // Retry when first reservation then reports EXPIRED -> falls back to fresh reserve -> PUT -> finalize on same RECONCILIATION_ID
   const secondB = await uploadEvidenceForCommittedTarget({
     target_kind: "RECONCILIATION",
     target_id: RECONCILIATION_ID,
@@ -1332,14 +2024,12 @@ test("uploadEvidenceForCommittedTarget executes reserve -> PUT -> finalize and s
     { url: "/api/vendor-finance/evidence/reserve", method: "POST" },
     { url: presignedPutUrl, method: "PUT" },
     { url: `/api/vendor-finance/evidence/${EVIDENCE_ID}/finalize`, method: "POST" },
-    // Resumed directly at finalize (put_completed=true), got 409 EXPIRED, then cleanly reserved fresh slot:
     { url: `/api/vendor-finance/evidence/${EVIDENCE_ID}/finalize`, method: "POST" },
     { url: "/api/vendor-finance/evidence/reserve", method: "POST" },
     { url: presignedPutUrl2, method: "PUT" },
     { url: `/api/vendor-finance/evidence/${EVIDENCE_ID_2}/finalize`, method: "POST" },
   ]);
 
-  // Confirm zero calls to any money entry or reconciliation creation route
   for (const call of [...callsA, ...callsB]) {
     assert.doesNotMatch(call.url, /\/vendors\/.*\/(entries|reconciliations)/);
   }

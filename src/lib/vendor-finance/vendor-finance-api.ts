@@ -4,6 +4,7 @@ import type { DirectEntrySessionResult } from "../auth/direct-entry-session-core
 import { isSameOriginAuthRequest } from "../auth/same-origin-auth-request.ts";
 import { failJson, isUuid, noStoreJson } from "../http/direct-entry-api-guard.ts";
 import {
+  vendorFinanceAdminNavPredicate,
   vendorFinanceNavPredicate,
   vendorFinanceRecordNavPredicate,
   type NavActorProjection,
@@ -14,21 +15,36 @@ import {
 } from "./r2-evidence-storage.ts";
 import {
   computeApplyOpeningBatchFingerprint,
+  computeAssignGlobalRoleFingerprint,
+  computeAssignProjectAccountantFingerprint,
   computeCreateReconciliationFingerprint,
+  computeEndGlobalRoleFingerprint,
+  computeEndProjectAccountantFingerprint,
   computeRecordEntryFingerprint,
   computeReserveEvidenceFingerprint,
   computeReverseEntryFingerprint,
+  computeSetProjectVendorLinkFingerprint,
   parseApplyOpeningBatchBody,
+  parseAssignGlobalRoleBody,
+  parseAssignProjectAccountantBody,
   parseCreateVendorReconciliationBody,
+  parseEndGlobalRoleBody,
+  parseEndProjectAccountantBody,
   parseFinalizeVendorFinanceEvidenceBody,
+  parseGetVendorFinanceVendorDetailQuery,
+  parseListGlobalRolesAdminQuery,
+  parseListProjectAccountantsAdminQuery,
+  parseListProjectVendorsAdminQuery,
   parseListVendorFinanceEntriesQuery,
   parseListVendorFinanceVendorsQuery,
   parseListVendorReconciliationsQuery,
+  parseMonthlyReportQuery,
   parseNoQueryParams,
   parsePreviewOpeningBatchBody,
   parseRecordVendorFinanceEntryBody,
   parseReserveVendorFinanceEvidenceBody,
   parseReverseVendorFinanceEntryBody,
+  parseSetProjectVendorLinkBody,
   parseUuidParam,
   parseVendorIdParam,
   vendorFinanceHttpStatusForError,
@@ -90,7 +106,7 @@ function parseRequestUrl(request: Request): URL | null {
 
 async function resolveVendorFinanceAuthority(
   dependencies: VendorFinanceApiDependencies,
-  requiredMode: "view" | "record",
+  requiredMode: "view" | "reconcile" | "record" | "evidence" | "admin",
 ): Promise<
   | {
       ok: true;
@@ -135,6 +151,13 @@ async function resolveVendorFinanceAuthority(
     scopes: actor.scopes.map((scope) => ({ kind: scope.kind })),
   };
 
+  if (requiredMode === "admin") {
+    if (!vendorFinanceAdminNavPredicate(navActor)) {
+      return { ok: false, response: vfinError("VENDOR_FINANCE_ADMIN_DENIED") };
+    }
+    return { ok: true, auth_subject: authSubject, app_user_id: appUserId };
+  }
+
   // Fast-path for Canonical Full Admin or direct `vendor_finance_record @ all`.
   if (vendorFinanceRecordNavPredicate(navActor)) {
     return { ok: true, auth_subject: authSubject, app_user_id: appUserId };
@@ -145,8 +168,8 @@ async function resolveVendorFinanceAuthority(
     return { ok: true, auth_subject: authSubject, app_user_id: appUserId };
   }
 
-  // Server-resolved VFIN boundary check (covers active ACCOUNTING department membership
-  // and enforces fail-closed denial for unauthorized or view-only actors).
+  // Server-resolved VFIN boundary check (covers active ACCOUNTING department membership,
+  // Cash-Holder, Cash-Holder record-on-behalf, and narrow Global Reconciler / Viewer).
   const accessResult = await dependencies.repository.getActorAccess({
     auth_subject: authSubject,
     app_user_id: appUserId,
@@ -159,6 +182,16 @@ async function resolveVendorFinanceAuthority(
     return { ok: false, response: vfinError("VENDOR_FINANCE_ACCESS_DENIED") };
   }
   if (requiredMode === "record" && !accessResult.data.can_record) {
+    return { ok: false, response: vfinError("VENDOR_FINANCE_RECORD_DENIED") };
+  }
+  if (requiredMode === "reconcile" && !accessResult.data.can_reconcile) {
+    return { ok: false, response: vfinError("VENDOR_FINANCE_RECONCILE_DENIED") };
+  }
+  if (
+    requiredMode === "evidence" &&
+    !accessResult.data.can_record &&
+    !accessResult.data.can_reconcile
+  ) {
     return { ok: false, response: vfinError("VENDOR_FINANCE_RECORD_DENIED") };
   }
 
@@ -266,6 +299,38 @@ async function safeDeleteFinalObject(
 }
 
 // -----------------------------------------------------------------------------
+// 0. GET /api/vendor-finance/context
+// -----------------------------------------------------------------------------
+export async function handleGetVendorFinanceContext(
+  request: Request,
+  enabledFlag: string | undefined,
+  dependencies: VendorFinanceApiDependencies,
+): Promise<Response> {
+  const gate = directEntryFeatureGate(enabledFlag);
+  if (gate) return gate;
+
+  if (hasDisallowedAuthorityHeaders(request)) {
+    return vfinError("CLIENT_AUTHORITY_FIELD_FORBIDDEN");
+  }
+
+  const url = parseRequestUrl(request);
+  if (!url || !parseNoQueryParams(url).ok) {
+    return vfinError("VENDOR_FINANCE_QUERY_INVALID");
+  }
+
+  const actor = await resolveVendorFinanceAuthority(dependencies, "view");
+  if (!actor.ok) return actor.response;
+
+  const result = await dependencies.repository.listContextOptions({
+    auth_subject: actor.auth_subject,
+    app_user_id: actor.app_user_id,
+  });
+  if (!result.ok) return vfinError(result.code);
+
+  return vfinOk(result.data, 200);
+}
+
+// -----------------------------------------------------------------------------
 // 1. GET /api/vendor-finance/vendors
 // -----------------------------------------------------------------------------
 export async function handleGetVendorFinanceVendors(
@@ -295,6 +360,9 @@ export async function handleGetVendorFinanceVendors(
     search: query.value.search,
     active: query.value.active,
     balance_filter: query.value.balance_filter,
+    project_id: query.value.project_id,
+    accountant_ref: query.value.accountant_ref,
+    ledger_scope: query.value.ledger_scope,
     page: query.value.page,
     page_size: query.value.page_size,
   });
@@ -325,8 +393,8 @@ export async function handleGetVendorFinanceVendorDetail(
   const actor = await resolveVendorFinanceAuthority(dependencies, "view");
   if (!actor.ok) return actor.response;
 
-  const noQuery = parseNoQueryParams(url);
-  if (!noQuery.ok) return vfinError(noQuery.code);
+  const query = parseGetVendorFinanceVendorDetailQuery(url);
+  if (!query.ok) return vfinError(query.code);
 
   const parsedVendorId = parseVendorIdParam(vendorId);
   if (!parsedVendorId.ok) return vfinError(parsedVendorId.code);
@@ -335,6 +403,9 @@ export async function handleGetVendorFinanceVendorDetail(
     auth_subject: actor.auth_subject,
     app_user_id: actor.app_user_id,
     vendor_id: parsedVendorId.vendor_id,
+    project_id: query.value.project_id,
+    accountant_ref: query.value.accountant_ref,
+    ledger_scope: query.value.ledger_scope,
   });
   if (!result.ok) return vfinError(result.code);
 
@@ -376,6 +447,10 @@ export async function handleGetVendorFinanceEntries(
     before_sequence: query.value.before_sequence,
     entry_type: query.value.entry_type,
     page_size: query.value.page_size,
+    project_id: query.value.project_id,
+    accountant_ref: query.value.accountant_ref,
+    ledger_scope: query.value.ledger_scope,
+    month: query.value.month,
   });
   if (!result.ok) return vfinError(result.code);
 
@@ -426,6 +501,7 @@ export async function handlePostVendorFinanceEntry(
   if (!parsedBody.ok) return vfinError(parsedBody.code);
 
   const fingerprint = computeRecordEntryFingerprint({
+    project_id: parsedBody.value.project_id,
     vendor_id: parsedVendorId.vendor_id,
     entry_type: parsedBody.value.entry_type,
     amount_minor: parsedBody.value.amount_minor,
@@ -436,6 +512,7 @@ export async function handlePostVendorFinanceEntry(
   const saved = await dependencies.repository.recordEntry({
     auth_subject: actor.auth_subject,
     app_user_id: actor.app_user_id,
+    project_id: parsedBody.value.project_id,
     vendor_id: parsedVendorId.vendor_id,
     entry_type: parsedBody.value.entry_type,
     amount_minor: parsedBody.value.amount_minor,
@@ -588,6 +665,7 @@ export async function handlePostPreviewOpeningBatch(
   const preview = await dependencies.repository.previewOpeningBatch({
     auth_subject: actor.auth_subject,
     app_user_id: actor.app_user_id,
+    project_id: parsedBody.value.project_id,
     cutoff_date: parsedBody.value.cutoff_date,
     items: parsedBody.value.items,
   });
@@ -636,6 +714,7 @@ export async function handlePostApplyOpeningBatch(
   if (!parsedBody.ok) return vfinError(parsedBody.code);
 
   const fingerprint = computeApplyOpeningBatchFingerprint({
+    project_id: parsedBody.value.project_id,
     cutoff_date: parsedBody.value.cutoff_date,
     items: parsedBody.value.items,
     reason: parsedBody.value.reason,
@@ -644,6 +723,7 @@ export async function handlePostApplyOpeningBatch(
   const applied = await dependencies.repository.applyOpeningBatch({
     auth_subject: actor.auth_subject,
     app_user_id: actor.app_user_id,
+    project_id: parsedBody.value.project_id,
     cutoff_date: parsedBody.value.cutoff_date,
     items: parsedBody.value.items,
     reason: parsedBody.value.reason,
@@ -689,6 +769,9 @@ export async function handleGetVendorReconciliations(
     vendor_id: parsedVendorId.vendor_id,
     page: query.value.page,
     page_size: query.value.page_size,
+    project_id: query.value.project_id,
+    accountant_ref: query.value.accountant_ref,
+    ledger_scope: query.value.ledger_scope,
   });
   if (!result.ok) return vfinError(result.code);
 
@@ -720,7 +803,7 @@ export async function handlePostVendorReconciliation(
     return vfinError("VENDOR_FINANCE_QUERY_INVALID");
   }
 
-  const actor = await resolveVendorFinanceAuthority(dependencies, "record");
+  const actor = await resolveVendorFinanceAuthority(dependencies, "reconcile");
   if (!actor.ok) return actor.response;
 
   const parsedVendorId = parseVendorIdParam(vendorId);
@@ -739,6 +822,8 @@ export async function handlePostVendorReconciliation(
   if (!parsedBody.ok) return vfinError(parsedBody.code);
 
   const fingerprint = computeCreateReconciliationFingerprint({
+    project_id: parsedBody.value.project_id,
+    accountant_ref: parsedBody.value.accountant_ref,
     vendor_id: parsedVendorId.vendor_id,
     as_of_date: parsedBody.value.as_of_date,
     confirmed_balance_minor: parsedBody.value.confirmed_balance_minor,
@@ -748,6 +833,8 @@ export async function handlePostVendorReconciliation(
   const saved = await dependencies.repository.createReconciliation({
     auth_subject: actor.auth_subject,
     app_user_id: actor.app_user_id,
+    project_id: parsedBody.value.project_id,
+    accountant_ref: parsedBody.value.accountant_ref,
     vendor_id: parsedVendorId.vendor_id,
     as_of_date: parsedBody.value.as_of_date,
     confirmed_balance_minor: parsedBody.value.confirmed_balance_minor,
@@ -761,7 +848,460 @@ export async function handlePostVendorReconciliation(
 }
 
 // -----------------------------------------------------------------------------
-// 11. POST /api/vendor-finance/evidence/reserve
+// 11. GET /api/vendor-finance/reports/monthly
+// -----------------------------------------------------------------------------
+export async function handleGetVendorFinanceMonthlyReport(
+  request: Request,
+  enabledFlag: string | undefined,
+  dependencies: VendorFinanceApiDependencies,
+): Promise<Response> {
+  const gate = directEntryFeatureGate(enabledFlag);
+  if (gate) return gate;
+
+  if (hasDisallowedAuthorityHeaders(request)) {
+    return vfinError("CLIENT_AUTHORITY_FIELD_FORBIDDEN");
+  }
+
+  const url = parseRequestUrl(request);
+  if (!url) return vfinError("VENDOR_FINANCE_QUERY_INVALID");
+
+  const actor = await resolveVendorFinanceAuthority(dependencies, "view");
+  if (!actor.ok) return actor.response;
+
+  const query = parseMonthlyReportQuery(url);
+  if (!query.ok) return vfinError(query.code);
+
+  const result = await dependencies.repository.getMonthlyReport({
+    auth_subject: actor.auth_subject,
+    app_user_id: actor.app_user_id,
+    month: query.value.month,
+    project_id: query.value.project_id,
+    accountant_ref: query.value.accountant_ref,
+    vendor_id: query.value.vendor_id,
+  });
+  if (!result.ok) return vfinError(result.code);
+
+  return vfinOk(result.data, 200);
+}
+
+// -----------------------------------------------------------------------------
+// 12. Full-Admin Governance Endpoints (`/api/vendor-finance/admin/*`)
+// -----------------------------------------------------------------------------
+export async function handleGetProjectAccountantsAdmin(
+  request: Request,
+  enabledFlag: string | undefined,
+  dependencies: VendorFinanceApiDependencies,
+): Promise<Response> {
+  const gate = directEntryFeatureGate(enabledFlag);
+  if (gate) return gate;
+
+  if (hasDisallowedAuthorityHeaders(request)) {
+    return vfinError("CLIENT_AUTHORITY_FIELD_FORBIDDEN");
+  }
+
+  const url = parseRequestUrl(request);
+  if (!url) return vfinError("VENDOR_FINANCE_QUERY_INVALID");
+
+  const actor = await resolveVendorFinanceAuthority(dependencies, "admin");
+  if (!actor.ok) return actor.response;
+
+  const query = parseListProjectAccountantsAdminQuery(url);
+  if (!query.ok) return vfinError(query.code);
+
+  const result = await dependencies.repository.listProjectAccountantsAdmin({
+    auth_subject: actor.auth_subject,
+    app_user_id: actor.app_user_id,
+    search: query.value.search,
+    include_history: query.value.include_history,
+    page: query.value.page,
+    page_size: query.value.page_size,
+  });
+  if (!result.ok) return vfinError(result.code);
+
+  return vfinOk(result.data, 200);
+}
+
+export async function handlePostAssignProjectAccountantAdmin(
+  request: Request,
+  enabledFlag: string | undefined,
+  dependencies: VendorFinanceApiDependencies,
+): Promise<Response> {
+  const gate = directEntryFeatureGate(enabledFlag);
+  if (gate) return gate;
+
+  if (!isSameOriginAuthRequest(request)) {
+    return vfinError("CSRF_ORIGIN_DENIED");
+  }
+
+  if (hasDisallowedAuthorityHeaders(request)) {
+    return vfinError("CLIENT_AUTHORITY_FIELD_FORBIDDEN");
+  }
+
+  const url = parseRequestUrl(request);
+  if (!url || !parseNoQueryParams(url).ok) {
+    return vfinError("VENDOR_FINANCE_QUERY_INVALID");
+  }
+
+  const actor = await resolveVendorFinanceAuthority(dependencies, "admin");
+  if (!actor.ok) return actor.response;
+
+  const boundedBody = await readBoundedJsonBody(
+    request,
+    MAX_VENDOR_FINANCE_MUTATION_JSON_BYTES,
+  );
+  if (!boundedBody.ok) return vfinError(boundedBody.code);
+
+  const parsedBody = parseAssignProjectAccountantBody(
+    boundedBody.value,
+    request.headers.get("idempotency-key"),
+  );
+  if (!parsedBody.ok) return vfinError(parsedBody.code);
+
+  const fingerprint = computeAssignProjectAccountantFingerprint({
+    project_id: parsedBody.value.project_id,
+    accountant_ref: parsedBody.value.accountant_ref,
+    valid_from: parsedBody.value.valid_from,
+    expected_version: parsedBody.value.expected_version,
+    reason: parsedBody.value.reason,
+  });
+
+  const saved = await dependencies.repository.assignProjectAccountantAdmin({
+    auth_subject: actor.auth_subject,
+    app_user_id: actor.app_user_id,
+    project_id: parsedBody.value.project_id,
+    accountant_ref: parsedBody.value.accountant_ref,
+    expected_version: parsedBody.value.expected_version,
+    valid_from: parsedBody.value.valid_from,
+    reason: parsedBody.value.reason,
+    idempotency_key: parsedBody.value.idempotency_key,
+    request_fingerprint: fingerprint,
+  });
+  if (!saved.ok) return vfinError(saved.code);
+
+  return vfinOk(saved.data, saved.data.replayed ? 200 : 201);
+}
+
+export async function handlePostEndProjectAccountantAdmin(
+  request: Request,
+  assignmentId: string,
+  enabledFlag: string | undefined,
+  dependencies: VendorFinanceApiDependencies,
+): Promise<Response> {
+  const gate = directEntryFeatureGate(enabledFlag);
+  if (gate) return gate;
+
+  if (!isSameOriginAuthRequest(request)) {
+    return vfinError("CSRF_ORIGIN_DENIED");
+  }
+
+  if (hasDisallowedAuthorityHeaders(request)) {
+    return vfinError("CLIENT_AUTHORITY_FIELD_FORBIDDEN");
+  }
+
+  const url = parseRequestUrl(request);
+  if (!url || !parseNoQueryParams(url).ok) {
+    return vfinError("VENDOR_FINANCE_QUERY_INVALID");
+  }
+
+  const actor = await resolveVendorFinanceAuthority(dependencies, "admin");
+  if (!actor.ok) return actor.response;
+
+  const parsedAssignmentId = parseUuidParam(
+    assignmentId,
+    "VENDOR_FINANCE_ASSIGNMENT_INVALID",
+  );
+  if (!parsedAssignmentId.ok) return vfinError(parsedAssignmentId.code);
+
+  const boundedBody = await readBoundedJsonBody(
+    request,
+    MAX_VENDOR_FINANCE_MUTATION_JSON_BYTES,
+  );
+  if (!boundedBody.ok) return vfinError(boundedBody.code);
+
+  const parsedBody = parseEndProjectAccountantBody(
+    boundedBody.value,
+    request.headers.get("idempotency-key"),
+  );
+  if (!parsedBody.ok) return vfinError(parsedBody.code);
+
+  const fingerprint = computeEndProjectAccountantFingerprint({
+    assignment_id: parsedAssignmentId.id,
+    expected_version: parsedBody.value.expected_version,
+    valid_to: parsedBody.value.valid_to,
+    reason: parsedBody.value.reason,
+  });
+
+  const saved = await dependencies.repository.endProjectAccountantAdmin({
+    auth_subject: actor.auth_subject,
+    app_user_id: actor.app_user_id,
+    assignment_id: parsedAssignmentId.id,
+    expected_version: parsedBody.value.expected_version,
+    valid_to: parsedBody.value.valid_to,
+    reason: parsedBody.value.reason,
+    idempotency_key: parsedBody.value.idempotency_key,
+    request_fingerprint: fingerprint,
+  });
+  if (!saved.ok) return vfinError(saved.code);
+
+  return vfinOk(saved.data, 200);
+}
+
+export async function handleGetProjectVendorsAdmin(
+  request: Request,
+  enabledFlag: string | undefined,
+  dependencies: VendorFinanceApiDependencies,
+): Promise<Response> {
+  const gate = directEntryFeatureGate(enabledFlag);
+  if (gate) return gate;
+
+  if (hasDisallowedAuthorityHeaders(request)) {
+    return vfinError("CLIENT_AUTHORITY_FIELD_FORBIDDEN");
+  }
+
+  const url = parseRequestUrl(request);
+  if (!url) return vfinError("VENDOR_FINANCE_QUERY_INVALID");
+
+  const actor = await resolveVendorFinanceAuthority(dependencies, "admin");
+  if (!actor.ok) return actor.response;
+
+  const query = parseListProjectVendorsAdminQuery(url);
+  if (!query.ok) return vfinError(query.code);
+
+  const result = await dependencies.repository.listProjectVendorsAdmin({
+    auth_subject: actor.auth_subject,
+    app_user_id: actor.app_user_id,
+    project_id: query.value.project_id,
+    search: query.value.search,
+    only_linked: query.value.only_linked,
+    page: query.value.page,
+    page_size: query.value.page_size,
+  });
+  if (!result.ok) return vfinError(result.code);
+
+  return vfinOk(result.data, 200);
+}
+
+export async function handlePostSetProjectVendorLinkAdmin(
+  request: Request,
+  enabledFlag: string | undefined,
+  dependencies: VendorFinanceApiDependencies,
+): Promise<Response> {
+  const gate = directEntryFeatureGate(enabledFlag);
+  if (gate) return gate;
+
+  if (!isSameOriginAuthRequest(request)) {
+    return vfinError("CSRF_ORIGIN_DENIED");
+  }
+
+  if (hasDisallowedAuthorityHeaders(request)) {
+    return vfinError("CLIENT_AUTHORITY_FIELD_FORBIDDEN");
+  }
+
+  const url = parseRequestUrl(request);
+  if (!url || !parseNoQueryParams(url).ok) {
+    return vfinError("VENDOR_FINANCE_QUERY_INVALID");
+  }
+
+  const actor = await resolveVendorFinanceAuthority(dependencies, "admin");
+  if (!actor.ok) return actor.response;
+
+  const boundedBody = await readBoundedJsonBody(
+    request,
+    MAX_VENDOR_FINANCE_MUTATION_JSON_BYTES,
+  );
+  if (!boundedBody.ok) return vfinError(boundedBody.code);
+
+  const parsedBody = parseSetProjectVendorLinkBody(
+    boundedBody.value,
+    request.headers.get("idempotency-key"),
+  );
+  if (!parsedBody.ok) return vfinError(parsedBody.code);
+
+  const fingerprint = computeSetProjectVendorLinkFingerprint({
+    project_id: parsedBody.value.project_id,
+    vendor_id: parsedBody.value.vendor_id,
+    active: parsedBody.value.active,
+    expected_version: parsedBody.value.expected_version,
+    reason: parsedBody.value.reason,
+  });
+
+  const saved = await dependencies.repository.setProjectVendorLinkAdmin({
+    auth_subject: actor.auth_subject,
+    app_user_id: actor.app_user_id,
+    project_id: parsedBody.value.project_id,
+    vendor_id: parsedBody.value.vendor_id,
+    active: parsedBody.value.active,
+    expected_version: parsedBody.value.expected_version,
+    reason: parsedBody.value.reason,
+    idempotency_key: parsedBody.value.idempotency_key,
+    request_fingerprint: fingerprint,
+  });
+  if (!saved.ok) return vfinError(saved.code);
+
+  return vfinOk(saved.data, saved.data.replayed ? 200 : 201);
+}
+
+export async function handleGetGlobalRolesAdmin(
+  request: Request,
+  enabledFlag: string | undefined,
+  dependencies: VendorFinanceApiDependencies,
+): Promise<Response> {
+  const gate = directEntryFeatureGate(enabledFlag);
+  if (gate) return gate;
+
+  if (hasDisallowedAuthorityHeaders(request)) {
+    return vfinError("CLIENT_AUTHORITY_FIELD_FORBIDDEN");
+  }
+
+  const url = parseRequestUrl(request);
+  if (!url) return vfinError("VENDOR_FINANCE_QUERY_INVALID");
+
+  const actor = await resolveVendorFinanceAuthority(dependencies, "admin");
+  if (!actor.ok) return actor.response;
+
+  const query = parseListGlobalRolesAdminQuery(url);
+  if (!query.ok) return vfinError(query.code);
+
+  const result = await dependencies.repository.listGlobalRolesAdmin({
+    auth_subject: actor.auth_subject,
+    app_user_id: actor.app_user_id,
+    search: query.value.search,
+    include_history: query.value.include_history,
+    page: query.value.page,
+    page_size: query.value.page_size,
+  });
+  if (!result.ok) return vfinError(result.code);
+
+  return vfinOk(result.data, 200);
+}
+
+export async function handlePostAssignGlobalRoleAdmin(
+  request: Request,
+  enabledFlag: string | undefined,
+  dependencies: VendorFinanceApiDependencies,
+): Promise<Response> {
+  const gate = directEntryFeatureGate(enabledFlag);
+  if (gate) return gate;
+
+  if (!isSameOriginAuthRequest(request)) {
+    return vfinError("CSRF_ORIGIN_DENIED");
+  }
+
+  if (hasDisallowedAuthorityHeaders(request)) {
+    return vfinError("CLIENT_AUTHORITY_FIELD_FORBIDDEN");
+  }
+
+  const url = parseRequestUrl(request);
+  if (!url || !parseNoQueryParams(url).ok) {
+    return vfinError("VENDOR_FINANCE_QUERY_INVALID");
+  }
+
+  const actor = await resolveVendorFinanceAuthority(dependencies, "admin");
+  if (!actor.ok) return actor.response;
+
+  const boundedBody = await readBoundedJsonBody(
+    request,
+    MAX_VENDOR_FINANCE_MUTATION_JSON_BYTES,
+  );
+  if (!boundedBody.ok) return vfinError(boundedBody.code);
+
+  const parsedBody = parseAssignGlobalRoleBody(
+    boundedBody.value,
+    request.headers.get("idempotency-key"),
+  );
+  if (!parsedBody.ok) return vfinError(parsedBody.code);
+
+  const fingerprint = computeAssignGlobalRoleFingerprint({
+    account_ref: parsedBody.value.account_ref,
+    role_code: parsedBody.value.role_code,
+    valid_from: parsedBody.value.valid_from,
+    expected_version: parsedBody.value.expected_version,
+    reason: parsedBody.value.reason,
+  });
+
+  const saved = await dependencies.repository.assignGlobalRoleAdmin({
+    auth_subject: actor.auth_subject,
+    app_user_id: actor.app_user_id,
+    account_ref: parsedBody.value.account_ref,
+    role_code: parsedBody.value.role_code,
+    expected_version: parsedBody.value.expected_version,
+    valid_from: parsedBody.value.valid_from,
+    reason: parsedBody.value.reason,
+    idempotency_key: parsedBody.value.idempotency_key,
+    request_fingerprint: fingerprint,
+  });
+  if (!saved.ok) return vfinError(saved.code);
+
+  return vfinOk(saved.data, saved.data.replayed ? 200 : 201);
+}
+
+export async function handlePostEndGlobalRoleAdmin(
+  request: Request,
+  roleGrantId: string,
+  enabledFlag: string | undefined,
+  dependencies: VendorFinanceApiDependencies,
+): Promise<Response> {
+  const gate = directEntryFeatureGate(enabledFlag);
+  if (gate) return gate;
+
+  if (!isSameOriginAuthRequest(request)) {
+    return vfinError("CSRF_ORIGIN_DENIED");
+  }
+
+  if (hasDisallowedAuthorityHeaders(request)) {
+    return vfinError("CLIENT_AUTHORITY_FIELD_FORBIDDEN");
+  }
+
+  const url = parseRequestUrl(request);
+  if (!url || !parseNoQueryParams(url).ok) {
+    return vfinError("VENDOR_FINANCE_QUERY_INVALID");
+  }
+
+  const actor = await resolveVendorFinanceAuthority(dependencies, "admin");
+  if (!actor.ok) return actor.response;
+
+  const parsedRoleGrantId = parseUuidParam(
+    roleGrantId,
+    "VENDOR_FINANCE_GLOBAL_ROLE_INVALID",
+  );
+  if (!parsedRoleGrantId.ok) return vfinError(parsedRoleGrantId.code);
+
+  const boundedBody = await readBoundedJsonBody(
+    request,
+    MAX_VENDOR_FINANCE_MUTATION_JSON_BYTES,
+  );
+  if (!boundedBody.ok) return vfinError(boundedBody.code);
+
+  const parsedBody = parseEndGlobalRoleBody(
+    boundedBody.value,
+    request.headers.get("idempotency-key"),
+  );
+  if (!parsedBody.ok) return vfinError(parsedBody.code);
+
+  const fingerprint = computeEndGlobalRoleFingerprint({
+    role_grant_id: parsedRoleGrantId.id,
+    expected_version: parsedBody.value.expected_version,
+    valid_to: parsedBody.value.valid_to,
+    reason: parsedBody.value.reason,
+  });
+
+  const saved = await dependencies.repository.endGlobalRoleAdmin({
+    auth_subject: actor.auth_subject,
+    app_user_id: actor.app_user_id,
+    role_grant_id: parsedRoleGrantId.id,
+    expected_version: parsedBody.value.expected_version,
+    valid_to: parsedBody.value.valid_to,
+    reason: parsedBody.value.reason,
+    idempotency_key: parsedBody.value.idempotency_key,
+    request_fingerprint: fingerprint,
+  });
+  if (!saved.ok) return vfinError(saved.code);
+
+  return vfinOk(saved.data, 200);
+}
+
+// -----------------------------------------------------------------------------
+// 13. POST /api/vendor-finance/evidence/reserve
 // -----------------------------------------------------------------------------
 export async function handlePostReserveVendorFinanceEvidence(
   request: Request,
@@ -784,7 +1324,7 @@ export async function handlePostReserveVendorFinanceEvidence(
     return vfinError("VENDOR_FINANCE_QUERY_INVALID");
   }
 
-  const actor = await resolveVendorFinanceAuthority(dependencies, "record");
+  const actor = await resolveVendorFinanceAuthority(dependencies, "evidence");
   if (!actor.ok) return actor.response;
 
   const boundedBody = await readBoundedJsonBody(
@@ -869,7 +1409,7 @@ export async function handlePostReserveVendorFinanceEvidence(
 }
 
 // -----------------------------------------------------------------------------
-// 12. POST /api/vendor-finance/evidence/[evidenceId]/finalize
+// 14. POST /api/vendor-finance/evidence/[evidenceId]/finalize
 // -----------------------------------------------------------------------------
 export async function handlePostFinalizeVendorFinanceEvidence(
   request: Request,
@@ -893,7 +1433,7 @@ export async function handlePostFinalizeVendorFinanceEvidence(
     return vfinError("VENDOR_FINANCE_QUERY_INVALID");
   }
 
-  const actor = await resolveVendorFinanceAuthority(dependencies, "record");
+  const actor = await resolveVendorFinanceAuthority(dependencies, "evidence");
   if (!actor.ok) return actor.response;
 
   const parsedEvidenceId = parseUuidParam(
@@ -1062,7 +1602,7 @@ export async function handlePostFinalizeVendorFinanceEvidence(
 }
 
 // -----------------------------------------------------------------------------
-// 13. GET /api/vendor-finance/evidence/[evidenceId]/download
+// 15. GET /api/vendor-finance/evidence/[evidenceId]/download
 // -----------------------------------------------------------------------------
 export async function handleGetDownloadVendorFinanceEvidence(
   request: Request,

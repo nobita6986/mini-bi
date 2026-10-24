@@ -98,10 +98,20 @@ export const resolveChangeRequestHistoricalAccessForRequest = cache(
 );
 
 export const resolveVendorFinanceAccessForRequest = cache(
-  async (): Promise<{ can_view: boolean; can_record: boolean }> => {
+  async (): Promise<{
+    can_view: boolean;
+    can_record: boolean;
+    can_reconcile: boolean;
+    can_manage_project_assignments: boolean;
+  }> => {
     const actor = await resolveActorForRequest();
     if (!actor.ok) {
-      return { can_view: false, can_record: false };
+      return {
+        can_view: false,
+        can_record: false,
+        can_reconcile: false,
+        can_manage_project_assignments: false,
+      };
     }
     try {
       const access = await createVendorFinanceRepository().getActorAccess({
@@ -112,12 +122,19 @@ export const resolveVendorFinanceAccessForRequest = cache(
         return {
           can_view: true,
           can_record: access.data.can_record,
+          can_reconcile: access.data.can_reconcile,
+          can_manage_project_assignments: access.data.can_manage_project_assignments,
         };
       }
     } catch {
       // Fail closed without disrupting AppShell rendering.
     }
-    return { can_view: false, can_record: false };
+    return {
+      can_view: false,
+      can_record: false,
+      can_reconcile: false,
+      can_manage_project_assignments: false,
+    };
   },
 );
 
@@ -159,6 +176,9 @@ export const resolveNavActorForAppShell = cache(
         projection.hasVendorFinanceAccess = true;
         if (vfinAccess.can_record) {
           projection.hasVendorFinanceRecordAccess = true;
+        }
+        if (vfinAccess.can_reconcile) {
+          projection.hasVendorFinanceReconcileAccess = true;
         }
       }
     }

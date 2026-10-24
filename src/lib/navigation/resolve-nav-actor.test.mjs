@@ -157,7 +157,7 @@ test("Gap1-13: RSC actor resolver reads cookies without attempting a forbidden w
   );
 });
 
-test("VFIN-01: resolveVendorFinanceAccessForRequest is wrapped by React cache() and probes server-side Accounting access only when DIRECT_ENTRY_API_ENABLED is true", () => {
+test("VFIN-01 & VFIN-02: resolveVendorFinanceAccessForRequest is wrapped by React cache() and probes server-side Accounting/Reconcile access only when DIRECT_ENTRY_API_ENABLED is true", () => {
   assert.match(
     resolveNavActor,
     /export\s+const\s+resolveVendorFinanceAccessForRequest\s*=\s*cache\(/,
@@ -166,4 +166,5 @@ test("VFIN-01: resolveVendorFinanceAccessForRequest is wrapped by React cache() 
   assert.match(resolveNavActor, /!vendorFinanceRecordNavPredicate\(projection\)/);
   assert.match(resolveNavActor, /projection\.hasVendorFinanceAccess\s*=\s*true/);
   assert.match(resolveNavActor, /projection\.hasVendorFinanceRecordAccess\s*=\s*true/);
+  assert.match(resolveNavActor, /projection\.hasVendorFinanceReconcileAccess\s*=\s*true/);
 });

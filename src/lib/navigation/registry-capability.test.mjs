@@ -37,6 +37,8 @@ const {
   workReportsNavPredicate,
   vendorFinanceNavPredicate,
   vendorFinanceRecordNavPredicate,
+  vendorFinanceReconcileNavPredicate,
+  vendorFinanceAdminNavPredicate,
   resolveNavCapabilityPredicate,
 } = cap;
 const { CURRENT_NAV_ENTRIES, filterEntriesForActor } = reg;
@@ -152,7 +154,23 @@ test("VFIN-01: vendorFinanceNavPredicate và vendorFinanceRecordNavPredicate fai
   const fullAdmin = makeActor(["entry_admin", "recruiter_master_manage", "team_master_manage"], all);
   assert.equal(vendorFinanceNavPredicate(fullAdmin), true);
   assert.equal(vendorFinanceRecordNavPredicate(fullAdmin), true);
+  assert.equal(vendorFinanceReconcileNavPredicate(fullAdmin), true);
+  assert.equal(vendorFinanceAdminNavPredicate(fullAdmin), true);
   assert.equal(resolveNavCapabilityPredicate("finance")(fullAdmin), true);
+
+  // VFIN-02 narrow global reconciler (BoD `GLOBAL_RECONCILER` or `CASH_HOLDER` without `can_record`).
+  const narrowReconciler = {
+    capabilities: [],
+    scopes: own,
+    hasVendorFinanceAccess: true,
+    hasVendorFinanceRecordAccess: false,
+    hasVendorFinanceReconcileAccess: true,
+  };
+  assert.equal(vendorFinanceNavPredicate(narrowReconciler), true);
+  assert.equal(vendorFinanceRecordNavPredicate(narrowReconciler), false, "narrow reconciler must NOT get can_record");
+  assert.equal(vendorFinanceReconcileNavPredicate(narrowReconciler), true, "narrow reconciler gets can_reconcile");
+  assert.equal(vendorFinanceAdminNavPredicate(narrowReconciler), false, "narrow reconciler is not Full Admin");
+  assert.equal(resolveNavCapabilityPredicate("finance")(narrowReconciler), true);
 
   // Active Accounting department member (server-probed without mutating capabilities or scopes).
   const accountingMember = {
@@ -160,9 +178,12 @@ test("VFIN-01: vendorFinanceNavPredicate và vendorFinanceRecordNavPredicate fai
     scopes: own,
     hasVendorFinanceAccess: true,
     hasVendorFinanceRecordAccess: true,
+    hasVendorFinanceReconcileAccess: true,
   };
   assert.equal(vendorFinanceNavPredicate(accountingMember), true);
   assert.equal(vendorFinanceRecordNavPredicate(accountingMember), true);
+  assert.equal(vendorFinanceReconcileNavPredicate(accountingMember), true);
+  assert.equal(vendorFinanceAdminNavPredicate(accountingMember), false, "Accounting membership does not open Admin project assignments");
   assert.equal(resolveNavCapabilityPredicate("finance")(accountingMember), true);
   assert.equal(directEntryNavPredicate(accountingMember), false, "Accounting membership does not open Direct Entry");
   assert.equal(adminAuthorityNavPredicate(accountingMember), false, "Accounting membership does not open Full Admin");
