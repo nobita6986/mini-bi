@@ -14,7 +14,6 @@ import { buildSpreadsheetValidation } from "./direct-entry-grid-validation.ts";
 import { defaultCells } from "./spreadsheet-row-model.ts";
 import {
   isValidReviewEntryId,
-  maskNationalIdForDisplay,
   parseCccdReviewListQuery,
   parseCccdReviewResolveRequest,
 } from "./cccd-review-contract.ts";
@@ -197,9 +196,7 @@ test("buildFormProfileValidation requires 12-digit CCCD and allows blank display
   assert.equal(gridWithNameWithoutCccd.canSave, true);
 });
 
-test("cccd-review-contract parses queue query, resolve requests, and masks CCCD by default", () => {
-  assert.equal(maskNationalIdForDisplay("079095008811"), "••••••••8811");
-  assert.equal(maskNationalIdForDisplay(null), "—");
+test("cccd-review-contract parses queue query and resolve requests", () => {
   assert.equal(isValidReviewEntryId(ENTRY_ID), true);
   assert.equal(isValidReviewEntryId("not-a-uuid"), false);
 
@@ -425,7 +422,7 @@ test("createCccdReviewRepository projects SQL RPC queue & resolution responses a
   assert.deepEqual(resolveBody.changed_fields, ["national_id", "display_name"]);
 });
 
-test("UI source guards: Form mode orders CCCD (required) before Họ và tên (optional) with Giới tính at the end, and Review panel masks CCCD by default with confirmation and no bypass", async () => {
+test("UI source guards: Form mode orders CCCD (required) before Họ và tên (optional) with Giới tính at the end, and Review panel shows full CCCD with confirmation and no bypass", async () => {
   const formSrc = await readFile(
     path.resolve("src/components/direct-entry/direct-entry-multi-entry-form.tsx"),
     "utf8",
@@ -445,7 +442,9 @@ test("UI source guards: Form mode orders CCCD (required) before Họ và tên (o
     path.resolve("src/components/reporting/cccd-review-panel.tsx"),
     "utf8",
   );
-  assert.match(panelSrc, /maskCccdValue/);
+  assert.doesNotMatch(panelSrc, /maskCccdValue|cccd-review-toggle-reveal|revealFullCccd/);
+  assert.match(panelSrc, /item\.entered\.national_id/);
+  assert.match(panelSrc, /item\.qr\.candidate_data\?\.national_id/);
   assert.match(panelSrc, /cccd-preview/);
   assert.match(panelSrc, /UPDATE_ENTERED_CCCD/);
   assert.match(panelSrc, /STANDARDIZE_FROM_QR/);

@@ -24,7 +24,6 @@ import {
   CCCD_REVIEW_STANDARDIZE_FIELD_LABELS,
   CCCD_REVIEW_STANDARDIZE_FIELDS,
   cccdReviewErrorMessage,
-  maskCccdValue,
   projectCccdReviewQueueResponse,
   type CccdReviewFilterStatus,
   type CccdReviewQueueItem,
@@ -148,7 +147,6 @@ export function CccdReviewPanel() {
   const notify = useNotify();
 
   const [selectedItem, setSelectedItem] = useState<CccdReviewQueueItem | null>(null);
-  const [revealFullCccd, setRevealFullCccd] = useState(false);
   const [actionMode, setActionMode] = useState<"UPDATE_ENTERED_CCCD" | "STANDARDIZE_FROM_QR">(
     "UPDATE_ENTERED_CCCD",
   );
@@ -260,7 +258,6 @@ export function CccdReviewPanel() {
     }
     setPreviewUrls({});
     setSelectedItem(item);
-    setRevealFullCccd(false);
     setEditedCccd(item.entered.national_id ?? "");
     setApplyBlankFromQr(true);
     const defaultQrFields = CCCD_REVIEW_STANDARDIZE_FIELDS.filter((field) => {
@@ -730,10 +727,10 @@ export function CccdReviewPanel() {
                         </div>
                       </td>
                       <td className="px-3 py-3 font-mono text-xs tabular-nums">
-                        {maskCccdValue(item.entered.national_id)}
+                        {item.entered.national_id ?? "—"}
                       </td>
                       <td className="px-3 py-3 font-mono text-xs tabular-nums">
-                        {maskCccdValue(item.qr.candidate_data?.national_id ?? item.qr.national_id ?? null)}
+                        {item.qr.candidate_data?.national_id ?? item.qr.national_id ?? "—"}
                       </td>
                       <td className="px-3 py-3">
                         <ReconciliationBadge status={item.reconciliation_status} />
@@ -809,7 +806,7 @@ export function CccdReviewPanel() {
         >
           <div className="space-y-4 text-sm">
             {actionError ? (
-              <Alert tone="danger" title="Không thể thực hiện">
+              <Alert tone="error" title="Không thể thực hiện">
                 {actionError}
               </Alert>
             ) : null}
@@ -820,14 +817,6 @@ export function CccdReviewPanel() {
                 <h4 className="font-semibold text-foreground">
                   1. Đối chiếu thông tin đã nhập và dữ liệu từ QR CCCD
                 </h4>
-                <button
-                  type="button"
-                  data-testid="cccd-review-toggle-reveal"
-                  onClick={() => setRevealFullCccd((v) => !v)}
-                  className="text-xs font-medium text-primary underline underline-offset-2"
-                >
-                  {revealFullCccd ? "Ẩn bớt số CCCD" : "Hiện số CCCD đầy đủ để đối chiếu"}
-                </button>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs sm:text-sm">
@@ -843,14 +832,8 @@ export function CccdReviewPanel() {
                     {CCCD_REVIEW_STANDARDIZE_FIELDS.map((field) => {
                       const rawEntered = enteredValueForField(selectedItem, field);
                       const rawQr = qrValueForField(selectedItem, field);
-                      const displayEntered =
-                        field === "national_id" && !revealFullCccd
-                          ? maskCccdValue(rawEntered)
-                          : rawEntered ?? "(Đang trống)";
-                      const displayQr =
-                        field === "national_id" && !revealFullCccd
-                          ? maskCccdValue(rawQr)
-                          : rawQr ?? "—";
+                      const displayEntered = rawEntered ?? "(Đang trống)";
+                      const displayQr = rawQr ?? "—";
                       const isMatch =
                         rawEntered !== null &&
                         rawQr !== null &&

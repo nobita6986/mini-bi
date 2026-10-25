@@ -12,18 +12,20 @@ import { projectOptionalActionReason } from "./action-reason.ts";
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const RESERVE_KEYS = new Set(["document_type", "expected_entry_version", "size_bytes", "mime_type", "reason"]);
 
+export type CccdFinalizeTriggerInput = {
+  auth_subject: string;
+  app_user_id: string;
+  entry_id: string;
+  document_id: string;
+  document_type: "CCCD_FRONT" | "CCCD_BACK";
+  image_bytes: Uint8Array;
+};
+
 export type DocumentApiDependencies = {
   resolveSession(): Promise<DirectEntrySessionResult>;
   repository: DirectEntryRepository;
   storage: DocumentObjectStorage;
-  onCccdImageFinalized?: (input: {
-    auth_subject: string;
-    app_user_id: string;
-    entry_id: string;
-    document_id: string;
-    document_type: "CCCD_FRONT" | "CCCD_BACK";
-    image_bytes: Uint8Array;
-  }) => void | Promise<void>;
+  onCccdImageFinalized?: (input: CccdFinalizeTriggerInput) => void | Promise<void>;
 };
 
 export function json(body: unknown, status: number, headers: Record<string, string> = {}): Response {

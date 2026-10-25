@@ -212,17 +212,6 @@ export function isCccdReviewStandardizeField(value: unknown): value is CccdRevie
   );
 }
 
-export function maskNationalIdForDisplay(nationalId: string | null | undefined): string {
-  if (typeof nationalId !== "string") return "—";
-  const trimmed = nationalId.trim();
-  if (trimmed.length === 12 && /^\d{12}$/.test(trimmed)) {
-    return `••••••••${trimmed.slice(8)}`;
-  }
-  return "—";
-}
-
-export const maskCccdValue = maskNationalIdForDisplay;
-
 export function buildCccdReviewQueueQuery(input: {
   status: CccdReviewStatusFilter;
   page?: number;

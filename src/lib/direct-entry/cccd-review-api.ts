@@ -63,8 +63,7 @@ async function resolveReviewActor(
     actor.capabilities.includes("entry_own") ||
     actor.capabilities.includes("entry_team") ||
     actor.capabilities.includes("document_upload") ||
-    actor.capabilities.includes("document_view") ||
-    actor.capabilities.includes("pii_view");
+    actor.capabilities.includes("document_view");
 
   if (!hasReviewOrCreateCapability) {
     return { ok: false, response: fail("CCCD_REVIEW_DENIED", 403) };
