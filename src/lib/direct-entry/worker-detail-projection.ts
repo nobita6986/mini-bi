@@ -139,8 +139,9 @@ function projectOptionalField(value: unknown, maxLength: number): { ok: true; va
 
 function projectWorker(value: unknown): WorkerDetailWorker | null {
   if (!isRecord(value)) return null;
-  if (typeof value.display_name !== "string" || value.display_name.trim().length < 1 ||
+  if (typeof value.display_name !== "string" ||
       value.display_name.length > 256 ||
+      (value.display_name.length > 0 && value.display_name.trim().length < 1) ||
       Object.keys(value).some((key) => !(WORKER_PROJECTION_KEYS as readonly string[]).includes(key))) {
     return null;
   }

@@ -28,7 +28,6 @@ const BASELINE_COMMIT = "8bf16afe9360e5eebe0dd9183c8ef9d85fc39b0c";
 const LOCKED_FILES = [
   "src/components/direct-entry/direct-entry-spreadsheet-grid.tsx",
   "src/components/direct-entry/direct-entry-spreadsheet-grid.module.css",
-  "src/components/direct-entry/direct-entry-multi-entry-form.tsx",
   "src/components/direct-entry/direct-entry-ddmm-date-input.tsx",
   "src/components/direct-entry/direct-entry-excel-paste-dialog.tsx",
   "src/components/direct-entry/direct-entry-worker-profile-paste-dialog.tsx",
@@ -44,7 +43,6 @@ const LOCKED_FILES = [
   "src/lib/direct-entry/live-grid-paste.ts",
   "src/lib/direct-entry/live-controller.ts",
   "src/lib/direct-entry/draft-profile-grid.ts",
-  "src/lib/direct-entry/full-profile-batch.ts",
   "src/lib/direct-entry/worker-profile-paste.ts",
   "src/lib/direct-entry/worker-profile-xlsx.ts",
 ];

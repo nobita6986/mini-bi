@@ -71,7 +71,10 @@ async function resolveQrActor(
   const actor = session.actor.actor;
   const canUpload =
     actor.capabilities.includes("document_upload") ||
-    actor.capabilities.includes("change_request_create");
+    actor.capabilities.includes("change_request_create") ||
+    actor.capabilities.includes("change_review") ||
+    actor.capabilities.includes("entry_privileged_edit") ||
+    actor.capabilities.includes("entry_admin");
   const canView =
     canUpload ||
     actor.capabilities.includes("document_view");
@@ -183,7 +186,7 @@ export function triggerBackgroundCccdQrExtraction(input: {
         entry_id: input.entry_id,
         document_id: input.document_id,
         image_bytes: input.image_bytes,
-        apply_blank_fields: false,
+        apply_blank_fields: true,
         expected_entry_version: null,
         idempotency_key: `bg:${input.document_id}`,
         qrRepository: input.qrRepository,
@@ -285,7 +288,7 @@ export async function getDirectEntryCccdQr(
               entry_id: entryId,
               document_id: prepared.data.document_id,
               image_bytes: bytes,
-              apply_blank_fields: false,
+              apply_blank_fields: true,
               expected_entry_version: null,
               idempotency_key: `reconcile:${prepared.data.document_id}`,
               qrRepository: dependencies.qrRepository,
@@ -321,6 +324,9 @@ export async function getDirectEntryCccdQr(
         entry_id: readResult.data.entry_id,
         entry_version: readResult.data.entry_version,
         status: summarizeStatus(latest, filteredEligible.length),
+        ...(readResult.data.reconciliation !== undefined
+          ? { reconciliation: readResult.data.reconciliation }
+          : {}),
         latest,
         extractions: filteredExtractions,
         eligible_documents: filteredEligible,
@@ -409,6 +415,9 @@ export async function processDirectEntryCccdQr(
             entry_id: applied.data.entry_id,
             entry_version: applied.data.entry_version,
             reused: applied.data.reused,
+            ...(applied.data.reconciliation !== undefined
+              ? { reconciliation: applied.data.reconciliation }
+              : {}),
             extraction: applied.data.extraction,
           },
           200,
@@ -464,6 +473,9 @@ export async function processDirectEntryCccdQr(
           entry_id: failedStorage.data.entry_id,
           entry_version: failedStorage.data.entry_version,
           reused: failedStorage.data.reused,
+          ...(failedStorage.data.reconciliation !== undefined
+            ? { reconciliation: failedStorage.data.reconciliation }
+            : {}),
           extraction: failedStorage.data.extraction,
         },
         200,
@@ -490,6 +502,9 @@ export async function processDirectEntryCccdQr(
         entry_id: completed.data.entry_id,
         entry_version: completed.data.entry_version,
         reused: completed.data.reused,
+        ...(completed.data.reconciliation !== undefined
+          ? { reconciliation: completed.data.reconciliation }
+          : {}),
         extraction: completed.data.extraction,
       },
       200,

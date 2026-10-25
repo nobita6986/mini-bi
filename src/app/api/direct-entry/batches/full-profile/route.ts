@@ -2,6 +2,8 @@ import "server-only";
 
 import { getDirectEntryActor } from "@/lib/auth/direct-entry-session";
 import { createDirectEntryActorRepository } from "@/lib/direct-entry/actor-context-repository";
+import { triggerBackgroundCccdQrExtraction } from "@/lib/direct-entry/cccd-qr-api";
+import { createServiceCccdQrRepository } from "@/lib/direct-entry/cccd-qr-repository";
 import { postFullProfileBatch } from "@/lib/direct-entry/full-profile-api";
 import { createFullProfileRepository } from "@/lib/direct-entry/full-profile-repository";
 import { createDirectEntryWriteRepository } from "@/lib/direct-entry/write-repository";
@@ -24,5 +26,10 @@ export async function POST(request: Request): Promise<Response> {
     portraitStages: createWorkerPortraitStageRepository(),
     documentRepository: createDirectEntryWriteRepository(),
     documentStorage: createR2DocumentStorage(),
+    onCccdImageFinalized: (input) =>
+      triggerBackgroundCccdQrExtraction({
+        ...input,
+        qrRepository: createServiceCccdQrRepository(),
+      }),
   });
 }

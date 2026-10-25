@@ -12,8 +12,11 @@ import {
   resolveActor,
   UUID,
   validateMutationRequest,
+  type CccdFinalizeTriggerInput,
   type DocumentApiDependencies,
 } from "./document-api.ts";
+
+export type { CccdFinalizeTriggerInput };
 
 function lifecycleBody(value: {
   document_id: string;
@@ -290,8 +293,28 @@ export async function previewCccdDocument(
   if (!UUID.test(documentId)) return fail("DOCUMENT_ID_INVALID", 400);
   void request;
   try {
-    const actor = await resolveActor(dependencies, "document_view");
-    if (!actor.ok) return actor.response;
+    const session = await dependencies.resolveSession();
+    if (!session.actor.ok) {
+      return session.actor.reason === "UNAUTHENTICATED"
+        ? fail("UNAUTHENTICATED", 401)
+        : fail("ACTOR_NOT_AVAILABLE", 403);
+    }
+    const resolvedActor = session.actor.actor;
+    const canPreviewCccd =
+      resolvedActor.capabilities.includes("document_view") ||
+      resolvedActor.capabilities.includes("document_upload") ||
+      resolvedActor.capabilities.includes("change_request_create") ||
+      resolvedActor.capabilities.includes("change_review") ||
+      resolvedActor.capabilities.includes("entry_privileged_edit") ||
+      resolvedActor.capabilities.includes("entry_admin") ||
+      resolvedActor.capabilities.includes("entry_create");
+    if (!canPreviewCccd) {
+      return fail("DOCUMENT_DENIED", 403);
+    }
+    const actor = {
+      auth_subject: resolvedActor.auth_subject,
+      app_user_id: resolvedActor.app_user_id,
+    };
     if (!dependencies.storage.available()) return fail("DOCUMENT_STORAGE_UNAVAILABLE", 503);
     const context = await dependencies.repository.getDocumentContext({
       auth_subject: actor.auth_subject,

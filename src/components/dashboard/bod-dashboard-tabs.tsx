@@ -5,6 +5,7 @@ import { parseAsString, useQueryStates } from "nuqs";
 
 import type { ReportingData } from "@/lib/reporting/p1-reporting";
 import type { ReportingOptionsResult } from "@/lib/reporting/p1-options-server";
+import { CccdReviewPanel } from "@/components/reporting/cccd-review-panel";
 import { DuplicateCccdReportPanel } from "@/components/reporting/duplicate-cccd-report-panel";
 import { OffboardingReportPanel } from "@/components/workforce/offboarding-report-panel";
 import { WorkforceDeepReportPanel } from "./dashboard-shared";
@@ -44,22 +45,24 @@ const queryParsers = {
   source: parseAsString,
 };
 
-type TabKey = "general" | "deep" | "team" | "duplicate-cccd" | "offboarding";
+type TabKey = "general" | "deep" | "team" | "cccd-review" | "duplicate-cccd" | "offboarding";
 
 type TabDef = { key: TabKey; label: string; panelId: string };
 
 /**
- * P3.1-HF-R3-R1 / WF-04 Hotfix:
+ * P3.1-HF-R3-R1 / WF-04 Hotfix / PRE-WAVE-2:
  * 1. "Báo cáo tổng quát" (mặc định)
  * 2. "Báo cáo chuyên sâu" (chỉ hiển thị cho actor có scope = "all", tức primaryTabLabel === undefined)
  * 3. "Báo cáo theo nhóm" (chỉ hiển thị cho actor có scope = "all")
- * 4. "Báo cáo CCCD trùng" (hiển thị khi canViewDuplicateCccd === true)
- * 5. "Báo cáo NLĐ nghỉ việc" (hiển thị khi canViewOffboarding === true)
+ * 4. "Review thông tin NLĐ" (nằm ngay trước "Báo cáo CCCD trùng", hiển thị khi canViewCccdReview === true)
+ * 5. "Báo cáo CCCD trùng" (hiển thị khi canViewDuplicateCccd === true)
+ * 6. "Báo cáo NLĐ nghỉ việc" (hiển thị khi canViewOffboarding === true)
  */
 const tabs: readonly TabDef[] = [
   { key: "general", label: "Báo cáo tổng quát", panelId: "bod-panel-general" },
   { key: "deep", label: "Báo cáo chuyên sâu", panelId: "bod-panel-deep" },
   { key: "team", label: "Báo cáo theo nhóm", panelId: "bod-panel-team" },
+  { key: "cccd-review", label: "Review thông tin NLĐ", panelId: "bod-panel-cccd-review" },
   { key: "duplicate-cccd", label: "Báo cáo CCCD trùng", panelId: "bod-panel-duplicate-cccd" },
   { key: "offboarding", label: "Báo cáo NLĐ nghỉ việc", panelId: "bod-panel-offboarding" },
 ];
@@ -70,6 +73,7 @@ export function BodDashboardTabs({
   data,
   generatedAt,
   optionsResult,
+  canViewCccdReview,
   canViewDuplicateCccd,
   canViewOffboarding,
 }: {
@@ -79,9 +83,11 @@ export function BodDashboardTabs({
   data: ReportingData;
   generatedAt?: string;
   optionsResult: ReportingOptionsResult;
+  canViewCccdReview?: boolean;
   canViewDuplicateCccd: boolean;
   canViewOffboarding: boolean;
 }) {
+  const effectiveCanViewCccdReview = canViewCccdReview ?? canViewDuplicateCccd;
   const [{ tab: rawTab, source }, setQuery] = useQueryStates(queryParsers, {
     history: "push",
     shallow: true,
@@ -90,7 +96,9 @@ export function BodDashboardTabs({
   const [isPending, startTransition] = useTransition();
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const visibleTabs = tabs.filter((tab) =>
-    tab.key === "duplicate-cccd"
+    tab.key === "cccd-review"
+      ? effectiveCanViewCccdReview
+      : tab.key === "duplicate-cccd"
       ? canViewDuplicateCccd
       : tab.key === "offboarding"
         ? canViewOffboarding
@@ -107,6 +115,8 @@ export function BodDashboardTabs({
       ? "deep"
       : primaryTabLabel === undefined && rawTab === "team"
         ? "team"
+        : rawTab === "cccd-review" && effectiveCanViewCccdReview
+          ? "cccd-review"
         : rawTab === "duplicate-cccd" && canViewDuplicateCccd
           ? "duplicate-cccd"
           : rawTab === "offboarding" && canViewOffboarding
@@ -179,6 +189,10 @@ export function BodDashboardTabs({
             optionsResult={optionsResult}
             view={bodTeamReportConfig}
           />
+        </div>
+      ) : activeTab === "cccd-review" ? (
+        <div id="bod-panel-cccd-review" role="tabpanel" aria-labelledby="bod-tab-cccd-review" tabIndex={0} data-ui-panel-motion="true" className="pt-4">
+          <CccdReviewPanel />
         </div>
       ) : activeTab === "duplicate-cccd" ? (
         <div id="bod-panel-duplicate-cccd" role="tabpanel" aria-labelledby="bod-tab-duplicate-cccd" tabIndex={0} data-ui-panel-motion="true" className="pt-4">

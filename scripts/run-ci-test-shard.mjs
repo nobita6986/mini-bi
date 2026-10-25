@@ -88,6 +88,7 @@ const TEST_WEIGHTS = {
   "test:vfin-01": 12.0,
   "test:vfin-01-ui": 2.5,
   "test:vfin-02": 14.0,
+  "test:pre-wave2-cccd-review": 8.0,
 };
 
 const target = process.argv[2];

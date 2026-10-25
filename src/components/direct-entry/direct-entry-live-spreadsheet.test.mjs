@@ -110,7 +110,7 @@ test("paste rồi sửa field khác hủy one-shot undo trước mutation để 
 });
 
 test("validation chay tren staged rows va map issue ve dung o", () => {
-  assert.match(live, /buildSpreadsheetValidation\(\{/);
+  assert.match(live, /\(isFormModeValidation \? buildFormProfileValidation : buildSpreadsheetValidation\)\(\{/);
   assert.match(live, /rows: stagedModel\.rows,/);
   // P1.7-H07: UI su dung `stagedValidationForDisplay` (loai bo
   // PASTE_VALUE_REQUIRED khi user chua bam "Lưu cac dong hop le").

@@ -52,6 +52,7 @@ export function DashboardView({
   report,
   optionsResult,
   audience,
+  canViewCccdReview,
   canViewDuplicateCccd,
   canViewOffboarding,
 }: {
@@ -59,6 +60,8 @@ export function DashboardView({
   optionsResult: ReportingOptionsResult;
   /** DB-authoritative audience from the scoped payload; null fails closed. */
   audience: ReportingAudience | null;
+  /** PRE-WAVE-2: server-derived visibility for the "Review thông tin NLĐ" tab. */
+  canViewCccdReview?: boolean;
   /** PRE-W2-HF-C: server-derived visibility for the "Báo cáo CCCD trùng" tab. */
   canViewDuplicateCccd: boolean;
   /** Server-derived visibility for the offboarding report tab. */
@@ -106,6 +109,7 @@ export function DashboardView({
         data={report.data}
         generatedAt={report.generatedAt}
         optionsResult={optionsResult}
+        canViewCccdReview={canViewCccdReview}
         canViewDuplicateCccd={canViewDuplicateCccd}
         canViewOffboarding={canViewOffboarding}
       />
@@ -128,6 +132,7 @@ export function DashboardView({
         data={report.data}
         generatedAt={report.generatedAt}
         optionsResult={optionsResult}
+        canViewCccdReview={canViewCccdReview}
         canViewDuplicateCccd={canViewDuplicateCccd}
         canViewOffboarding={canViewOffboarding}
       />
@@ -144,6 +149,7 @@ export function DashboardView({
       data={report.data}
       generatedAt={generatedAt}
       optionsResult={optionsResult}
+      canViewCccdReview={canViewCccdReview}
       canViewDuplicateCccd={canViewDuplicateCccd}
       canViewOffboarding={canViewOffboarding}
       general={

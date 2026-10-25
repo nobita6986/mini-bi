@@ -105,9 +105,11 @@ export function createFullProfileRepository(rpc?: Rpc) {
     }): Promise<FullProfileRepositoryResult> {
       try {
         resolvedRpc ??= serviceRoleRpc();
-        const rpcName = input.payload.contract_version === "worker-profile/1.1"
-          ? "direct_entry_create_full_profile_batch_v2"
-          : "direct_entry_create_full_profile_batch";
+        const rpcName =
+          input.payload.contract_version === "worker-profile/1.1" ||
+          input.payload.contract_version === "worker-profile/1.2"
+            ? "direct_entry_create_full_profile_batch_v2"
+            : "direct_entry_create_full_profile_batch";
         const { data, error } = await resolvedRpc(rpcName, {
           p_auth_subject: input.auth_subject,
           p_app_user_id: input.app_user_id,

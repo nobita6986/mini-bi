@@ -381,7 +381,7 @@ test("triggerBackgroundCccdQrExtraction runs decode + completeExtraction asynchr
   assert.equal(calls[0][0], "prepare");
   assert.equal(calls[1][0], "complete");
   assert.equal(calls[1][1].status, "SUCCEEDED");
-  assert.equal(calls[1][1].apply_blank_fields, false);
+  assert.equal(calls[1][1].apply_blank_fields, true);
   assert.equal(calls[1][1].idempotency_key, `bg:${DOCUMENT_ID}`);
 });
 

@@ -64,8 +64,8 @@ test("W06D: tab URL/history and source normalization use the locked contract", (
 });
 
 test("W06D: missing tab defaults general; repeated or malformed tab normalizes general", () => {
-  assert.match(page, /type DashboardTab = "general" \| "deep" \| "team" \| "duplicate-cccd" \| "offboarding"/);
-  assert.match(page, /typeof value === "string" &&[\s\S]*value === "duplicate-cccd" \|\| value === "offboarding"/);
+  assert.match(page, /type DashboardTab = "general" \| "deep" \| "team" \| "cccd-review" \| "duplicate-cccd" \| "offboarding"/);
+  assert.match(page, /typeof value === "string" &&[\s\S]*value === "cccd-review" \|\| value === "duplicate-cccd" \|\| value === "offboarding"/);
   assert.match(page, /rawTab !== undefined && tab === null/);
   assert.match(page, /normalizedDashboardPath\(params, "general", false\)/);
   assert.match(page, /query\.set\("tab", tab\)/);

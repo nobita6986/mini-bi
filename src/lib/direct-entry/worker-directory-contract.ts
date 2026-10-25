@@ -316,7 +316,8 @@ export function projectWorkerDirectoryRow(value: unknown): WorkerDirectoryRow | 
     return null;
   }
   if (typeof value.display_name !== "string" ||
-      value.display_name.trim().length < 1 || value.display_name.length > 256) {
+      value.display_name.length > 256 ||
+      (value.display_name.length > 0 && value.display_name.trim().length < 1)) {
     return null;
   }
   if (typeof value.project_id !== "string" || !PROJECT_ID.test(value.project_id)) return null;

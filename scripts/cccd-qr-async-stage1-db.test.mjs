@@ -170,17 +170,77 @@ test("record-first worker profile creation/submission succeeds without CCCD imag
   assert.deepEqual(afterFailureRows[0].worker_details, originalWorkerDetails);
 });
 
-test("background QR extraction stores candidate_data, is idempotent on retry, and apply_blank_fields only fills blank worker_details fields under OCC", async () => {
-  // Seed draftEntryId with mixed worker_details:
+test("background QR extraction stores candidate_data, enforces exact CCCD match before auto-filling blank fields, and is idempotent on retry under OCC", async () => {
+  // First verify MISMATCH guard: when user-entered CCCD ("079099887766") differs from QR ("038095001234"),
+  // apply_blank_fields MUST NOT overwrite or auto-fill any field and MUST mark MISMATCH.
+  const mismatchedDetails = {
+    display_name: "Original Worker Name",
+    national_id: { state: "provided", value: "079099887766" },
+    address: { state: "intentionally_blank" },
+    date_of_birth: { state: "unknown" },
+    gender: { state: "omitted" },
+    phone: { state: "unknown" },
+  };
+  await db.query(
+    "update public.direct_entries set worker_details = $2::jsonb, version = version + 1 where entry_id = $1",
+    [draftEntryId, JSON.stringify(mismatchedDetails)],
+  );
+
+  const { rows: mismatchVerRows } = await db.query(
+    "select version from public.direct_entries where entry_id = $1",
+    [draftEntryId],
+  );
+  const mismatchReserved = await db.query(
+    "select public.direct_entry_reserve_document_direct_upload(" +
+      "$1::uuid, $2::uuid, $3::uuid, $4::integer, 'CCCD_FRONT', " +
+      "'qr-stage1-mismatch-reserve', 640, 'image/png', null) as data",
+    [ACTORS.owner.auth_subject, ACTORS.owner.app_user_id, draftEntryId, mismatchVerRows[0].version],
+  );
+  const mismatchDocId = mismatchReserved.rows[0].data.document_id;
+  const mismatchFinalized = await db.query(
+    "select public.direct_entry_finalize_document_direct_upload(" +
+      "$1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::integer, " +
+      "'qr-stage1-mismatch-finalize', 'validated', $6, 640, 'image/png') as data",
+    [
+      ACTORS.owner.auth_subject,
+      ACTORS.owner.app_user_id,
+      draftEntryId,
+      mismatchDocId,
+      mismatchReserved.rows[0].data.entry_version,
+      "d".repeat(64),
+    ],
+  );
+  const mismatchCompleted = await db.query(
+    "select public.direct_entry_complete_cccd_qr_extraction(" +
+      "$1::uuid, $2::uuid, $3::uuid, $4::uuid, 'SUCCEEDED', null, null, $5::jsonb, true, $6::integer, 'bg-mismatch-1') as data",
+    [
+      ACTORS.owner.auth_subject,
+      ACTORS.owner.app_user_id,
+      draftEntryId,
+      mismatchDocId,
+      JSON.stringify(CANDIDATE_DATA),
+      mismatchFinalized.rows[0].data.entry_version,
+    ],
+  );
+  assert.equal(mismatchCompleted.rows[0].data.extraction.reconciliation_status, "MISMATCH");
+  assert.equal(mismatchCompleted.rows[0].data.reconciliation.status, "MISMATCH");
+  assert.deepEqual(mismatchCompleted.rows[0].data.extraction.applied_fields, []);
+  const { rows: afterMismatchRows } = await db.query(
+    "select worker_details from public.direct_entries where entry_id = $1",
+    [draftEntryId],
+  );
+  assert.deepEqual(afterMismatchRows[0].worker_details, mismatchedDetails);
+
+  // Now seed draftEntryId with matching national_id ("079095001234") and mixed worker_details:
   // - display_name: "Original Worker Name" (must never be overwritten)
-  // - national_id: provided by user ("079099887766") -> must NOT be overwritten
+  // - national_id: provided by user ("079095001234") -> matches QR exactly
   // - address: intentionally_blank -> must NOT be overwritten
   // - date_of_birth: unknown -> eligible blank
   // - gender: omitted -> eligible blank
   // - national_id_issued_at: omitted -> eligible blank
   const initialDetails = {
     display_name: "Original Worker Name",
-    national_id: { state: "provided", value: "079099887766" },
+    national_id: { state: "provided", value: "079095001234" },
     address: { state: "intentionally_blank" },
     date_of_birth: { state: "unknown" },
     gender: { state: "omitted" },
@@ -199,7 +259,12 @@ test("background QR extraction stores candidate_data, is idempotent on retry, an
     "select public.direct_entry_reserve_document_direct_upload(" +
       "$1::uuid, $2::uuid, $3::uuid, $4::integer, 'CCCD_FRONT', " +
       "'qr-stage1-draft-reserve', 640, 'image/png', null) as data",
-    [ACTORS.owner.auth_subject, ACTORS.owner.app_user_id, draftEntryId, draftVerRows[0].version],
+    [
+      ACTORS.owner.auth_subject,
+      ACTORS.owner.app_user_id,
+      draftEntryId,
+      draftVerRows[0].version,
+    ],
   );
   const docId = reserved.rows[0].data.document_id;
   const finalized = await db.query(
@@ -248,6 +313,8 @@ test("background QR extraction stores candidate_data, is idempotent on retry, an
   assert.equal(bgCompleted.rows[0].data.reused, false);
   assert.equal(bgCompleted.rows[0].data.entry_version, versionBeforeQr);
   assert.equal(bgCompleted.rows[0].data.extraction.status, "SUCCEEDED");
+  assert.equal(bgCompleted.rows[0].data.extraction.reconciliation_status, "MATCHED_INITIAL");
+  assert.equal(bgCompleted.rows[0].data.reconciliation.status, "MATCHED_INITIAL");
   assert.equal(
     bgCompleted.rows[0].data.extraction.candidate_data.authenticity,
     "UNVERIFIED_QR_TEXT",
@@ -261,7 +328,7 @@ test("background QR extraction stores candidate_data, is idempotent on retry, an
     national_id_issued_at: "eligible_blank",
   });
 
-  // 2. Idempotent retry of background completion returns reused = true and keeps single extraction row
+  // 2. Idempotent retry of background completion returns reused = true and keeps single extraction row per document
   const bgRetry = await db.query(
     "select public.direct_entry_complete_cccd_qr_extraction(" +
       "$1::uuid, $2::uuid, $3::uuid, $4::uuid, 'SUCCEEDED', null, null, $5::jsonb, false, null, 'bg-idem-2') as data",
@@ -275,8 +342,8 @@ test("background QR extraction stores candidate_data, is idempotent on retry, an
   );
   assert.equal(bgRetry.rows[0].data.reused, true);
   const { rows: extractionCountRows } = await db.query(
-    "select count(*)::int as cnt from public.direct_entry_cccd_qr_extractions where entry_id = $1",
-    [draftEntryId],
+    "select count(*)::int as cnt from public.direct_entry_cccd_qr_extractions where document_id = $1",
+    [docId],
   );
   assert.equal(extractionCountRows[0].cnt, 1);
 
@@ -329,7 +396,7 @@ test("background QR extraction stores candidate_data, is idempotent on retry, an
   assert.equal(updatedEntryRows[0].version, versionBeforeQr + 1);
   assert.deepEqual(updatedEntryRows[0].worker_details, {
     display_name: "Original Worker Name",
-    national_id: { state: "provided", value: "079099887766" },
+    national_id: { state: "provided", value: "079095001234" },
     address: { state: "intentionally_blank" },
     date_of_birth: { state: "provided", value: "15/08/1995" },
     gender: { state: "provided", value: "MALE" },

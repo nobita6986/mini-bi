@@ -355,6 +355,15 @@ export function canViewDuplicateCccdReport(actor: ActorResolution | null): boole
 }
 
 /**
+ * PRE-WAVE-2: Quyết định actor có được thấy tab "Review thông tin NLĐ" trên Dashboard không.
+ * Mọi tài khoản nghiệp vụ đã xác thực hợp lệ đều thấy tab để xử lý hồ sơ trong scope của mình
+ * (bao gồm cả hồ sơ do chính mình tạo); quyền dòng thực tế do API và RPC PostgreSQL kiểm tra độc lập.
+ */
+export function canViewCccdReviewReport(actor: ActorResolution | null): boolean {
+  return actor !== null && actor.ok;
+}
+
+/**
  * WF-04 Post-Merge Hotfix: Quyết định actor có được thấy tab "Báo cáo chuyên sâu"
  * và khu vực "Hiện trạng & biến động trạng thái lao động" trên Dashboard hay không.
  *

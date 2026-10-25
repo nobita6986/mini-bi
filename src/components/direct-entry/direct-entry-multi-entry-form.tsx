@@ -121,7 +121,7 @@ export function DirectEntryMultiEntryForm({
                   if ((event.currentTarget as HTMLDetailsElement).open) onActivateRow(rowId);
                 }}>
                 <summary>
-                  NLĐ {index + 1}: {cells.display_name || "Chưa nhập họ tên"}
+                  NLĐ {index + 1}: {cells.display_name || (cells.national_id ? `CCCD ${cells.national_id}` : "Chưa nhập họ tên")}
                   {" · "}{validationRow ? (validationRow.errorCount > 0
                     ? `${validationRow.errorCount} lỗi` : "Hợp lệ") : "Chưa nhập"}
                 </summary>
@@ -187,17 +187,17 @@ export function DirectEntryMultiEntryForm({
                       Hãy chọn “Đang làm” hoặc “Đang chờ việc” để tiếp tục.
                     </span>}
                   </Field>
-                  <Field label={fieldLabel("Họ và tên")}>
+                  <Field label={fieldLabel("Số CCCD")}>
+                    <input required maxLength={12} inputMode="numeric" autoComplete="off" value={cells.national_id ?? ""}
+                      onChange={handleChange(rowId, "national_id")} />
+                  </Field>
+                  <Field label="Họ và tên">
                     <input autoComplete="name" value={cells.display_name ?? ""}
                       onChange={handleChange(rowId, "display_name")} />
                   </Field>
                   <Field label="Số điện thoại">
                     <input autoComplete="tel" inputMode="tel" value={cells.phone ?? ""}
                       onChange={handleChange(rowId, "phone")} />
-                  </Field>
-                  <Field label="Số CCCD">
-                    <input inputMode="numeric" autoComplete="off" value={cells.national_id ?? ""}
-                      onChange={handleChange(rowId, "national_id")} />
                   </Field>
 
                   <div className={styles.formUploadSection}>
@@ -252,13 +252,6 @@ export function DirectEntryMultiEntryForm({
                       <Field label="Ghi chú">
                         <textarea value={cells.general_note ?? ""} onChange={handleChange(rowId, "general_note")} />
                       </Field>
-                      <Field label="Giới tính">
-                        <select value={cells.gender ?? ""} onChange={handleChange(rowId, "gender")}>
-                          <option value="">—</option><option value="Nam">Nam</option><option value="Nữ">Nữ</option>
-                          {(cells.gender ?? "") !== "" && !["Nam", "Nữ"].includes(cells.gender ?? "") &&
-                            <option value={cells.gender} disabled>{cells.gender}</option>}
-                        </select>
-                      </Field>
                       <Field label="Ngày sinh">
                         <input inputMode="numeric" placeholder="DD/MM/YYYY"
                           value={formatFreeDateText(cells.date_of_birth ?? "")}
@@ -272,6 +265,13 @@ export function DirectEntryMultiEntryForm({
                       <Field label="Địa chỉ">
                         <input autoComplete="street-address" value={cells.address ?? ""}
                           onChange={handleChange(rowId, "address")} />
+                      </Field>
+                      <Field label="Giới tính">
+                        <select value={cells.gender ?? ""} onChange={handleChange(rowId, "gender")}>
+                          <option value="">—</option><option value="Nam">Nam</option><option value="Nữ">Nữ</option><option value="Khác">Khác</option>
+                          {(cells.gender ?? "") !== "" && !["Nam", "Nữ", "Khác"].includes(cells.gender ?? "") &&
+                            <option value={cells.gender} disabled>{cells.gender}</option>}
+                        </select>
                       </Field>
                     </div>
                   </details>
