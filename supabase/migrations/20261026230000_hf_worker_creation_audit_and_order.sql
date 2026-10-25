@@ -120,13 +120,27 @@ declare
       || 'T' || pg_catalog.to_char(v_entry.created_at at time zone 'UTC', 'HH24:MI:SS.US') || 'Z',
     'created_by', (
       select jsonb_build_object(
-        'display_name', creator_projection.data->>'display_name',
-        'login_id', creator_projection.data->>'login_id'
+        'display_name', coalesce(
+          recruiter.display_name,
+          nullif(creator.display_name, login.login_id)
+        ),
+        'login_id', login.login_id
       )
         from public.direct_entry_app_users creator
+        left join auth.users auth_user on auth_user.id = creator.auth_subject
         cross join lateral (
-          select public.direct_entry_app_user_projection(creator) as data
-        ) creator_projection
+          select lower(nullif(split_part(to_jsonb(auth_user)->>'email', '@', 1), '')) as login_id
+        ) login
+        left join lateral (
+          select r.display_name
+            from public.direct_entry_app_user_recruiter_links l
+            join public.recruiters r on r.recruiter_id = l.recruiter_id
+           where l.app_user_id = creator.app_user_id
+             and l.verified
+             and l.is_current
+           order by l.valid_from desc, l.link_id desc
+           limit 1
+        ) recruiter on true
        where creator.app_user_id = v_entry.created_by_user_id
     ),
     'entry_id', v_entry.entry_id, 'submission_id', v_entry.submission_id,$new$;
