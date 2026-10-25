@@ -18,7 +18,6 @@ export type CccdQrStatus = (typeof CCCD_QR_STATUSES)[number];
 export const CCCD_QR_ERROR_FIELDS = [
   "payload",
   "national_id",
-  "legacy_national_id",
   "display_name",
   "date_of_birth",
   "gender",
@@ -34,7 +33,6 @@ export const CCCD_QR_ERROR_CODES = [
   "QR_FORMAT_INVALID",
   "QR_FIELD_MISSING",
   "QR_NATIONAL_ID_INVALID",
-  "QR_LEGACY_ID_INVALID",
   "QR_NAME_INVALID",
   "QR_DOB_INVALID",
   "QR_GENDER_INVALID",
@@ -52,7 +50,6 @@ export type CccdQrCandidateData = {
   source: typeof CCCD_QR_SOURCE;
   authenticity: typeof CCCD_QR_AUTHENTICITY;
   national_id: string;
-  legacy_national_id: string | null;
   display_name: string;
   date_of_birth: string;
   date_of_birth_iso: string;
@@ -200,7 +197,7 @@ function normalizeWhitespace(raw: string): string {
 
 /**
  * Parses and validates the official Vietnamese chip-based CCCD QR code payload:
- *   `cccd_12_digits|cmnd_9_digits_or_empty|full_name|dob_ddmmyyyy|gender|permanent_address|issue_date_ddmmyyyy`
+ *   `cccd_12_digits|ignored_cmnd_field|full_name|dob_ddmmyyyy|gender|permanent_address|issue_date_ddmmyyyy`
  *
  * Security invariants:
  * - Never returns or logs raw QR payload or decoded PII inside error objects.
@@ -219,7 +216,7 @@ export function parseCccdQrPayload(
   if (stripped.length === 0) {
     return { ok: false, error_code: "QR_PAYLOAD_EMPTY", error_field: "payload" };
   }
-  if (stripped.length > 2048 || CONTROL_CHAR_REGEX.test(stripped)) {
+  if (stripped.length > 2048) {
     return { ok: false, error_code: "QR_FORMAT_INVALID", error_field: "payload" };
   }
 
@@ -238,7 +235,7 @@ export function parseCccdQrPayload(
 
   const [
     rawNationalId,
-    rawLegacyId,
+    , // Legacy CMND is intentionally discarded.
     rawDisplayName,
     rawDob,
     rawGender,
@@ -246,18 +243,17 @@ export function parseCccdQrPayload(
     rawIssuedAt,
   ] = parts;
 
+  if (
+    [rawNationalId, rawDisplayName, rawDob, rawGender, rawAddress, rawIssuedAt].some((field) =>
+      CONTROL_CHAR_REGEX.test(field),
+    )
+  ) {
+    return { ok: false, error_code: "QR_FORMAT_INVALID", error_field: "payload" };
+  }
+
   const nationalId = rawNationalId.trim();
   if (!/^\d{12}$/.test(nationalId) || !isCanonicalNationalId(nationalId) || /^0+$/.test(nationalId)) {
     return { ok: false, error_code: "QR_NATIONAL_ID_INVALID", error_field: "national_id" };
-  }
-
-  const legacyTrimmed = rawLegacyId.trim();
-  let legacyNationalId: string | null = null;
-  if (legacyTrimmed.length > 0) {
-    if (!/^\d{9}$/.test(legacyTrimmed) || !isCanonicalNationalId(legacyTrimmed) || /^0+$/.test(legacyTrimmed)) {
-      return { ok: false, error_code: "QR_LEGACY_ID_INVALID", error_field: "legacy_national_id" };
-    }
-    legacyNationalId = legacyTrimmed;
   }
 
   const displayName = normalizeWhitespace(rawDisplayName.normalize("NFC"));
@@ -301,7 +297,6 @@ export function parseCccdQrPayload(
       source: CCCD_QR_SOURCE,
       authenticity: CCCD_QR_AUTHENTICITY,
       national_id: nationalId,
-      legacy_national_id: legacyNationalId,
       display_name: displayName,
       date_of_birth: dob.uiDate,
       date_of_birth_iso: dob.isoDate,

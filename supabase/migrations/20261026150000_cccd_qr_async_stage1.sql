@@ -35,7 +35,6 @@ create table public.direct_entry_cccd_qr_extractions (
       or error_field in (
         'payload',
         'national_id',
-        'legacy_national_id',
         'display_name',
         'date_of_birth',
         'gender',
@@ -70,11 +69,7 @@ create table public.direct_entry_cccd_qr_extractions (
       and candidate_data->>'source' = 'CCCD_QR'
       and candidate_data->>'authenticity' = 'UNVERIFIED_QR_TEXT'
       and (candidate_data->>'national_id') ~ '^[0-9]{12}$'
-      and (
-        candidate_data->'legacy_national_id' is null
-        or jsonb_typeof(candidate_data->'legacy_national_id') = 'null'
-        or (candidate_data->>'legacy_national_id') ~ '^[0-9]{9}$'
-      )
+      and not (candidate_data ? 'legacy_national_id')
       and length(btrim(coalesce(candidate_data->>'display_name', ''))) between 1 and 256
       and length(btrim(coalesce(candidate_data->>'date_of_birth', ''))) between 1 and 10
       and (candidate_data->>'gender') in ('MALE', 'FEMALE', 'OTHER')
@@ -514,11 +509,7 @@ begin
          or p_candidate_data->>'source' <> 'CCCD_QR'
          or p_candidate_data->>'authenticity' <> 'UNVERIFIED_QR_TEXT'
          or coalesce(p_candidate_data->>'national_id', '') !~ '^[0-9]{12}$'
-         or (
-           p_candidate_data->'legacy_national_id' is not null
-           and jsonb_typeof(p_candidate_data->'legacy_national_id') <> 'null'
-           and coalesce(p_candidate_data->>'legacy_national_id', '') !~ '^[0-9]{9}$'
-         )
+         or p_candidate_data ? 'legacy_national_id'
          or length(btrim(coalesce(p_candidate_data->>'display_name', ''))) not between 1 and 256
          or length(btrim(coalesce(p_candidate_data->>'date_of_birth', ''))) not between 1 and 10
          or coalesce(p_candidate_data->>'gender', '') not in ('MALE', 'FEMALE', 'OTHER')

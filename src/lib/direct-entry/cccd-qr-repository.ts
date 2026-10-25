@@ -133,8 +133,6 @@ function projectCandidateData(value: unknown): CccdQrCandidateData | null {
     value.authenticity !== CCCD_QR_AUTHENTICITY ||
     typeof value.national_id !== "string" ||
     !/^\d{12}$/.test(value.national_id) ||
-    (value.legacy_national_id !== null &&
-      (typeof value.legacy_national_id !== "string" || !/^\d{9}$/.test(value.legacy_national_id))) ||
     typeof value.display_name !== "string" ||
     value.display_name.trim().length < 1 ||
     typeof value.date_of_birth !== "string" ||
@@ -152,7 +150,6 @@ function projectCandidateData(value: unknown): CccdQrCandidateData | null {
     source: CCCD_QR_SOURCE,
     authenticity: CCCD_QR_AUTHENTICITY,
     national_id: value.national_id,
-    legacy_national_id: value.legacy_national_id,
     display_name: value.display_name,
     date_of_birth: value.date_of_birth,
     date_of_birth_iso: value.date_of_birth_iso,

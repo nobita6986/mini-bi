@@ -233,7 +233,6 @@ test("decodeCccdQrFromImageBytes decodes standard CCCD QR PNG image with Vietnam
     source: "CCCD_QR",
     authenticity: "UNVERIFIED_QR_TEXT",
     national_id: "079095001234",
-    legacy_national_id: "025123456",
     display_name: "Nguyễn Văn An",
     date_of_birth: "15/08/1995",
     date_of_birth_iso: "1995-08-15",
@@ -243,6 +242,7 @@ test("decodeCccdQrFromImageBytes decodes standard CCCD QR PNG image with Vietnam
     national_id_issued_at: "20/10/2021",
     national_id_issued_at_iso: "2021-10-20",
   });
+  assert.equal(Object.hasOwn(result.candidate_data, "legacy_national_id"), false);
 });
 
 test("decodeCccdQrFromImageBytes decodes CCCD card JPEG where QR is small in the top-right quadrant or rotated 90 degrees", async () => {

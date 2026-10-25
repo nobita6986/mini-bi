@@ -33,7 +33,6 @@ const CANDIDATE_DATA = {
   source: "CCCD_QR",
   authenticity: "UNVERIFIED_QR_TEXT",
   national_id: "079095001234",
-  legacy_national_id: "025123456",
   display_name: "Nguyễn Văn An",
   date_of_birth: "15/08/1995",
   date_of_birth_iso: "1995-08-15",
@@ -217,6 +216,22 @@ test("background QR extraction stores candidate_data, is idempotent on retry, an
     ],
   );
   const versionBeforeQr = finalized.rows[0].data.entry_version;
+
+  await assert.rejects(
+    db.query(
+      "select public.direct_entry_complete_cccd_qr_extraction(" +
+        "$1::uuid, $2::uuid, $3::uuid, $4::uuid, 'SUCCEEDED', null, null, $5::jsonb, false, null, 'bg-legacy-id') as data",
+      [
+        ACTORS.owner.auth_subject,
+        ACTORS.owner.app_user_id,
+        draftEntryId,
+        docId,
+        JSON.stringify({ ...CANDIDATE_DATA, legacy_national_id: "025123456" }),
+      ],
+    ),
+    (error) => error.code === "22023",
+    "database must reject candidate data containing the discarded CMND field",
+  );
 
   // 1. Complete background extraction with apply_blank_fields = false -> stores candidate_data without bumping entry version
   const bgCompleted = await db.query(

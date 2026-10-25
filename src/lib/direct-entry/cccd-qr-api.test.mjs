@@ -45,7 +45,6 @@ const CANDIDATE_DATA = {
   source: "CCCD_QR",
   authenticity: "UNVERIFIED_QR_TEXT",
   national_id: "079095001234",
-  legacy_national_id: "025123456",
   display_name: "Nguyễn Văn An",
   date_of_birth: "15/08/1995",
   date_of_birth_iso: "1995-08-15",
@@ -318,6 +317,7 @@ test("getDirectEntryCccdQr performs self-healing lazy completion when an eligibl
   assert.equal(body.ok, true);
   assert.equal(body.status, "SUCCEEDED");
   assert.equal(body.latest.candidate_data.national_id, "079095001234");
+  assert.equal(Object.hasOwn(body.latest.candidate_data, "legacy_national_id"), false);
 });
 
 test("triggerBackgroundCccdQrExtraction runs decode + completeExtraction asynchronously and swallows errors without rejecting", async () => {

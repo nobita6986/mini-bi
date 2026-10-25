@@ -12,7 +12,7 @@ import {
 
 const REFERENCE_DATE = "2026-10-25";
 
-test("parseCccdQrPayload parses official 7-field Vietnamese chip-based CCCD QR payload with 9-digit CMND", () => {
+test("parseCccdQrPayload ignores the old CMND field and returns only supported CCCD fields", () => {
   const raw =
     "079095001234|025123456|Nguyễn Văn An|15081995|Nam|123 Nguyễn Trãi, Phường Bến Thành, Quận 1, TP. Hồ Chí Minh|20102021";
   const result = parseCccdQrPayload(raw, { referenceDateIso: REFERENCE_DATE });
@@ -23,7 +23,6 @@ test("parseCccdQrPayload parses official 7-field Vietnamese chip-based CCCD QR p
     source: CCCD_QR_SOURCE,
     authenticity: CCCD_QR_AUTHENTICITY,
     national_id: "079095001234",
-    legacy_national_id: "025123456",
     display_name: "Nguyễn Văn An",
     date_of_birth: "15/08/1995",
     date_of_birth_iso: "1995-08-15",
@@ -33,6 +32,7 @@ test("parseCccdQrPayload parses official 7-field Vietnamese chip-based CCCD QR p
     national_id_issued_at: "20/10/2021",
     national_id_issued_at_iso: "2021-10-20",
   });
+  assert.equal(Object.hasOwn(result.data, "legacy_national_id"), false);
 });
 
 test("parseCccdQrPayload parses 7-field CCCD QR payload with empty legacy CMND, female/other genders, and slash dates", () => {
@@ -43,7 +43,7 @@ test("parseCccdQrPayload parses 7-field CCCD QR payload with empty legacy CMND, 
   assert.equal(femaleResult.ok, true);
   if (!femaleResult.ok) return;
   assert.equal(femaleResult.data.national_id, "001198005678");
-  assert.equal(femaleResult.data.legacy_national_id, null);
+  assert.equal(Object.hasOwn(femaleResult.data, "legacy_national_id"), false);
   assert.equal(femaleResult.data.display_name, "Trần Thị Bích Ngọc");
   assert.equal(femaleResult.data.date_of_birth, "29/02/1996");
   assert.equal(femaleResult.data.date_of_birth_iso, "1996-02-29");
@@ -60,6 +60,17 @@ test("parseCccdQrPayload parses 7-field CCCD QR payload with empty legacy CMND, 
   if (!otherResult.ok) return;
   assert.equal(otherResult.data.gender, "OTHER");
   assert.equal(otherResult.data.gender_label, "Khác");
+});
+
+test("parseCccdQrPayload accepts and discards any value in the unused old CMND slot", () => {
+  const result = parseCccdQrPayload(
+    "079095001234|not-used|Nguyễn Văn An|15081995|Nam|TP.HCM|20102021",
+    { referenceDateIso: REFERENCE_DATE },
+  );
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.data.national_id, "079095001234");
+  assert.equal(Object.hasOwn(result.data, "legacy_national_id"), false);
 });
 
 test("parseCccdQrPayload rejects malformed structure, invalid fields, and never leaks PII in error objects", () => {
@@ -98,16 +109,6 @@ test("parseCccdQrPayload rejects malformed structure, invalid fields, and never 
       input: "000000000000|025123456|Nguyễn Văn An|15081995|Nam|TP.HCM|20102021",
       error_code: "QR_NATIONAL_ID_INVALID",
       error_field: "national_id",
-    },
-    {
-      input: "079095001234|12345|Nguyễn Văn An|15081995|Nam|TP.HCM|20102021",
-      error_code: "QR_LEGACY_ID_INVALID",
-      error_field: "legacy_national_id",
-    },
-    {
-      input: "079095001234|000000000|Nguyễn Văn An|15081995|Nam|TP.HCM|20102021",
-      error_code: "QR_LEGACY_ID_INVALID",
-      error_field: "legacy_national_id",
     },
     {
       input: "079095001234|025123456|=CMD()|15081995|Nam|TP.HCM|20102021",
