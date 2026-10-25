@@ -11,8 +11,9 @@ export default async function MyWorkReportsHistoryPage() {
   return (
     <WorkReportsShell
       actor={resolution?.ok ? resolution.actor : null}
-      title="Lịch sử của tôi"
-      description="Các bản nháp, báo cáo đã nộp và lịch sử revision của bạn."
+      active="history"
+      title="Lịch sử"
+      description="Các báo cáo đã nộp, quá hạn và lịch sử revision của bạn."
     >
       <MyObligations history />
     </WorkReportsShell>

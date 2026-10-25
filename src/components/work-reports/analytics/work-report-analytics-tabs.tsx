@@ -14,7 +14,20 @@ export function WorkReportAnalyticsTabs({ canViewSubmissions }: { canViewSubmiss
   const [tab, setTab] = useState<"submissions" | "summary">(canViewSubmissions ? "submissions" : "summary");
   return (
     <div className="space-y-4">
-      <div role="tablist" aria-label="Tổng hợp báo cáo" className="flex flex-wrap gap-1 border-b border-border">
+      <div role="tablist" aria-label="Chế độ xem Theo dõi báo cáo" className="flex flex-wrap gap-1 border-b border-border">
+        <button
+          type="button"
+          role="tab"
+          id="analytics-tab-summary"
+          aria-selected={tab === "summary"}
+          aria-controls="analytics-panel-summary"
+          className={tabClass + (tab === "summary"
+            ? " border-b-2 border-primary bg-primary/5 text-foreground"
+            : " text-muted hover:text-foreground")}
+          onClick={() => setTab("summary")}
+        >
+          Tổng quan
+        </button>
         {canViewSubmissions ? (
           <button
             type="button"
@@ -30,19 +43,6 @@ export function WorkReportAnalyticsTabs({ canViewSubmissions }: { canViewSubmiss
             Bài nộp
           </button>
         ) : null}
-        <button
-          type="button"
-          role="tab"
-          id="analytics-tab-summary"
-          aria-selected={tab === "summary"}
-          aria-controls="analytics-panel-summary"
-          className={tabClass + (tab === "summary"
-            ? " border-b-2 border-primary bg-primary/5 text-foreground"
-            : " text-muted hover:text-foreground")}
-          onClick={() => setTab("summary")}
-        >
-          Tổng hợp
-        </button>
       </div>
       <div
         role="tabpanel"

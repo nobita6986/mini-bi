@@ -21,6 +21,7 @@ export default async function WorkReportDelegationsPage() {
   return workReportDelegationPredicate(resolution.actor) ? (
     <WorkReportsShell
       actor={resolution.actor}
+      active="delegations"
       title="Ủy quyền"
       description="Giao quyền báo cáo trong phạm vi và thời hạn được máy chủ cấp phép."
     >

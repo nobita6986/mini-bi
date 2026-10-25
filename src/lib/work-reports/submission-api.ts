@@ -2,8 +2,8 @@ import type { DirectEntrySessionResult } from "../auth/direct-entry-session-core
 import { validateClientBusinessPayload } from "../auth/direct-entry-v2.ts";
 import { checkSameOriginRequest } from "../ai/gateway/http-guards.mjs";
 import { readBoundedJson } from "../direct-entry/write-api.ts";
-import type { WorkReportActorRef, WorkReportRpcOutcome } from "./assignment-repository.ts";
-import type { SubmissionRepository } from "./submission-repository.ts";
+import type { WorkReportActorRef } from "./assignment-repository.ts";
+import type { SubmissionRepository, WorkReportSubmissionRpcOutcome } from "./submission-repository.ts";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const KEY = /^[\w-]{1,128}$/;
@@ -47,11 +47,16 @@ function mutationGuard(request: Request): Response | null {
   return null;
 }
 
-function mapOutcome<T>(result: WorkReportRpcOutcome<T>): Response {
+function mapOutcome<T>(result: WorkReportSubmissionRpcOutcome<T>): Response {
   if (!result.ok) {
-    const mapping = { conflict: ["WORK_REPORT_VERSION_CONFLICT", 409], denied: ["WORK_REPORT_ACCESS_DENIED", 403],
-      invalid: ["WORK_REPORT_PAYLOAD_INVALID", 400], "not-found": ["WORK_REPORT_NOT_FOUND", 404],
-      unavailable: ["WORK_REPORT_UNAVAILABLE", 503] } as const;
+    const mapping = {
+      conflict: ["WORK_REPORT_VERSION_CONFLICT", 409],
+      "deadline-passed": ["WORK_REPORT_DEADLINE_PASSED", 409],
+      denied: ["WORK_REPORT_ACCESS_DENIED", 403],
+      invalid: ["WORK_REPORT_PAYLOAD_INVALID", 400],
+      "not-found": ["WORK_REPORT_NOT_FOUND", 404],
+      unavailable: ["WORK_REPORT_UNAVAILABLE", 503],
+    } as const;
     const [code, status] = mapping[result.kind];
     return fail(code, status);
   }

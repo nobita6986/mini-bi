@@ -21,19 +21,43 @@ test("dynamic renderer covers all eight F0 field types and preserves disabled fi
   assert.match(source, /Lịch sử các lần nộp/);
 });
 
-test("inbox exposes loading and explicit retryable error states", async () => {
+test("inbox exposes loading, explicit retryable error states, and separates overdue items into history", async () => {
   const source = await readFile(inboxPath, "utf8");
   assert.match(source, /Đang tải nghĩa vụ báo cáo/);
   assert.match(source, /Không tải được danh sách báo cáo/);
   assert.match(source, /Tải lại/);
+  assert.match(source, /is_overdue\?: boolean/);
+  assert.match(source, /if \(item\.is_overdue\) return false/);
+  assert.match(source, /if \(item\.is_overdue\) return true/);
+  assert.match(source, /Quá hạn · Bản nháp chưa nộp/);
+  assert.match(source, /Quá hạn · Chưa nộp/);
 });
 
-test("rejected reports show the reviewer reason and can be resubmitted after the deadline", async () => {
+test("rejected reports show the reviewer reason and can be resubmitted after the deadline, while overdue unsubmitted reports lock editing and handle 409 WORK_REPORT_DEADLINE_PASSED", async () => {
   const source = await readFile(rendererPath, "utf8");
   assert.match(source, /latest_review_event\?: \{ decision: string; reason: string \| null; reviewed_at: string \}/);
   assert.match(source, /detail\.submission\?\.state === "REJECTED" \|\| now === null/);
   assert.match(source, /Báo cáo cần nộp lại/);
   assert.match(source, /latest_review_event\?\.reason/);
+  assert.match(source, /const isOverdue = Boolean\(detail\.obligation\.is_overdue\) \|\| serverDeadlinePassed/);
+  assert.match(source, /const canEdit = !isOverdue &&/);
+  assert.match(source, /if \(code === "WORK_REPORT_DEADLINE_PASSED"\)/);
+  assert.match(source, /setServerDeadlinePassed\(true\)/);
+  assert.match(source, /Kỳ báo cáo đã quá hạn/);
+});
+
+test("assignment manager provides Tạo đợt giao form, pre-confirmation summary, state filters, per-person progress detail, and revocation confirmation", async () => {
+  const source = await readFile(assignmentManagerPath, "utf8");
+  assert.match(source, /Tạo đợt giao/);
+  assert.match(source, /Tóm tắt đợt giao trước khi xác nhận/);
+  assert.match(source, /Xác nhận tạo đợt giao/);
+  assert.match(source, /Đang hoạt động/);
+  assert.match(source, /Tạm dừng/);
+  assert.match(source, /Đã thu hồi/);
+  assert.match(source, /Tiến độ từng thành viên/);
+  assert.match(source, /Lịch sử thay đổi đợt giao/);
+  assert.match(source, /Xác nhận thu hồi đợt giao báo cáo/);
+  assert.match(source, /Các báo cáo đã nộp và toàn bộ lịch sử bài nộp được giữ nguyên, không bị xóa/);
 });
 
 test("assignment page resolves the request actor and requires report_assign scope server-side", async () => {

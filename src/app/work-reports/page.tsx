@@ -12,8 +12,9 @@ export default async function WorkReportsPage() {
   return (
     <WorkReportsShell
       actor={actor}
-      title="Cần báo cáo"
-      description="Các báo cáo được giao cho bạn; lưu nháp hoặc nộp trước hạn."
+      active="my"
+      title="Cần làm"
+      description="Các báo cáo được giao cho bạn trong kỳ hiện hành; lưu nháp hoặc nộp trước hạn."
     >
       <MyObligations />
     </WorkReportsShell>

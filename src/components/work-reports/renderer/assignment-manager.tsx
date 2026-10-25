@@ -3,10 +3,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { StatusBadge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardHeader } from "@/components/ui/card";
 import { FormDialog } from "@/components/ui/form-dialog";
 import { useNotify } from "@/components/ui/notify-provider";
 import { StatusBanner } from "@/components/ui/status-banner";
 import type {
+  WorkReportAssignmentAuditItem,
+  WorkReportAssignmentProgressItem,
   WorkReportAssignmentSummary,
   WorkReportEligibleGroupUser,
   WorkReportGroupItem,
@@ -35,6 +38,14 @@ const controlClass =
 
 export function AssignmentManager() {
   const notify = useNotify();
+  const [activeSubView, setActiveSubView] = useState<"assignments" | "groups">("assignments");
+  const [showCreateForm, setShowCreateForm] = useState(true);
+  const [confirmingCreate, setConfirmingCreate] = useState(false);
+  const [stateFilter, setStateFilter] = useState<"ACTIVE" | "PAUSED" | "REVOKED">("ACTIVE");
+  const [selectedAssignmentId, setSelectedAssignmentId] = useState<string | null>(null);
+  const [revokeConfirmAssignment, setRevokeConfirmAssignment] =
+    useState<WorkReportAssignmentSummary | null>(null);
+
   const [templates, setTemplates] = useState<Template[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
   const [users, setUsers] = useState<User[]>([]);
@@ -68,6 +79,36 @@ export function AssignmentManager() {
   const [trackingError, setTrackingError] = useState<string | null>(null);
   const [trackingBusy, setTrackingBusy] = useState(false);
   const templatesLoaded = loadedTeamId === teamId;
+
+  useEffect(() => {
+    const syncFromLocation = () => {
+      if (typeof window === "undefined") return;
+      const params = new URLSearchParams(window.location.search);
+      setActiveSubView(params.get("tab") === "groups" ? "groups" : "assignments");
+    };
+    syncFromLocation();
+    const handleTabEvent = (event: Event) => {
+      const detail = (event as CustomEvent<"assignments" | "groups">).detail;
+      if (detail === "assignments" || detail === "groups") {
+        setActiveSubView(detail);
+      }
+    };
+    window.addEventListener("popstate", syncFromLocation);
+    window.addEventListener("work-reports:assignment-tab", handleTabEvent);
+    return () => {
+      window.removeEventListener("popstate", syncFromLocation);
+      window.removeEventListener("work-reports:assignment-tab", handleTabEvent);
+    };
+  }, []);
+
+  function switchSubView(next: "assignments" | "groups") {
+    setActiveSubView(next);
+    if (typeof window !== "undefined") {
+      const href = next === "groups" ? "/work-reports/assignments?tab=groups" : "/work-reports/assignments";
+      window.history.replaceState(null, "", href);
+      window.dispatchEvent(new CustomEvent("work-reports:assignment-tab", { detail: next }));
+    }
+  }
 
   const fetchGroupsPayload = useCallback(async (signal?: AbortSignal) => {
     const response = await fetch("/api/work-reports/groups", { cache: "no-store", signal });
@@ -196,6 +237,57 @@ export function AssignmentManager() {
     () => activeGroups.find((group) => group.group_id === targetGroupId) ?? null,
     [activeGroups, targetGroupId],
   );
+  const selectedTemplate = useMemo(
+    () => templates.find((item) => item.template_id === templateId) ?? null,
+    [templates, templateId],
+  );
+  const selectedTeam = useMemo(
+    () => teams.find((item) => item.team_id === teamId) ?? null,
+    [teams, teamId],
+  );
+  const selectedUser = useMemo(
+    () => users.find((item) => item.app_user_id === targetId) ?? null,
+    [users, targetId],
+  );
+
+  const summaryTargetDescription = useMemo(() => {
+    if (targetKind === "GROUP") {
+      return selectedGroup ? `Nhóm báo cáo: ${selectedGroup.display_name}` : "Chưa chọn nhóm báo cáo";
+    }
+    if (targetKind === "TEAM") {
+      return selectedTeam ? `Team: ${selectedTeam.display_name} (${selectedTeam.code})` : "Chưa chọn Team";
+    }
+    if (targetKind === "USER") {
+      return selectedUser ? `Nhân viên: ${selectedUser.display_name}` : "Chưa chọn nhân viên";
+    }
+    return targetUsers.length > 0 ? `Danh sách nhân viên đã chọn (${targetUsers.length} người)` : "Chưa chọn danh sách nhân viên";
+  }, [targetKind, selectedGroup, selectedTeam, selectedUser, targetUsers.length]);
+
+  const summaryMemberCount = useMemo(() => {
+    if (targetKind === "GROUP") return selectedGroup?.members.length ?? 0;
+    if (targetKind === "USER") return targetId ? 1 : 0;
+    if (targetKind === "USER_SET") return targetUsers.length;
+    if (targetKind === "TEAM") return teamId ? users.length : 0;
+    return 0;
+  }, [targetKind, selectedGroup, targetId, targetUsers.length, teamId, users.length]);
+
+  const selectedAssignment = useMemo(
+    () => assignments.find((item) => item.assignment_id === selectedAssignmentId) ?? null,
+    [assignments, selectedAssignmentId],
+  );
+
+  const filteredAssignments = useMemo(
+    () => assignments.filter((item) => item.state === stateFilter),
+    [assignments, stateFilter],
+  );
+
+  const assignmentCountsByState = useMemo(() => {
+    return {
+      ACTIVE: assignments.filter((item) => item.state === "ACTIVE").length,
+      PAUSED: assignments.filter((item) => item.state === "PAUSED").length,
+      REVOKED: assignments.filter((item) => item.state === "REVOKED").length,
+    };
+  }, [assignments]);
 
   const memberCandidateTeams = useMemo(() => {
     const map = new Map<string, string>();
@@ -394,8 +486,10 @@ export function AssignmentManager() {
     }
   }
 
-  async function updateAssignment(assignment: WorkReportAssignmentSummary, state: "ACTIVE" | "PAUSED" | "REVOKED") {
-    if (state === "REVOKED" && !window.confirm("Thu hồi giao báo cáo này? Các nghĩa vụ đã nộp được giữ nguyên.")) return;
+  async function executeUpdateAssignment(
+    assignment: WorkReportAssignmentSummary,
+    state: "ACTIVE" | "PAUSED" | "REVOKED",
+  ) {
     setTrackingBusy(true);
     setTrackingError(null);
     try {
@@ -410,28 +504,40 @@ export function AssignmentManager() {
       notify.success({
         title:
           state === "PAUSED"
-            ? "Đã tạm dừng giao báo cáo."
+            ? "Đã tạm dừng đợt giao báo cáo."
             : state === "REVOKED"
-              ? "Đã thu hồi giao báo cáo."
-              : "Đã kích hoạt lại giao báo cáo.",
+              ? "Đã thu hồi đợt giao báo cáo."
+              : "Đã kích hoạt lại đợt giao báo cáo.",
       });
+      setRevokeConfirmAssignment(null);
       await reloadAssignments();
     } catch (cause) {
       const code = cause instanceof Error ? cause.message : "WORK_REPORT_UNAVAILABLE";
       const isConflict = code === "WORK_REPORT_VERSION_CONFLICT";
       const msg = isConflict
-        ? "Giao báo cáo vừa được thay đổi ở nơi khác. Danh sách đã cũ; vui lòng tải lại."
+        ? "Đợt giao vừa được thay đổi ở nơi khác. Danh sách đã cũ; vui lòng tải lại."
         : code === "WORK_REPORT_ACCESS_DENIED" || code === "WORK_REPORT_SCOPE_DENIED"
-          ? "Bạn không có quyền với toàn bộ thành viên của giao báo cáo này."
+          ? "Bạn không có quyền với toàn bộ thành viên của đợt giao này."
           : code === "WORK_REPORT_REQUEST_INVALID"
-            ? "Không thể kích hoạt giao báo cáo khi nhóm báo cáo đang ngừng sử dụng."
-            : "Không cập nhật được giao báo cáo. Vui lòng thử lại.";
+            ? "Không thể kích hoạt lại đợt giao khi nhóm nhận báo cáo đang ngừng sử dụng."
+            : "Không cập nhật được đợt giao báo cáo. Vui lòng thử lại.";
       setTrackingError(msg);
       if (isConflict) notify.warning({ title: msg });
       else notify.error({ title: msg });
     } finally {
       setTrackingBusy(false);
     }
+  }
+
+  function requestUpdateAssignment(
+    assignment: WorkReportAssignmentSummary,
+    state: "ACTIVE" | "PAUSED" | "REVOKED",
+  ) {
+    if (state === "REVOKED") {
+      setRevokeConfirmAssignment(assignment);
+      return;
+    }
+    void executeUpdateAssignment(assignment, state);
   }
 
   async function refreshProgress() {
@@ -446,7 +552,7 @@ export function AssignmentManager() {
       });
       const result = await response.json().catch(() => null);
       if (!response.ok || result?.ok !== true) throw new Error(result?.code ?? "WORK_REPORT_UNAVAILABLE");
-      notify.success({ title: "Đã cập nhật nghĩa vụ cho kỳ hiện tại." });
+      notify.success({ title: "Đã đồng bộ nghĩa vụ cho kỳ hiện tại." });
       await reloadAssignments();
     } catch {
       const msg = "Không cập nhật được tiến độ nghĩa vụ. Vui lòng thử lại.";
@@ -457,10 +563,7 @@ export function AssignmentManager() {
     }
   }
 
-  async function create(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setBusy(true);
-    setError(null);
+  function validateCreateFields(): boolean {
     const ids = targetKind === "USER_SET" ? targetUsers : [];
     const missingRequired =
       !templateId ||
@@ -468,10 +571,23 @@ export function AssignmentManager() {
         ? !targetGroupId
         : !teamId || (targetKind === "USER" && !targetId) || (targetKind === "USER_SET" && ids.length === 0));
     if (missingRequired) {
-      setError("Chọn mẫu, nhóm và đối tượng được giao.");
-      setBusy(false);
+      setError("Chọn mẫu báo cáo, nhóm và đối tượng nhận báo cáo trước khi xác nhận.");
+      return false;
+    }
+    setError(null);
+    return true;
+  }
+
+  async function create(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!validateCreateFields()) return;
+    if (!confirmingCreate) {
+      setConfirmingCreate(true);
       return;
     }
+    setBusy(true);
+    setError(null);
+    const ids = targetKind === "USER_SET" ? targetUsers : [];
     try {
       const idempotency_key = crypto.randomUUID();
       const response = await fetch("/api/work-reports/assignments", {
@@ -496,16 +612,21 @@ export function AssignmentManager() {
       });
       const result = await response.json();
       if (!response.ok || result?.ok !== true) throw new Error(result?.code ?? "WORK_REPORT_UNAVAILABLE");
-      notify.success({ title: `Đã tạo assignment ${result.assignment_id} (version ${result.version}).` });
+      notify.success({ title: "Đã tạo đợt giao báo cáo và phát sinh nghĩa vụ kỳ hiện hành." });
+      setConfirmingCreate(false);
+      setStateFilter("ACTIVE");
       await Promise.all([reloadAssignments(), reloadGroups()]);
+      if (typeof result.assignment_id === "string") {
+        setSelectedAssignmentId(result.assignment_id);
+      }
     } catch (cause) {
       const code = cause instanceof Error ? cause.message : "WORK_REPORT_UNAVAILABLE";
       const msg =
         code === "WORK_REPORT_SCOPE_DENIED" || code === "WORK_REPORT_ACCESS_DENIED"
-          ? "Bạn không có quyền giao báo cáo cho toàn bộ đối tượng đã chọn. Không có assignment nào được tạo."
+          ? "Bạn không có quyền giao báo cáo cho toàn bộ đối tượng đã chọn. Không có đợt giao nào được tạo."
           : code === "WORK_REPORT_VERSION_CONFLICT"
-            ? "Giao báo cáo cho đối tượng này đã tồn tại hoặc mẫu đã thay đổi. Tải lại và thử lại."
-            : "Không tạo được giao việc. Vui lòng kiểm tra thông tin hoặc thử lại.";
+            ? "Đợt giao báo cáo cho đối tượng này đã tồn tại hoặc mẫu đã thay đổi. Tải lại và thử lại."
+            : "Không tạo được đợt giao. Vui lòng kiểm tra thông tin hoặc thử lại.";
       setError(msg);
       if (code === "WORK_REPORT_VERSION_CONFLICT") notify.warning({ title: msg });
       else notify.error({ title: msg });
@@ -516,408 +637,683 @@ export function AssignmentManager() {
 
   return (
     <div className="space-y-6">
-      <StatusBanner tone="info" title="Phạm vi giao báo cáo">
-        Mẫu, nhóm, nhân viên và assignment được tải theo quyền hiện tại; máy chủ kiểm tra lại scope trước mọi thao tác.
-      </StatusBanner>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant={activeSubView === "assignments" ? "primary" : "secondary"}
+            size="sm"
+            onClick={() => switchSubView("assignments")}
+          >
+            Đợt giao ({assignments.length})
+          </Button>
+          <Button
+            type="button"
+            variant={activeSubView === "groups" ? "primary" : "secondary"}
+            size="sm"
+            onClick={() => switchSubView("groups")}
+          >
+            Nhóm nhận báo cáo ({groups.length})
+          </Button>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          {activeSubView === "assignments" ? (
+            <Button
+              type="button"
+              variant="primary"
+              onClick={() => {
+                setShowCreateForm((prev) => !prev);
+                setConfirmingCreate(false);
+              }}
+            >
+              {showCreateForm ? "Thu gọn biểu mẫu" : "Tạo đợt giao"}
+            </Button>
+          ) : (
+            <Button type="button" variant="primary" disabled={groupBusy} onClick={openNewGroupDialog}>
+              Tạo nhóm nhận báo cáo
+            </Button>
+          )}
+        </div>
+      </div>
+
       {error ? <StatusBanner tone="error">{error}</StatusBanner> : null}
 
-      <form onSubmit={(event) => void create(event)} className="max-w-2xl space-y-4 rounded-xl border border-border p-4 sm:p-6">
-        <h2 className="font-semibold">Tạo giao báo cáo</h2>
-        <div className="space-y-1.5">
-          <label htmlFor="team" className="text-sm font-medium">
-            {targetKind === "GROUP" ? "Lọc theo Team hành chính (tùy chọn)" : "Nhóm trong phạm vi được giao"}
-          </label>
-          <select
-            id="team"
-            required={targetKind !== "GROUP"}
-            value={teamId}
-            onChange={(event) => {
-              setTeamId(event.target.value);
-              setTargetId("");
-              setTargetUsers([]);
-            }}
-            className={controlClass}
-          >
-            <option value="">
-              {targetKind === "GROUP" ? "Tất cả Team trong phạm vi" : "Chọn nhóm"}
-            </option>
-            {teams.map((team) => (
-              <option key={team.team_id} value={team.team_id}>
-                {team.display_name} ({team.code})
-              </option>
-            ))}
-          </select>
-        </div>
+      {activeSubView === "assignments" && showCreateForm ? (
+        <Card className="max-w-5xl">
+          <CardHeader
+            title="Tạo đợt giao"
+            description="Thiết lập mẫu báo cáo, đối tượng/nhóm nhận, chu kỳ và hạn nộp. Khi đợt giao có hiệu lực trong ngày, hệ thống tự động phát sinh ngay nghĩa vụ kỳ hiện tại cho nhân viên."
+          />
 
-        <div className="space-y-1.5">
-          <label htmlFor="template" className="text-sm font-medium">Mẫu báo cáo</label>
-          <select
-            id="template"
-            required
-            value={templateId}
-            onChange={(event) => setTemplateId(event.target.value)}
-            className={controlClass}
-          >
-            <option value="">Chọn mẫu đang hoạt động</option>
-            {templates.map((template) => (
-              <option key={template.template_id} value={template.template_id}>
-                {template.display_name} ({template.template_code})
-              </option>
-            ))}
-          </select>
-          {templatesLoaded && !error && templates.length === 0 ? (
-            <p className="text-xs text-muted">Chưa có mẫu đã publish.</p>
-          ) : null}
-        </div>
-
-        <div className="space-y-1.5">
-          <label htmlFor="target-kind" className="text-sm font-medium">Đối tượng</label>
-          <select
-            id="target-kind"
-            value={targetKind}
-            onChange={(event) => setTargetKind(event.target.value as typeof targetKind)}
-            className={controlClass}
-          >
-            <option value="USER">Một nhân viên</option>
-            <option value="TEAM">Một nhóm (Team hành chính)</option>
-            <option value="USER_SET">Danh sách nhân viên</option>
-            <option value="GROUP">Nhóm báo cáo tùy chỉnh</option>
-          </select>
-        </div>
-
-        {targetKind === "USER_SET" ? (
-          <div className="space-y-1.5">
-            <label htmlFor="target-users" className="text-sm font-medium">Nhân viên</label>
-            <select
-              id="target-users"
-              required
-              multiple
-              value={targetUsers}
-              onChange={(event) =>
-                setTargetUsers(Array.from(event.target.selectedOptions, (option) => option.value))
-              }
-              className="min-h-32 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm"
-            >
-              {users.map((user) => (
-                <option key={user.app_user_id} value={user.app_user_id}>
-                  {user.display_name}
-                </option>
-              ))}
-            </select>
-          </div>
-        ) : targetKind === "USER" ? (
-          <div className="space-y-1.5">
-            <label htmlFor="target-id" className="text-sm font-medium">Nhân viên</label>
-            <select
-              id="target-id"
-              required
-              value={targetId}
-              onChange={(event) => setTargetId(event.target.value)}
-              className={controlClass}
-            >
-              <option value="">Chọn nhân viên</option>
-              {users.map((user) => (
-                <option key={user.app_user_id} value={user.app_user_id}>
-                  {user.display_name}
-                </option>
-              ))}
-            </select>
-          </div>
-        ) : targetKind === "GROUP" ? (
-          <div className="space-y-2">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <label htmlFor="target-group" className="text-sm font-medium">Nhóm báo cáo tùy chỉnh</label>
-              <Button type="button" size="sm" variant="secondary" onClick={openNewGroupDialog}>
-                Tạo nhóm báo cáo mới
-              </Button>
-            </div>
-            <select
-              id="target-group"
-              required
-              value={targetGroupId}
-              onChange={(event) => setTargetGroupId(event.target.value)}
-              className={controlClass}
-            >
-              <option value="">Chọn nhóm báo cáo đang sử dụng</option>
-              {activeGroups.map((group) => (
-                <option key={group.group_id} value={group.group_id}>
-                  {group.display_name} ({group.members.length} thành viên)
-                </option>
-              ))}
-            </select>
-            {!groupsLoading && activeGroups.length === 0 ? (
-              <p className="text-xs text-muted">
-                Chưa có nhóm báo cáo đang sử dụng trong phạm vi quyền. Hãy tạo nhóm báo cáo mới trước khi giao.
-              </p>
-            ) : null}
-            {selectedGroup ? (
-              <div className="rounded-lg bg-subtle p-3 text-xs text-muted">
-                <span className="font-medium text-foreground">
-                  Thành viên hiện tại ({selectedGroup.members.length}):
-                </span>{" "}
-                {selectedGroup.members
-                  .map(
-                    (member) =>
-                      `${member.display_name}${member.team_display_name ? ` (${member.team_display_name})` : ""}`,
-                  )
-                  .join(", ")}
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-
-        <p className="text-xs text-muted">
-          Danh sách nhân viên được xác định từ liên kết tài khoản và thành viên nhóm hiện hành. Scope vẫn được kiểm tra lại trong RPC khi tạo assignment.
-        </p>
-
-        <div className="grid gap-3 sm:grid-cols-2">
-          <label className="space-y-1.5 text-sm font-medium">
-            Chu kỳ
-            <select
-              value={frequency}
-              onChange={(event) => setFrequency(event.target.value)}
-              className="min-h-11 w-full rounded-lg border border-border bg-surface px-3 font-normal"
-            >
-              <option value="DAILY">Hằng ngày</option>
-              <option value="WEEKLY">Hằng tuần</option>
-              <option value="MONTHLY">Hằng tháng</option>
-              <option value="ONCE">Một lần</option>
-            </select>
-          </label>
-          <label className="space-y-1.5 text-sm font-medium">
-            Ngày bắt đầu
-            <input
-              type="date"
-              required
-              value={effectiveFrom}
-              onChange={(event) => setEffectiveFrom(event.target.value)}
-              className="min-h-11 w-full rounded-lg border border-border bg-surface px-3 font-normal"
-            />
-          </label>
-          <label className="space-y-1.5 text-sm font-medium">
-            Số ngày cộng vào kỳ hạn
-            <input
-              type="number"
-              min="0"
-              max="31"
-              required
-              value={dueDayOffset}
-              onChange={(event) => setDueDayOffset(event.target.value)}
-              className="min-h-11 w-full rounded-lg border border-border bg-surface px-3 font-normal"
-            />
-          </label>
-          <label className="space-y-1.5 text-sm font-medium">
-            Giờ đến hạn (giờ Việt Nam)
-            <input
-              type="time"
-              step="1"
-              required
-              value={dueTime}
-              onChange={(event) => setDueTime(event.target.value)}
-              className="min-h-11 w-full rounded-lg border border-border bg-surface px-3 font-normal"
-            />
-          </label>
-        </div>
-
-        <Button
-          type="submit"
-          variant="primary"
-          disabled={
-            busy ||
-            !templates.length ||
-            (!teamId && targetKind !== "GROUP") ||
-            (targetKind === "GROUP" && !targetGroupId) ||
-            !templatesLoaded
-          }
-        >
-          {busy ? "Đang tạo…" : "Tạo giao việc"}
-        </Button>
-      </form>
-
-      <section className="space-y-3" aria-labelledby="custom-groups-title">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 id="custom-groups-title" className="text-lg font-semibold">Nhóm báo cáo tùy chỉnh</h2>
-            <p className="text-sm text-muted">
-              Danh sách người nhận tái sử dụng xuyên nhiều Team hành chính (ví dụ: Nhóm Tuyển dụng, Nhóm QLDA, Nhóm Tổ trưởng).
-            </p>
-            <p className="text-xs text-muted">
-              Đây là nhóm phục vụ phân công báo cáo, không thay đổi Team hành chính, Phòng ban hay quyền dữ liệu. Thay đổi thành viên chỉ áp dụng cho nghĩa vụ chưa phát sinh; nghĩa vụ và bài nộp đã tạo được giữ nguyên.
-            </p>
-          </div>
-          <Button type="button" variant="secondary" disabled={groupBusy} onClick={openNewGroupDialog}>
-            Tạo nhóm báo cáo
-          </Button>
-        </div>
-
-        {groupsError ? (
-          <StatusBanner tone="error">
-            <div className="flex flex-wrap items-center gap-2">
-              <span>{groupsError}</span>
-              <Button type="button" size="sm" variant="secondary" onClick={() => void reloadGroups()}>
-                Thử lại
-              </Button>
-            </div>
-          </StatusBanner>
-        ) : null}
-
-        {groupsLoading ? (
-          <p role="status" className="text-sm text-muted">Đang tải nhóm báo cáo tùy chỉnh…</p>
-        ) : groups.length === 0 ? (
-          <p className="rounded-lg border border-border p-4 text-sm text-muted">
-            Chưa có nhóm báo cáo tùy chỉnh trong phạm vi quyền hiện tại.
-          </p>
-        ) : (
-          <div className="space-y-3">
-            {groups.map((group) => (
-              <article key={group.group_id} className="rounded-xl border border-border p-4">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="space-y-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h3 className="font-semibold">{group.display_name}</h3>
-                      <StatusBadge tone={group.active ? "success" : "neutral"}>
-                        {group.active ? "Đang sử dụng" : "Ngừng sử dụng"}
-                      </StatusBadge>
-                    </div>
-                    {group.description ? <p className="text-sm text-muted">{group.description}</p> : null}
-                    <p className="text-xs text-muted">
-                      {group.members.length} thành viên · {group.assignment_count} giao báo cáo tham chiếu · phiên bản v{group.version}
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="secondary"
-                      disabled={groupBusy}
-                      onClick={() => openEditGroupDialog(group)}
-                    >
-                      Sửa nhóm
-                    </Button>
-                    {group.active ? (
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="secondary"
-                        disabled={groupBusy}
-                        onClick={() => void toggleGroupActive(group, false)}
-                      >
-                        Ngừng sử dụng
-                      </Button>
-                    ) : (
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="secondary"
-                        disabled={groupBusy}
-                        onClick={() => void toggleGroupActive(group, true)}
-                      >
-                        Sử dụng lại
-                      </Button>
-                    )}
-                  </div>
-                </div>
-                <div className="mt-3 flex flex-wrap gap-1.5">
-                  {group.members.map((member) => (
-                    <span
-                      key={member.app_user_id}
-                      className="inline-flex items-center gap-1 rounded-md bg-subtle px-2.5 py-1 text-xs"
-                    >
-                      <span className="font-medium text-foreground">{member.display_name}</span>
-                      <span className="text-muted">
-                        ({member.team_display_name ?? "Chưa gắn Team"}
-                        {!member.enabled ? " · Ngừng hoạt động" : ""})
-                      </span>
-                    </span>
+          <form onSubmit={(event) => void create(event)} className="space-y-5">
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-1.5">
+                <label htmlFor="team" className="text-sm font-medium">
+                  {targetKind === "GROUP" ? "Lọc theo Team hành chính (tùy chọn)" : "Team trong phạm vi được giao"}
+                </label>
+                <select
+                  id="team"
+                  required={targetKind !== "GROUP"}
+                  value={teamId}
+                  onChange={(event) => {
+                    setTeamId(event.target.value);
+                    setTargetId("");
+                    setTargetUsers([]);
+                    setConfirmingCreate(false);
+                  }}
+                  className={controlClass}
+                >
+                  <option value="">
+                    {targetKind === "GROUP" ? "Tất cả Team trong phạm vi" : "Chọn nhóm"}
+                  </option>
+                  {teams.map((team) => (
+                    <option key={team.team_id} value={team.team_id}>
+                      {team.display_name} ({team.code})
+                    </option>
                   ))}
-                </div>
-              </article>
-            ))}
-          </div>
-        )}
-      </section>
+                </select>
+              </div>
 
-      <section className="space-y-3" aria-labelledby="assignment-tracking-title">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 id="assignment-tracking-title" className="text-lg font-semibold">Giao báo cáo đã tạo</h2>
-            <p className="text-sm text-muted">Theo dõi tiến độ nghĩa vụ; danh sách không hiển thị nội dung bài nộp.</p>
-            <p className="text-xs text-muted">Cập nhật sẽ phát sinh nghĩa vụ cho toàn bộ scope hiện được cấp quyền.</p>
-          </div>
-          <Button type="button" variant="secondary" disabled={trackingBusy} onClick={() => void refreshProgress()}>
-            {trackingBusy ? "Đang cập nhật…" : "Cập nhật tiến độ kỳ hiện tại"}
-          </Button>
-        </div>
-        {trackingError ? <StatusBanner tone="error">{trackingError}</StatusBanner> : null}
-        {trackingLoadedTeamId !== teamId ? (
-          <p role="status" className="text-sm text-muted">Đang tải danh sách giao báo cáo…</p>
-        ) : assignments.length === 0 ? (
-          <p className="rounded-lg border border-border p-4 text-sm text-muted">
-            Chưa có giao báo cáo trong phạm vi này.
-          </p>
-        ) : (
-          <div className="space-y-3">
-            {assignments.map((assignment) => (
-              <article key={assignment.assignment_id} className="rounded-xl border border-border p-4">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="space-y-1">
-                    <h3 className="font-semibold">{assignment.template_name}</h3>
-                    <p className="text-sm text-muted">
-                      {targetKindLabel(assignment.target_kind)}: {assignment.target_label} · {frequencyLabel(assignment.frequency)} · {stateLabel(assignment.state)}
-                    </p>
-                    <p className="text-xs text-muted">
-                      Từ {assignment.effective_from}
-                      {assignment.effective_to ? ` đến ${assignment.effective_to}` : " · không có ngày kết thúc"}
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {assignment.state === "ACTIVE" ? (
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        disabled={trackingBusy}
-                        onClick={() => void updateAssignment(assignment, "PAUSED")}
-                      >
-                        Tạm dừng
-                      </Button>
-                    ) : null}
-                    {assignment.state === "PAUSED" ? (
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        disabled={trackingBusy}
-                        onClick={() => void updateAssignment(assignment, "ACTIVE")}
-                      >
-                        Kích hoạt
-                      </Button>
-                    ) : null}
-                    {assignment.state !== "REVOKED" ? (
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        disabled={trackingBusy}
-                        onClick={() => void updateAssignment(assignment, "REVOKED")}
-                      >
-                        Thu hồi
-                      </Button>
-                    ) : null}
-                  </div>
-                </div>
-                <div className="mt-3 grid grid-cols-2 gap-2 text-sm sm:grid-cols-5">
-                  <Progress label="Tổng nghĩa vụ" value={assignment.obligation_total} />
-                  <Progress label="Đã nộp" value={assignment.submitted_count} />
-                  <Progress label="Chưa bắt đầu" value={assignment.not_started_count} />
-                  <Progress label="Đang nháp" value={assignment.draft_count} />
-                  <Progress label="Miễn / huỷ" value={assignment.exempted_count + assignment.cancelled_count} />
-                </div>
-                {assignment.obligation_total === 0 ? (
-                  <p className="mt-2 text-xs text-muted">Chưa có nghĩa vụ được phát sinh cho assignment này.</p>
+              <div className="space-y-1.5">
+                <label htmlFor="template" className="text-sm font-medium">Mẫu báo cáo</label>
+                <select
+                  id="template"
+                  required
+                  value={templateId}
+                  onChange={(event) => {
+                    setTemplateId(event.target.value);
+                    setConfirmingCreate(false);
+                  }}
+                  className={controlClass}
+                >
+                  <option value="">Chọn mẫu đang hoạt động</option>
+                  {templates.map((template) => (
+                    <option key={template.template_id} value={template.template_id}>
+                      {template.display_name} ({template.template_code})
+                    </option>
+                  ))}
+                </select>
+                {templatesLoaded && !error && templates.length === 0 ? (
+                  <p className="text-xs text-muted">Chưa có mẫu đã publish.</p>
                 ) : null}
-              </article>
-            ))}
+              </div>
+
+              <div className="space-y-1.5">
+                <label htmlFor="target-kind" className="text-sm font-medium">Đối tượng nhận báo cáo</label>
+                <select
+                  id="target-kind"
+                  value={targetKind}
+                  onChange={(event) => {
+                    setTargetKind(event.target.value as typeof targetKind);
+                    setConfirmingCreate(false);
+                  }}
+                  className={controlClass}
+                >
+                  <option value="USER">Một nhân viên</option>
+                  <option value="TEAM">Một nhóm (Team hành chính)</option>
+                  <option value="USER_SET">Danh sách nhân viên</option>
+                  <option value="GROUP">Nhóm báo cáo tùy chỉnh</option>
+                </select>
+              </div>
+
+              {targetKind === "USER_SET" ? (
+                <div className="space-y-1.5 md:col-span-2">
+                  <label htmlFor="target-users" className="text-sm font-medium">Nhân viên</label>
+                  <select
+                    id="target-users"
+                    required
+                    multiple
+                    value={targetUsers}
+                    onChange={(event) => {
+                      setTargetUsers(Array.from(event.target.selectedOptions, (option) => option.value));
+                      setConfirmingCreate(false);
+                    }}
+                    className="min-h-32 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm"
+                  >
+                    {users.map((user) => (
+                      <option key={user.app_user_id} value={user.app_user_id}>
+                        {user.display_name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : targetKind === "USER" ? (
+                <div className="space-y-1.5">
+                  <label htmlFor="target-id" className="text-sm font-medium">Nhân viên</label>
+                  <select
+                    id="target-id"
+                    required
+                    value={targetId}
+                    onChange={(event) => {
+                      setTargetId(event.target.value);
+                      setConfirmingCreate(false);
+                    }}
+                    className={controlClass}
+                  >
+                    <option value="">Chọn nhân viên</option>
+                    {users.map((user) => (
+                      <option key={user.app_user_id} value={user.app_user_id}>
+                        {user.display_name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : targetKind === "GROUP" ? (
+                <div className="space-y-2 md:col-span-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <label htmlFor="target-group" className="text-sm font-medium">Nhóm báo cáo tùy chỉnh</label>
+                    <Button type="button" size="sm" variant="secondary" onClick={openNewGroupDialog}>
+                      Tạo nhóm báo cáo mới
+                    </Button>
+                  </div>
+                  <select
+                    id="target-group"
+                    required
+                    value={targetGroupId}
+                    onChange={(event) => {
+                      setTargetGroupId(event.target.value);
+                      setConfirmingCreate(false);
+                    }}
+                    className={controlClass}
+                  >
+                    <option value="">Chọn nhóm báo cáo đang sử dụng</option>
+                    {activeGroups.map((group) => (
+                      <option key={group.group_id} value={group.group_id}>
+                        {group.display_name} ({group.members.length} thành viên)
+                      </option>
+                    ))}
+                  </select>
+                  {!groupsLoading && activeGroups.length === 0 ? (
+                    <p className="text-xs text-muted">
+                      Chưa có nhóm báo cáo đang sử dụng trong phạm vi quyền. Hãy tạo nhóm báo cáo mới trước khi giao.
+                    </p>
+                  ) : null}
+                  {selectedGroup ? (
+                    <div className="rounded-lg bg-subtle p-3 text-xs text-muted">
+                      <span className="font-medium text-foreground">
+                        Thành viên hiện tại ({selectedGroup.members.length}):
+                      </span>{" "}
+                      {selectedGroup.members
+                        .map(
+                          (member) =>
+                            `${member.display_name}${member.team_display_name ? ` (${member.team_display_name})` : ""}`,
+                        )
+                        .join(", ")}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+
+            <p className="text-xs text-muted">
+              Danh sách nhân viên được xác định từ liên kết tài khoản và thành viên nhóm hiện hành. Scope vẫn được kiểm tra lại trong RPC khi tạo assignment.
+            </p>
+
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <label className="space-y-1.5 text-sm font-medium">
+                Chu kỳ
+                <select
+                  value={frequency}
+                  onChange={(event) => {
+                    setFrequency(event.target.value);
+                    setConfirmingCreate(false);
+                  }}
+                  className="min-h-11 w-full rounded-lg border border-border bg-surface px-3 font-normal"
+                >
+                  <option value="DAILY">Hằng ngày</option>
+                  <option value="WEEKLY">Hằng tuần</option>
+                  <option value="MONTHLY">Hằng tháng</option>
+                  <option value="ONCE">Một lần</option>
+                </select>
+              </label>
+              <label className="space-y-1.5 text-sm font-medium">
+                Ngày bắt đầu
+                <input
+                  type="date"
+                  required
+                  value={effectiveFrom}
+                  onChange={(event) => {
+                    setEffectiveFrom(event.target.value);
+                    setConfirmingCreate(false);
+                  }}
+                  className="min-h-11 w-full rounded-lg border border-border bg-surface px-3 font-normal"
+                />
+              </label>
+              <label className="space-y-1.5 text-sm font-medium">
+                Số ngày cộng vào kỳ hạn
+                <input
+                  type="number"
+                  min="0"
+                  max="31"
+                  required
+                  value={dueDayOffset}
+                  onChange={(event) => {
+                    setDueDayOffset(event.target.value);
+                    setConfirmingCreate(false);
+                  }}
+                  className="min-h-11 w-full rounded-lg border border-border bg-surface px-3 font-normal"
+                />
+              </label>
+              <label className="space-y-1.5 text-sm font-medium">
+                Giờ đến hạn (giờ Việt Nam)
+                <input
+                  type="time"
+                  step="1"
+                  required
+                  value={dueTime}
+                  onChange={(event) => {
+                    setDueTime(event.target.value);
+                    setConfirmingCreate(false);
+                  }}
+                  className="min-h-11 w-full rounded-lg border border-border bg-surface px-3 font-normal"
+                />
+              </label>
+            </div>
+
+            <div
+              aria-label="Tóm tắt trước khi xác nhận tạo đợt giao"
+              className="rounded-xl border border-primary/25 bg-primary/5 p-4"
+            >
+              <h3 className="text-sm font-semibold text-foreground">
+                Tóm tắt đợt giao trước khi xác nhận
+              </h3>
+              <dl className="mt-2.5 grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-3">
+                <div>
+                  <dt className="text-xs text-muted">Mẫu báo cáo</dt>
+                  <dd className="font-medium text-foreground">
+                    {selectedTemplate ? `${selectedTemplate.display_name} (${selectedTemplate.template_code})` : "Chưa chọn mẫu"}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-muted">Đối tượng / Nhóm</dt>
+                  <dd className="font-medium text-foreground">{summaryTargetDescription}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-muted">Số thành viên</dt>
+                  <dd className="font-medium tabular-nums text-foreground">{summaryMemberCount} người</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-muted">Chu kỳ</dt>
+                  <dd className="font-medium text-foreground">{frequencyLabel(frequency)}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-muted">Ngày bắt đầu</dt>
+                  <dd className="font-medium tabular-nums text-foreground">{effectiveFrom || "—"}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-muted">Hạn nộp</dt>
+                  <dd className="font-medium tabular-nums text-foreground">
+                    +{dueDayOffset || "0"} ngày · {dueTime} (giờ VN)
+                  </dd>
+                </div>
+              </dl>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="submit"
+                variant="primary"
+                disabled={
+                  busy ||
+                  !templates.length ||
+                  (!teamId && targetKind !== "GROUP") ||
+                  (targetKind === "GROUP" && !targetGroupId) ||
+                  !templatesLoaded
+                }
+              >
+                {busy
+                  ? "Đang tạo…"
+                  : confirmingCreate
+                    ? "Xác nhận tạo đợt giao"
+                    : "Tạo đợt giao"}
+              </Button>
+              {confirmingCreate ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={busy}
+                  onClick={() => setConfirmingCreate(false)}
+                >
+                  Chỉnh sửa lại
+                </Button>
+              ) : null}
+            </div>
+          </form>
+        </Card>
+      ) : null}
+
+      {activeSubView === "groups" ? (
+        <section className="space-y-3" aria-labelledby="custom-groups-title">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 id="custom-groups-title" className="text-lg font-semibold">Nhóm nhận báo cáo</h2>
+              <p className="text-sm text-muted">
+                Danh sách người nhận tái sử dụng xuyên nhiều Team hành chính (ví dụ: Nhóm Tuyển dụng, Nhóm QLDA, Nhóm Tổ trưởng).
+              </p>
+              <p className="text-xs text-muted">
+                Đây là nhóm phục vụ phân công báo cáo, không thay đổi Team hành chính, Phòng ban hay quyền dữ liệu. Thay đổi thành viên chỉ áp dụng cho nghĩa vụ chưa phát sinh; nghĩa vụ và bài nộp đã tạo được giữ nguyên.
+              </p>
+            </div>
+            <Button type="button" variant="secondary" disabled={groupBusy} onClick={openNewGroupDialog}>
+              Tạo nhóm báo cáo
+            </Button>
           </div>
-        )}
-      </section>
+
+          {groupsError ? (
+            <StatusBanner tone="error">
+              <div className="flex flex-wrap items-center gap-2">
+                <span>{groupsError}</span>
+                <Button type="button" size="sm" variant="secondary" onClick={() => void reloadGroups()}>
+                  Thử lại
+                </Button>
+              </div>
+            </StatusBanner>
+          ) : null}
+
+          {groupsLoading ? (
+            <p role="status" className="text-sm text-muted">Đang tải nhóm báo cáo tùy chỉnh…</p>
+          ) : groups.length === 0 ? (
+            <p className="rounded-lg border border-border p-4 text-sm text-muted">
+              Chưa có nhóm báo cáo tùy chỉnh trong phạm vi quyền hiện tại.
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {groups.map((group) => (
+                <article key={group.group_id} className="rounded-xl border border-border bg-surface p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="space-y-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h3 className="font-semibold">{group.display_name}</h3>
+                        <StatusBadge tone={group.active ? "success" : "neutral"}>
+                          {group.active ? "Đang sử dụng" : "Ngừng sử dụng"}
+                        </StatusBadge>
+                      </div>
+                      {group.description ? <p className="text-sm text-muted">{group.description}</p> : null}
+                      <p className="text-xs text-muted">
+                        {group.members.length} thành viên · {group.assignment_count} đợt giao tham chiếu · phiên bản v{group.version}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        disabled={groupBusy}
+                        onClick={() => openEditGroupDialog(group)}
+                      >
+                        Sửa nhóm
+                      </Button>
+                      {group.active ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="secondary"
+                          disabled={groupBusy}
+                          onClick={() => void toggleGroupActive(group, false)}
+                        >
+                          Ngừng sử dụng
+                        </Button>
+                      ) : (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="secondary"
+                          disabled={groupBusy}
+                          onClick={() => void toggleGroupActive(group, true)}
+                        >
+                          Sử dụng lại
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-1.5">
+                    {group.members.map((member) => (
+                      <span
+                        key={member.app_user_id}
+                        className="inline-flex items-center gap-1 rounded-md bg-subtle px-2.5 py-1 text-xs"
+                      >
+                        <span className="font-medium text-foreground">{member.display_name}</span>
+                        <span className="text-muted">
+                          ({member.team_display_name ?? "Chưa gắn Team"}
+                          {!member.enabled ? " · Ngừng hoạt động" : ""})
+                        </span>
+                      </span>
+                    ))}
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+      ) : null}
+
+      {activeSubView === "assignments" ? (
+        <section className="space-y-4" aria-labelledby="assignment-tracking-title">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 id="assignment-tracking-title" className="text-lg font-semibold">Danh sách đợt giao</h2>
+              <p className="text-sm text-muted">
+                Lọc theo trạng thái đợt giao và chọn một đợt giao để xem tiến độ từng thành viên, lịch sử thay đổi hoặc thao tác Tạm dừng / Kích hoạt lại / Thu hồi.
+              </p>
+              <p className="text-xs text-muted">
+                Nghĩa vụ kỳ hiện tại tự phát sinh khi tạo đợt giao hoặc khi nhân viên mở danh sách báo cáo (Web/Android). Dùng nút bên phải nếu cần đồng bộ ngay cho các thành viên chưa mở ứng dụng hôm nay.
+              </p>
+            </div>
+            <Button type="button" variant="secondary" disabled={trackingBusy} onClick={() => void refreshProgress()}>
+              {trackingBusy ? "Đang đồng bộ…" : "Đồng bộ nghĩa vụ kỳ hiện tại"}
+            </Button>
+          </div>
+
+          <div
+            role="tablist"
+            aria-label="Lọc trạng thái đợt giao"
+            className="flex flex-wrap gap-1.5 rounded-xl border border-border bg-surface p-1.5"
+          >
+            {(
+              [
+                { key: "ACTIVE", label: "Đang hoạt động", count: assignmentCountsByState.ACTIVE },
+                { key: "PAUSED", label: "Tạm dừng", count: assignmentCountsByState.PAUSED },
+                { key: "REVOKED", label: "Đã thu hồi", count: assignmentCountsByState.REVOKED },
+              ] as const
+            ).map((tab) => {
+              const active = stateFilter === tab.key;
+              return (
+                <button
+                  key={tab.key}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => setStateFilter(tab.key)}
+                  className={
+                    "inline-flex min-h-10 items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-colors " +
+                    (active
+                      ? "bg-primary text-on-primary shadow-2xs"
+                      : "text-muted hover:bg-muted/10 hover:text-foreground")
+                  }
+                >
+                  <span>{tab.label}</span>
+                  <span className="rounded-full bg-background/20 px-1.5 py-0.5 text-[11px] tabular-nums">
+                    {tab.count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          {trackingError ? <StatusBanner tone="error">{trackingError}</StatusBanner> : null}
+
+          {trackingLoadedTeamId !== teamId ? (
+            <p role="status" className="text-sm text-muted">Đang tải danh sách đợt giao…</p>
+          ) : filteredAssignments.length === 0 ? (
+            <p className="rounded-lg border border-border p-4 text-sm text-muted">
+              Không có đợt giao nào ở trạng thái {stateLabel(stateFilter)}.
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {filteredAssignments.map((assignment) => {
+                const incompleteCount = assignment.not_started_count + assignment.draft_count;
+                const isSelected = selectedAssignment?.assignment_id === assignment.assignment_id;
+                return (
+                  <article
+                    key={assignment.assignment_id}
+                    className={
+                      "rounded-xl border bg-surface p-4 transition-colors " +
+                      (isSelected ? "border-primary ring-1 ring-primary/30" : "border-border")
+                    }
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="space-y-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h3 className="font-semibold">{assignment.template_name}</h3>
+                          <StatusBadge
+                            tone={
+                              assignment.state === "ACTIVE"
+                                ? "success"
+                                : assignment.state === "PAUSED"
+                                  ? "warning"
+                                  : "neutral"
+                            }
+                          >
+                            {stateLabel(assignment.state)}
+                          </StatusBadge>
+                        </div>
+                        <p className="text-sm text-muted">
+                          {targetKindLabel(assignment.target_kind)}: {assignment.target_label}
+                          {typeof assignment.target_member_count === "number"
+                            ? ` (${assignment.target_member_count} thành viên)`
+                            : ""}{" "}
+                          · Tần suất: {frequencyLabel(assignment.frequency)}
+                        </p>
+                        <p className="text-xs text-muted">
+                          Từ {assignment.effective_from}
+                          {assignment.effective_to ? ` đến ${assignment.effective_to}` : " · không giới hạn ngày kết thúc"}
+                          {typeof assignment.due_time_local === "string"
+                            ? ` · Hạn nộp +${assignment.due_day_offset ?? 0} ngày lúc ${assignment.due_time_local}`
+                            : ""}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant={isSelected ? "primary" : "outline"}
+                          onClick={() =>
+                            setSelectedAssignmentId(
+                              isSelected ? null : assignment.assignment_id,
+                            )
+                          }
+                        >
+                          {isSelected ? "Đóng chi tiết" : "Xem chi tiết"}
+                        </Button>
+                        {assignment.state === "ACTIVE" ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="secondary"
+                            disabled={trackingBusy}
+                            onClick={() => requestUpdateAssignment(assignment, "PAUSED")}
+                          >
+                            Tạm dừng
+                          </Button>
+                        ) : null}
+                        {assignment.state === "PAUSED" ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="secondary"
+                            disabled={trackingBusy}
+                            onClick={() => requestUpdateAssignment(assignment, "ACTIVE")}
+                          >
+                            Kích hoạt lại
+                          </Button>
+                        ) : null}
+                        {assignment.state !== "REVOKED" ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="secondary"
+                            disabled={trackingBusy}
+                            onClick={() => requestUpdateAssignment(assignment, "REVOKED")}
+                          >
+                            Thu hồi
+                          </Button>
+                        ) : null}
+                      </div>
+                    </div>
+
+                    <div className="mt-3 grid grid-cols-2 gap-2 text-sm sm:grid-cols-5">
+                      <Progress label="Đã nộp" value={assignment.submitted_count} />
+                      <Progress label="Chưa hoàn thành" value={incompleteCount} />
+                      <Progress label="Quá hạn chưa nộp" value={assignment.overdue_count ?? 0} />
+                      <Progress label="Tổng nghĩa vụ" value={assignment.obligation_total} />
+                      <Progress label="Miễn / huỷ" value={assignment.exempted_count + assignment.cancelled_count} />
+                    </div>
+
+                    {isSelected ? (
+                      <AssignmentDetailPanel
+                        assignment={assignment}
+                        busy={trackingBusy}
+                        onAction={(nextState) => requestUpdateAssignment(assignment, nextState)}
+                      />
+                    ) : null}
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </section>
+      ) : null}
+
+      <FormDialog
+        open={revokeConfirmAssignment !== null}
+        onOpenChange={(open) => {
+          if (!open && !trackingBusy) {
+            setRevokeConfirmAssignment(null);
+          }
+        }}
+        title="Xác nhận thu hồi đợt giao báo cáo"
+        description="Vui lòng kiểm tra kỹ tác động trước khi xác nhận thu hồi đợt giao."
+        closeDisabled={trackingBusy}
+      >
+        {revokeConfirmAssignment ? (
+          <div className="space-y-4 text-sm">
+            <StatusBanner tone="warning" title="Ý nghĩa thu hồi đợt giao ở máy chủ">
+              Thu hồi đợt giao sẽ chuyển trạng thái đợt giao sang <strong>Đã thu hồi</strong>, hủy các nghĩa vụ đang mở nhưng chưa bắt đầu nộp (<code>NOT_STARTED</code> → <code>CANCELLED</code>), và ngừng phát sinh nghĩa vụ cho các kỳ tiếp theo.{" "}
+              <strong>Các báo cáo đã nộp và toàn bộ lịch sử bài nộp được giữ nguyên, không bị xóa.</strong>
+            </StatusBanner>
+            <div className="rounded-lg border border-border bg-subtle p-3 space-y-1">
+              <p className="font-medium text-foreground">{revokeConfirmAssignment.template_name}</p>
+              <p className="text-xs text-muted">
+                {targetKindLabel(revokeConfirmAssignment.target_kind)}: {revokeConfirmAssignment.target_label} · Chu kỳ{" "}
+                {frequencyLabel(revokeConfirmAssignment.frequency)}
+              </p>
+              <p className="text-xs text-muted">
+                Đã nộp: {revokeConfirmAssignment.submitted_count} · Chưa hoàn thành:{" "}
+                {revokeConfirmAssignment.not_started_count + revokeConfirmAssignment.draft_count}
+              </p>
+            </div>
+            <div className="flex justify-end gap-2 border-t border-border pt-3">
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={trackingBusy}
+                onClick={() => setRevokeConfirmAssignment(null)}
+              >
+                Giữ đợt giao
+              </Button>
+              <Button
+                type="button"
+                variant="primary"
+                disabled={trackingBusy}
+                onClick={() => void executeUpdateAssignment(revokeConfirmAssignment, "REVOKED")}
+              >
+                {trackingBusy ? "Đang thu hồi…" : "Xác nhận thu hồi"}
+              </Button>
+            </div>
+          </div>
+        ) : null}
+      </FormDialog>
 
       <FormDialog
         open={groupEditor !== null}
@@ -1088,6 +1484,149 @@ export function AssignmentManager() {
   );
 }
 
+function AssignmentDetailPanel({
+  assignment,
+  busy,
+  onAction,
+}: {
+  assignment: WorkReportAssignmentSummary;
+  busy: boolean;
+  onAction: (nextState: "ACTIVE" | "PAUSED" | "REVOKED") => void;
+}) {
+  const assigneeProgress: readonly WorkReportAssignmentProgressItem[] = assignment.assignee_progress ?? [];
+  const auditHistory: readonly WorkReportAssignmentAuditItem[] = assignment.audit_history ?? [];
+
+  return (
+    <div className="mt-4 space-y-4 border-t border-border pt-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h4 className="text-sm font-semibold text-foreground">Chi tiết đợt giao & Tiến độ từng người</h4>
+        <div className="flex flex-wrap gap-2">
+          {assignment.state === "ACTIVE" ? (
+            <Button type="button" size="sm" variant="secondary" disabled={busy} onClick={() => onAction("PAUSED")}>
+              Tạm dừng đợt giao
+            </Button>
+          ) : null}
+          {assignment.state === "PAUSED" ? (
+            <Button type="button" size="sm" variant="secondary" disabled={busy} onClick={() => onAction("ACTIVE")}>
+              Kích hoạt lại đợt giao
+            </Button>
+          ) : null}
+          {assignment.state !== "REVOKED" ? (
+            <Button type="button" size="sm" variant="secondary" disabled={busy} onClick={() => onAction("REVOKED")}>
+              Thu hồi đợt giao
+            </Button>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <h5 className="text-xs font-semibold uppercase tracking-wide text-muted">
+          Tiến độ từng thành viên ({assigneeProgress.length})
+        </h5>
+        {assigneeProgress.length === 0 ? (
+          <p className="rounded-lg bg-subtle p-3 text-xs text-muted">
+            Chưa có nghĩa vụ nào được phát sinh cho đợt giao này.
+          </p>
+        ) : (
+          <div className="overflow-x-auto rounded-lg border border-border">
+            <table className="w-full text-left text-xs">
+              <thead className="border-b border-border bg-subtle text-muted">
+                <tr>
+                  <th className="px-3 py-2 font-medium">Thành viên</th>
+                  <th className="px-3 py-2 font-medium">Kỳ gần nhất</th>
+                  <th className="px-3 py-2 font-medium">Hạn nộp</th>
+                  <th className="px-3 py-2 font-medium">Trạng thái</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {assigneeProgress.map((row) => (
+                  <tr key={`${row.assignee_app_user_id}-${row.period_key}`}>
+                    <td className="px-3 py-2 font-medium text-foreground">{row.assignee_display_name}</td>
+                    <td className="px-3 py-2 tabular-nums text-muted">{row.period_key}</td>
+                    <td className="px-3 py-2 tabular-nums text-muted">
+                      {new Date(row.due_at).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}
+                    </td>
+                    <td className="px-3 py-2">
+                      <StatusBadge tone={progressBadgeTone(row)}>
+                        {progressBadgeLabel(row)}
+                      </StatusBadge>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div className="space-y-2">
+        <h5 className="text-xs font-semibold uppercase tracking-wide text-muted">
+          Lịch sử thay đổi đợt giao ({auditHistory.length})
+        </h5>
+        {auditHistory.length === 0 ? (
+          <p className="rounded-lg bg-subtle p-3 text-xs text-muted">Chưa có lịch sử thay đổi.</p>
+        ) : (
+          <ol className="space-y-1.5 rounded-lg border border-border bg-subtle/40 p-3 text-xs">
+            {auditHistory.map((item) => (
+              <li key={item.event_id} className="flex flex-wrap items-center justify-between gap-2">
+                <span>
+                  <strong className="font-medium text-foreground">{auditEventLabel(item)}</strong>
+                  {item.actor_display_name ? ` · thực hiện bởi ${item.actor_display_name}` : ""}
+                </span>
+                <span className="tabular-nums text-muted">
+                  {new Date(item.created_at).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}
+                </span>
+              </li>
+            ))}
+          </ol>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function progressBadgeTone(
+  row: WorkReportAssignmentProgressItem,
+): "success" | "warning" | "danger" | "neutral" {
+  if (row.obligation_status !== "ACTIVE") return "neutral";
+  if (row.is_overdue) return "danger";
+  if (row.submission_state === "APPROVED" || row.submission_state === "COMPLETED" || row.submission_state === "PENDING_REVIEW") {
+    return "success";
+  }
+  if (row.submission_state === "REJECTED" || row.submission_state === "DRAFT") {
+    return "warning";
+  }
+  return "neutral";
+}
+
+function progressBadgeLabel(row: WorkReportAssignmentProgressItem): string {
+  if (row.obligation_status === "CANCELLED") return "Đã hủy";
+  if (row.obligation_status === "EXEMPTED") return "Được miễn";
+  if (row.is_overdue) {
+    return row.submission_state === "DRAFT" ? "Quá hạn (Đang nháp)" : "Quá hạn (Chưa nộp)";
+  }
+  switch (row.submission_state) {
+    case "APPROVED":
+      return "Đã duyệt";
+    case "COMPLETED":
+    case "PENDING_REVIEW":
+      return "Đã nộp";
+    case "REJECTED":
+      return "Bị từ chối · Chờ nộp lại";
+    case "DRAFT":
+      return "Đang lưu nháp";
+    default:
+      return "Chưa bắt đầu";
+  }
+}
+
+function auditEventLabel(item: WorkReportAssignmentAuditItem): string {
+  if (item.action === "ASSIGNMENT_CREATE") return "Tạo đợt giao";
+  if (item.state === "PAUSED") return "Tạm dừng đợt giao";
+  if (item.state === "REVOKED") return "Thu hồi đợt giao";
+  return "Kích hoạt lại đợt giao";
+}
+
 function targetKindLabel(value: string) {
   return (
     ({
@@ -1109,7 +1648,7 @@ function frequencyLabel(value: string) {
 
 function stateLabel(value: string) {
   return (
-    ({ ACTIVE: "đang hoạt động", PAUSED: "đã tạm dừng", REVOKED: "đã thu hồi" } as Record<string, string>)[value] ??
+    ({ ACTIVE: "đang hoạt động", PAUSED: "tạm dừng", REVOKED: "đã thu hồi" } as Record<string, string>)[value] ??
     value
   );
 }

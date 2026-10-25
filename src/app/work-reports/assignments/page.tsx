@@ -22,8 +22,9 @@ export default async function WorkReportAssignmentsPage() {
       return (
         <WorkReportsShell
           actor={actor?.ok ? actor.actor : null}
-          title="Giao báo cáo"
-          description="Tạo giao việc cho nhân viên, nhóm hoặc danh sách nhân viên."
+          active="assignments"
+          title="Đợt giao & Nhóm nhận báo cáo"
+          description="Tạo đợt giao báo cáo, quản lý nhóm người nhận và theo dõi tiến độ từng thành viên."
         >
           <AssignmentManager />
         </WorkReportsShell>
