@@ -228,45 +228,45 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function scoreCandidateActor(payload: ActorContextResolutionPayload): number {
-  if (payload.enabled !== true) return -1;
+function isVerifiedAllScopeActor(
+  payload: ActorContextResolutionPayload,
+  expectedAuthSubject: string,
+  expectedAppUserId?: string,
+): payload is {
+  auth_subject: string;
+  app_user_id: string;
+  enabled: true;
+  all_scope_grants: unknown[];
+} {
+  if (payload.enabled !== true) return false;
   if (
     typeof payload.auth_subject !== "string" ||
     !UUID_REGEX.test(payload.auth_subject) ||
+    payload.auth_subject.toLowerCase() !== expectedAuthSubject.toLowerCase()
+  ) {
+    return false;
+  }
+  if (
     typeof payload.app_user_id !== "string" ||
     !UUID_REGEX.test(payload.app_user_id)
   ) {
-    return -1;
+    return false;
+  }
+  if (
+    expectedAppUserId &&
+    payload.app_user_id.toLowerCase() !== expectedAppUserId.toLowerCase()
+  ) {
+    return false;
   }
   const allScopeGrants = Array.isArray(payload.all_scope_grants)
     ? payload.all_scope_grants
     : [];
-  if (allScopeGrants.length === 0) return -1;
-
-  const caps = new Set<string>(
-    Array.isArray(payload.capabilities)
-      ? payload.capabilities.filter((item): item is string => typeof item === "string")
-      : [],
-  );
-
-  let score = 10;
-  if (
-    caps.has("entry_admin") &&
-    caps.has("recruiter_master_manage") &&
-    caps.has("team_master_manage")
-  ) {
-    score += 100;
-  }
-  if (caps.has("catalog_master_manage")) score += 30;
-  if (caps.has("entry_privileged_edit")) score += 25;
-  if (caps.has("report_view")) score += 15;
-  if (caps.has("report_analytics_view")) score += 15;
-  if (caps.has("vendor_finance_view")) score += 15;
-  if (caps.has("change_review")) score += 10;
-  return score;
+  if (allScopeGrants.length === 0) return false;
+  return true;
 }
 
 let cachedServiceActor: {
+  cacheKey: string;
   actor: N8nInternalActorRef;
   expiresAtMs: number;
 } | null = null;
@@ -283,19 +283,22 @@ export type N8nActorResolverDependencies = {
     data: unknown;
     error: unknown;
   }>;
-  listAuthUserIds?: () => Promise<readonly string[]>;
   nowMs?: () => number;
 };
 
 /**
- * Resolves the internal `(auth_subject, app_user_id)` binding used ONLY on the
- * server to invoke existing `service_role` read RPCs on behalf of the fixed
- * principal `n8n_bod_readonly`.
+ * Resolves and verifies the explicit internal `(auth_subject, app_user_id)`
+ * service actor used on the server to invoke `service_role` read RPCs on
+ * behalf of the fixed principal `n8n_bod_readonly`.
  *
- * Resolution order:
- * 1. Explicit `N8N_BOD_READONLY_AUTH_SUBJECT` + `N8N_BOD_READONLY_APP_USER_ID` env vars.
- * 2. Explicit `N8N_BOD_READONLY_AUTH_SUBJECT` env var resolved via `direct_entry_resolve_actor_context`.
- * 3. Auto-discovery of the highest-authority enabled `all`-scope actor via `direct_entry_resolve_actor_context`.
+ * Security invariants:
+ * 1. Requires explicit `N8N_BOD_READONLY_AUTH_SUBJECT` UUID configuration (no
+ *    account-scanning auto-discovery).
+ * 2. Optional `N8N_BOD_READONLY_APP_USER_ID` must be a valid UUID and match the
+ *    DB-resolved `app_user_id` if provided.
+ * 3. Always verifies via `direct_entry_resolve_actor_context` that the actor is
+ *    enabled and holds active `all` scope (`all_scope_grants.length > 0`)
+ *    before allowing any query execution.
  */
 export async function resolveN8nBodServiceActor(
   deps: N8nActorResolverDependencies = {},
@@ -309,22 +312,30 @@ export async function resolveN8nBodServiceActor(
   const explicitAuthSubject = env.authSubject?.trim();
   const explicitAppUserId = env.appUserId?.trim();
 
-  if (
-    explicitAuthSubject &&
-    UUID_REGEX.test(explicitAuthSubject) &&
-    explicitAppUserId &&
-    UUID_REGEX.test(explicitAppUserId)
-  ) {
+  if (!explicitAuthSubject || !UUID_REGEX.test(explicitAuthSubject)) {
     return {
-      ok: true,
-      actor: {
-        auth_subject: explicitAuthSubject,
-        app_user_id: explicitAppUserId,
-      },
+      ok: false,
+      code: "SERVICE_PRINCIPAL_ACTOR_UNAVAILABLE",
+      message:
+        "Server chưa cấu hình tường minh N8N_BOD_READONLY_AUTH_SUBJECT (UUID hợp lệ) cho principal n8n_bod_readonly.",
     };
   }
 
-  if (cachedServiceActor && cachedServiceActor.expiresAtMs > nowMs) {
+  if (explicitAppUserId && !UUID_REGEX.test(explicitAppUserId)) {
+    return {
+      ok: false,
+      code: "SERVICE_PRINCIPAL_ACTOR_UNAVAILABLE",
+      message:
+        "Cấu hình N8N_BOD_READONLY_APP_USER_ID không phải UUID hợp lệ.",
+    };
+  }
+
+  const cacheKey = `${explicitAuthSubject.toLowerCase()}|${(explicitAppUserId ?? "").toLowerCase()}`;
+  if (
+    cachedServiceActor &&
+    cachedServiceActor.cacheKey === cacheKey &&
+    cachedServiceActor.expiresAtMs > nowMs
+  ) {
     return { ok: true, actor: cachedServiceActor.actor };
   }
 
@@ -342,91 +353,32 @@ export async function resolveN8nBodServiceActor(
       return { data, error };
     });
 
-  if (explicitAuthSubject && UUID_REGEX.test(explicitAuthSubject)) {
-    try {
-      const { data, error } = await callActorContextRpc(explicitAuthSubject);
-      if (!error && isRecord(data) && scoreCandidateActor(data) >= 10) {
-        const actor: N8nInternalActorRef = {
-          auth_subject: data.auth_subject as string,
-          app_user_id: data.app_user_id as string,
-        };
-        cachedServiceActor = {
-          actor,
-          expiresAtMs: nowMs + ACTOR_CACHE_TTL_MS,
-        };
-        return { ok: true, actor };
-      }
-    } catch {
-      // Fall through to fail-closed error below.
-    }
-    return {
-      ok: false,
-      code: "SERVICE_PRINCIPAL_ACTOR_UNAVAILABLE",
-      message:
-        "Không thể xác thực tài khoản đại diện N8N_BOD_READONLY_AUTH_SUBJECT với quyền đọc toàn miền (all scope).",
-    };
-  }
-
-  const listAuthUserIds =
-    deps.listAuthUserIds ??
-    (async () => {
-      const { createServiceSupabaseClient } = await import(
-        "../../supabase/server.ts"
-      );
-      const client = createServiceSupabaseClient();
-      const userIds: string[] = [];
-      for (let page = 1; page <= 3; page += 1) {
-        const { data, error } = await client.auth.admin.listUsers({
-          page,
-          perPage: 200,
-        });
-        if (error || !data?.users?.length) break;
-        for (const user of data.users) {
-          if (typeof user.id === "string" && UUID_REGEX.test(user.id)) {
-            userIds.push(user.id);
-          }
-        }
-        if (data.users.length < 200) break;
-      }
-      return userIds;
-    });
-
   try {
-    const candidateUserIds = await listAuthUserIds();
-    let bestScore = -1;
-    let bestActor: N8nInternalActorRef | null = null;
-
-    for (const authSubject of candidateUserIds) {
-      const { data, error } = await callActorContextRpc(authSubject);
-      if (error || !isRecord(data)) continue;
-      const score = scoreCandidateActor(data);
-      if (score > bestScore) {
-        bestScore = score;
-        bestActor = {
-          auth_subject: data.auth_subject as string,
-          app_user_id: data.app_user_id as string,
-        };
-        if (score >= 180) {
-          break;
-        }
-      }
-    }
-
-    if (bestActor) {
+    const { data, error } = await callActorContextRpc(explicitAuthSubject);
+    if (
+      !error &&
+      isRecord(data) &&
+      isVerifiedAllScopeActor(data, explicitAuthSubject, explicitAppUserId)
+    ) {
+      const actor: N8nInternalActorRef = {
+        auth_subject: data.auth_subject,
+        app_user_id: data.app_user_id,
+      };
       cachedServiceActor = {
-        actor: bestActor,
+        cacheKey,
+        actor,
         expiresAtMs: nowMs + ACTOR_CACHE_TTL_MS,
       };
-      return { ok: true, actor: bestActor };
+      return { ok: true, actor };
     }
   } catch {
-    // Fall through to fail-closed error.
+    // Fall through to fail-closed error below.
   }
 
   return {
     ok: false,
     code: "SERVICE_PRINCIPAL_ACTOR_UNAVAILABLE",
     message:
-      "Không tìm thấy actor nội bộ có quyền toàn miền (all scope) cho principal n8n_bod_readonly. Hãy cấu hình N8N_BOD_READONLY_AUTH_SUBJECT và N8N_BOD_READONLY_APP_USER_ID.",
+      "Không thể xác thực tài khoản đại diện N8N_BOD_READONLY_AUTH_SUBJECT đang hoạt động và có quyền đọc toàn miền (all scope).",
   };
 }

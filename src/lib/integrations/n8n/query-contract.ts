@@ -50,7 +50,9 @@ export type N8nDecodedCursor = {
   kind: "offset" | "page" | "token";
   offset?: number;
   page?: number;
-  token?: string;
+  token?: string | null;
+  sub_offset?: number;
+  batch_page_size?: number;
 };
 
 export type N8nQueryValidationErrorCode =
@@ -206,6 +208,37 @@ export function decodeN8nCursor(
     const parsed = JSON.parse(jsonText);
     if (!isRecord(parsed)) return null;
     if (parsed.v !== 1 || parsed.dataset !== expectedDataset) return null;
+
+    let subOffset: number | undefined;
+    if (parsed.sub_offset !== undefined) {
+      if (
+        typeof parsed.sub_offset !== "number" ||
+        !Number.isSafeInteger(parsed.sub_offset) ||
+        parsed.sub_offset < 0 ||
+        parsed.sub_offset > 100000
+      ) {
+        return null;
+      }
+      subOffset = parsed.sub_offset;
+    }
+
+    let batchPageSize: number | undefined;
+    if (parsed.batch_page_size !== undefined) {
+      if (
+        typeof parsed.batch_page_size !== "number" ||
+        !Number.isSafeInteger(parsed.batch_page_size) ||
+        parsed.batch_page_size < 1 ||
+        parsed.batch_page_size > 500
+      ) {
+        return null;
+      }
+      batchPageSize = parsed.batch_page_size;
+    }
+
+    const extraFields: { sub_offset?: number; batch_page_size?: number } = {};
+    if (subOffset !== undefined) extraFields.sub_offset = subOffset;
+    if (batchPageSize !== undefined) extraFields.batch_page_size = batchPageSize;
+
     if (parsed.kind === "offset") {
       if (
         typeof parsed.offset !== "number" ||
@@ -220,6 +253,7 @@ export function decodeN8nCursor(
         dataset: expectedDataset,
         kind: "offset",
         offset: parsed.offset,
+        ...extraFields,
       };
     }
     if (parsed.kind === "page") {
@@ -236,21 +270,25 @@ export function decodeN8nCursor(
         dataset: expectedDataset,
         kind: "page",
         page: parsed.page,
+        ...extraFields,
       };
     }
     if (parsed.kind === "token") {
-      if (
-        typeof parsed.token !== "string" ||
-        parsed.token.trim().length < 1 ||
-        parsed.token.length > 512
-      ) {
+      const isNonEmptyStringToken =
+        typeof parsed.token === "string" &&
+        parsed.token.trim().length >= 1 &&
+        parsed.token.length <= 512;
+      const isInitialBatchSubOffsetToken =
+        parsed.token === null && typeof subOffset === "number" && subOffset > 0;
+      if (!isNonEmptyStringToken && !isInitialBatchSubOffsetToken) {
         return null;
       }
       return {
         v: 1,
         dataset: expectedDataset,
         kind: "token",
-        token: parsed.token,
+        token: parsed.token as string | null,
+        ...extraFields,
       };
     }
     return null;

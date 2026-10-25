@@ -108,7 +108,7 @@ export type N8nDatasetPaginationSpec = {
 
 export type N8nDatasetSpec = {
   dataset: string;
-  domain: Exclude<N8nDomainKey, "work_reports">;
+  domain: N8nDomainKey;
   title: string;
   description: string;
   grain: string;
@@ -2790,23 +2790,622 @@ const DATASETS: readonly N8nDatasetSpec[] = Object.freeze([
     },
     business_rules: [],
   },
-]);
 
-const PENDING_DATASETS: readonly N8nPendingDatasetSpec[] = Object.freeze([
+  // =========================================================================
+  // 8. WORK REPORTS DOMAIN (Báo cáo công việc)
+  // =========================================================================
   {
-    dataset: "work_reports",
+    dataset: "work_reports_templates",
     domain: "work_reports",
-    title: "Báo cáo Công việc (Work Reports)",
-    status: "PENDING_T1A_CONTRACT",
-    reason:
-      "Dataset Báo cáo công việc chưa kích hoạt trong T1B vì T1A đang thay đổi luồng giao báo cáo và materialize nghĩa vụ. Sẽ bổ sung adapter sau khi T1A chốt contract.",
-    planned_capabilities: [
-      "Tổng quan nghĩa vụ báo cáo (obligations overview & compliance rate)",
-      "Chi tiết bài nộp và tiến độ rà soát (submissions & review decisions)",
-      "Phân tích đóng góp theo nhóm và mẫu báo cáo (analytics breakdown & contributions)",
+    title: "Danh mục Mẫu Báo cáo Công việc (Work Report Templates)",
+    description:
+      "Danh mục mẫu báo cáo công việc (template_id, template_code, display_name, tần suất mặc định và trạng thái phát hành) dùng để tra cứu trước khi lọc giao việc, bài nộp hoặc phân tích KPI báo cáo công việc.",
+    grain: "1 dòng trên mỗi mẫu báo cáo công việc (template_id).",
+    canonical_source: {
+      name: "public.work_report_list_templates",
+      kind: "rpc",
+      underlying_objects: [
+        "public.work_report_list_templates",
+        "public.work_report_templates",
+      ],
+    },
+    supported_modes: ["detail", "both"],
+    default_mode: "detail",
+    time_semantics: {
+      timezone: N8N_BOD_BUSINESS_TIMEZONE,
+      business_date_field: null,
+      supports_date_range: false,
+      supports_as_of_date: false,
+      cutoff_date: null,
+      description: "Danh mục mẫu báo cáo hiện hành tại ngày nghiệp vụ.",
+    },
+    fields: [
+      field("template_id", "string", "UUID mẫu báo cáo", {
+        filterable: true,
+        sortable: true,
+      }),
+      field("template_code", "string", "Mã mẫu báo cáo chuẩn", {
+        filterable: true,
+        sortable: true,
+      }),
+      field("display_name", "string", "Tên hiển thị mẫu báo cáo", {
+        filterable: true,
+        sortable: true,
+      }),
+      field("description", "string", "Mô tả mẫu báo cáo"),
+      field("default_frequency", "string", "Tần suất mặc định: DAILY | WEEKLY | MONTHLY | ONCE", {
+        filterable: true,
+        sortable: true,
+      }),
+      field("status", "string", "Trạng thái mẫu: DRAFT | ACTIVE | ARCHIVED", {
+        filterable: true,
+        sortable: true,
+      }),
+      field("current_published_version_id", "string", "UUID phiên bản đã phát hành hiện hành"),
+      field("draft_version_id", "string", "UUID phiên bản nháp (nếu có)"),
+      field("version", "integer", "Phiên bản bản ghi mẫu"),
+      field("updated_at", "datetime", "Thời điểm cập nhật gần nhất", {
+        sortable: true,
+      }),
+    ],
+    measures: [
+      {
+        name: "total_templates",
+        type: "integer",
+        label: "Tổng số mẫu báo cáo",
+        formula: "COUNT(*) mẫu báo cáo khớp bộ lọc",
+        description: "Tổng số mẫu báo cáo công việc.",
+        business_limits: "Tính trên toàn bộ mẫu báo cáo trong hệ thống.",
+      },
+      {
+        name: "active_templates",
+        type: "integer",
+        label: "Số mẫu báo cáo đang ACTIVE",
+        formula: "COUNT(*) FILTER (WHERE status = 'ACTIVE')",
+        description: "Số mẫu báo cáo đang hoạt động.",
+        business_limits: "Chỉ tính mẫu có status = 'ACTIVE'.",
+      },
+    ],
+    dimensions: [
+      { name: "status", label: "Trạng thái mẫu", description: "Theo trạng thái DRAFT/ACTIVE/ARCHIVED.", catalog_dataset: null },
+      { name: "default_frequency", label: "Tần suất mặc định", description: "Theo tần suất DAILY/WEEKLY/MONTHLY/ONCE.", catalog_dataset: null },
+    ],
+    filters: [
+      { field: "template_id", type: "string", allowed_operators: ["eq", "in"], description: "Lọc theo UUID mẫu báo cáo." },
+      { field: "template_code", type: "string", allowed_operators: ["eq", "in"], description: "Lọc theo mã mẫu báo cáo." },
+      { field: "status", type: "string", allowed_operators: ["eq", "in"], description: "Lọc theo trạng thái DRAFT | ACTIVE | ARCHIVED." },
+      { field: "default_frequency", type: "string", allowed_operators: ["eq", "in"], description: "Lọc theo tần suất DAILY | WEEKLY | MONTHLY | ONCE." },
+      { field: "search", type: "string", allowed_operators: ["contains", "eq"], description: "Tìm theo tên hoặc mã mẫu báo cáo." },
+    ],
+    allowed_relations: [
+      {
+        target_dataset: "work_reports_assignments",
+        local_field: "template_id",
+        target_field: "template_id",
+        cardinality: "one_to_many",
+        description: "Tra cứu các đợt giao báo cáo của mẫu này.",
+      },
+      {
+        target_dataset: "work_reports_submissions",
+        local_field: "template_id",
+        target_field: "template_id",
+        cardinality: "one_to_many",
+        description: "Tra cứu danh sách bài nộp của mẫu này.",
+      },
+      {
+        target_dataset: "work_reports_analytics",
+        local_field: "template_id",
+        target_field: "template_id",
+        cardinality: "one_to_many",
+        description: "Phân tích tỷ lệ tuân thủ và KPI của mẫu này.",
+      },
+    ],
+    pagination: {
+      strategy: "cursor",
+      default_page_size: 50,
+      max_page_size: 200,
+    },
+    business_rules: [
+      "Hãy tra cứu template_id từ work_reports_templates trước khi gọi work_reports_analytics.",
+    ],
+  },
+  {
+    dataset: "work_reports_assignments",
+    domain: "work_reports",
+    title: "Giao Báo cáo & Tiến độ Nghĩa vụ (Work Report Assignments & Obligations)",
+    description:
+      "Danh sách các quy tắc giao báo cáo công việc (theo cá nhân, nhóm tuyển dụng, tập người dùng hoặc nhóm báo cáo) kèm thống kê nghĩa vụ (tổng nghĩa vụ, đã nộp, chưa bắt đầu, quá hạn, bị từ chối, miễn trừ) và chi tiết tiến độ từng người khi lọc theo assignment_id.",
+    grain: "1 dòng trên mỗi đợt giao báo cáo (assignment_id).",
+    canonical_source: {
+      name: "public.work_report_list_assignments + public.work_report_get_assignment_detail",
+      kind: "rpc",
+      underlying_objects: [
+        "public.work_report_list_assignments",
+        "public.work_report_get_assignment_detail",
+        "public.work_report_assignments",
+        "public.work_report_obligations",
+      ],
+    },
+    supported_modes: ["aggregate", "detail", "both"],
+    default_mode: "both",
+    time_semantics: {
+      timezone: N8N_BOD_BUSINESS_TIMEZONE,
+      business_date_field: "effective_from",
+      supports_date_range: true,
+      supports_as_of_date: false,
+      cutoff_date: null,
+      description: "Lọc theo ngày bắt đầu hiệu lực (effective_from) của giao việc.",
+    },
+    fields: [
+      field("assignment_id", "string", "UUID bản ghi giao báo cáo", {
+        filterable: true,
+        sortable: true,
+      }),
+      field("template_id", "string", "UUID mẫu báo cáo", {
+        filterable: true,
+        sortable: true,
+      }),
+      field("template_code", "string", "Mã mẫu báo cáo", {
+        filterable: true,
+        sortable: true,
+      }),
+      field("template_name", "string", "Tên mẫu báo cáo", { sortable: true }),
+      field("target_kind", "string", "Loại đối tượng nhận: USER | TEAM | USER_SET | GROUP", {
+        filterable: true,
+        sortable: true,
+      }),
+      field("target_group_id", "string", "UUID nhóm báo cáo (nếu target_kind = GROUP)", {
+        filterable: true,
+      }),
+      field("target_label", "string", "Nhãn hiển thị đối tượng nhận giao việc", {
+        sortable: true,
+      }),
+      field("target_member_count", "integer", "Số lượng thành viên thuộc đối tượng giao việc", {
+        sortable: true,
+      }),
+      field("frequency", "string", "Tần suất báo cáo: DAILY | WEEKLY | MONTHLY | ONCE", {
+        filterable: true,
+        sortable: true,
+      }),
+      field("is_mandatory", "boolean", "Có bắt buộc nộp hay không", {
+        filterable: true,
+      }),
+      field("due_day_offset", "integer", "Số ngày cộng thêm vào hạn nộp"),
+      field("due_time_local", "string", "Giờ hạn nộp theo múi giờ Asia/Ho_Chi_Minh"),
+      field("exclude_sundays", "boolean", "Có loại trừ Chủ nhật khi sinh nghĩa vụ DAILY hay không"),
+      field("effective_from", "date", "Ngày bắt đầu hiệu lực", {
+        filterable: true,
+        sortable: true,
+      }),
+      field("effective_to", "date", "Ngày kết thúc hiệu lực (null nếu không thời hạn)"),
+      field("state", "string", "Trạng thái giao việc: ACTIVE | PAUSED | REVOKED", {
+        filterable: true,
+        sortable: true,
+      }),
+      field("version", "integer", "Phiên bản bản ghi"),
+      field("created_at", "datetime", "Thời điểm tạo", { sortable: true }),
+      field("obligation_total", "integer", "Tổng số nghĩa vụ đã materialize", {
+        sortable: true,
+      }),
+      field("submitted_count", "integer", "Số nghĩa vụ đã nộp", {
+        sortable: true,
+      }),
+      field("not_started_count", "integer", "Số nghĩa vụ chưa bắt đầu", {
+        sortable: true,
+      }),
+      field("draft_count", "integer", "Số nghĩa vụ đang lưu nháp", {
+        sortable: true,
+      }),
+      field("overdue_count", "integer", "Số nghĩa vụ quá hạn", {
+        sortable: true,
+      }),
+      field("rejected_count", "integer", "Số nghĩa vụ bị từ chối rà soát", {
+        sortable: true,
+      }),
+      field("exempted_count", "integer", "Số nghĩa vụ được miễn trừ", {
+        sortable: true,
+      }),
+      field("cancelled_count", "integer", "Số nghĩa vụ đã hủy", {
+        sortable: true,
+      }),
+      field(
+        "assignee_progress",
+        "json",
+        "Danh sách chi tiết tiến độ nghĩa vụ từng cá nhân (trả về khi lọc theo assignment_id)",
+      ),
+    ],
+    measures: [
+      {
+        name: "total_assignments",
+        type: "integer",
+        label: "Tổng số quy tắc giao báo cáo",
+        formula: "COUNT(*) assignment khớp bộ lọc",
+        description: "Tổng số đợt giao báo cáo.",
+        business_limits: "Tính trên phạm vi toàn miền (hoặc theo team_id nếu lọc).",
+      },
+      {
+        name: "obligation_total_sum",
+        type: "integer",
+        label: "Tổng số nghĩa vụ",
+        formula: "SUM(obligation_total)",
+        description: "Tổng số nghĩa vụ đã sinh của các đợt giao việc khớp bộ lọc.",
+        business_limits: "Chỉ tính các nghĩa vụ đã materialize.",
+      },
+      {
+        name: "submitted_count_sum",
+        type: "integer",
+        label: "Tổng số nghĩa vụ đã nộp",
+        formula: "SUM(submitted_count)",
+        description: "Tổng số nghĩa vụ đã hoàn thành nộp.",
+        business_limits: "Bao gồm COMPLETED, PENDING_REVIEW và APPROVED.",
+      },
+      {
+        name: "overdue_count_sum",
+        type: "integer",
+        label: "Tổng số nghĩa vụ quá hạn",
+        formula: "SUM(overdue_count)",
+        description: "Tổng số nghĩa vụ quá hạn chưa hoàn thành.",
+        business_limits: "Tính theo giờ hạn nộp Asia/Ho_Chi_Minh.",
+      },
+    ],
+    dimensions: [
+      { name: "template", label: "Mẫu báo cáo", description: "Theo mẫu báo cáo.", catalog_dataset: "work_reports_templates" },
+      { name: "target_kind", label: "Loại đối tượng", description: "USER / TEAM / USER_SET / GROUP.", catalog_dataset: null },
+      { name: "state", label: "Trạng thái giao việc", description: "ACTIVE / PAUSED / REVOKED.", catalog_dataset: null },
+    ],
+    filters: [
+      { field: "assignment_id", type: "string", allowed_operators: ["eq"], description: "Lọc theo UUID đợt giao báo cáo (kích hoạt tải chi tiết assignee_progress)." },
+      { field: "template_id", type: "string", allowed_operators: ["eq", "in"], description: "Lọc theo UUID mẫu báo cáo." },
+      { field: "team_id", type: "string", allowed_operators: ["eq"], description: "Lọc theo UUID nhóm tuyển dụng." },
+      { field: "target_kind", type: "string", allowed_operators: ["eq", "in"], description: "Lọc theo loại đối tượng: USER | TEAM | USER_SET | GROUP." },
+      { field: "state", type: "string", allowed_operators: ["eq", "in"], description: "Lọc theo trạng thái: ACTIVE | PAUSED | REVOKED." },
+      { field: "frequency", type: "string", allowed_operators: ["eq", "in"], description: "Lọc theo tần suất: DAILY | WEEKLY | MONTHLY | ONCE." },
+      { field: "search", type: "string", allowed_operators: ["contains", "eq"], description: "Tìm kiếm theo tên/mã mẫu hoặc nhãn đối tượng nhận." },
+    ],
+    allowed_relations: [
+      {
+        target_dataset: "work_reports_templates",
+        local_field: "template_id",
+        target_field: "template_id",
+        cardinality: "many_to_one",
+        description: "Liên kết tới mẫu báo cáo.",
+      },
+    ],
+    pagination: {
+      strategy: "cursor",
+      default_page_size: 50,
+      max_page_size: 200,
+    },
+    business_rules: [
+      "Khi truyền filter assignment_id (eq), adapter sẽ gọi thêm work_report_get_assignment_detail để đính kèm tiến độ từng nghĩa vụ trong trường assignee_progress.",
+    ],
+  },
+  {
+    dataset: "work_reports_submissions",
+    domain: "work_reports",
+    title: "Danh sách Bài nộp Báo cáo Công việc (Work Report Readable Submissions)",
+    description:
+      "Danh sách các bài nộp báo cáo công việc đã nộp (COMPLETED, PENDING_REVIEW, APPROVED, REJECTED) trên toàn miền, bao gồm trạng thái trễ hạn (is_late), chỉnh sửa sau hạn (has_post_deadline_amendment) và số lần sửa (current_revision_no).",
+    grain: "1 dòng trên mỗi bài nộp báo cáo (submission_id / obligation_id).",
+    canonical_source: {
+      name: "public.work_report_list_readable_submissions",
+      kind: "rpc",
+      underlying_objects: [
+        "public.work_report_list_readable_submissions",
+        "public.work_report_submissions",
+        "public.work_report_obligations",
+      ],
+    },
+    supported_modes: ["detail", "both"],
+    default_mode: "detail",
+    time_semantics: {
+      timezone: N8N_BOD_BUSINESS_TIMEZONE,
+      business_date_field: "period_start_date",
+      supports_date_range: true,
+      supports_as_of_date: false,
+      cutoff_date: null,
+      description:
+        "date_range lọc theo ngày bắt đầu kỳ báo cáo (period_start_date, YYYY-MM-DD theo lịch Asia/Ho_Chi_Minh).",
+    },
+    fields: [
+      field("obligation_id", "string", "UUID nghĩa vụ báo cáo", {
+        filterable: true,
+      }),
+      field("submission_id", "string", "UUID bài nộp báo cáo", {
+        filterable: true,
+      }),
+      field("template_id", "string", "UUID mẫu báo cáo", {
+        filterable: true,
+        sortable: true,
+      }),
+      field("template_name", "string", "Tên mẫu báo cáo", { sortable: true }),
+      field("template_version_id", "string", "UUID phiên bản mẫu báo cáo", {
+        filterable: true,
+      }),
+      field("template_version_no", "integer", "Số thứ tự phiên bản mẫu", {
+        sortable: true,
+      }),
+      field("assignee_app_user_id", "string", "UUID người được giao nộp báo cáo", {
+        filterable: true,
+        sortable: true,
+      }),
+      field("assignee_display_name", "string", "Họ tên người nộp báo cáo", {
+        sortable: true,
+      }),
+      field("team_id", "string", "UUID nhóm của người nộp tại kỳ báo cáo", {
+        filterable: true,
+        sortable: true,
+      }),
+      field("team_display_name", "string", "Tên nhóm của người nộp", {
+        sortable: true,
+      }),
+      field("period_key", "string", "Mã kỳ báo cáo (ví dụ 2026-04-20 hoặc 2026-W16)", {
+        filterable: true,
+        sortable: true,
+      }),
+      field("period_start_date", "date", "Ngày bắt đầu kỳ báo cáo (YYYY-MM-DD)", {
+        filterable: true,
+        sortable: true,
+      }),
+      field("period_end_date", "date", "Ngày kết thúc kỳ báo cáo (YYYY-MM-DD)", {
+        sortable: true,
+      }),
+      field("state", "string", "Trạng thái bài nộp: COMPLETED | PENDING_REVIEW | APPROVED | REJECTED", {
+        filterable: true,
+        sortable: true,
+      }),
+      field("latest_submitted_at", "datetime", "Thời điểm nộp gần nhất", {
+        sortable: true,
+      }),
+      field("is_late", "boolean", "Bài nộp bị trễ hạn hay không", {
+        filterable: true,
+        sortable: true,
+      }),
+      field(
+        "has_post_deadline_amendment",
+        "boolean",
+        "Có chỉnh sửa lại sau thời điểm hạn nộp hay không",
+        { filterable: true },
+      ),
+      field("current_revision_no", "integer", "Số lần nộp/cập nhật của bài nộp", {
+        sortable: true,
+      }),
+    ],
+    measures: [
+      {
+        name: "returned_submissions",
+        type: "integer",
+        label: "Số bài nộp trong trang trả về",
+        formula: "COUNT(*) bài nộp trong trang hiện tại",
+        description: "Số dòng bài nộp trả về trong trang hiện tại.",
+        business_limits: "Sử dụng next_cursor để duyệt tiếp nếu has_more = true.",
+      },
+      {
+        name: "late_count",
+        type: "integer",
+        label: "Số bài nộp trễ hạn trong trang",
+        formula: "COUNT(*) FILTER (WHERE is_late = true)",
+        description: "Số bài nộp bị đánh dấu trễ hạn trong tập trả về.",
+        business_limits: "Để xem tổng hợp toàn kỳ, hãy dùng dataset work_reports_analytics.",
+      },
+      {
+        name: "amended_count",
+        type: "integer",
+        label: "Số bài nộp sửa sau hạn trong trang",
+        formula: "COUNT(*) FILTER (WHERE has_post_deadline_amendment = true)",
+        description: "Số bài nộp có chỉnh sửa sau hạn trong tập trả về.",
+        business_limits: "Tính trên trang hiện tại.",
+      },
+    ],
+    dimensions: [
+      { name: "template", label: "Mẫu báo cáo", description: "Theo mẫu báo cáo.", catalog_dataset: "work_reports_templates" },
+      { name: "team", label: "Nhóm", description: "Theo nhóm.", catalog_dataset: "catalog_teams" },
+      { name: "state", label: "Trạng thái bài nộp", description: "COMPLETED / PENDING_REVIEW / APPROVED / REJECTED.", catalog_dataset: null },
+    ],
+    filters: [
+      { field: "template_id", type: "string", allowed_operators: ["eq"], description: "Lọc theo UUID mẫu báo cáo." },
+      { field: "version_id", type: "string", allowed_operators: ["eq"], description: "Lọc theo UUID phiên bản mẫu báo cáo." },
+      { field: "team_id", type: "string", allowed_operators: ["eq"], description: "Lọc theo UUID nhóm." },
+      { field: "assignee_id", type: "string", allowed_operators: ["eq"], description: "Lọc theo UUID người nộp (app_user_id)." },
+      { field: "state", type: "string", allowed_operators: ["eq"], description: "Lọc theo trạng thái: COMPLETED | PENDING_REVIEW | APPROVED | REJECTED." },
+      { field: "is_late", type: "boolean", allowed_operators: ["eq"], description: "Lọc bài nộp trễ hạn (true | false)." },
+    ],
+    allowed_relations: [
+      {
+        target_dataset: "work_reports_templates",
+        local_field: "template_id",
+        target_field: "template_id",
+        cardinality: "many_to_one",
+        description: "Liên kết tới mẫu báo cáo.",
+      },
+      {
+        target_dataset: "catalog_teams",
+        local_field: "team_id",
+        target_field: "team_id",
+        cardinality: "many_to_one",
+        description: "Liên kết tới nhóm tuyển dụng.",
+      },
+    ],
+    pagination: {
+      strategy: "keyset_cursor",
+      default_page_size: 50,
+      max_page_size: 100,
+    },
+    business_rules: [
+      "Không trả payload_json / draft_payload_json thô trong danh sách để bảo đảm giới hạn băng thông và bảo mật nội dung tự do.",
+    ],
+  },
+  {
+    dataset: "work_reports_analytics",
+    domain: "work_reports",
+    title: "Phân tích Tuân thủ & KPI Báo cáo Công việc (Work Report Analytics Overview & Breakdown)",
+    description:
+      "Tổng hợp tỷ lệ hoàn thành báo cáo đúng hạn/trễ hạn/quá hạn, các chỉ số metric số học (sum, avg, min, max) và tỷ lệ trọng số (weighted ratios) của một mẫu báo cáo, kèm bảng phân rã (breakdown) theo nhóm (team), cá nhân (assignee) hoặc kỳ báo cáo (period).",
+    grain: "Summary toàn miền cho template_id + 1 dòng trên mỗi nhóm phân rã (team | assignee | period).",
+    canonical_source: {
+      name: "public.work_report_analytics_overview + public.work_report_analytics_breakdown",
+      kind: "rpc",
+      underlying_objects: [
+        "public.work_report_analytics_overview",
+        "public.work_report_analytics_breakdown",
+        "public.work_report_submission_metric_values",
+      ],
+    },
+    supported_modes: ["aggregate", "detail", "both"],
+    default_mode: "both",
+    time_semantics: {
+      timezone: N8N_BOD_BUSINESS_TIMEZONE,
+      business_date_field: null,
+      supports_date_range: true,
+      supports_as_of_date: false,
+      cutoff_date: null,
+      description:
+        "date_range lọc theo khoảng ngày bắt đầu kỳ báo cáo (period_start_date từ from đến to).",
+    },
+    fields: [
+      field("group_by", "string", "Chiều phân rã: team | assignee | period", {
+        filterable: true,
+      }),
+      field("group_id", "string", "ID của nhóm/cá nhân/kỳ phân rã (null nếu chưa gán nhóm)", {
+        filterable: true,
+        sortable: true,
+      }),
+      field("group_label", "string", "Tên hiển thị của nhóm/cá nhân/kỳ báo cáo", {
+        sortable: true,
+      }),
+      field("due_count", "integer", "Số nghĩa vụ đến hạn", { sortable: true }),
+      field("completed_count", "integer", "Số nghĩa vụ đã hoàn thành", {
+        sortable: true,
+      }),
+      field("on_time_count", "integer", "Số nghĩa vụ nộp đúng hạn", {
+        sortable: true,
+      }),
+      field("late_submitted_count", "integer", "Số nghĩa vụ nộp trễ hạn", {
+        sortable: true,
+      }),
+      field("pending_due_count", "integer", "Số nghĩa vụ chưa tới hạn và chưa nộp", {
+        sortable: true,
+      }),
+      field("overdue_missing_count", "integer", "Số nghĩa vụ đã quá hạn nhưng chưa nộp", {
+        sortable: true,
+      }),
+      field("exempted_count", "integer", "Số nghĩa vụ được miễn trừ", {
+        sortable: true,
+      }),
+      field("pending_review_count", "integer", "Số bài nộp đang chờ duyệt", {
+        sortable: true,
+      }),
+      field("completion_rate", "number", "Tỷ lệ hoàn thành (%)", {
+        sortable: true,
+      }),
+      field(
+        "metrics",
+        "json",
+        "Mảng các chỉ số định lượng đã tổng hợp (metric_key, label, unit, sum_value, avg_value, min_value, max_value, count_valid, missing_value_count)",
+      ),
+    ],
+    measures: [
+      {
+        name: "due_count",
+        type: "integer",
+        label: "Tổng nghĩa vụ tính tuân thủ",
+        formula: "compliance.due_count từ public.work_report_analytics_overview",
+        description: "Tổng số nghĩa vụ thuộc mẫu số tính tỷ lệ hoàn thành.",
+        business_limits: "Không bao gồm nghĩa vụ đã miễn trừ (EXEMPTED) hoặc đã hủy (CANCELLED).",
+      },
+      {
+        name: "completed_count",
+        type: "integer",
+        label: "Tổng nghĩa vụ đã hoàn thành",
+        formula: "compliance.completed_count",
+        description: "Tổng số nghĩa vụ đã hoàn thành theo chế độ finality đã chọn.",
+        business_limits:
+          "Khi finality = 'final' (mặc định), chỉ tính COMPLETED (nếu mẫu không cần duyệt) hoặc APPROVED (nếu mẫu cần duyệt). Khi finality = 'provisional_included', tính thêm PENDING_REVIEW.",
+      },
+      {
+        name: "on_time_count",
+        type: "integer",
+        label: "Số nghĩa vụ hoàn thành đúng hạn",
+        formula: "compliance.on_time_count",
+        description: "Số nghĩa vụ hoàn thành trước hoặc đúng due_at.",
+        business_limits: "Tính theo finality đã chọn.",
+      },
+      {
+        name: "late_submitted_count",
+        type: "integer",
+        label: "Số nghĩa vụ hoàn thành trễ hạn",
+        formula: "compliance.late_submitted_count",
+        description: "Số nghĩa vụ hoàn thành nhưng nộp sau due_at.",
+        business_limits: "Tính theo finality đã chọn.",
+      },
+      {
+        name: "overdue_missing_count",
+        type: "integer",
+        label: "Số nghĩa vụ quá hạn chưa nộp",
+        formula: "compliance.overdue_missing_count",
+        description: "Số nghĩa vụ đã quá hạn mà chưa có bài nộp hợp lệ.",
+        business_limits: "Tính tại thời điểm as_of.",
+      },
+      {
+        name: "completion_rate",
+        type: "number",
+        label: "Tỷ lệ hoàn thành (%)",
+        formula: "ROUND((completed_count::numeric / NULLIF(due_count, 0)) * 100, 2)",
+        description: "Phần trăm nghĩa vụ hoàn thành trên tổng nghĩa vụ đến hạn.",
+        business_limits: "Trả null khi due_count = 0.",
+      },
+    ],
+    dimensions: [
+      { name: "team", label: "Nhóm", description: "Phân rã theo nhóm (group_by = 'team').", catalog_dataset: "catalog_teams" },
+      { name: "assignee", label: "Người được giao", description: "Phân rã theo cá nhân (group_by = 'assignee').", catalog_dataset: null },
+      { name: "period", label: "Kỳ báo cáo", description: "Phân rã theo kỳ (group_by = 'period').", catalog_dataset: null },
+    ],
+    filters: [
+      {
+        field: "template_id",
+        type: "string",
+        allowed_operators: ["eq"],
+        required: true,
+        description: "UUID mẫu báo cáo cần phân tích (BẮT BUỘC — tra cứu từ work_reports_templates).",
+      },
+      { field: "version_id", type: "string", allowed_operators: ["eq"], description: "UUID phiên bản mẫu báo cáo (tùy chọn)." },
+      { field: "team_id", type: "string", allowed_operators: ["eq"], description: "Lọc theo UUID nhóm." },
+      { field: "assignee_id", type: "string", allowed_operators: ["eq"], description: "Lọc theo UUID người nộp." },
+      {
+        field: "group_by",
+        type: "string",
+        allowed_operators: ["eq"],
+        description: "Chiều phân rã dòng chi tiết: 'team' (mặc định) | 'assignee' | 'period'.",
+      },
+      {
+        field: "finality",
+        type: "string",
+        allowed_operators: ["eq"],
+        description: "Chế độ chốt số liệu: 'final' (mặc định) | 'provisional_included'.",
+      },
+    ],
+    allowed_relations: [
+      {
+        target_dataset: "work_reports_templates",
+        local_field: "template_id",
+        target_field: "template_id",
+        cardinality: "many_to_one",
+        description: "Liên kết tới mẫu báo cáo.",
+      },
+    ],
+    pagination: {
+      strategy: "page_cursor",
+      default_page_size: 50,
+      max_page_size: 100,
+    },
+    business_rules: [
+      "Bắt buộc truyền filter template_id (op: 'eq').",
+      "Chỉ cộng gộp các metric cùng compatible_group theo đúng metric_contract_json của mẫu báo cáo.",
     ],
   },
 ]);
+
+const PENDING_DATASETS: readonly N8nPendingDatasetSpec[] = Object.freeze([]);
 
 const DATASET_BY_NAME = new Map<string, N8nDatasetSpec>(
   DATASETS.map((item) => [item.dataset, item]),
@@ -2866,6 +3465,7 @@ export function getN8nBodCatalog(
         "METADATA_ONLY_NO_BULK_MEDIA: Ảnh CCCD, ảnh chân dung, ảnh chấm công và tệp chứng từ tài chính không bao giờ được trả hàng loạt trong /query; chỉ trả các cờ/đếm metadata.",
       multi_query_guidance: [
         "Để trả lời câu hỏi theo tên dự án, nhóm, người tuyển hoặc Vendor khi chưa biết ID, hãy gọi catalog_projects / catalog_teams / catalog_recruiters / catalog_vendors trước để lấy ID chuẩn, sau đó gọi dataset nghiệp vụ.",
+        "Để trả lời câu hỏi về Báo cáo công việc (work_reports), hãy gọi work_reports_templates hoặc work_reports_assignments trước để biết template_id, sau đó gọi work_reports_analytics hoặc work_reports_submissions.",
         "Để trả lời câu hỏi liên domain (ví dụ: so sánh tuyển dụng, lực lượng lao động đang ON và chi phí Vendor của cùng một dự án), hãy thực hiện nhiều truy vấn /query độc lập với cùng project_id rồi tổng hợp theo khóa dự án.",
         "Khi phân tích tài chính Vendor cho BoD, luôn giữ nguyên ngữ cảnh Dự án + Kế toán phụ trách (project_id + responsible_accountant_user_id); tuyệt đối không tự cộng bù trừ số dư dương của kế toán này với số dư âm của kế toán khác.",
       ],
@@ -2923,9 +3523,9 @@ export function getN8nBodCatalog(
       {
         domain: "work_reports",
         title: "Báo cáo công việc (Work Reports)",
-        status: "PENDING_T1A_CONTRACT",
+        status: "ACTIVE",
         description:
-          "Đang chờ T1A hoàn tất thay đổi luồng giao báo cáo và materialize nghĩa vụ; chưa mở adapter trong vòng T1B.",
+          "Danh mục mẫu báo cáo, quy tắc giao báo cáo & nghĩa vụ, danh sách bài nộp toàn miền và phân tích tỷ lệ tuân thủ / KPI theo mẫu báo cáo.",
       },
     ],
     datasets: DATASETS,

@@ -29,7 +29,20 @@ import {
   type VendorFinanceEntryType,
 } from "../../vendor-finance/vendor-finance-contract.ts";
 import { createVendorFinanceRepository } from "../../vendor-finance/vendor-finance-repository.ts";
+import {
+  createAnalyticsRepository,
+  type WorkReportAnalyticsFinality,
+  type WorkReportAnalyticsGroupBy,
+} from "../../work-reports/analytics-repository.ts";
+import { createAssignmentRepository } from "../../work-reports/assignment-repository.ts";
+import {
+  createReportReaderRepository,
+  WORK_REPORT_READABLE_STATES,
+  type WorkReportReadableState,
+} from "../../work-reports/report-reader-repository.ts";
+import { createWorkReportTemplateRepository } from "../../work-reports/template-repository.ts";
 import { createOffboardingReportRepository } from "../../workforce/offboarding-report-repository.ts";
+import { runWithSupabaseAbortSignal } from "../../supabase/server.ts";
 
 import {
   N8N_BOD_READONLY_PRINCIPAL,
@@ -43,6 +56,7 @@ import {
 } from "./catalog.ts";
 import {
   applyResidualFiltersAndSort,
+  decodeN8nCursor,
   encodeN8nCursor,
   findEqFilterBoolean,
   findEqFilterString,
@@ -133,6 +147,7 @@ export type N8nDatasetAdapter = (
   context: {
     actor: N8nInternalActorRef;
     businessDate: string;
+    signal?: AbortSignal;
   },
 ) => Promise<
   | { ok: true; data: N8nAdapterExecutionResult }
@@ -191,6 +206,10 @@ export type N8nDispatcherDependencies = {
   personnelCatalogRepo?: ReturnType<typeof createPersonnelCatalogRepository>;
   vendorCatalogRepo?: ReturnType<typeof createVendorCatalogRepository>;
   laborTypeCatalogRepo?: ReturnType<typeof createLaborTypeCatalogRepository>;
+  workReportTemplateRepo?: ReturnType<typeof createWorkReportTemplateRepository>;
+  workReportAssignmentRepo?: ReturnType<typeof createAssignmentRepository>;
+  workReportReaderRepo?: ReturnType<typeof createReportReaderRepository>;
+  workReportAnalyticsRepo?: ReturnType<typeof createAnalyticsRepository>;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -491,6 +510,14 @@ function createDefaultAdapters(
     deps.vendorCatalogRepo ?? createVendorCatalogRepository();
   const laborTypeCatalogRepo =
     deps.laborTypeCatalogRepo ?? createLaborTypeCatalogRepository();
+  const workReportTemplateRepo =
+    deps.workReportTemplateRepo ?? createWorkReportTemplateRepository();
+  const workReportAssignmentRepo =
+    deps.workReportAssignmentRepo ?? createAssignmentRepository();
+  const workReportReaderRepo =
+    deps.workReportReaderRepo ?? createReportReaderRepository();
+  const workReportAnalyticsRepo =
+    deps.workReportAnalyticsRepo ?? createAnalyticsRepository();
 
   return {
     // -----------------------------------------------------------------------
@@ -1214,10 +1241,6 @@ function createDefaultAdapters(
       const projectId = findEqFilterString(spec.filters, "project_id") ?? "default";
       const nationalId = findEqFilterString(spec.filters, "national_id");
       const displayName = findSearchFilterString(spec.filters, "display_name");
-      const offset =
-        spec.cursor?.kind === "offset" && typeof spec.cursor.offset === "number"
-          ? spec.cursor.offset
-          : 0;
 
       const outcome = await workerEpisodeLookupRepo.lookup({
         auth_subject: actor.auth_subject,
@@ -1225,8 +1248,8 @@ function createDefaultAdapters(
         project_id: projectId,
         display_name: displayName,
         national_id: nationalId,
-        page_size: Math.min(50, spec.page_size),
-        offset,
+        page_size: 50,
+        offset: 0,
       });
 
       if (!outcome.ok) {
@@ -1259,13 +1282,7 @@ function createDefaultAdapters(
 
       const pushed = new Set(["project_id", "national_id", "display_name"]);
       const filteredRows = applyResidualFiltersAndSort(rawRows, spec, pushed);
-      const nextCursor = outcome.data.has_more
-        ? encodeN8nCursor({
-            dataset: spec.dataset,
-            kind: "offset",
-            offset: offset + outcome.data.page_size,
-          })
-        : null;
+      const paged = paginateInMemoryRows(filteredRows, spec);
 
       return {
         ok: true,
@@ -1276,12 +1293,12 @@ function createDefaultAdapters(
             match_mode: outcome.data.match,
             project_id: outcome.data.project_id,
             matched_worker_count: outcome.data.workers.length,
-            returned_episode_count: filteredRows.length,
+            returned_episode_count: paged.slice.length,
           },
-          rows: filteredRows,
-          has_more: outcome.data.has_more,
-          next_cursor: nextCursor,
-          total_matching: filteredRows.length,
+          rows: paged.slice,
+          has_more: paged.has_more,
+          next_cursor: paged.next_cursor,
+          total_matching: paged.total_matching,
         },
       };
     },
@@ -2498,24 +2515,458 @@ function createDefaultAdapters(
         },
       };
     },
+
+    // -----------------------------------------------------------------------
+    // 8. WORK REPORTS (Báo cáo công việc)
+    // -----------------------------------------------------------------------
+    async work_reports_templates(spec, { actor, businessDate }) {
+      const outcome = await workReportTemplateRepo.list(actor);
+      if (!outcome.ok) {
+        return {
+          ok: false,
+          status: outcome.kind === "invalid" ? 400 : 503,
+          code: `WORK_REPORT_TEMPLATES_${outcome.kind.toUpperCase()}`,
+          message: "Không thể truy vấn danh mục mẫu báo cáo công việc.",
+        };
+      }
+
+      const search = findSearchFilterString(spec.filters, "search")?.toLowerCase();
+      let rawRows: Record<string, unknown>[] = outcome.data.map((tpl) => ({
+        template_id: tpl.template_id,
+        template_code: tpl.template_code,
+        display_name: tpl.display_name,
+        description: tpl.description,
+        default_frequency: tpl.default_frequency,
+        status: tpl.status,
+        current_published_version_id: tpl.current_published_version_id,
+        draft_version_id: tpl.draft_version_id,
+        version: tpl.version,
+        updated_at: tpl.updated_at,
+      }));
+
+      if (search) {
+        rawRows = rawRows.filter(
+          (r) =>
+            String(r.template_code).toLowerCase().includes(search) ||
+            String(r.display_name).toLowerCase().includes(search) ||
+            String(r.description ?? "").toLowerCase().includes(search),
+        );
+      }
+
+      const pushed = new Set(["search"]);
+      const filteredRows = applyResidualFiltersAndSort(rawRows, spec, pushed);
+      const paged = paginateInMemoryRows(filteredRows, spec);
+      const activeCount = filteredRows.filter(
+        (r) => r.status === "ACTIVE",
+      ).length;
+
+      return {
+        ok: true,
+        data: {
+          as_of_date: businessDate,
+          date_range: { from: null, to: null },
+          summary: {
+            total_templates: filteredRows.length,
+            active_templates: activeCount,
+          },
+          rows: paged.slice,
+          has_more: paged.has_more,
+          next_cursor: paged.next_cursor,
+          total_matching: paged.total_matching,
+        },
+      };
+    },
+
+    async work_reports_assignments(spec, { actor, businessDate }) {
+      const teamId = findEqFilterString(spec.filters, "team_id");
+      const assignmentId = findEqFilterString(spec.filters, "assignment_id");
+
+      const outcome = await workReportAssignmentRepo.listAssignments({
+        auth_subject: actor.auth_subject,
+        app_user_id: actor.app_user_id,
+        team_id: teamId,
+      });
+
+      if (!outcome.ok) {
+        return {
+          ok: false,
+          status:
+            outcome.kind === "not-found"
+              ? 404
+              : outcome.kind === "invalid"
+                ? 400
+                : 503,
+          code: `WORK_REPORT_ASSIGNMENTS_${outcome.kind.toUpperCase()}`,
+          message: "Không thể truy vấn danh sách giao báo cáo công việc.",
+        };
+      }
+
+      let detailByAssignmentId = new Map<string, readonly unknown[]>();
+      if (assignmentId && workReportAssignmentRepo.getAssignmentDetail) {
+        const detailRes = await workReportAssignmentRepo.getAssignmentDetail({
+          auth_subject: actor.auth_subject,
+          app_user_id: actor.app_user_id,
+          assignment_id: assignmentId,
+        });
+        if (detailRes.ok) {
+          detailByAssignmentId = new Map([
+            [detailRes.data.assignment_id, detailRes.data.assignee_progress],
+          ]);
+        }
+      }
+
+      const search = findSearchFilterString(spec.filters, "search")?.toLowerCase();
+      let rawRows: Record<string, unknown>[] = outcome.data.map((item) => ({
+        assignment_id: item.assignment_id,
+        template_id: item.template_id,
+        template_code: item.template_code,
+        template_name: item.template_name,
+        target_kind: item.target_kind,
+        target_group_id: item.target_group_id ?? null,
+        target_label: item.target_label,
+        target_member_count: item.target_member_count ?? null,
+        frequency: item.frequency,
+        is_mandatory: item.is_mandatory,
+        due_day_offset: item.due_day_offset ?? null,
+        due_time_local: item.due_time_local ?? null,
+        exclude_sundays: item.exclude_sundays ?? null,
+        effective_from: item.effective_from,
+        effective_to: item.effective_to,
+        state: item.state,
+        version: item.version,
+        created_at: item.created_at,
+        obligation_total: item.obligation_total,
+        submitted_count: item.submitted_count,
+        not_started_count: item.not_started_count,
+        draft_count: item.draft_count,
+        overdue_count: item.overdue_count ?? 0,
+        rejected_count: item.rejected_count ?? 0,
+        exempted_count: item.exempted_count,
+        cancelled_count: item.cancelled_count,
+        assignee_progress:
+          detailByAssignmentId.get(item.assignment_id) ??
+          item.assignee_progress ??
+          null,
+      }));
+
+      if (search) {
+        rawRows = rawRows.filter(
+          (r) =>
+            String(r.template_code).toLowerCase().includes(search) ||
+            String(r.template_name).toLowerCase().includes(search) ||
+            String(r.target_label).toLowerCase().includes(search),
+        );
+      }
+
+      const pushed = new Set(["team_id", "search"]);
+      const filteredRows = applyResidualFiltersAndSort(rawRows, spec, pushed);
+      const paged = paginateInMemoryRows(filteredRows, spec);
+
+      let obligationTotalSum = 0;
+      let submittedCountSum = 0;
+      let overdueCountSum = 0;
+      for (const r of filteredRows) {
+        obligationTotalSum += Number(r.obligation_total ?? 0);
+        submittedCountSum += Number(r.submitted_count ?? 0);
+        overdueCountSum += Number(r.overdue_count ?? 0);
+      }
+
+      return {
+        ok: true,
+        data: {
+          as_of_date: businessDate,
+          date_range: spec.date_range ?? { from: null, to: null },
+          summary: {
+            total_assignments: filteredRows.length,
+            obligation_total_sum: obligationTotalSum,
+            submitted_count_sum: submittedCountSum,
+            overdue_count_sum: overdueCountSum,
+          },
+          rows: paged.slice,
+          has_more: paged.has_more,
+          next_cursor: paged.next_cursor,
+          total_matching: paged.total_matching,
+        },
+      };
+    },
+
+    async work_reports_submissions(spec, { actor, businessDate }) {
+      const cursorToken =
+        spec.cursor?.kind === "token" ? (spec.cursor.token ?? null) : null;
+      const stateRaw = findEqFilterString(spec.filters, "state")?.toUpperCase();
+      const stateFilter: WorkReportReadableState | null =
+        stateRaw &&
+        (WORK_REPORT_READABLE_STATES as readonly string[]).includes(stateRaw)
+          ? (stateRaw as WorkReportReadableState)
+          : null;
+
+      const outcome = await workReportReaderRepo.listReadable({
+        auth_subject: actor.auth_subject,
+        app_user_id: actor.app_user_id,
+        template_id: findEqFilterString(spec.filters, "template_id"),
+        version_id:
+          findEqFilterString(spec.filters, "version_id") ??
+          findEqFilterString(spec.filters, "template_version_id"),
+        from: spec.date_range?.from ?? null,
+        to: spec.date_range?.to ?? null,
+        team_id: findEqFilterString(spec.filters, "team_id"),
+        assignee_id:
+          findEqFilterString(spec.filters, "assignee_id") ??
+          findEqFilterString(spec.filters, "assignee_app_user_id"),
+        state: stateFilter,
+        cursor: cursorToken,
+        limit: Math.min(100, spec.page_size),
+      });
+
+      if (!outcome.ok) {
+        return {
+          ok: false,
+          status:
+            outcome.kind === "not-found"
+              ? 404
+              : outcome.kind === "invalid"
+                ? 400
+                : 503,
+          code: `WORK_REPORT_SUBMISSIONS_${outcome.kind.toUpperCase()}`,
+          message: "Không thể truy vấn danh sách bài nộp báo cáo công việc.",
+        };
+      }
+
+      const rawRows: Record<string, unknown>[] = outcome.data.items.map(
+        (item) => ({
+          obligation_id: item.obligation_id,
+          submission_id: item.submission_id,
+          template_id: item.template_id,
+          template_name: item.template_name,
+          template_version_id: item.template_version_id,
+          template_version_no: item.template_version_no,
+          assignee_app_user_id: item.assignee_app_user_id,
+          assignee_display_name: item.assignee_display_name,
+          team_id: item.team_id,
+          team_display_name: item.team_display_name,
+          period_key: item.period_key,
+          period_start_date: item.period_start_date,
+          period_end_date: item.period_end_date,
+          state: item.state,
+          latest_submitted_at: item.latest_submitted_at,
+          is_late: item.is_late,
+          has_post_deadline_amendment: item.has_post_deadline_amendment,
+          current_revision_no: item.current_revision_no,
+        }),
+      );
+
+      const pushed = new Set([
+        "template_id",
+        "version_id",
+        "template_version_id",
+        "team_id",
+        "assignee_id",
+        "assignee_app_user_id",
+        "state",
+        "period_start_date",
+      ]);
+      const filteredRows = applyResidualFiltersAndSort(rawRows, spec, pushed);
+      const lateCount = filteredRows.filter((r) => r.is_late === true).length;
+      const amendedCount = filteredRows.filter(
+        (r) => r.has_post_deadline_amendment === true,
+      ).length;
+
+      const nextCursor =
+        outcome.data.has_more && outcome.data.next_cursor
+          ? encodeN8nCursor({
+              dataset: spec.dataset,
+              kind: "token",
+              token: outcome.data.next_cursor,
+            })
+          : null;
+
+      return {
+        ok: true,
+        data: {
+          as_of_date: spec.date_range?.to ?? businessDate,
+          date_range: spec.date_range ?? { from: null, to: null },
+          summary: {
+            effective_scope: outcome.data.effective_scope,
+            returned_submissions: filteredRows.length,
+            late_count: lateCount,
+            amended_count: amendedCount,
+          },
+          rows: filteredRows,
+          has_more: outcome.data.has_more,
+          next_cursor: nextCursor,
+          total_matching: null,
+        },
+      };
+    },
+
+    async work_reports_analytics(spec, { actor, businessDate }) {
+      const templateId = findEqFilterString(spec.filters, "template_id");
+      if (!templateId) {
+        return {
+          ok: false,
+          status: 400,
+          code: "MISSING_REQUIRED_FILTER",
+          message: "Bắt buộc truyền filter template_id.",
+        };
+      }
+
+      const groupByRaw =
+        findEqFilterString(spec.filters, "group_by")?.toLowerCase() ?? "team";
+      const groupBy: WorkReportAnalyticsGroupBy =
+        groupByRaw === "team" ||
+        groupByRaw === "assignee" ||
+        groupByRaw === "period"
+          ? groupByRaw
+          : "team";
+
+      const finalityRaw =
+        findEqFilterString(spec.filters, "finality")?.toLowerCase() ?? "final";
+      const finality: WorkReportAnalyticsFinality =
+        finalityRaw === "provisional_included"
+          ? "provisional_included"
+          : "final";
+
+      const page =
+        spec.cursor?.kind === "page" && spec.cursor.page ? spec.cursor.page : 1;
+      const pageSize = Math.min(100, spec.page_size);
+
+      const commonInput = {
+        auth_subject: actor.auth_subject,
+        app_user_id: actor.app_user_id,
+        template_id: templateId,
+        version_id: findEqFilterString(spec.filters, "version_id"),
+        from: spec.date_range?.from ?? null,
+        to: spec.date_range?.to ?? null,
+        team_id: findEqFilterString(spec.filters, "team_id"),
+        assignee_id: findEqFilterString(spec.filters, "assignee_id"),
+        finality,
+      };
+
+      const [overviewRes, breakdownRes] = await Promise.all([
+        workReportAnalyticsRepo.overview(commonInput),
+        workReportAnalyticsRepo.breakdown({
+          ...commonInput,
+          group_by: groupBy,
+          page,
+          page_size: pageSize,
+        }),
+      ]);
+
+      if (!overviewRes.ok) {
+        return {
+          ok: false,
+          status:
+            overviewRes.kind === "not-found"
+              ? 404
+              : overviewRes.kind === "invalid"
+                ? 400
+                : 503,
+          code: `WORK_REPORT_ANALYTICS_OVERVIEW_${overviewRes.kind.toUpperCase()}`,
+          message: "Không thể truy vấn tổng quan phân tích báo cáo công việc.",
+        };
+      }
+
+      if (!breakdownRes.ok) {
+        return {
+          ok: false,
+          status:
+            breakdownRes.kind === "not-found"
+              ? 404
+              : breakdownRes.kind === "invalid"
+                ? 400
+                : 503,
+          code: `WORK_REPORT_ANALYTICS_BREAKDOWN_${breakdownRes.kind.toUpperCase()}`,
+          message: "Không thể truy vấn bảng phân rã báo cáo công việc.",
+        };
+      }
+
+      const rawRows: Record<string, unknown>[] = breakdownRes.data.items.map(
+        (item) => ({
+          group_by: breakdownRes.data.group_by,
+          group_id: item.group_id,
+          group_label: item.group_label,
+          due_count: item.due_count,
+          completed_count: item.completed_count,
+          on_time_count: item.on_time_count,
+          late_submitted_count: item.late_submitted_count,
+          pending_due_count: item.pending_due_count,
+          overdue_missing_count: item.overdue_missing_count,
+          exempted_count: item.exempted_count,
+          pending_review_count: item.pending_review_count,
+          completion_rate: item.completion_rate,
+          metrics: item.metrics,
+        }),
+      );
+
+      const pushed = new Set([
+        "template_id",
+        "version_id",
+        "team_id",
+        "assignee_id",
+        "group_by",
+        "finality",
+      ]);
+      const filteredRows = applyResidualFiltersAndSort(rawRows, spec, pushed);
+      const hasMore = page * pageSize < breakdownRes.data.total_groups;
+      const nextCursor = hasMore
+        ? encodeN8nCursor({
+            dataset: spec.dataset,
+            kind: "page",
+            page: page + 1,
+          })
+        : null;
+
+      return {
+        ok: true,
+        data: {
+          as_of_date: overviewRes.data.as_of.slice(0, 10) || businessDate,
+          date_range: spec.date_range ?? { from: null, to: null },
+          summary: {
+            as_of: overviewRes.data.as_of,
+            effective_scope: overviewRes.data.effective_scope,
+            template_id: templateId,
+            finality,
+            group_by: groupBy,
+            total_groups: breakdownRes.data.total_groups,
+            ...overviewRes.data.compliance,
+            metrics: overviewRes.data.metrics,
+            ratios: overviewRes.data.ratios ?? [],
+          },
+          rows: filteredRows,
+          has_more: hasMore,
+          next_cursor: nextCursor,
+          total_matching: breakdownRes.data.total_groups,
+        },
+      };
+    },
   };
 }
 
 function withTimeout<T>(
   promise: Promise<T>,
   timeoutMs: number,
+  abortController: AbortController,
 ): Promise<{ timedOut: false; value: T } | { timedOut: true }> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
+      abortController.abort(new DOMException("Query timed out", "TimeoutError"));
       resolve({ timedOut: true });
     }, timeoutMs);
     promise.then(
       (value) => {
         clearTimeout(timer);
+        if (abortController.signal.aborted) {
+          resolve({ timedOut: true });
+          return;
+        }
         resolve({ timedOut: false, value });
       },
       (err) => {
         clearTimeout(timer);
+        if (abortController.signal.aborted) {
+          resolve({ timedOut: true });
+          return;
+        }
         reject(err);
       },
     );
@@ -2550,39 +3001,6 @@ export async function dispatchN8nBodQuery(
   const now = deps.now ? deps.now() : new Date();
   const businessDate = currentHoChiMinhBusinessDate(now);
 
-  // Resolve internal actor for RPC calls (not needed for data_quality_pipeline or recruitment_legacy_summary,
-  // but resolved uniformly unless dataset doesn't require actor).
-  const datasetsWithoutRpcActor = new Set([
-    "recruitment_legacy_summary",
-    "data_quality_pipeline",
-  ]);
-
-  let actor: N8nInternalActorRef = {
-    auth_subject: "00000000-0000-4000-8000-000000000000",
-    app_user_id: "00000000-0000-4000-8000-000000000000",
-  };
-
-  if (!datasetsWithoutRpcActor.has(spec.dataset)) {
-    const actorResolver =
-      deps.resolveActor ?? (() => resolveN8nBodServiceActor());
-    const actorResolution = await actorResolver();
-    if (!actorResolution.ok) {
-      return {
-        status: 503,
-        body: {
-          ok: false,
-          catalog_version: N8N_BOD_CATALOG_VERSION,
-          principal: N8N_BOD_READONLY_PRINCIPAL,
-          error: {
-            code: actorResolution.code,
-            message: actorResolution.message,
-          },
-        },
-      };
-    }
-    actor = actorResolution.actor;
-  }
-
   const adapters = {
     ...createDefaultAdapters(deps),
     ...(deps.customAdapters ?? {}),
@@ -2604,13 +3022,58 @@ export async function dispatchN8nBodQuery(
     };
   }
 
+  // When resuming a previously truncated page/token batch (sub_offset > 0),
+  // preserve the backend batch_page_size so batch boundaries remain identical.
+  const batchPageSize = spec.cursor?.batch_page_size ?? spec.page_size;
+  const effectiveSpec: ValidatedN8nQuerySpec =
+    batchPageSize !== spec.page_size
+      ? { ...spec, page_size: batchPageSize }
+      : spec;
+
   const timeoutMs = deps.timeoutMs ?? DEFAULT_N8N_QUERY_TIMEOUT_MS;
-  let executionOutcome: Awaited<ReturnType<N8nDatasetAdapter>>;
+  const abortController = new AbortController();
+  const actorResolver =
+    deps.resolveActor ?? (() => resolveN8nBodServiceActor());
+
+  type TimedPipelineResult =
+    | {
+        stage: "actor_failed";
+        code: string;
+        message: string;
+      }
+    | {
+        stage: "executed";
+        outcome: Awaited<ReturnType<N8nDatasetAdapter>>;
+      };
+
+  let pipelineResult: TimedPipelineResult;
   try {
     const timed = await withTimeout(
-      adapter(spec, { actor, businessDate }),
+      Promise.resolve(
+        runWithSupabaseAbortSignal(abortController.signal, async () => {
+          const actorResolution = await actorResolver();
+          if (!actorResolution.ok) {
+            return {
+              stage: "actor_failed" as const,
+              code: actorResolution.code,
+              message: actorResolution.message,
+            };
+          }
+          const outcome = await adapter(effectiveSpec, {
+            actor: actorResolution.actor,
+            businessDate,
+            signal: abortController.signal,
+          });
+          return {
+            stage: "executed" as const,
+            outcome,
+          };
+        }),
+      ),
       timeoutMs,
+      abortController,
     );
+
     if (timed.timedOut) {
       return {
         status: 504,
@@ -2620,12 +3083,12 @@ export async function dispatchN8nBodQuery(
           principal: N8N_BOD_READONLY_PRINCIPAL,
           error: {
             code: "QUERY_TIMEOUT",
-            message: `Truy vấn vượt quá giới hạn thời gian (${timeoutMs}ms). Hãy thu hẹp khoảng ngày hoặc giảm page_size.`,
+            message: `Truy vấn vượt quá giới hạn thời gian (${timeoutMs}ms) và đã bị hủy ở tầng gọi dữ liệu. Hãy thu hẹp khoảng ngày hoặc giảm page_size.`,
           },
         },
       };
     }
-    executionOutcome = timed.value;
+    pipelineResult = timed.value;
   } catch {
     return {
       status: 503,
@@ -2641,6 +3104,22 @@ export async function dispatchN8nBodQuery(
     };
   }
 
+  if (pipelineResult.stage === "actor_failed") {
+    return {
+      status: 503,
+      body: {
+        ok: false,
+        catalog_version: N8N_BOD_CATALOG_VERSION,
+        principal: N8N_BOD_READONLY_PRINCIPAL,
+        error: {
+          code: pipelineResult.code,
+          message: pipelineResult.message,
+        },
+      },
+    };
+  }
+
+  const executionOutcome = pipelineResult.outcome;
   if (!executionOutcome.ok) {
     return {
       status: executionOutcome.status,
@@ -2658,86 +3137,207 @@ export async function dispatchN8nBodQuery(
   }
 
   const data = executionOutcome.data;
-  let projectedRows = projectAndRedactRows(data.rows, spec);
-  let hasMore = data.has_more;
-  let nextCursor = data.next_cursor;
-  const warnings = [...(data.warnings ?? [])];
+  const decodedAdapterNextCursor = data.next_cursor
+    ? decodeN8nCursor(data.next_cursor, spec.dataset)
+    : null;
 
-  // Enforce response payload ceiling (MAX_N8N_RESPONSE_BYTES)
-  const projectedJsonBytes = Buffer.byteLength(
-    JSON.stringify(projectedRows),
+  const effectiveCursorKind: "offset" | "page" | "token" =
+    spec.cursor?.kind ??
+    decodedAdapterNextCursor?.kind ??
+    (spec.datasetSpec.pagination.strategy === "page_cursor"
+      ? "page"
+      : spec.datasetSpec.pagination.strategy === "keyset_cursor"
+        ? "token"
+        : "offset");
+
+  const baseOffset =
+    spec.cursor?.kind === "offset" && typeof spec.cursor.offset === "number"
+      ? spec.cursor.offset
+      : 0;
+  const currentPage =
+    spec.cursor?.kind === "page" && typeof spec.cursor.page === "number"
+      ? spec.cursor.page
+      : 1;
+  const currentToken =
+    spec.cursor?.kind === "token" ? (spec.cursor.token ?? null) : null;
+  const currentSubOffset =
+    effectiveCursorKind === "offset" ? 0 : (spec.cursor?.sub_offset ?? 0);
+
+  const remainingBatchRows =
+    currentSubOffset > 0 ? data.rows.slice(currentSubOffset) : data.rows;
+  const candidateRows = remainingBatchRows.slice(0, spec.page_size);
+  const fullProjectedRows = projectAndRedactRows(candidateRows, spec);
+  const baseWarnings = [...(data.warnings ?? [])];
+  const filteredSummary = filterSummaryMeasures(data.summary, spec);
+
+  const computePaginationForKeepCount = (
+    keepCount: number,
+  ): { hasMore: boolean; nextCursor: string | null } => {
+    const cutBeforeEndOfBatch = keepCount < remainingBatchRows.length;
+    if (!cutBeforeEndOfBatch) {
+      return {
+        hasMore: data.has_more,
+        nextCursor: data.next_cursor,
+      };
+    }
+    if (effectiveCursorKind === "page") {
+      return {
+        hasMore: true,
+        nextCursor: encodeN8nCursor({
+          dataset: spec.dataset,
+          kind: "page",
+          page: currentPage,
+          sub_offset: currentSubOffset + keepCount,
+          batch_page_size: batchPageSize,
+        }),
+      };
+    }
+    if (effectiveCursorKind === "token") {
+      return {
+        hasMore: true,
+        nextCursor: encodeN8nCursor({
+          dataset: spec.dataset,
+          kind: "token",
+          token: currentToken,
+          sub_offset: currentSubOffset + keepCount,
+          batch_page_size: batchPageSize,
+        }),
+      };
+    }
+    return {
+      hasMore: true,
+      nextCursor: encodeN8nCursor({
+        dataset: spec.dataset,
+        kind: "offset",
+        offset: baseOffset + keepCount,
+      }),
+    };
+  };
+
+  const buildEnvelope = (
+    rowsSlice: readonly Record<string, unknown>[],
+    hasMoreVal: boolean,
+    nextCursorVal: string | null,
+    warningsList: readonly string[],
+  ): N8nQuerySuccessEnvelope => {
+    const completenessStatus: N8nCompletenessStatus = data.degraded
+      ? "DEGRADED"
+      : rowsSlice.length === 0 && spec.mode !== "aggregate"
+        ? "EMPTY"
+        : hasMoreVal
+          ? "PARTIAL"
+          : "COMPLETE";
+
+    return {
+      ok: true,
+      catalog_version: N8N_BOD_CATALOG_VERSION,
+      principal: N8N_BOD_READONLY_PRINCIPAL,
+      dataset: spec.dataset,
+      domain: spec.datasetSpec.domain,
+      mode: spec.mode,
+      source: {
+        canonical_name: spec.datasetSpec.canonical_source.name,
+        kind: spec.datasetSpec.canonical_source.kind,
+        cutoff_date: spec.datasetSpec.time_semantics.cutoff_date,
+        subledger_grain:
+          spec.datasetSpec.canonical_source.subledger_grain ?? null,
+      },
+      generated_at: now.toISOString(),
+      business_timezone: N8N_BOD_BUSINESS_TIMEZONE,
+      as_of_date: data.as_of_date,
+      date_range: data.date_range,
+      completeness: {
+        status: completenessStatus,
+        is_complete: !hasMoreVal && !data.degraded,
+        missing_or_warnings: warningsList,
+        notes: data.notes ?? [],
+      },
+      summary: filteredSummary,
+      row_count: rowsSlice.length,
+      rows: rowsSlice,
+      pagination: {
+        page_size: spec.page_size,
+        has_more: hasMoreVal,
+        next_cursor: nextCursorVal,
+        total_matching: data.total_matching,
+      },
+      sensitivity: {
+        requested_sensitive_fields: spec.requestedSensitiveFields,
+        redacted_sensitive_fields: spec.redactedSensitiveFields,
+        media_policy: "METADATA_ONLY_NO_BULK_MEDIA",
+      },
+    };
+  };
+
+  const initialPagination = computePaginationForKeepCount(
+    fullProjectedRows.length,
+  );
+  let finalEnvelope = buildEnvelope(
+    fullProjectedRows,
+    initialPagination.hasMore,
+    initialPagination.nextCursor,
+    baseWarnings,
+  );
+
+  const serializedBytes = Buffer.byteLength(
+    JSON.stringify(finalEnvelope),
     "utf8",
   );
-  if (projectedJsonBytes > MAX_N8N_RESPONSE_BYTES / 2 && projectedRows.length > 1) {
-    const safeCount = Math.max(
-      1,
-      Math.floor(
-        (projectedRows.length * (MAX_N8N_RESPONSE_BYTES / 2)) /
-          projectedJsonBytes,
-      ),
-    );
-    projectedRows = projectedRows.slice(0, safeCount);
-    hasMore = true;
-    nextCursor ??= encodeN8nCursor({
-      dataset: spec.dataset,
-      kind: "offset",
-      offset: safeCount,
-    });
-    warnings.push(
-      "Kết quả đã được cắt theo giới hạn kích thước trang phản hồi; hãy dùng next_cursor để lấy tiếp.",
-    );
+
+  // Enforce strict 1 MiB (MAX_N8N_RESPONSE_BYTES) limit on the ENTIRE JSON envelope.
+  if (serializedBytes > MAX_N8N_RESPONSE_BYTES) {
+    const truncationWarning =
+      "Kết quả đã được cắt theo giới hạn kích thước phản hồi (1 MiB); hãy dùng next_cursor để lấy tiếp ngay sau dòng cuối cùng đã trả.";
+    const truncatedWarnings = [...baseWarnings, truncationWarning];
+
+    let bestEnvelope: N8nQuerySuccessEnvelope | null = null;
+    if (fullProjectedRows.length > 1) {
+      let low = 1;
+      let high = fullProjectedRows.length - 1;
+      while (low <= high) {
+        const mid = Math.floor((low + high) / 2);
+        const pag = computePaginationForKeepCount(mid);
+        const candidateEnv = buildEnvelope(
+          fullProjectedRows.slice(0, mid),
+          pag.hasMore,
+          pag.nextCursor,
+          truncatedWarnings,
+        );
+        const bytes = Buffer.byteLength(JSON.stringify(candidateEnv), "utf8");
+        if (bytes <= MAX_N8N_RESPONSE_BYTES) {
+          bestEnvelope = candidateEnv;
+          low = mid + 1;
+        } else {
+          high = mid - 1;
+        }
+      }
+    }
+
+    if (bestEnvelope) {
+      finalEnvelope = bestEnvelope;
+    } else {
+      // Even a single row (or summary alone) exceeds 1 MiB — fail closed with a compact 413 error envelope.
+      return {
+        status: 413,
+        body: {
+          ok: false,
+          catalog_version: N8N_BOD_CATALOG_VERSION,
+          principal: N8N_BOD_READONLY_PRINCIPAL,
+          error: {
+            code: "RESPONSE_TOO_LARGE",
+            message: `Phản hồi JSON vượt quá giới hạn ${MAX_N8N_RESPONSE_BYTES} bytes (1 MiB) ngay cả khi giảm về tối thiểu 1 dòng. Hãy chỉ định danh sách fields/measures gọn hơn hoặc dùng mode phù hợp.`,
+            details: {
+              dataset: spec.dataset,
+              max_response_bytes: MAX_N8N_RESPONSE_BYTES,
+            },
+          },
+        },
+      };
+    }
   }
-
-  const completenessStatus: N8nCompletenessStatus = data.degraded
-    ? "DEGRADED"
-    : projectedRows.length === 0 && spec.mode !== "aggregate"
-      ? "EMPTY"
-      : hasMore
-        ? "PARTIAL"
-        : "COMPLETE";
-
-  const envelope: N8nQuerySuccessEnvelope = {
-    ok: true,
-    catalog_version: N8N_BOD_CATALOG_VERSION,
-    principal: N8N_BOD_READONLY_PRINCIPAL,
-    dataset: spec.dataset,
-    domain: spec.datasetSpec.domain,
-    mode: spec.mode,
-    source: {
-      canonical_name: spec.datasetSpec.canonical_source.name,
-      kind: spec.datasetSpec.canonical_source.kind,
-      cutoff_date: spec.datasetSpec.time_semantics.cutoff_date,
-      subledger_grain:
-        spec.datasetSpec.canonical_source.subledger_grain ?? null,
-    },
-    generated_at: now.toISOString(),
-    business_timezone: N8N_BOD_BUSINESS_TIMEZONE,
-    as_of_date: data.as_of_date,
-    date_range: data.date_range,
-    completeness: {
-      status: completenessStatus,
-      is_complete: !hasMore && !data.degraded,
-      missing_or_warnings: warnings,
-      notes: data.notes ?? [],
-    },
-    summary: filterSummaryMeasures(data.summary, spec),
-    row_count: projectedRows.length,
-    rows: projectedRows,
-    pagination: {
-      page_size: spec.page_size,
-      has_more: hasMore,
-      next_cursor: nextCursor,
-      total_matching: data.total_matching,
-    },
-    sensitivity: {
-      requested_sensitive_fields: spec.requestedSensitiveFields,
-      redacted_sensitive_fields: spec.redactedSensitiveFields,
-      media_policy: "METADATA_ONLY_NO_BULK_MEDIA",
-    },
-  };
 
   return {
     status: 200,
-    body: envelope,
+    body: finalEnvelope,
   };
 }

@@ -8,10 +8,15 @@ import {
   resolveN8nBodServiceActor,
 } from "./auth.ts";
 import { N8N_BOD_CATALOG_VERSION } from "./catalog.ts";
+import { MAX_N8N_RESPONSE_BYTES } from "./dispatcher.ts";
 import {
   handleN8nBodCatalogGet,
   handleN8nBodQueryPost,
 } from "./http-handlers.ts";
+import {
+  createAbortAwareFetch,
+  runWithSupabaseAbortSignal,
+} from "../../supabase/server.ts";
 
 const VALID_API_KEY = "n8n_bod_secret_token_for_unit_test_1234567890";
 const TEST_ENV = {
@@ -109,62 +114,81 @@ test("authenticateN8nBodRequest enforces dedicated Bearer secret and rejects for
   assert.equal(okRes.principal.scope, "all");
 });
 
-test("resolveN8nBodServiceActor supports explicit env and auto-discovers full-admin actor", async () => {
+test("resolveN8nBodServiceActor requires explicit N8N_BOD_READONLY_AUTH_SUBJECT and verifies all scope via RPC", async () => {
   clearN8nServiceActorCache();
-  const explicit = await resolveN8nBodServiceActor({ env: TEST_ENV });
-  assert.equal(explicit.ok, true);
-  assert.deepEqual(explicit.actor, TEST_ACTOR);
 
-  clearN8nServiceActorCache();
-  const discovered = await resolveN8nBodServiceActor({
+  // 1. Missing explicit authSubject must fail closed (no 600-account scan)
+  const missingSubject = await resolveN8nBodServiceActor({
     env: { apiKey: VALID_API_KEY },
-    listAuthUserIds: async () => [
-      "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-      "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-    ],
+    resolveActorContextRpc: async () => {
+      throw new Error("Should not be called when authSubject is missing");
+    },
+  });
+  assert.equal(missingSubject.ok, false);
+  assert.equal(missingSubject.code, "SERVICE_PRINCIPAL_ACTOR_UNAVAILABLE");
+
+  // 2. Explicit authSubject + appUserId WITHOUT all_scope_grants must be rejected
+  clearN8nServiceActorCache();
+  const nonAllScope = await resolveN8nBodServiceActor({
+    env: TEST_ENV,
+    resolveActorContextRpc: async (authSubject) => ({
+      data: {
+        auth_subject: authSubject,
+        app_user_id: TEST_ENV.appUserId,
+        enabled: true,
+        capabilities: ["entry_own"],
+        all_scope_grants: [],
+      },
+      error: null,
+    }),
+  });
+  assert.equal(nonAllScope.ok, false);
+  assert.equal(nonAllScope.code, "SERVICE_PRINCIPAL_ACTOR_UNAVAILABLE");
+
+  // 3. Explicit authSubject + mismatched appUserId must be rejected
+  clearN8nServiceActorCache();
+  const mismatchedAppUser = await resolveN8nBodServiceActor({
+    env: TEST_ENV,
+    resolveActorContextRpc: async (authSubject) => ({
+      data: {
+        auth_subject: authSubject,
+        app_user_id: "99999999-9999-4999-8999-999999999999",
+        enabled: true,
+        capabilities: ["entry_admin"],
+        all_scope_grants: [{ valid_from: "2026-01-01", valid_to: null }],
+      },
+      error: null,
+    }),
+  });
+  assert.equal(mismatchedAppUser.ok, false);
+  assert.equal(mismatchedAppUser.code, "SERVICE_PRINCIPAL_ACTOR_UNAVAILABLE");
+
+  // 4. Explicit authSubject verified with enabled=true and active all_scope_grants succeeds
+  clearN8nServiceActorCache();
+  let rpcCallCount = 0;
+  const verified = await resolveN8nBodServiceActor({
+    env: TEST_ENV,
     resolveActorContextRpc: async (authSubject) => {
-      if (authSubject === "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa") {
-        return {
-          data: {
-            auth_subject: authSubject,
-            app_user_id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
-            enabled: true,
-            capabilities: ["entry_own"],
-            all_scope_grants: [],
-          },
-          error: null,
-        };
-      }
+      rpcCallCount += 1;
       return {
         data: {
           auth_subject: authSubject,
-          app_user_id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+          app_user_id: TEST_ENV.appUserId,
           enabled: true,
-          capabilities: [
-            "entry_admin",
-            "recruiter_master_manage",
-            "team_master_manage",
-            "catalog_master_manage",
-            "entry_privileged_edit",
-            "report_view",
-            "report_analytics_view",
-            "vendor_finance_view",
-          ],
+          capabilities: ["entry_admin", "report_view"],
           all_scope_grants: [{ valid_from: "2026-01-01", valid_to: null }],
         },
         error: null,
       };
     },
   });
-  assert.equal(discovered.ok, true);
-  assert.equal(
-    discovered.actor.app_user_id,
-    "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
-  );
+  assert.equal(verified.ok, true);
+  assert.equal(rpcCallCount, 1);
+  assert.deepEqual(verified.actor, TEST_ACTOR);
   clearN8nServiceActorCache();
 });
 
-test("GET /api/integrations/n8n/v1/catalog returns complete versioned catalog and pending work_reports", async () => {
+test("GET /api/integrations/n8n/v1/catalog returns complete versioned catalog including active work_reports domain", async () => {
   const response = await handleN8nBodCatalogGet(makeCatalogRequest(), {
     env: TEST_ENV,
     now: new Date("2026-10-25T10:00:00.000Z"),
@@ -204,6 +228,10 @@ test("GET /api/integrations/n8n/v1/catalog returns complete versioned catalog an
     "catalog_recruiters",
     "catalog_vendors",
     "catalog_labor_types",
+    "work_reports_templates",
+    "work_reports_assignments",
+    "work_reports_submissions",
+    "work_reports_analytics",
   ];
   assert.deepEqual(datasetNames, expectedDatasets);
 
@@ -218,13 +246,14 @@ test("GET /api/integrations/n8n/v1/catalog returns complete versioned catalog an
     }
   }
 
-  // Pending work_reports must be explicitly documented
-  assert.equal(body.pending_datasets.length, 1);
-  assert.equal(body.pending_datasets[0].dataset, "work_reports");
-  assert.equal(body.pending_datasets[0].status, "PENDING_T1A_CONTRACT");
+  // Work reports domain is now ACTIVE and pending_datasets is empty
+  const workReportsDomain = body.domains.find((d) => d.domain === "work_reports");
+  assert.ok(workReportsDomain);
+  assert.equal(workReportsDomain.status, "ACTIVE");
+  assert.equal(body.pending_datasets.length, 0);
 });
 
-test("POST /api/integrations/n8n/v1/query rejects SQL, client authority fields, and pending work_reports", async () => {
+test("POST /api/integrations/n8n/v1/query rejects SQL, client authority fields, and unknown datasets", async () => {
   // 1. Reject arbitrary SQL
   const sqlRes = await handleN8nBodQueryPost(
     makeQueryRequest({
@@ -259,19 +288,7 @@ test("POST /api/integrations/n8n/v1/query rejects SQL, client authority fields, 
     assert.equal(authBody.error.code, "CLIENT_AUTHORITY_FORBIDDEN");
   }
 
-  // 3. Pending dataset work_reports returns 422 DATASET_PENDING_CONTRACT
-  const pendingRes = await handleN8nBodQueryPost(
-    makeQueryRequest({
-      dataset: "work_reports",
-    }),
-    { env: TEST_ENV },
-  );
-  assert.equal(pendingRes.status, 422);
-  const pendingBody = await pendingRes.json();
-  assert.equal(pendingBody.error.code, "DATASET_PENDING_CONTRACT");
-  assert.equal(pendingBody.error.details.status, "PENDING_T1A_CONTRACT");
-
-  // 4. Unknown dataset returns 400 DATASET_NOT_SUPPORTED
+  // 3. Unknown dataset returns 400 DATASET_NOT_SUPPORTED
   const unknownRes = await handleN8nBodQueryPost(
     makeQueryRequest({
       dataset: "non_existent_dataset",
@@ -1052,4 +1069,568 @@ test("Cursor pagination and multi-query cross-domain workflow work end-to-end", 
   assert.equal(crossCursorRes.status, 400);
   const crossCursorBody = await crossCursorRes.json();
   assert.equal(crossCursorBody.error.code, "INVALID_CURSOR");
+});
+
+test("Response byte-limit truncation (1 MiB) preserves lossless cursor continuation across offset, page, and token strategies and bounds single huge rows", async () => {
+  // Each row carries ~420 KiB so at most 2 rows (~840 KiB) fit inside 1 MiB (1,048,576 bytes),
+  // whereas 3 rows (~1.26 MiB) exceed 1 MiB and trigger truncation.
+  const largeBlob = "X".repeat(420 * 1024);
+
+  const allProjects = Array.from({ length: 5 }, (_, idx) => ({
+    project_id: `proj-${idx + 1}`,
+    display_name: `Project ${idx + 1} ${largeBlob}`,
+    active: true,
+    version: 1,
+    active_assignment_count: 1,
+    revision_count: 1,
+    updated_at: "2026-10-25T00:00:00Z",
+    updated_by_user_id: null,
+  }));
+
+  const allTeams = Array.from({ length: 6 }, (_, idx) => ({
+    team_id: `00000000-0000-4000-8000-00000000000${idx + 1}`,
+    code: `TEAM_${idx + 1}`,
+    display_name: `Team ${idx + 1} ${largeBlob}`,
+    active: true,
+    version: 1,
+    revision_count: 1,
+  }));
+
+  const allWorkers = Array.from({ length: 5 }, (_, idx) => ({
+    entry_id: `10000000-0000-4000-8000-00000000000${idx + 1}`,
+    entry_version: 1,
+    submission_state: "SUBMITTED",
+    employee_code: `EMP_${idx + 1}`,
+    display_name: `Worker ${idx + 1} ${largeBlob}`,
+    project_id: "proj-1",
+    project_display: "Dự án 1",
+    first_work_date: "2026-10-20",
+    labor_type: "chinh_thuc",
+    labor_type_display: "Chính thức",
+    employment_status: "ON",
+    recruiter_id: "44444444-4444-4444-8444-444444444444",
+    recruiter_display: "Recruiter 1",
+    payment: null,
+  }));
+
+  const dispatcherDeps = {
+    resolveActor: async () => ({ ok: true, actor: TEST_ACTOR }),
+    projectAdminRepo: {
+      listProjects: async () => ({
+        ok: true,
+        data: {
+          authorization_date: "2026-10-25",
+          projects: allProjects,
+        },
+      }),
+    },
+    teamCatalogRepo: {
+      listTeams: async ({ page, page_size }) => {
+        const start = (page - 1) * page_size;
+        const slice = allTeams.slice(start, start + page_size);
+        return {
+          ok: true,
+          data: {
+            authorization_date: "2026-10-25",
+            page,
+            page_size,
+            total: allTeams.length,
+            teams: slice,
+          },
+        };
+      },
+    },
+    workerDirectoryRepo: {
+      listWorkers: async ({ cursor, page_size }) => {
+        const startIdx = cursor ? Number.parseInt(cursor, 10) : 0;
+        const slice = allWorkers.slice(startIdx, startIdx + page_size);
+        const nextIdx = startIdx + slice.length;
+        const hasMore = nextIdx < allWorkers.length;
+        return {
+          ok: true,
+          data: {
+            authorization_date: "2026-10-25",
+            scope: "all",
+            page_size,
+            has_more: hasMore,
+            next_cursor: hasMore ? String(nextIdx) : null,
+            summary: {
+              total_workers: allWorkers.length,
+              on_count: allWorkers.length,
+              off_count: 0,
+              unconfirmed_count: 0,
+            },
+            items: slice,
+          },
+        };
+      },
+    },
+  };
+
+  // 1. Offset strategy (catalog_projects): requesting page_size = 5 must truncate each response <= 1 MiB
+  // and walk through all 5 projects without losing or duplicating any row.
+  const collectedProjectIds = [];
+  let cursor = null;
+  let guard = 0;
+  do {
+    guard += 1;
+    assert.ok(guard <= 10, "Pagination loop guard exceeded for catalog_projects");
+    const res = await handleN8nBodQueryPost(
+      makeQueryRequest({
+        dataset: "catalog_projects",
+        page_size: 5,
+        ...(cursor ? { cursor } : {}),
+      }),
+      { env: TEST_ENV, dispatcherDeps },
+    );
+    assert.equal(res.status, 200);
+    const rawJson = await res.text();
+    assert.ok(
+      Buffer.byteLength(rawJson, "utf8") <= MAX_N8N_RESPONSE_BYTES,
+      `Response JSON exceeded 1 MiB: ${Buffer.byteLength(rawJson, "utf8")}`,
+    );
+    const body = JSON.parse(rawJson);
+    for (const row of body.rows) {
+      collectedProjectIds.push(row.project_id);
+    }
+    cursor = body.pagination.has_more ? body.pagination.next_cursor : null;
+  } while (cursor);
+
+  assert.deepEqual(collectedProjectIds, [
+    "proj-1",
+    "proj-2",
+    "proj-3",
+    "proj-4",
+    "proj-5",
+  ]);
+
+  // 2. Page cursor strategy (catalog_teams): backend page_size = 3 (2 backend pages of 3 rows = 6 rows).
+  // Truncation cuts each 3-row backend page into [2 rows] + [1 row], never skipping the 3rd row of page 1!
+  const collectedTeamCodes = [];
+  cursor = null;
+  guard = 0;
+  do {
+    guard += 1;
+    assert.ok(guard <= 10, "Pagination loop guard exceeded for catalog_teams");
+    const res = await handleN8nBodQueryPost(
+      makeQueryRequest({
+        dataset: "catalog_teams",
+        page_size: 3,
+        ...(cursor ? { cursor } : {}),
+      }),
+      { env: TEST_ENV, dispatcherDeps },
+    );
+    assert.equal(res.status, 200);
+    const rawJson = await res.text();
+    assert.ok(Buffer.byteLength(rawJson, "utf8") <= MAX_N8N_RESPONSE_BYTES);
+    const body = JSON.parse(rawJson);
+    for (const row of body.rows) {
+      collectedTeamCodes.push(row.code);
+    }
+    cursor = body.pagination.has_more ? body.pagination.next_cursor : null;
+  } while (cursor);
+
+  assert.deepEqual(collectedTeamCodes, [
+    "TEAM_1",
+    "TEAM_2",
+    "TEAM_3",
+    "TEAM_4",
+    "TEAM_5",
+    "TEAM_6",
+  ]);
+
+  // 3. Keyset token cursor strategy (workers_directory): backend page_size = 3 across 5 workers.
+  // Truncation on initial batch (token = null) and subsequent token batch must never skip cut rows!
+  const collectedEmployeeCodes = [];
+  cursor = null;
+  guard = 0;
+  do {
+    guard += 1;
+    assert.ok(guard <= 10, "Pagination loop guard exceeded for workers_directory");
+    const res = await handleN8nBodQueryPost(
+      makeQueryRequest({
+        dataset: "workers_directory",
+        page_size: 3,
+        ...(cursor ? { cursor } : {}),
+      }),
+      { env: TEST_ENV, dispatcherDeps },
+    );
+    assert.equal(res.status, 200);
+    const rawJson = await res.text();
+    assert.ok(Buffer.byteLength(rawJson, "utf8") <= MAX_N8N_RESPONSE_BYTES);
+    const body = JSON.parse(rawJson);
+    for (const row of body.rows) {
+      collectedEmployeeCodes.push(row.employee_code);
+    }
+    cursor = body.pagination.has_more ? body.pagination.next_cursor : null;
+  } while (cursor);
+
+  assert.deepEqual(collectedEmployeeCodes, [
+    "EMP_1",
+    "EMP_2",
+    "EMP_3",
+    "EMP_4",
+    "EMP_5",
+  ]);
+
+  // 4. Single huge row (> 1 MiB) must NOT return a > 1 MiB payload; must fail closed with 413 RESPONSE_TOO_LARGE <= 1 MiB.
+  const hugeRowDeps = {
+    resolveActor: async () => ({ ok: true, actor: TEST_ACTOR }),
+    projectAdminRepo: {
+      listProjects: async () => ({
+        ok: true,
+        data: {
+          authorization_date: "2026-10-25",
+          projects: [
+            {
+              project_id: "proj-huge",
+              display_name: "H".repeat(MAX_N8N_RESPONSE_BYTES + 10000),
+              active: true,
+              version: 1,
+              active_assignment_count: 1,
+              revision_count: 1,
+              updated_at: "2026-10-25T00:00:00Z",
+              updated_by_user_id: null,
+            },
+          ],
+        },
+      }),
+    },
+  };
+
+  const hugeRes = await handleN8nBodQueryPost(
+    makeQueryRequest({
+      dataset: "catalog_projects",
+      page_size: 1,
+    }),
+    { env: TEST_ENV, dispatcherDeps: hugeRowDeps },
+  );
+  assert.equal(hugeRes.status, 413);
+  const hugeRawJson = await hugeRes.text();
+  assert.ok(Buffer.byteLength(hugeRawJson, "utf8") <= MAX_N8N_RESPONSE_BYTES);
+  const hugeBody = JSON.parse(hugeRawJson);
+  assert.equal(hugeBody.ok, false);
+  assert.equal(hugeBody.error.code, "RESPONSE_TOO_LARGE");
+});
+
+test("Query timeout aborts in-flight DB/PostgREST fetch via AbortSignal and returns HTTP 504", async () => {
+  let adapterSignalAborted = false;
+  let fetchSignalAborted = false;
+
+  const abortAwareFetch = createAbortAwareFetch(undefined, (_input, init) => {
+    return new Promise((_resolve, reject) => {
+      const sig = init?.signal;
+      if (sig?.aborted) {
+        fetchSignalAborted = true;
+        reject(sig.reason ?? new Error("Aborted"));
+        return;
+      }
+      sig?.addEventListener(
+        "abort",
+        () => {
+          fetchSignalAborted = true;
+          reject(sig.reason ?? new Error("Aborted"));
+        },
+        { once: true },
+      );
+    });
+  });
+
+  const dispatcherDeps = {
+    timeoutMs: 30,
+    resolveActor: async () => ({ ok: true, actor: TEST_ACTOR }),
+    customAdapters: {
+      catalog_projects: async (_spec, context) => {
+        context.signal?.addEventListener(
+          "abort",
+          () => {
+            adapterSignalAborted = true;
+          },
+          { once: true },
+        );
+        // Simulate an in-flight PostgREST fetch using the active Supabase abort signal context
+        await abortAwareFetch("https://supabase.internal/rest/v1/rpc/direct_entry_list_projects_admin");
+        return {
+          ok: true,
+          data: {
+            as_of_date: "2026-10-25",
+            date_range: { from: null, to: null },
+            summary: { total_projects: 0 },
+            rows: [],
+            has_more: false,
+            next_cursor: null,
+            total_matching: 0,
+          },
+        };
+      },
+    },
+  };
+
+  const res = await handleN8nBodQueryPost(
+    makeQueryRequest({
+      dataset: "catalog_projects",
+    }),
+    { env: TEST_ENV, dispatcherDeps },
+  );
+  assert.equal(res.status, 504);
+  const body = await res.json();
+  assert.equal(body.ok, false);
+  assert.equal(body.error.code, "QUERY_TIMEOUT");
+  assert.equal(adapterSignalAborted, true, "Adapter AbortSignal must be aborted on timeout");
+  assert.equal(fetchSignalAborted, true, "In-flight PostgREST fetch must be aborted on timeout");
+
+  // Also verify runWithSupabaseAbortSignal directly propagates abort to createAbortAwareFetch
+  const manualController = new AbortController();
+  let directFetchAborted = false;
+  const directPromise = runWithSupabaseAbortSignal(manualController.signal, () =>
+    abortAwareFetch("https://supabase.internal/rest/v1/rpc/test").catch(() => {
+      directFetchAborted = manualController.signal.aborted;
+    }),
+  );
+  manualController.abort();
+  await directPromise;
+  assert.equal(directFetchAborted, true);
+});
+
+test("Work Reports domain datasets (templates, assignments, submissions, analytics) work end-to-end", async () => {
+  const TEMPLATE_ID = "11111111-2222-4333-8444-555555555555";
+  const VERSION_ID = "22222222-3333-4444-8555-666666666666";
+  const ASSIGNMENT_ID = "33333333-4444-4555-8666-777777777777";
+  const TEAM_ID = "44444444-5555-4666-8777-888888888888";
+  const ASSIGNEE_ID = "55555555-6666-4777-8888-999999999999";
+
+  const dispatcherDeps = {
+    resolveActor: async () => ({ ok: true, actor: TEST_ACTOR }),
+    workReportTemplateRepo: {
+      list: async () => ({
+        ok: true,
+        data: [
+          {
+            template_id: TEMPLATE_ID,
+            template_code: "DAILY_RECRUITMENT",
+            display_name: "Báo cáo Tuyển dụng Hàng ngày",
+            description: "Mẫu báo cáo tiến độ tuyển dụng ngày",
+            default_frequency: "DAILY",
+            status: "ACTIVE",
+            current_published_version_id: VERSION_ID,
+            draft_version_id: null,
+            version: 1,
+            updated_at: "2026-10-25T08:00:00Z",
+          },
+        ],
+      }),
+    },
+    workReportAssignmentRepo: {
+      listAssignments: async () => ({
+        ok: true,
+        data: [
+          {
+            assignment_id: ASSIGNMENT_ID,
+            template_id: TEMPLATE_ID,
+            template_code: "DAILY_RECRUITMENT",
+            template_name: "Báo cáo Tuyển dụng Hàng ngày",
+            target_kind: "TEAM",
+            target_group_id: null,
+            target_label: "Nhóm Tuyển dụng Miền Bắc",
+            target_member_count: 5,
+            frequency: "DAILY",
+            is_mandatory: true,
+            due_day_offset: 0,
+            due_time_local: "17:30",
+            exclude_sundays: true,
+            effective_from: "2026-10-01",
+            effective_to: null,
+            state: "ACTIVE",
+            version: 1,
+            created_at: "2026-10-01T00:00:00Z",
+            obligation_total: 10,
+            submitted_count: 8,
+            not_started_count: 1,
+            draft_count: 0,
+            overdue_count: 1,
+            rejected_count: 0,
+            exempted_count: 0,
+            cancelled_count: 0,
+          },
+        ],
+      }),
+      getAssignmentDetail: async () => ({
+        ok: true,
+        data: {
+          assignment_id: ASSIGNMENT_ID,
+          assignee_progress: [
+            {
+              obligation_id: "66666666-7777-4888-8999-000000000001",
+              assignee_app_user_id: ASSIGNEE_ID,
+              assignee_display_name: "Nguyễn Văn Tuyển",
+              period_key: "2026-10-25",
+              period_start_date: "2026-10-25",
+              period_end_date: "2026-10-25",
+              due_at: "2026-10-25T10:30:00Z",
+              reopened_until: null,
+              obligation_status: "ACTIVE",
+              submission_state: "COMPLETED",
+              is_overdue: false,
+              submitted_at: "2026-10-25T09:00:00Z",
+              version: 1,
+            },
+          ],
+          audit_history: [],
+        },
+      }),
+    },
+    workReportReaderRepo: {
+      listReadable: async () => ({
+        ok: true,
+        data: {
+          effective_scope: { kind: "all", label: "Toàn miền" },
+          filter_options: { templates: [], teams: [], assignees: [] },
+          items: [
+            {
+              obligation_id: "66666666-7777-4888-8999-000000000001",
+              submission_id: "77777777-8888-4999-8000-000000000002",
+              template_id: TEMPLATE_ID,
+              template_name: "Báo cáo Tuyển dụng Hàng ngày",
+              template_version_id: VERSION_ID,
+              template_version_no: 1,
+              assignee_app_user_id: ASSIGNEE_ID,
+              assignee_display_name: "Nguyễn Văn Tuyển",
+              team_id: TEAM_ID,
+              team_display_name: "Nhóm Tuyển dụng Miền Bắc",
+              period_key: "2026-10-25",
+              period_start_date: "2026-10-25",
+              period_end_date: "2026-10-25",
+              state: "COMPLETED",
+              latest_submitted_at: "2026-10-25T09:00:00Z",
+              is_late: false,
+              has_post_deadline_amendment: false,
+              current_revision_no: 1,
+            },
+          ],
+          next_cursor: null,
+          has_more: false,
+        },
+      }),
+    },
+    workReportAnalyticsRepo: {
+      overview: async () => ({
+        ok: true,
+        data: {
+          as_of: "2026-10-25T10:00:00Z",
+          effective_scope: { kind: "all", label: "Toàn miền" },
+          compliance: {
+            due_count: 10,
+            completed_count: 8,
+            on_time_count: 7,
+            late_submitted_count: 1,
+            pending_due_count: 1,
+            overdue_missing_count: 1,
+            exempted_count: 0,
+            pending_review_count: 0,
+            completion_rate: 80,
+          },
+          metrics: [
+            {
+              metric_key: "calls_made",
+              label: "Số cuộc gọi tư vấn",
+              unit: "cuộc gọi",
+              compatible_group: "outreach",
+              sum_value: 150,
+              avg_value: 18.75,
+              min_value: 10,
+              max_value: 30,
+              count_valid: 8,
+              missing_value_count: 0,
+            },
+          ],
+          ratios: [],
+        },
+      }),
+      breakdown: async () => ({
+        ok: true,
+        data: {
+          as_of: "2026-10-25T10:00:00Z",
+          effective_scope: { kind: "all", label: "Toàn miền" },
+          group_by: "team",
+          page: 1,
+          page_size: 50,
+          total_groups: 1,
+          items: [
+            {
+              group_id: TEAM_ID,
+              group_label: "Nhóm Tuyển dụng Miền Bắc",
+              due_count: 10,
+              completed_count: 8,
+              on_time_count: 7,
+              late_submitted_count: 1,
+              pending_due_count: 1,
+              overdue_missing_count: 1,
+              exempted_count: 0,
+              pending_review_count: 0,
+              completion_rate: 80,
+              metrics: [],
+            },
+          ],
+        },
+      }),
+    },
+  };
+
+  // 1. work_reports_templates
+  const tplRes = await handleN8nBodQueryPost(
+    makeQueryRequest({ dataset: "work_reports_templates" }),
+    { env: TEST_ENV, dispatcherDeps },
+  );
+  assert.equal(tplRes.status, 200);
+  const tplBody = await tplRes.json();
+  assert.equal(tplBody.rows.length, 1);
+  assert.equal(tplBody.rows[0].template_code, "DAILY_RECRUITMENT");
+  assert.equal(tplBody.summary.active_templates, 1);
+
+  // 2. work_reports_assignments with assignment_id detail drill-down
+  const assignRes = await handleN8nBodQueryPost(
+    makeQueryRequest({
+      dataset: "work_reports_assignments",
+      filters: [{ field: "assignment_id", op: "eq", value: ASSIGNMENT_ID }],
+    }),
+    { env: TEST_ENV, dispatcherDeps },
+  );
+  assert.equal(assignRes.status, 200);
+  const assignBody = await assignRes.json();
+  assert.equal(assignBody.rows.length, 1);
+  assert.equal(assignBody.rows[0].obligation_total, 10);
+  assert.equal(assignBody.rows[0].assignee_progress.length, 1);
+
+  // 3. work_reports_submissions
+  const subRes = await handleN8nBodQueryPost(
+    makeQueryRequest({
+      dataset: "work_reports_submissions",
+      date_range: { from: "2026-10-01", to: "2026-10-25" },
+      filters: [{ field: "template_id", op: "eq", value: TEMPLATE_ID }],
+    }),
+    { env: TEST_ENV, dispatcherDeps },
+  );
+  assert.equal(subRes.status, 200);
+  const subBody = await subRes.json();
+  assert.equal(subBody.rows.length, 1);
+  assert.equal(subBody.rows[0].assignee_display_name, "Nguyễn Văn Tuyển");
+
+  // 4. work_reports_analytics
+  const anaRes = await handleN8nBodQueryPost(
+    makeQueryRequest({
+      dataset: "work_reports_analytics",
+      date_range: { from: "2026-10-01", to: "2026-10-25" },
+      filters: [
+        { field: "template_id", op: "eq", value: TEMPLATE_ID },
+        { field: "group_by", op: "eq", value: "team" },
+      ],
+    }),
+    { env: TEST_ENV, dispatcherDeps },
+  );
+  assert.equal(anaRes.status, 200);
+  const anaBody = await anaRes.json();
+  assert.equal(anaBody.summary.completion_rate, 80);
+  assert.equal(anaBody.summary.metrics[0].sum_value, 150);
+  assert.equal(anaBody.rows.length, 1);
+  assert.equal(anaBody.rows[0].group_label, "Nhóm Tuyển dụng Miền Bắc");
 });
