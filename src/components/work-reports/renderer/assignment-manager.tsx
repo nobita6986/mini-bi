@@ -1279,7 +1279,7 @@ export function AssignmentManager() {
         {revokeConfirmAssignment ? (
           <div className="space-y-4 text-sm">
             <StatusBanner tone="warning" title="Ý nghĩa thu hồi đợt giao ở máy chủ">
-              Thu hồi đợt giao sẽ chuyển trạng thái đợt giao sang <strong>Đã thu hồi</strong>, hủy các nghĩa vụ đang mở nhưng chưa bắt đầu nộp (<code>NOT_STARTED</code> → <code>CANCELLED</code>), và ngừng phát sinh nghĩa vụ cho các kỳ tiếp theo.{" "}
+              Thu hồi đợt giao sẽ chuyển trạng thái đợt giao sang <strong>Đã thu hồi</strong>, hủy toàn bộ các nghĩa vụ đang mở nhưng <strong>chưa nộp</strong> — bao gồm cả nghĩa vụ <strong>chưa bắt đầu</strong> (<code>NOT_STARTED</code> → <code>CANCELLED</code>) và nghĩa vụ <strong>đang lưu bản nháp chưa nộp</strong> (<code>DRAFT</code> → <code>CANCELLED</code>) — đồng thời ngừng phát sinh nghĩa vụ cho các kỳ tiếp theo.{" "}
               <strong>Các báo cáo đã nộp và toàn bộ lịch sử bài nộp được giữ nguyên, không bị xóa.</strong>
             </StatusBanner>
             <div className="rounded-lg border border-border bg-subtle p-3 space-y-1">
@@ -1289,8 +1289,9 @@ export function AssignmentManager() {
                 {frequencyLabel(revokeConfirmAssignment.frequency)}
               </p>
               <p className="text-xs text-muted">
-                Đã nộp: {revokeConfirmAssignment.submitted_count} · Chưa hoàn thành:{" "}
-                {revokeConfirmAssignment.not_started_count + revokeConfirmAssignment.draft_count}
+                Đã nộp (giữ nguyên): {revokeConfirmAssignment.submitted_count} · Chưa hoàn thành sẽ hủy:{" "}
+                {revokeConfirmAssignment.not_started_count + revokeConfirmAssignment.draft_count} (Chưa bắt đầu:{" "}
+                {revokeConfirmAssignment.not_started_count}, Bản nháp chưa nộp: {revokeConfirmAssignment.draft_count})
               </p>
             </div>
             <div className="flex justify-end gap-2 border-t border-border pt-3">
@@ -1493,8 +1494,68 @@ function AssignmentDetailPanel({
   busy: boolean;
   onAction: (nextState: "ACTIVE" | "PAUSED" | "REVOKED") => void;
 }) {
-  const assigneeProgress: readonly WorkReportAssignmentProgressItem[] = assignment.assignee_progress ?? [];
-  const auditHistory: readonly WorkReportAssignmentAuditItem[] = assignment.audit_history ?? [];
+  const hasInlineDetail =
+    Array.isArray(assignment.assignee_progress) && Array.isArray(assignment.audit_history);
+  const [reloadTick, setReloadTick] = useState(0);
+  const requestKey = `${assignment.assignment_id}:${assignment.version}:${assignment.state}:${assignment.obligation_total}:${assignment.submitted_count}:${assignment.not_started_count}:${assignment.draft_count}:${reloadTick}`;
+  const [fetchedDetail, setFetchedDetail] = useState<{
+    key: string;
+    assignee_progress: readonly WorkReportAssignmentProgressItem[];
+    audit_history: readonly WorkReportAssignmentAuditItem[];
+    error: string | null;
+  } | null>(null);
+
+  useEffect(() => {
+    if (hasInlineDetail) return;
+
+    const controller = new AbortController();
+    fetch(`/api/work-reports/assignments/${encodeURIComponent(assignment.assignment_id)}`, {
+      cache: "no-store",
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        const result = await response.json().catch(() => null);
+        if (
+          !response.ok ||
+          result?.ok !== true ||
+          !Array.isArray(result.assignee_progress) ||
+          !Array.isArray(result.audit_history)
+        ) {
+          throw new Error(result?.code ?? "WORK_REPORT_UNAVAILABLE");
+        }
+        if (controller.signal.aborted) return;
+        setFetchedDetail({
+          key: requestKey,
+          assignee_progress: result.assignee_progress as WorkReportAssignmentProgressItem[],
+          audit_history: result.audit_history as WorkReportAssignmentAuditItem[],
+          error: null,
+        });
+      })
+      .catch((cause: unknown) => {
+        if (controller.signal.aborted) return;
+        const code = cause instanceof Error ? cause.message : "WORK_REPORT_UNAVAILABLE";
+        setFetchedDetail({
+          key: requestKey,
+          assignee_progress: [],
+          audit_history: [],
+          error:
+            code === "WORK_REPORT_ACCESS_DENIED" || code === "WORK_REPORT_SCOPE_DENIED"
+              ? "Bạn không có quyền xem chi tiết đợt giao này."
+              : "Không tải được chi tiết tiến độ thành viên và lịch sử đợt giao.",
+        });
+      });
+
+    return () => controller.abort();
+  }, [assignment.assignment_id, hasInlineDetail, requestKey]);
+
+  const loading = !hasInlineDetail && fetchedDetail?.key !== requestKey;
+  const detailError = !hasInlineDetail && fetchedDetail?.key === requestKey ? fetchedDetail.error : null;
+  const assigneeProgress: readonly WorkReportAssignmentProgressItem[] = hasInlineDetail
+    ? (assignment.assignee_progress ?? [])
+    : (fetchedDetail?.assignee_progress ?? []);
+  const auditHistory: readonly WorkReportAssignmentAuditItem[] = hasInlineDetail
+    ? (assignment.audit_history ?? [])
+    : (fetchedDetail?.audit_history ?? []);
 
   return (
     <div className="mt-4 space-y-4 border-t border-border pt-4">
@@ -1519,68 +1580,92 @@ function AssignmentDetailPanel({
         </div>
       </div>
 
-      <div className="space-y-2">
-        <h5 className="text-xs font-semibold uppercase tracking-wide text-muted">
-          Tiến độ từng thành viên ({assigneeProgress.length})
-        </h5>
-        {assigneeProgress.length === 0 ? (
-          <p className="rounded-lg bg-subtle p-3 text-xs text-muted">
-            Chưa có nghĩa vụ nào được phát sinh cho đợt giao này.
-          </p>
-        ) : (
-          <div className="overflow-x-auto rounded-lg border border-border">
-            <table className="w-full text-left text-xs">
-              <thead className="border-b border-border bg-subtle text-muted">
-                <tr>
-                  <th className="px-3 py-2 font-medium">Thành viên</th>
-                  <th className="px-3 py-2 font-medium">Kỳ gần nhất</th>
-                  <th className="px-3 py-2 font-medium">Hạn nộp</th>
-                  <th className="px-3 py-2 font-medium">Trạng thái</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {assigneeProgress.map((row) => (
-                  <tr key={`${row.assignee_app_user_id}-${row.period_key}`}>
-                    <td className="px-3 py-2 font-medium text-foreground">{row.assignee_display_name}</td>
-                    <td className="px-3 py-2 tabular-nums text-muted">{row.period_key}</td>
-                    <td className="px-3 py-2 tabular-nums text-muted">
-                      {new Date(row.due_at).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}
-                    </td>
-                    <td className="px-3 py-2">
-                      <StatusBadge tone={progressBadgeTone(row)}>
-                        {progressBadgeLabel(row)}
-                      </StatusBadge>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+      {detailError ? (
+        <StatusBanner tone="error">
+          <div className="flex flex-wrap items-center gap-2">
+            <span>{detailError}</span>
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              onClick={() => setReloadTick((prev) => prev + 1)}
+            >
+              Thử lại
+            </Button>
           </div>
-        )}
-      </div>
+        </StatusBanner>
+      ) : null}
 
-      <div className="space-y-2">
-        <h5 className="text-xs font-semibold uppercase tracking-wide text-muted">
-          Lịch sử thay đổi đợt giao ({auditHistory.length})
-        </h5>
-        {auditHistory.length === 0 ? (
-          <p className="rounded-lg bg-subtle p-3 text-xs text-muted">Chưa có lịch sử thay đổi.</p>
-        ) : (
-          <ol className="space-y-1.5 rounded-lg border border-border bg-subtle/40 p-3 text-xs">
-            {auditHistory.map((item) => (
-              <li key={item.event_id} className="flex flex-wrap items-center justify-between gap-2">
-                <span>
-                  <strong className="font-medium text-foreground">{auditEventLabel(item)}</strong>
-                  {item.actor_display_name ? ` · thực hiện bởi ${item.actor_display_name}` : ""}
-                </span>
-                <span className="tabular-nums text-muted">
-                  {new Date(item.created_at).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}
-                </span>
-              </li>
-            ))}
-          </ol>
-        )}
-      </div>
+      {loading ? (
+        <p role="status" className="rounded-lg bg-subtle p-3 text-xs text-muted">
+          Đang tải chi tiết tiến độ thành viên và lịch sử đợt giao…
+        </p>
+      ) : (
+        <>
+          <div className="space-y-2">
+            <h5 className="text-xs font-semibold uppercase tracking-wide text-muted">
+              Tiến độ từng thành viên — kỳ gần nhất ({assigneeProgress.length})
+            </h5>
+            {assigneeProgress.length === 0 ? (
+              <p className="rounded-lg bg-subtle p-3 text-xs text-muted">
+                Chưa có nghĩa vụ nào được phát sinh cho đợt giao này.
+              </p>
+            ) : (
+              <div className="overflow-x-auto rounded-lg border border-border">
+                <table className="w-full text-left text-xs">
+                  <thead className="border-b border-border bg-subtle text-muted">
+                    <tr>
+                      <th className="px-3 py-2 font-medium">Thành viên</th>
+                      <th className="px-3 py-2 font-medium">Kỳ gần nhất</th>
+                      <th className="px-3 py-2 font-medium">Hạn nộp</th>
+                      <th className="px-3 py-2 font-medium">Trạng thái</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {assigneeProgress.map((row) => (
+                      <tr key={`${row.assignee_app_user_id}-${row.period_key}`}>
+                        <td className="px-3 py-2 font-medium text-foreground">{row.assignee_display_name}</td>
+                        <td className="px-3 py-2 tabular-nums text-muted">{row.period_key}</td>
+                        <td className="px-3 py-2 tabular-nums text-muted">
+                          {new Date(row.due_at).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}
+                        </td>
+                        <td className="px-3 py-2">
+                          <StatusBadge tone={progressBadgeTone(row)}>
+                            {progressBadgeLabel(row)}
+                          </StatusBadge>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-2">
+            <h5 className="text-xs font-semibold uppercase tracking-wide text-muted">
+              Lịch sử thay đổi đợt giao gần nhất ({auditHistory.length})
+            </h5>
+            {auditHistory.length === 0 ? (
+              <p className="rounded-lg bg-subtle p-3 text-xs text-muted">Chưa có lịch sử thay đổi.</p>
+            ) : (
+              <ol className="space-y-1.5 rounded-lg border border-border bg-subtle/40 p-3 text-xs">
+                {auditHistory.map((item) => (
+                  <li key={item.event_id} className="flex flex-wrap items-center justify-between gap-2">
+                    <span>
+                      <strong className="font-medium text-foreground">{auditEventLabel(item)}</strong>
+                      {item.actor_display_name ? ` · thực hiện bởi ${item.actor_display_name}` : ""}
+                    </span>
+                    <span className="tabular-nums text-muted">
+                      {new Date(item.created_at).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }

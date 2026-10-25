@@ -37,6 +37,7 @@ import {
   F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES,
   F2_WORK_REPORTS_REVIEW_AND_DELEGATION_RPC_SIGNATURES,
   HF_WORK_REPORTS_GROUPS_AND_ANALYTICS_OPTIONS_RPC_SIGNATURES,
+  WORK_REPORTS_ANDROID_SYNC_AND_UX_RPC_SIGNATURE,
   WORK_REPORTS_READER_CONTRACT_RPC_SIGNATURES,
 } from "./lib/migration-validation.mjs";
 import { AUTH_PROLOGUE } from "./lib/s04c-read-fixture.mjs";
@@ -228,7 +229,8 @@ test("F1 schema, forced RLS, table privilege revocation and RPC allowlist match 
       F1_WORK_REPORTS_ASSIGNMENT_TRACKING_RPC_SIGNATURE, ...F1_5_WORK_REPORTS_ANALYTICS_RPC_SIGNATURES,
       ...F2_WORK_REPORTS_REVIEW_AND_DELEGATION_RPC_SIGNATURES,
       ...WORK_REPORTS_READER_CONTRACT_RPC_SIGNATURES,
-      ...HF_WORK_REPORTS_GROUPS_AND_ANALYTICS_OPTIONS_RPC_SIGNATURES]],
+      ...HF_WORK_REPORTS_GROUPS_AND_ANALYTICS_OPTIONS_RPC_SIGNATURES,
+      WORK_REPORTS_ANDROID_SYNC_AND_UX_RPC_SIGNATURE]],
   );
   const serviceExec = fnRows.filter((r) => r.service_exec).map((r) => r.signature).sort();
   assert.deepEqual(serviceExec, expectedFnRows.map((r) => r.signature).sort());
@@ -677,9 +679,16 @@ test("assignments, obligations, snapshot_team_id immutability, deadline/reopen/e
   assert.equal(leaderAssignments[0].result.items[0].target_label, "Staff A1, Staff A2");
   assert.equal(leaderAssignments[0].result.items[0].obligation_total, 2, "auto-materializes current business date obligations on assignment creation");
   assert.equal(leaderAssignments[0].result.items[0].target_member_count, 2);
-  assert.ok(Array.isArray(leaderAssignments[0].result.items[0].assignee_progress));
-  assert.ok(Array.isArray(leaderAssignments[0].result.items[0].audit_history));
-  assert.equal(leaderAssignments[0].result.items[0].audit_history[0].action, "ASSIGNMENT_CREATE");
+  assert.equal("assignee_progress" in leaderAssignments[0].result.items[0], false, "list_assignments does not preload assignee_progress");
+  assert.equal("audit_history" in leaderAssignments[0].result.items[0], false, "list_assignments does not preload audit_history");
+  const { rows: leaderAsgDetail } = await db.query(
+    "select public.work_report_get_assignment_detail($1::uuid, $2::uuid, $3::uuid) as result",
+    [LEADER_A.auth, LEADER_A.app, assignmentId],
+  );
+  assert.ok(Array.isArray(leaderAsgDetail[0].result.assignee_progress));
+  assert.equal(leaderAsgDetail[0].result.assignee_progress.length, 2);
+  assert.ok(Array.isArray(leaderAsgDetail[0].result.audit_history));
+  assert.equal(leaderAsgDetail[0].result.audit_history[0].action, "ASSIGNMENT_CREATE");
   await assert.rejects(
     db.query("select public.work_report_list_assignments($1::uuid, $2::uuid, $3::uuid)",
       [LEADER_A.auth, LEADER_A.app, TEAM_B]),
@@ -1863,4 +1872,42 @@ test("Android sync: auto-materialize on create/reactivate, 7-day per-actor backf
   assert.equal(rejectedItem.submission_state, "REJECTED");
   assert.equal(rejectedItem.is_overdue, false, "REJECTED obligation keeps is_overdue = false even after due_at so assignee can resubmit");
   assert.equal(afterReject[0].detail_res.obligation.is_overdue, false);
+
+  // 4) Assignment list RPC is lightweight (does not preload assignee_progress / audit_history),
+  //    while work_report_get_assignment_detail returns bounded latest-period progress per assignee and audit history.
+  const { rows: listAsgRows } = await db.query(
+    `select public.work_report_list_assignments($1::uuid, $2::uuid, null) as result`,
+    [ADMIN.auth, ADMIN.app],
+  );
+  const listedSyncAsg = listAsgRows[0].result.items.find((a) => a.assignment_id === syncAsgId);
+  assert.ok(listedSyncAsg, "syncAsgId is returned in work_report_list_assignments");
+  assert.equal("assignee_progress" in listedSyncAsg, false, "list_assignments does not preload assignee_progress");
+  assert.equal("audit_history" in listedSyncAsg, false, "list_assignments does not preload audit_history");
+  assert.equal(listedSyncAsg.rejected_count, 1);
+
+  const { rows: detailAsgRows } = await db.query(
+    `select public.work_report_get_assignment_detail($1::uuid, $2::uuid, $3::uuid) as result`,
+    [ADMIN.auth, ADMIN.app, syncAsgId],
+  );
+  const asgDetail = detailAsgRows[0].result;
+  assert.equal(asgDetail.assignment_id, syncAsgId);
+  assert.equal(
+    asgDetail.assignee_progress.length,
+    1,
+    "work_report_get_assignment_detail bounds assignee_progress to latest period per assignee (1 row despite 5 periods)",
+  );
+  assert.equal(asgDetail.assignee_progress[0].assignee_app_user_id, STAFF_B1.app);
+  assert.equal(asgDetail.assignee_progress[0].period_key, todayStr);
+  assert.equal(asgDetail.assignee_progress[0].submission_state, "REJECTED");
+  assert.ok(asgDetail.audit_history.length >= 1, "audit_history includes creation event");
+  assert.equal(asgDetail.audit_history[0].action, "ASSIGNMENT_CREATE");
+
+  // Out-of-scope leader is denied access to assignment detail
+  await assert.rejects(
+    db.query(
+      `select public.work_report_get_assignment_detail($1::uuid, $2::uuid, $3::uuid)`,
+      [LEADER_A.auth, LEADER_A.app, syncAsgId],
+    ),
+    (err) => err.code === "42501" && err.message.includes("WORK_REPORT_SCOPE_DENIED"),
+  );
 });

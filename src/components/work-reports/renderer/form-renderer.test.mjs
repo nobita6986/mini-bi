@@ -46,7 +46,7 @@ test("rejected reports show the reviewer reason and can be resubmitted after the
   assert.match(source, /Kỳ báo cáo đã quá hạn/);
 });
 
-test("assignment manager provides Tạo đợt giao form, pre-confirmation summary, state filters, per-person progress detail, and revocation confirmation", async () => {
+test("assignment manager provides Tạo đợt giao form, pre-confirmation summary, state filters, lazy-loaded per-person progress detail, and revocation confirmation including DRAFT", async () => {
   const source = await readFile(assignmentManagerPath, "utf8");
   assert.match(source, /Tạo đợt giao/);
   assert.match(source, /Tóm tắt đợt giao trước khi xác nhận/);
@@ -54,9 +54,12 @@ test("assignment manager provides Tạo đợt giao form, pre-confirmation summa
   assert.match(source, /Đang hoạt động/);
   assert.match(source, /Tạm dừng/);
   assert.match(source, /Đã thu hồi/);
-  assert.match(source, /Tiến độ từng thành viên/);
-  assert.match(source, /Lịch sử thay đổi đợt giao/);
+  assert.match(source, /fetch\(`\/api\/work-reports\/assignments\/\$\{encodeURIComponent\(assignment\.assignment_id\)\}`/);
+  assert.match(source, /Tiến độ từng thành viên — kỳ gần nhất/);
+  assert.match(source, /Lịch sử thay đổi đợt giao gần nhất/);
   assert.match(source, /Xác nhận thu hồi đợt giao báo cáo/);
+  assert.match(source, /đang lưu bản nháp chưa nộp/);
+  assert.match(source, /DRAFT/);
   assert.match(source, /Các báo cáo đã nộp và toàn bộ lịch sử bài nộp được giữ nguyên, không bị xóa/);
 });
 

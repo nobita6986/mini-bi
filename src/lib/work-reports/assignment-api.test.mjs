@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
-import { createWorkReportAssignment, createWorkReportGroup, listWorkReportAssignmentOptions, listWorkReportAssignments,
+import { createWorkReportAssignment, createWorkReportGroup, getWorkReportAssignmentDetail, listWorkReportAssignmentOptions, listWorkReportAssignments,
   listWorkReportGroups, patchWorkReportGroup, setWorkReportAssignmentState, changeWorkReportObligation } from "./assignment-api.ts";
 
 const actor = { auth_subject: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", app_user_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" };
@@ -47,6 +47,42 @@ test("assignment tracking uses the session actor and accepts only the optional t
   assert.equal((await listWorkReportAssignments(
     getRequest(`/api/work-reports/assignments/tracking?app_user_id=${user}`), "true", deps(),
   )).status, 400);
+});
+
+test("assignment detail lazy-loads bounded assignee progress and audit history for the session actor", async () => {
+  const assignmentId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+  let detailInput;
+  const detailPayload = {
+    assignment_id: assignmentId,
+    assignee_progress: [],
+    audit_history: [],
+  };
+  const response = await getWorkReportAssignmentDetail(
+    getRequest(`/api/work-reports/assignments/${assignmentId}`),
+    assignmentId,
+    "true",
+    deps({
+      getAssignmentDetail: async (value) => {
+        detailInput = value;
+        return { ok: true, data: detailPayload };
+      },
+    }),
+  );
+  assert.equal(response.status, 200);
+  assert.deepEqual(detailInput, { ...actor, assignment_id: assignmentId });
+  assert.deepEqual(await response.json(), { ok: true, ...detailPayload });
+  assert.equal(
+    (await getWorkReportAssignmentDetail(getRequest(`/api/work-reports/assignments/${assignmentId}`), "not-a-uuid", "true", deps())).status,
+    400,
+  );
+  assert.equal(
+    (await getWorkReportAssignmentDetail(getRequest(`/api/work-reports/assignments/${assignmentId}?app_user_id=${user}`), assignmentId, "true", deps())).status,
+    400,
+  );
+  assert.equal(
+    (await getWorkReportAssignmentDetail(getRequest(`/api/work-reports/assignments/${assignmentId}`), assignmentId, "false", deps())).status,
+    404,
+  );
 });
 
 test("assignment creation resolves actor from session and validates scope through repository result", async () => {

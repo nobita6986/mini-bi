@@ -148,6 +148,29 @@ export async function listWorkReportAssignments(request: Request, enabled: strin
   }
 }
 
+export async function getWorkReportAssignmentDetail(
+  request: Request,
+  assignmentId: string,
+  enabled: string | undefined,
+  deps: AssignmentApiDependencies,
+): Promise<Response> {
+  if (enabled !== "true") return fail("NOT_FOUND", 404);
+  if (!UUID.test(assignmentId)) return fail("WORK_REPORT_ASSIGNMENT_INVALID", 400);
+  const url = new URL(request.url);
+  if (url.searchParams.size > 0) return fail("WORK_REPORT_REQUEST_INVALID", 400);
+  const actor = await actorFromSession(deps);
+  if (actor instanceof Response) return actor;
+  try {
+    if (!deps.repository.getAssignmentDetail) {
+      return fail("WORK_REPORT_UNAVAILABLE", 503);
+    }
+    return mapOutcome(await deps.repository.getAssignmentDetail({ ...actor, assignment_id: assignmentId }));
+  } catch {
+    console.error("[work-reports] assignment detail unavailable");
+    return fail("WORK_REPORT_UNAVAILABLE", 503);
+  }
+}
+
 export async function setWorkReportAssignmentState(request: Request, assignmentId: string, enabled: string | undefined,
   deps: AssignmentApiDependencies): Promise<Response> {
   if (enabled !== "true") return fail("NOT_FOUND", 404);

@@ -1243,9 +1243,7 @@ begin
       'overdue_count', tracked.overdue_count,
       'rejected_count', tracked.rejected_count,
       'exempted_count', tracked.exempted_count,
-      'cancelled_count', tracked.cancelled_count,
-      'assignee_progress', tracked.assignee_progress,
-      'audit_history', tracked.audit_history
+      'cancelled_count', tracked.cancelled_count
     ) order by tracked.updated_at desc, tracked.assignment_id)
       from (
         select a.assignment_id,
@@ -1313,60 +1311,7 @@ begin
                    and s.state = 'REJECTED'
                )::integer as rejected_count,
                count(o.obligation_id) filter (where o.obligation_status = 'EXEMPTED')::integer as exempted_count,
-               count(o.obligation_id) filter (where o.obligation_status = 'CANCELLED')::integer as cancelled_count,
-               coalesce((
-                 select jsonb_agg(
-                   jsonb_build_object(
-                     'obligation_id', o_row.obligation_id,
-                     'assignee_app_user_id', o_row.assignee_app_user_id,
-                     'assignee_display_name', coalesce(u_row.display_name, o_row.assignee_app_user_id::text),
-                     'period_key', o_row.period_key,
-                     'period_start_date', o_row.period_start_date,
-                     'period_end_date', o_row.period_end_date,
-                     'due_at', o_row.due_at,
-                     'reopened_until', o_row.reopened_until,
-                     'obligation_status', o_row.obligation_status,
-                     'submission_state', coalesce(s_row.state, 'NOT_STARTED'),
-                     'is_overdue', (
-                       o_row.obligation_status = 'ACTIVE'
-                       and coalesce(s_row.state, 'NOT_STARTED') in ('NOT_STARTED', 'DRAFT')
-                       and now() > o_row.due_at
-                       and coalesce(o_row.reopened_until < now(), true)
-                     ),
-                     'submitted_at', s_row.latest_submitted_at,
-                     'version', o_row.version
-                   )
-                   order by o_row.period_start_date desc, u_row.display_name asc, o_row.obligation_id desc
-                 )
-                   from public.work_report_obligations o_row
-                   left join public.direct_entry_app_users u_row
-                     on u_row.app_user_id = o_row.assignee_app_user_id
-                   left join public.work_report_submissions s_row
-                     on s_row.obligation_id = o_row.obligation_id
-                  where o_row.assignment_id = a.assignment_id
-               ), '[]'::jsonb) as assignee_progress,
-               coalesce((
-                 select jsonb_agg(
-                   jsonb_build_object(
-                     'event_id', ae.audit_event_id,
-                     'action', ae.action,
-                     'state', case
-                       when ae.action = 'ASSIGNMENT_CREATE' then 'ACTIVE'
-                       else coalesce(ae.metadata_json ->> 'state', a.state)
-                     end,
-                     'actor_user_id', ae.actor_user_id,
-                     'actor_display_name', coalesce(au.display_name, ae.actor_user_id::text),
-                     'created_at', ae.created_at
-                   )
-                   order by ae.created_at desc, ae.audit_event_id desc
-                 )
-                   from public.work_report_audit_events ae
-                   left join public.direct_entry_app_users au
-                     on au.app_user_id = ae.actor_user_id
-                  where ae.template_id = a.template_id
-                    and ae.action in ('ASSIGNMENT_CREATE', 'ASSIGNMENT_STATE')
-                    and (ae.metadata_json ->> 'assignment_id') = a.assignment_id::text
-               ), '[]'::jsonb) as audit_history
+               count(o.obligation_id) filter (where o.obligation_status = 'CANCELLED')::integer as cancelled_count
           from public.work_report_assignments a
           join public.work_report_templates t on t.template_id = a.template_id
           left join public.teams team on team.team_id = a.target_team_id
@@ -1447,6 +1392,168 @@ begin
 end;
 $function$;
 
+create or replace function public.work_report_get_assignment_detail(
+  p_auth_subject uuid,
+  p_app_user_id uuid,
+  p_assignment_id uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $function$
+declare
+  v_assignment public.work_report_assignments%rowtype;
+  v_authorized boolean := false;
+begin
+  perform public.work_report_assert_actor(p_auth_subject, p_app_user_id);
+
+  if p_assignment_id is null then
+    raise exception 'WORK_REPORT_ASSIGNMENT_NOT_FOUND' using errcode = 'P0002';
+  end if;
+
+  select *
+    into v_assignment
+    from public.work_report_assignments a
+   where a.assignment_id = p_assignment_id;
+
+  if not found then
+    raise exception 'WORK_REPORT_ASSIGNMENT_NOT_FOUND' using errcode = 'P0002';
+  end if;
+
+  v_authorized := (
+    (v_assignment.target_kind = 'TEAM' and exists (
+      select 1
+        from public.work_report__internal_resolve_capability_authority(
+          p_app_user_id, 'report_assign', v_assignment.template_id, v_assignment.target_team_id
+        )
+    )) or
+    (v_assignment.target_kind = 'USER' and exists (
+      select 1
+        from public.work_report__internal_resolve_capability_authority(
+          p_app_user_id, 'report_assign', v_assignment.template_id, public.work_report_current_team(v_assignment.target_user_id)
+        )
+    )) or
+    (v_assignment.target_kind = 'USER_SET'
+      and exists (select 1 from public.work_report_assignment_targets x where x.assignment_id = v_assignment.assignment_id)
+      and not exists (
+        select 1
+          from public.work_report_assignment_targets x
+         where x.assignment_id = v_assignment.assignment_id
+           and not exists (
+             select 1
+               from public.work_report__internal_resolve_capability_authority(
+                 p_app_user_id, 'report_assign', v_assignment.template_id, public.work_report_current_team(x.target_user_id)
+               )
+           )
+      )
+    ) or
+    (v_assignment.target_kind = 'GROUP'
+      and exists (select 1 from public.work_report_group_members gm where gm.group_id = v_assignment.target_group_id)
+      and not exists (
+        select 1
+          from public.work_report_group_members gm
+         where gm.group_id = v_assignment.target_group_id
+           and not public.work_report__internal_actor_can_assign_member(
+             p_app_user_id,
+             gm.member_user_id,
+             v_assignment.template_id
+           )
+      )
+    )
+  );
+
+  if not coalesce(v_authorized, false) then
+    raise exception 'WORK_REPORT_SCOPE_DENIED' using errcode = '42501';
+  end if;
+
+  return jsonb_build_object(
+    'assignment_id', v_assignment.assignment_id,
+    'assignee_progress', coalesce((
+      select jsonb_agg(
+        jsonb_build_object(
+          'obligation_id', latest_o.obligation_id,
+          'assignee_app_user_id', latest_o.assignee_app_user_id,
+          'assignee_display_name', latest_o.assignee_display_name,
+          'period_key', latest_o.period_key,
+          'period_start_date', latest_o.period_start_date,
+          'period_end_date', latest_o.period_end_date,
+          'due_at', latest_o.due_at,
+          'reopened_until', latest_o.reopened_until,
+          'obligation_status', latest_o.obligation_status,
+          'submission_state', latest_o.submission_state,
+          'is_overdue', latest_o.is_overdue,
+          'submitted_at', latest_o.submitted_at,
+          'version', latest_o.version
+        )
+        order by latest_o.assignee_display_name asc, latest_o.period_start_date desc, latest_o.obligation_id desc
+      )
+        from (
+          select distinct on (o_row.assignee_app_user_id)
+                 o_row.obligation_id,
+                 o_row.assignee_app_user_id,
+                 coalesce(u_row.display_name, o_row.assignee_app_user_id::text) as assignee_display_name,
+                 o_row.period_key,
+                 o_row.period_start_date,
+                 o_row.period_end_date,
+                 o_row.due_at,
+                 o_row.reopened_until,
+                 o_row.obligation_status,
+                 coalesce(s_row.state, 'NOT_STARTED') as submission_state,
+                 (
+                   o_row.obligation_status = 'ACTIVE'
+                   and coalesce(s_row.state, 'NOT_STARTED') in ('NOT_STARTED', 'DRAFT')
+                   and now() > o_row.due_at
+                   and coalesce(o_row.reopened_until < now(), true)
+                 ) as is_overdue,
+                 s_row.latest_submitted_at as submitted_at,
+                 o_row.version
+            from public.work_report_obligations o_row
+            left join public.direct_entry_app_users u_row
+              on u_row.app_user_id = o_row.assignee_app_user_id
+            left join public.work_report_submissions s_row
+              on s_row.obligation_id = o_row.obligation_id
+           where o_row.assignment_id = v_assignment.assignment_id
+           order by o_row.assignee_app_user_id, o_row.period_start_date desc, o_row.obligation_id desc
+           limit 200
+        ) latest_o
+    ), '[]'::jsonb),
+    'audit_history', coalesce((
+      select jsonb_agg(
+        jsonb_build_object(
+          'event_id', recent_ae.audit_event_id,
+          'action', recent_ae.action,
+          'state', recent_ae.state,
+          'actor_user_id', recent_ae.actor_user_id,
+          'actor_display_name', recent_ae.actor_display_name,
+          'created_at', recent_ae.created_at
+        )
+        order by recent_ae.created_at desc, recent_ae.audit_event_id desc
+      )
+        from (
+          select ae.audit_event_id,
+                 ae.action,
+                 case
+                   when ae.action = 'ASSIGNMENT_CREATE' then 'ACTIVE'
+                   else coalesce(ae.metadata_json ->> 'state', v_assignment.state)
+                 end as state,
+                 ae.actor_user_id,
+                 coalesce(au.display_name, ae.actor_user_id::text) as actor_display_name,
+                 ae.created_at
+            from public.work_report_audit_events ae
+            left join public.direct_entry_app_users au
+              on au.app_user_id = ae.actor_user_id
+           where ae.template_id = v_assignment.template_id
+             and ae.action in ('ASSIGNMENT_CREATE', 'ASSIGNMENT_STATE')
+             and (ae.metadata_json ->> 'assignment_id') = v_assignment.assignment_id::text
+           order by ae.created_at desc, ae.audit_event_id desc
+           limit 25
+        ) recent_ae
+    ), '[]'::jsonb)
+  );
+end;
+$function$;
+
 -- -----------------------------------------------------------------------------
 -- 6. Align routine ownership with canonical Work Reports owner.
 -- -----------------------------------------------------------------------------
@@ -1471,7 +1578,8 @@ begin
     'public.work_report_set_assignment_state(uuid, uuid, uuid, integer, text, text)',
     'public.work_report_list_my_obligations(uuid, uuid, text)',
     'public.work_report_get_submission(uuid, uuid, uuid)',
-    'public.work_report_list_assignments(uuid, uuid, uuid)'
+    'public.work_report_list_assignments(uuid, uuid, uuid)',
+    'public.work_report_get_assignment_detail(uuid, uuid, uuid)'
   ]
   loop
     select p.proowner
@@ -1526,6 +1634,11 @@ revoke all on function public.work_report_list_assignments(uuid, uuid, uuid)
 grant execute on function public.work_report_list_assignments(uuid, uuid, uuid)
   to service_role;
 
+revoke all on function public.work_report_get_assignment_detail(uuid, uuid, uuid)
+  from public, anon, authenticated, service_role;
+grant execute on function public.work_report_get_assignment_detail(uuid, uuid, uuid)
+  to service_role;
+
 -- -----------------------------------------------------------------------------
 -- 8. Install-time fail-closed catalog & ACL self-check.
 -- -----------------------------------------------------------------------------
@@ -1565,7 +1678,8 @@ begin
     'public.work_report_set_assignment_state(uuid, uuid, uuid, integer, text, text)'::pg_catalog.regprocedure,
     'public.work_report_list_my_obligations(uuid, uuid, text)'::pg_catalog.regprocedure,
     'public.work_report_get_submission(uuid, uuid, uuid)'::pg_catalog.regprocedure,
-    'public.work_report_list_assignments(uuid, uuid, uuid)'::pg_catalog.regprocedure
+    'public.work_report_list_assignments(uuid, uuid, uuid)'::pg_catalog.regprocedure,
+    'public.work_report_get_assignment_detail(uuid, uuid, uuid)'::pg_catalog.regprocedure
   ]
   loop
     select p.prosecdef,

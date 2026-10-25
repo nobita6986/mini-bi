@@ -152,9 +152,16 @@ export type WorkReportAssignmentSummary = {
   audit_history?: readonly WorkReportAssignmentAuditItem[];
 };
 
+export type WorkReportAssignmentDetail = {
+  assignment_id: string;
+  assignee_progress: readonly WorkReportAssignmentProgressItem[];
+  audit_history: readonly WorkReportAssignmentAuditItem[];
+};
+
 export type AssignmentRepository = {
   listOptions(input: WorkReportActorRef & { team_id: string | null }): Promise<WorkReportRpcOutcome<WorkReportAssignmentOptions>>;
   listAssignments(input: WorkReportActorRef & { team_id: string | null }): Promise<WorkReportRpcOutcome<WorkReportAssignmentSummary[]>>;
+  getAssignmentDetail?(input: WorkReportActorRef & { assignment_id: string }): Promise<WorkReportRpcOutcome<WorkReportAssignmentDetail>>;
   listGroups(input: WorkReportActorRef): Promise<WorkReportRpcOutcome<WorkReportGroupsDirectory>>;
   createGroup(input: GroupCreateInput): Promise<WorkReportRpcOutcome<{ group_id: string; version: number }>>;
   updateGroup(input: GroupUpdateInput): Promise<WorkReportRpcOutcome<{ group_id: string; version: number }>>;
@@ -287,6 +294,43 @@ function assignmentList(value: unknown): value is { items: WorkReportAssignmentS
     (item.audit_history === undefined || Array.isArray(item.audit_history)));
 }
 
+function assignmentDetail(value: unknown): value is WorkReportAssignmentDetail {
+  return (
+    record(value) &&
+    typeof value.assignment_id === "string" &&
+    UUID.test(value.assignment_id) &&
+    Array.isArray(value.assignee_progress) &&
+    value.assignee_progress.every(
+      (item) =>
+        record(item) &&
+        UUID.test(String(item.obligation_id)) &&
+        UUID.test(String(item.assignee_app_user_id)) &&
+        typeof item.assignee_display_name === "string" &&
+        typeof item.period_key === "string" &&
+        typeof item.period_start_date === "string" &&
+        typeof item.period_end_date === "string" &&
+        typeof item.due_at === "string" &&
+        nullableString(item.reopened_until) &&
+        ["ACTIVE", "EXEMPTED", "CANCELLED"].includes(String(item.obligation_status)) &&
+        ["NOT_STARTED", "DRAFT", "COMPLETED", "PENDING_REVIEW", "APPROVED", "REJECTED"].includes(String(item.submission_state)) &&
+        typeof item.is_overdue === "boolean" &&
+        nullableString(item.submitted_at) &&
+        Number.isInteger(item.version),
+    ) &&
+    Array.isArray(value.audit_history) &&
+    value.audit_history.every(
+      (item) =>
+        record(item) &&
+        UUID.test(String(item.event_id)) &&
+        ["ASSIGNMENT_CREATE", "ASSIGNMENT_STATE"].includes(String(item.action)) &&
+        ["ACTIVE", "PAUSED", "REVOKED"].includes(String(item.state)) &&
+        UUID.test(String(item.actor_user_id)) &&
+        typeof item.actor_display_name === "string" &&
+        typeof item.created_at === "string",
+    )
+  );
+}
+
 export function createAssignmentRepository(rpc?: Rpc): AssignmentRepository {
   let call = rpc;
   const invoke: Rpc = async (name, args) => {
@@ -314,6 +358,19 @@ export function createAssignmentRepository(rpc?: Rpc): AssignmentRepository {
         return result.ok ? { ok: true, data: result.data.items } : result;
       } catch {
         console.error("[work-reports] assignment list RPC failed");
+        return { ok: false, kind: "unavailable" };
+      }
+    },
+    async getAssignmentDetail(input) {
+      try {
+        const { data, error } = await invoke("work_report_get_assignment_detail", {
+          p_auth_subject: input.auth_subject,
+          p_app_user_id: input.app_user_id,
+          p_assignment_id: input.assignment_id,
+        });
+        return outcome(data, error, assignmentDetail);
+      } catch {
+        console.error("[work-reports] assignment detail RPC failed");
         return { ok: false, kind: "unavailable" };
       }
     },
