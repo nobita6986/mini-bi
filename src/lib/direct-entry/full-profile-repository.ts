@@ -18,6 +18,7 @@ export type FullProfileRepositoryResult =
 const SAFE_INVALID_CODES = new Set([
   "BANK_NOT_ACTIVE",
   "BATCH_INVALID",
+  "CONTRACT_VERSION_UNSUPPORTED",
   "EMPLOYEE_CODE_DUPLICATE",
   "EMPLOYEE_CODE_SEQUENCE_EXHAUSTED",
   "EMPLOYEE_CODE_LEGACY_QUARANTINE",
@@ -96,6 +97,27 @@ function classify(error: { code?: string; message?: string }): FullProfileReposi
   return { ok: false, kind: "unavailable" };
 }
 
+function logUnavailableBatch(
+  rpcName: string,
+  error: { code?: string; message?: string },
+  payload: FullProfilePayload,
+): void {
+  console.error("[direct-entry] full-profile batch RPC unavailable", {
+    rpc: rpcName,
+    sqlstate: error.code ?? "UNKNOWN",
+    message_fingerprint: createHash("sha256").update(error.message ?? "").digest("hex"),
+    contract_version: payload.contract_version,
+    row_count: payload.rows.length,
+  });
+}
+
+function canFallbackV12ToV11(payload: FullProfilePayload): boolean {
+  return (
+    payload.contract_version === "worker-profile/1.2" &&
+    payload.rows.every((row) => typeof row.display_name === "string" && row.display_name.trim() !== "")
+  );
+}
+
 export function createFullProfileRepository(rpc?: Rpc) {
   let resolvedRpc = rpc;
   return {
@@ -110,15 +132,33 @@ export function createFullProfileRepository(rpc?: Rpc) {
           input.payload.contract_version === "worker-profile/1.2"
             ? "direct_entry_create_full_profile_batch_v2"
             : "direct_entry_create_full_profile_batch";
-        const { data, error } = await resolvedRpc(rpcName, {
+        let { data, error } = await resolvedRpc(rpcName, {
           p_auth_subject: input.auth_subject,
           p_app_user_id: input.app_user_id,
           p_contract_version: input.payload.contract_version,
           p_rows: input.payload.rows,
           p_idempotency_key: input.idempotency_key,
         });
+        if (
+          error?.code === "22023" &&
+          error.message === "CONTRACT_VERSION_UNSUPPORTED" &&
+          canFallbackV12ToV11(input.payload)
+        ) {
+          ({ data, error } = await resolvedRpc(rpcName, {
+            p_auth_subject: input.auth_subject,
+            p_app_user_id: input.app_user_id,
+            p_contract_version: "worker-profile/1.1",
+            p_rows: input.payload.rows,
+            p_idempotency_key: input.idempotency_key,
+          }));
+        }
         if (error?.code === "42501") logDeniedBatch(error, input.payload);
-        return error ? classify(error) : { ok: true, data };
+        if (!error) return { ok: true, data };
+        const classified = classify(error);
+        if (!classified.ok && classified.kind === "unavailable") {
+          logUnavailableBatch(rpcName, error, input.payload);
+        }
+        return classified;
       } catch {
         console.error("[direct-entry] full-profile batch RPC failed");
         return { ok: false, kind: "unavailable" };
@@ -131,8 +171,9 @@ export function createFullProfileRepository(rpc?: Rpc) {
     }): Promise<FullProfileRepositoryResult> {
       try {
         resolvedRpc ??= serviceRoleRpc();
-        const { data, error } = await resolvedRpc(
-          "direct_entry_create_full_profile_batch_with_portrait_stages",
+        const rpcName = "direct_entry_create_full_profile_batch_with_portrait_stages";
+        let { data, error } = await resolvedRpc(
+          rpcName,
           {
             p_auth_subject: input.auth_subject,
             p_app_user_id: input.app_user_id,
@@ -142,8 +183,30 @@ export function createFullProfileRepository(rpc?: Rpc) {
             p_stage_ids: input.portrait_stage_ids,
           },
         );
+        if (
+          error?.code === "22023" &&
+          error.message === "CONTRACT_VERSION_UNSUPPORTED" &&
+          canFallbackV12ToV11(input.payload)
+        ) {
+          ({ data, error } = await resolvedRpc(
+            rpcName,
+            {
+              p_auth_subject: input.auth_subject,
+              p_app_user_id: input.app_user_id,
+              p_contract_version: "worker-profile/1.1",
+              p_rows: input.payload.rows,
+              p_idempotency_key: input.idempotency_key,
+              p_stage_ids: input.portrait_stage_ids,
+            },
+          ));
+        }
         if (error?.code === "42501") logDeniedBatch(error, input.payload);
-        return error ? classify(error) : { ok: true, data };
+        if (!error) return { ok: true, data };
+        const classified = classify(error);
+        if (!classified.ok && classified.kind === "unavailable") {
+          logUnavailableBatch(rpcName, error, input.payload);
+        }
+        return classified;
       } catch {
         console.error("[direct-entry] portrait full-profile batch RPC failed");
         return { ok: false, kind: "unavailable" };

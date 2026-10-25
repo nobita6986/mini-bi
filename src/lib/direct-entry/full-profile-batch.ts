@@ -551,10 +551,14 @@ export async function fullProfileIntentDigest(
 /* ---------------------------------------------------------------- messages */
 
 const MESSAGES: Readonly<Record<string, string>> = Object.freeze({
-  FULL_PROFILE_NETWORK: "Không gửi được yêu cầu. Chưa dòng nào được lưu; hãy bấm Thử lại.",
+  FULL_PROFILE_NETWORK:
+    "Không nhận được phản hồi hoàn tất từ máy chủ. Hệ thống đang đối chiếu lại trạng thái lưu; nếu hồ sơ chưa xuất hiện, hãy bấm Thử lại với cùng yêu cầu (không tạo hồ sơ trùng).",
   FULL_PROFILE_PROJECTION_INVALID:
     "Máy chủ trả về kết quả không đọc được. Chưa xác định được kết quả; hãy bấm Thử lại với cùng yêu cầu.",
-  BATCH_UNAVAILABLE: "Máy chủ chưa xử lý được. Chưa dòng nào được lưu; hãy bấm Thử lại.",
+  BATCH_UNAVAILABLE:
+    "Máy chủ chưa xác nhận hoàn tất xử lý. Hệ thống đang đối chiếu lại trạng thái lưu; nếu hồ sơ chưa xuất hiện, hãy bấm Thử lại với cùng yêu cầu (không tạo hồ sơ trùng).",
+  PORTRAIT_PROMOTION_PENDING:
+    "Hồ sơ đã lưu; máy chủ vẫn đang hoàn tất một số tệp đính kèm. Hãy tải lại danh sách sau ít phút.",
   IDEMPOTENCY_CONFLICT:
     "Dữ liệu đã thay đổi ở nơi khác. Hãy tải lại danh sách rồi dán lại trước khi lưu.",
   BATCH_INVALID: "Máy chủ từ chối nhóm dòng. Kiểm tra lại dữ liệu và danh mục.",

@@ -319,9 +319,13 @@ export async function postFullProfileBatch(
     if (!result.ok) {
       if (result.kind !== "unavailable" && claimed.length > 0) {
         for (const stage of claimed) {
-          await reconcileRejectedPortraitStage(
-            stage.stage_id, stageBatchIdempotencyKey, actor, dependencies,
-          );
+          try {
+            await reconcileRejectedPortraitStage(
+              stage.stage_id, stageBatchIdempotencyKey, actor, dependencies,
+            );
+          } catch {
+            console.error("[direct-entry] rejected stage reconciliation threw");
+          }
         }
       }
       if (result.kind === "conflict") return fail("IDEMPOTENCY_CONFLICT", 409);
@@ -345,96 +349,101 @@ export async function postFullProfileBatch(
       console.error("[direct-entry] full-profile batch returned malformed projection");
       return fail("BATCH_UNAVAILABLE", 500);
     }
-    for (const stage of claimed) {
-      const claimedStage = stage.data;
-      const entryId = projection.entry_ids[stage.index];
-      if (claimedStage.document_type !== stage.document_type) {
-        console.error("[direct-entry] worker document stage type mismatch");
-        return fail("IDEMPOTENCY_CONFLICT", 409);
-      }
-      if (claimedStage.status === "ATTACHED") {
-        if (claimedStage.entry_id !== entryId || !claimedStage.document_id) {
+    try {
+      for (const stage of claimed) {
+        const claimedStage = stage.data;
+        const entryId = projection.entry_ids[stage.index];
+        if (claimedStage.document_type !== stage.document_type) {
+          console.error("[direct-entry] worker document stage type mismatch");
           return fail("IDEMPOTENCY_CONFLICT", 409);
         }
-        await dependencies.documentStorage!.deleteEnrollmentPortraitStage(stage.stage_id);
-        continue;
-      }
+        if (claimedStage.status === "ATTACHED") {
+          if (claimedStage.entry_id !== entryId || !claimedStage.document_id) {
+            return fail("IDEMPOTENCY_CONFLICT", 409);
+          }
+          await dependencies.documentStorage!.deleteEnrollmentPortraitStage(stage.stage_id);
+          continue;
+        }
 
-      const stagedBytes = await dependencies.documentStorage!.readEnrollmentPortraitStage(stage.stage_id);
-      if (!stagedBytes || stagedBytes.byteLength !== claimedStage.size_bytes ||
-          sha256Hex(stagedBytes) !== claimedStage.checksum_sha256 ||
-          !inspectDocumentContent({
-            document_type: claimedStage.document_type,
-            mime_type: claimedStage.mime_type,
-            bytes: stagedBytes,
-          }).ok) {
-        console.error("[direct-entry] portrait stage integrity check failed");
-        return fail("PORTRAIT_PROMOTION_PENDING", 503);
-      }
-
-      const entry = await dependencies.documentRepository!.readEntry({
-        ...actor, entry_id: entryId,
-      });
-      if (!entry.ok || typeof entry.data !== "object" || entry.data === null ||
-          !("version" in entry.data) || typeof entry.data.version !== "number") {
-        console.error("[direct-entry] portrait enrollment entry lookup unavailable");
-        return fail("PORTRAIT_PROMOTION_PENDING", 503);
-      }
-      const reservation = await dependencies.documentRepository!.reserveDocumentUpload({
-        ...actor,
-        entry_id: entryId,
-        expected_entry_version: entry.data.version,
-            document_type: claimedStage.document_type,
-        idempotency_key: stage.stage_id,
-        size_bytes: claimedStage.size_bytes,
-        mime_type: claimedStage.mime_type,
-        reason: null,
-      });
-      if (!reservation.ok) return fail("PORTRAIT_PROMOTION_PENDING", 503);
-      if (reservation.data.upload_status === "QUEUED") {
-        await dependencies.documentStorage!.copyEnrollmentPortraitStage({
-          stage_id: stage.stage_id,
-          storage_key: reservation.data.storage_key,
-          mime_type: claimedStage.mime_type,
-        });
-        const finalizeRequest = new Request("https://direct-entry.internal/api/direct-entry", {
-          method: "POST",
-          headers: {
-            origin: "https://direct-entry.internal",
-            host: "direct-entry.internal",
-            "content-type": "application/json",
-            "idempotency-key": stage.stage_id,
-          },
-          body: JSON.stringify({ expected_entry_version: reservation.data.entry_version }),
-        });
-        const finalized = await finalizeDirectEntryDocument(
-          finalizeRequest, entryId, reservation.data.document_id, "true", {
-            resolveSession: dependencies.resolveSession,
-            repository: dependencies.documentRepository!,
-            storage: dependencies.documentStorage!,
-            onCccdImageFinalized: dependencies.onCccdImageFinalized,
-          },
-        );
-        if (!finalized.ok) {
-          console.error("[direct-entry] portrait enrollment finalization pending");
+        const stagedBytes = await dependencies.documentStorage!.readEnrollmentPortraitStage(stage.stage_id);
+        if (!stagedBytes || stagedBytes.byteLength !== claimedStage.size_bytes ||
+            sha256Hex(stagedBytes) !== claimedStage.checksum_sha256 ||
+            !inspectDocumentContent({
+              document_type: claimedStage.document_type,
+              mime_type: claimedStage.mime_type,
+              bytes: stagedBytes,
+            }).ok) {
+          console.error("[direct-entry] portrait stage integrity check failed");
           return fail("PORTRAIT_PROMOTION_PENDING", 503);
         }
-      } else if (reservation.data.upload_status !== "READY" ||
-          reservation.data.validation_status !== "VALIDATED") {
-        return fail("PORTRAIT_PROMOTION_PENDING", 503);
+
+        const entry = await dependencies.documentRepository!.readEntry({
+          ...actor, entry_id: entryId,
+        });
+        if (!entry.ok || typeof entry.data !== "object" || entry.data === null ||
+            !("version" in entry.data) || typeof entry.data.version !== "number") {
+          console.error("[direct-entry] portrait enrollment entry lookup unavailable");
+          return fail("PORTRAIT_PROMOTION_PENDING", 503);
+        }
+        const reservation = await dependencies.documentRepository!.reserveDocumentUpload({
+          ...actor,
+          entry_id: entryId,
+          expected_entry_version: entry.data.version,
+          document_type: claimedStage.document_type,
+          idempotency_key: stage.stage_id,
+          size_bytes: claimedStage.size_bytes,
+          mime_type: claimedStage.mime_type,
+          reason: null,
+        });
+        if (!reservation.ok) return fail("PORTRAIT_PROMOTION_PENDING", 503);
+        if (reservation.data.upload_status === "QUEUED") {
+          await dependencies.documentStorage!.copyEnrollmentPortraitStage({
+            stage_id: stage.stage_id,
+            storage_key: reservation.data.storage_key,
+            mime_type: claimedStage.mime_type,
+          });
+          const finalizeRequest = new Request("https://direct-entry.internal/api/direct-entry", {
+            method: "POST",
+            headers: {
+              origin: "https://direct-entry.internal",
+              host: "direct-entry.internal",
+              "content-type": "application/json",
+              "idempotency-key": stage.stage_id,
+            },
+            body: JSON.stringify({ expected_entry_version: reservation.data.entry_version }),
+          });
+          const finalized = await finalizeDirectEntryDocument(
+            finalizeRequest, entryId, reservation.data.document_id, "true", {
+              resolveSession: dependencies.resolveSession,
+              repository: dependencies.documentRepository!,
+              storage: dependencies.documentStorage!,
+              onCccdImageFinalized: dependencies.onCccdImageFinalized,
+            },
+          );
+          if (!finalized.ok) {
+            console.error("[direct-entry] portrait enrollment finalization pending");
+            return fail("PORTRAIT_PROMOTION_PENDING", 503);
+          }
+        } else if (reservation.data.upload_status !== "READY" ||
+            reservation.data.validation_status !== "VALIDATED") {
+          return fail("PORTRAIT_PROMOTION_PENDING", 503);
+        }
+        const completed = await dependencies.portraitStages!.complete({
+          ...actor,
+          stage_id: stage.stage_id,
+          idempotency_key: stageBatchIdempotencyKey,
+          entry_id: entryId,
+          document_id: reservation.data.document_id,
+        });
+        if (!completed.ok) {
+          console.error("[direct-entry] portrait stage completion pending");
+          return fail("PORTRAIT_PROMOTION_PENDING", 503);
+        }
+        await dependencies.documentStorage!.deleteEnrollmentPortraitStage(stage.stage_id);
       }
-      const completed = await dependencies.portraitStages!.complete({
-        ...actor,
-        stage_id: stage.stage_id,
-        idempotency_key: stageBatchIdempotencyKey,
-        entry_id: entryId,
-        document_id: reservation.data.document_id,
-      });
-      if (!completed.ok) {
-        console.error("[direct-entry] portrait stage completion pending");
-        return fail("PORTRAIT_PROMOTION_PENDING", 503);
-      }
-      await dependencies.documentStorage!.deleteEnrollmentPortraitStage(stage.stage_id);
+    } catch {
+      console.error("[direct-entry] post-commit stage promotion failed");
+      return fail("PORTRAIT_PROMOTION_PENDING", 503);
     }
     const { replayed, ...safeResult } = projection;
     return respond({ ok: true, ...safeResult }, replayed ? 200 : 201);

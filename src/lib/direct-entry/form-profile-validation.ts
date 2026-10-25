@@ -38,24 +38,106 @@ export function buildFormProfileValidation(input: {
   const base = buildSpreadsheetValidation(input);
   if (base.preview === null) return base;
 
+  const stagedRowByClientId = new Map(
+    input.rows.map((row) => [row.clientRowId, row] as const),
+  );
+
   const clientRowIdForSourceRow = (sourceRow: number): string | null => {
     const index = sourceRow - 2;
     return base.rowOrder[index] ?? null;
   };
 
   const previewRows: WorkerProfilePreviewRow[] = base.preview.rows.map((previewRow) => {
-    const filteredIssues = previewRow.issues.filter(
-      (item) => !(item.field === "display_name" && item.code === "PASTE_VALUE_REQUIRED"),
-    );
-    const hasNationalIdError = filteredIssues.some((item) => item.field === "national_id");
+    const clientRowId = clientRowIdForSourceRow(previewRow.sourceRow);
+    const stagedRow = clientRowId !== null ? stagedRowByClientId.get(clientRowId) : undefined;
+    const providerType = stagedRow?.providerType ?? "";
+    const rawProjectId = (stagedRow?.cells.project_id ?? previewRow.labels.project ?? "").trim();
+    const rawRecruiterId = (stagedRow?.cells.recruiter_id ?? previewRow.labels.recruiter ?? "").trim();
+    const rawLaborType = (stagedRow?.cells.labor_type ?? previewRow.row.labor_type ?? "").trim();
+    const recruiterReadyForCatalogCheck = providerType !== "" && rawRecruiterId !== "";
+
+    const filteredIssues = previewRow.issues.filter((item) => {
+      if (item.field === "display_name" && item.code === "PASTE_VALUE_REQUIRED") {
+        return false;
+      }
+      if (
+        item.field === "project_id" &&
+        (item.code === "PASTE_CATALOG_MISSING" || item.code === "PASTE_CATALOG_UNRESOLVED") &&
+        rawProjectId === ""
+      ) {
+        return false;
+      }
+      if (
+        item.field === "recruiter_id" &&
+        (item.code === "PASTE_CATALOG_MISSING" || item.code === "PASTE_CATALOG_UNRESOLVED") &&
+        !recruiterReadyForCatalogCheck
+      ) {
+        return false;
+      }
+      if (item.field === "labor_type" && item.code === "PASTE_LABOR_TYPE_INVALID" && rawLaborType === "") {
+        return false;
+      }
+      return true;
+    });
+
+    const catalog = input.catalogFor(previewRow.row.first_work_date || input.referenceDate);
+    const normalizedRecruiterKey = rawRecruiterId.toLocaleLowerCase("vi-VN");
+    const recruiterProviderMismatch =
+      recruiterReadyForCatalogCheck &&
+      ((previewRow.resolved !== null && previewRow.resolved.provider_type !== providerType) ||
+        (catalog !== null &&
+          catalog.recruiters.some(
+            (recruiter) =>
+              recruiter.id.trim().toLocaleLowerCase("vi-VN") === normalizedRecruiterKey ||
+              recruiter.label.trim().toLocaleLowerCase("vi-VN") === normalizedRecruiterKey,
+          ) &&
+          !catalog.recruiters.some(
+            (recruiter) =>
+              (recruiter.id.trim().toLocaleLowerCase("vi-VN") === normalizedRecruiterKey ||
+                recruiter.label.trim().toLocaleLowerCase("vi-VN") === normalizedRecruiterKey) &&
+              recruiter.provider_type === providerType,
+          )));
+
     const nextIssues: WorkerProfileIssue[] = [...filteredIssues];
+    if (rawProjectId === "" && !nextIssues.some((item) => item.field === "project_id")) {
+      nextIssues.push(issue("PASTE_VALUE_REQUIRED", "error", previewRow.sourceRow, "project_id"));
+    }
+    if (!recruiterReadyForCatalogCheck && !nextIssues.some((item) => item.field === "recruiter_id")) {
+      nextIssues.push(issue("PASTE_VALUE_REQUIRED", "error", previewRow.sourceRow, "recruiter_id"));
+    }
+    if (
+      recruiterProviderMismatch &&
+      !nextIssues.some((item) => item.field === "recruiter_id" && item.code === "PASTE_CATALOG_MISSING")
+    ) {
+      nextIssues.push(issue("PASTE_CATALOG_MISSING", "error", previewRow.sourceRow, "recruiter_id"));
+    }
+    if (rawLaborType === "" && !nextIssues.some((item) => item.field === "labor_type")) {
+      nextIssues.push(issue("PASTE_VALUE_REQUIRED", "error", previewRow.sourceRow, "labor_type"));
+    }
+
+    const hasNationalIdError = nextIssues.some((item) => item.field === "national_id");
     if (previewRow.row.worker.national_id.state !== "provided" && !hasNationalIdError) {
       nextIssues.push(issue("PASTE_VALUE_REQUIRED", "error", previewRow.sourceRow, "national_id"));
     }
+
+    const resolved =
+      !recruiterReadyForCatalogCheck || recruiterProviderMismatch
+        ? {
+            project_id: previewRow.resolved.project_id,
+            recruiter_id: null,
+            provider_type: null,
+          }
+        : previewRow.resolved;
+
     return {
       ...previewRow,
+      resolved,
       issues: nextIssues,
-      canProceed: nextIssues.length === 0,
+      canProceed:
+        nextIssues.length === 0 &&
+        resolved.project_id !== null &&
+        resolved.recruiter_id !== null &&
+        resolved.provider_type !== null,
     };
   });
 
