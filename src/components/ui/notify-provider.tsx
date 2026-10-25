@@ -12,6 +12,7 @@ import {
 import { usePathname } from "next/navigation";
 
 import { ToastViewport } from "@/components/ui/toast";
+import { getDefaultFormSaveUploadJobManager } from "@/lib/direct-entry/form-save-upload-job-manager";
 import {
   bindNotifyTimerScheduler,
   createNotifyStore,
@@ -89,6 +90,7 @@ export function NotifyProvider({
   // Fallback clear when landing on /login (after logout or session expiry)
   useEffect(() => {
     syncNotifyPathname(store, pathname);
+    getDefaultFormSaveUploadJobManager().syncSessionPathname(pathname);
   }, [pathname, store]);
 
   // Independent per-Toast deadline & enter/exit timer scheduler

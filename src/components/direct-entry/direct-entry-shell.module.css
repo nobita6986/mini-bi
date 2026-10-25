@@ -2034,3 +2034,193 @@
     font-size: 12px;
   }
 }
+
+
+/* PRE-W2-HF: Form file upload status slots & delete confirmation dialog */
+.formUploadSlotHeader {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.formUploadSlotHeader h4 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.formUploadStatusBadge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  max-width: 100%;
+  border: 1px solid var(--border, #d4d4d8);
+  border-radius: 9999px;
+  background: var(--surface, #fff);
+  color: var(--muted, #52525b);
+  padding: 2px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.formUploadStatusBadge[data-status="selected"] {
+  border-color: color-mix(in srgb, var(--primary, #0f172a) 35%, var(--border, #d4d4d8));
+  background: color-mix(in srgb, var(--primary, #0f172a) 10%, var(--surface, #fff));
+  color: var(--primary, #0f172a);
+}
+
+.formUploadStatusBadge[data-status="uploading"] {
+  border-color: color-mix(in srgb, var(--semantic-warning, #b45309) 35%, var(--border, #d4d4d8));
+  background: color-mix(in srgb, var(--semantic-warning, #b45309) 12%, var(--surface, #fff));
+  color: var(--semantic-warning, #b45309);
+}
+
+.formUploadStatusBadge[data-status="uploaded"] {
+  border-color: color-mix(in srgb, var(--semantic-success, #047857) 35%, var(--border, #d4d4d8));
+  background: color-mix(in srgb, var(--semantic-success, #047857) 12%, var(--surface, #fff));
+  color: var(--semantic-success, #047857);
+}
+
+.formUploadStatusBadge[data-status="error"] {
+  border-color: color-mix(in srgb, var(--semantic-error, #be123c) 40%, var(--border, #d4d4d8));
+  background: color-mix(in srgb, var(--semantic-error, #be123c) 12%, var(--surface, #fff));
+  color: var(--semantic-error, #be123c);
+}
+
+.formUploadFileMeta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+}
+
+.formUploadFileName {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.formUploadFileSize {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--muted, #52525b);
+}
+
+.formUploadSlotActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.formPostSaveJobsSection {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--border, #d4d4d8);
+  border-radius: 10px;
+  background: var(--surface, #fff);
+  padding: 14px;
+}
+
+.formPostSaveJobCard {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--border, #d4d4d8);
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.formDeleteConfirmOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 69;
+  background: rgb(15 23 42 / 48%);
+}
+
+.formDeleteConfirmDialog {
+  position: fixed;
+  z-index: 70;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  box-sizing: border-box;
+  width: min(92vw, 460px);
+  max-height: 90dvh;
+  overflow-y: auto;
+  border: 1px solid var(--border, #d4d4d8);
+  border-radius: 14px;
+  background: var(--surface, #fff);
+  color: var(--foreground);
+  padding: 22px;
+  box-shadow: 0 18px 48px rgb(15 23 42 / 24%);
+}
+
+.formDeleteConfirmTitle {
+  margin: 0 0 8px;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.formDeleteConfirmDescription {
+  margin: 0;
+  color: var(--muted, #52525b);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.formDeleteConfirmActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 20px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border, #d4d4d8);
+}
+
+.formDeleteCancelButtonProminent {
+  min-height: 48px;
+  min-width: 164px;
+  padding: 12px 24px;
+  border: 2px solid var(--primary, #0f172a);
+  border-radius: 10px;
+  background: var(--primary, #0f172a);
+  color: var(--primary-foreground, #ffffff);
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgb(15 23 42 / 18%);
+}
+
+.formDeleteCancelButtonProminent:focus-visible {
+  outline: 3px solid var(--ring, #2563eb);
+  outline-offset: 2px;
+}
+
+.formDeleteConfirmButtonSubtle {
+  min-height: 38px;
+  padding: 6px 14px;
+  border: 1px solid var(--semantic-error, #be123c);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--semantic-error, #be123c);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.formDeleteConfirmButtonSubtle:focus-visible {
+  outline: 2px solid var(--semantic-error, #be123c);
+  outline-offset: 2px;
+}

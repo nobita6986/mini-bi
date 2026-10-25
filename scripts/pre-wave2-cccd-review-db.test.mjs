@@ -599,3 +599,76 @@ test("MISMATCH and QR_UNREADABLE queue, creator scope vs out-of-scope isolation,
   assert.equal(afterStd[0].worker_details.national_id.value, "079095005566");
   assert.equal(afterStd[0].worker_details.gender.value, "FEMALE");
 });
+
+test("PRE-W2-HF migration aligns owners and keeps direct_entry_create_full_profile_batch_with_portrait_stages idempotent on replay", async () => {
+  assert.ok(
+    migrations.migrationNames.includes("20261026210000_pre_w2_hf_form_save_owner_and_stage_alignment.sql"),
+    "migration inventory includes 20261026210000_pre_w2_hf_form_save_owner_and_stage_alignment.sql",
+  );
+
+  const stageId = "e8000000-0000-4000-8000-000000000001";
+  const stageCreateKey = "e9000000-0000-4000-8000-000000000001";
+  const batchIdemKey = "ea000000-0000-4000-8000-000000000001";
+
+  await db.query(
+    "select public.direct_entry_create_worker_document_stage_idempotent(" +
+      "$1::uuid, $2::uuid, $3::uuid, 'WORKER_PORTRAIT', 'image/jpeg', 512, $4, $5)",
+    [ACTORS.owner.auth_subject, ACTORS.owner.app_user_id, stageId, "b".repeat(64), stageCreateKey],
+  );
+  await db.query(
+    "select public.direct_entry_claim_worker_portrait_stage($1::uuid, $2::uuid, $3::uuid, $4::text)",
+    [ACTORS.owner.auth_subject, ACTORS.owner.app_user_id, stageId, batchIdemKey],
+  );
+
+  const rowsPayload = [
+    {
+      project_id: projectId,
+      first_work_date: "2026-04-04",
+      recruiter_id: recruiterId,
+      provider_type: "hrp",
+      labor_type: "TEMPORARY",
+      display_name: "",
+      worker_details: {
+        gender: { state: "provided", value: "MALE" },
+        date_of_birth: { state: "omitted" },
+        national_id: { state: "provided", value: "079095007788" },
+        national_id_issued_at: { state: "omitted" },
+        national_id_issued_place: { state: "omitted" },
+        address: { state: "omitted" },
+        phone: { state: "omitted" },
+      },
+      general_note: { state: "omitted" },
+      payment: null,
+      employment: { initial_status: "ON" },
+    },
+  ];
+
+  const firstCall = await db.query(
+    "select public.direct_entry_create_full_profile_batch_with_portrait_stages(" +
+      "$1::uuid, $2::uuid, 'worker-profile/1.2', $3::jsonb, $4::text, $5::uuid[]) as data",
+    [
+      ACTORS.owner.auth_subject,
+      ACTORS.owner.app_user_id,
+      JSON.stringify(rowsPayload),
+      batchIdemKey,
+      [stageId],
+    ],
+  );
+  assert.equal(firstCall.rows[0].data.entry_ids.length, 1);
+  assert.equal(firstCall.rows[0].data.replayed, false);
+
+  const replayedCall = await db.query(
+    "select public.direct_entry_create_full_profile_batch_with_portrait_stages(" +
+      "$1::uuid, $2::uuid, 'worker-profile/1.2', $3::jsonb, $4::text, $5::uuid[]) as data",
+    [
+      ACTORS.owner.auth_subject,
+      ACTORS.owner.app_user_id,
+      JSON.stringify(rowsPayload),
+      batchIdemKey,
+      [stageId],
+    ],
+  );
+  assert.equal(replayedCall.rows[0].data.submission_id, firstCall.rows[0].data.submission_id);
+  assert.equal(replayedCall.rows[0].data.replayed, true);
+});
+

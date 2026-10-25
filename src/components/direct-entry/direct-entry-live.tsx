@@ -94,6 +94,7 @@ import {
 import { DdmmDateInput } from "@/components/direct-entry/direct-entry-ddmm-date-input";
 import { buildSpreadsheetValidation } from "@/lib/direct-entry/direct-entry-grid-validation";
 import { buildFormProfileValidation } from "@/lib/direct-entry/form-profile-validation";
+import { getDefaultFormSaveUploadJobManager } from "@/lib/direct-entry/form-save-upload-job-manager";
 import {
   DRAFT_EDITABLE_GRID_FIELDS,
   applyLiveGridPaste,
@@ -1903,6 +1904,7 @@ export function DirectEntryLive() {
     visibleFormRowIds]);
 
   const deleteFormRow = useCallback((clientRowId: string) => {
+    getDefaultFormSaveUploadJobManager().clearRowFiles(clientRowId);
     onStagedDelete(clientRowId);
     setVisibleFormRowIds((current) => current.filter((id) => id !== clientRowId));
   }, [onStagedDelete]);
@@ -2062,10 +2064,15 @@ export function DirectEntryLive() {
       return;
     }
     const stageControllers = [portraitStages, cccdFrontStages, cccdBackStages, contractStages];
-    const blockingStageControllers = inputMode === "form"
-      ? [portraitStages, contractStages]
-      : stageControllers;
-    if (savedClientRowIds.some((rowId) => blockingStageControllers.some(
+    const formUploadJobManager = getDefaultFormSaveUploadJobManager();
+    if (inputMode === "form" && formUploadJobManager.hasInvalidSelectedFiles(savedClientRowIds)) {
+      setStagedMessageWithTone(
+        "Có tệp đính kèm không hợp lệ. Hãy thay tệp đúng định dạng/dung lượng hoặc bấm Hủy tệp trước khi lưu.",
+        "error",
+      );
+      return;
+    }
+    if (inputMode !== "form" && savedClientRowIds.some((rowId) => stageControllers.some(
       (controller) => controller.slots.get(rowId)?.status === "staging"))) {
       setStagedMessageWithTone("Đang tải hồ sơ lên bản nháp. Chờ hoàn tất rồi hãy lưu các dòng.", "info");
       return;
@@ -2073,9 +2080,9 @@ export function DirectEntryLive() {
     const body = inputMode === "form"
       ? buildCccdRequiredFullProfileRequestBody(
         validPreviewRows,
-        portraitStageIdsBySourceRow,
+        undefined,
         "ON",
-        documentStageIdsBySourceRow,
+        undefined,
       )
       : buildServerGeneratedFullProfileRequestBody(
         validPreviewRows,
@@ -2101,6 +2108,7 @@ export function DirectEntryLive() {
     stagedInFlight.current = true;
     setStagedBusy(true);
     setStagedMessageWithTone("", "");
+    const saveToastId = inputMode === "form" ? formUploadJobManager.beginSaveProgress() : null;
     try {
       const result = await postFullProfileBatch({
         rows: body.rows,
@@ -2133,13 +2141,33 @@ export function DirectEntryLive() {
         // hay tên đều bị hủy bỏ; chi dung entry_id server-issued).
         const savedEntryIds = result.entryIds;
         const stagedToEntry = new Map<string, string>();
+        const savedEntriesForUpload: { clientRowId: string; entryId: string; initialEntryVersion: number }[] = [];
         for (let index = 0; index < savedClientRowIds.length; index += 1) {
           const cid = savedClientRowIds[index];
           const eid = savedEntryIds[index];
-          if (cid !== undefined && eid !== undefined) stagedToEntry.set(cid, eid);
+          if (cid !== undefined && eid !== undefined) {
+            stagedToEntry.set(cid, eid);
+            savedEntriesForUpload.push({
+              clientRowId: cid,
+              entryId: eid,
+              initialEntryVersion: 1,
+            });
+          }
         }
         // Chỉ bỏ các dòng được máy chủ xác nhận; dòng lỗi và stage của chúng vẫn ở lại để sửa.
         clearSavedStagedRows();
+        if (inputMode === "form") {
+          formUploadJobManager.startPostSaveUploadJob({
+            toastId: saveToastId,
+            savedEntries: savedEntriesForUpload,
+            onEntryUploaded: (uploadedEntryId, latestVersion) => {
+              onPaymentEntryVersionChange(uploadedEntryId, latestVersion);
+            },
+            onJobCompleted: () => {
+              void Promise.all([reloadDrafts(), loadSubmissions("replace")]);
+            },
+          });
+        }
         const invalidRowCount = stagedValidation.rows.filter((row) => !row.canProceed).length;
         setStagedValidationTriggered(invalidRowCount > 0);
         setStagedMessageWithTone(
@@ -2169,12 +2197,13 @@ export function DirectEntryLive() {
         return;
       }
       if (result.kind === "retry") {
-        // W2S1: ket qua khong xac dinh => hoi DB trang thai that cua stage. Neu ho so DA luu
-        // nhung anh chua hoan tat thi bao dung, khong bao "chua luu" (khong bao luu gia).
+        void Promise.all([reloadDrafts(), loadSubmissions("replace")]);
+        formUploadJobManager.failSaveProgress(saveToastId, fullProfileErrorMessage(result.code), "warning");
         const documentPending = await reconcileStagedDocuments();
         setStagedMessage(documentPending ?? fullProfileErrorMessage(result.code));
         return;
       }
+      formUploadJobManager.failSaveProgress(saveToastId, fullProfileErrorMessage(result.code), "error");
       stagedIntent.current = clearIntentKey(stagedIntent.current, intent);
       setStagedMessageWithTone(fullProfileErrorMessage(result.code), "error");
     } finally {
@@ -2182,7 +2211,7 @@ export function DirectEntryLive() {
       setStagedBusy(false);
     }
   }, [editingDraftSubmissionId, hasActiveLaborTypes, inputMode, invalidateStagedUndo,
-    loadSubmissions, reloadDrafts,
+    loadSubmissions, onPaymentEntryVersionChange, reloadDrafts,
     cccdBackStages, cccdFrontStages, contractStages, documentStageIdsBySourceRow,
     portraitStageIdsBySourceRow, portraitStages, reconcileStagedDocuments, saveRow,
     selectedClientRowId, setSelectedClientRowId, setStagedMessage, setStagedModel, stagedModel,

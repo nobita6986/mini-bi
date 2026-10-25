@@ -1,14 +1,30 @@
 "use client";
 
-import type { ChangeEvent } from "react";
+import * as AlertDialog from "radix-ui/alert-dialog";
+import {
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ChangeEvent,
+} from "react";
 
 import { DdmmDateInput } from "@/components/direct-entry/direct-entry-ddmm-date-input";
 import type { DraftCatalog } from "@/lib/direct-entry/write-repository";
 import type { SpreadsheetValidation } from "@/lib/direct-entry/direct-entry-grid-validation";
 import type { SpreadsheetRowModel } from "@/lib/direct-entry/spreadsheet-row-model";
 import { formatFreeDateText } from "@/lib/direct-entry/direct-entry-date-format";
+import {
+  FORM_DOCUMENT_HINTS,
+  FORM_DOCUMENT_LABELS,
+  FORM_DOCUMENT_TYPES,
+  formUploadSlotStatusLabel,
+  formatFormFileSize,
+  getDefaultFormSaveUploadJobManager,
+  type FormDocumentType,
+  type FormSaveUploadJobManager,
+  type FormUploadSlotState,
+} from "@/lib/direct-entry/form-save-upload-job-manager";
 import type { WorkerPortraitStagesController } from "./use-worker-portrait-stages";
-import { WorkerDocumentStageSlot, WorkerPortraitStageSlot } from "./worker-portrait-stage-slot";
 import styles from "./direct-entry-shell.module.css";
 
 const FORM_EMPLOYMENT_STATUS_CHOICES = ["Đang làm", "Đang chờ việc"] as const;
@@ -25,6 +41,133 @@ function statusLabel(value: string): string {
   return value;
 }
 
+type FormDocumentUploadSlotProps = {
+  documentType: FormDocumentType;
+  testIdSuffix: string;
+  slot: FormUploadSlotState;
+  busy: boolean;
+  onSelectFile(file: File): void;
+  onCancel?(): void;
+  onRetry?(): void;
+};
+
+export function FormDocumentUploadSlot({
+  documentType,
+  testIdSuffix,
+  slot,
+  busy,
+  onSelectFile,
+  onCancel,
+  onRetry,
+}: FormDocumentUploadSlotProps) {
+  const docKey = documentType.toLowerCase();
+  const inputId = `form-upload-input-${docKey}-${testIdSuffix}`;
+  const isPortrait = documentType === "WORKER_PORTRAIT";
+  const label = FORM_DOCUMENT_LABELS[documentType];
+  const hint = FORM_DOCUMENT_HINTS[documentType];
+  const badgeText = formUploadSlotStatusLabel(slot);
+  const uploading = slot.status === "uploading";
+  const hasFileName = slot.fileName.trim() !== "";
+  const formattedSize = formatFormFileSize(slot.sizeBytes);
+
+  return (
+    <div
+      className={styles.formUploadCard}
+      data-testid={`form-upload-slot-${docKey}-${testIdSuffix}`}
+    >
+      <div className={styles.formUploadSlotHeader}>
+        <h4>{label}</h4>
+        <span
+          className={styles.formUploadStatusBadge}
+          data-status={slot.status}
+          data-testid={`form-upload-badge-${docKey}-${testIdSuffix}`}
+        >
+          {badgeText}
+        </span>
+      </div>
+
+      <label className={styles.field} htmlFor={inputId}>
+        <span>{hint}</span>
+        <span className={styles.filePickerControl}>
+          <input
+            id={inputId}
+            className={styles.filePickerInput}
+            type="file"
+            accept={isPortrait ? "image/jpeg,image/png" : "image/jpeg,image/png,application/pdf"}
+            disabled={busy || uploading}
+            data-testid={`form-upload-input-${docKey}-${testIdSuffix}`}
+            onChange={(event) => {
+              const file = event.currentTarget.files?.[0] ?? null;
+              event.currentTarget.value = "";
+              if (file !== null) {
+                onSelectFile(file);
+              }
+            }}
+          />
+          <span className={styles.filePickerButton} aria-hidden="true">
+            {slot.status === "idle" ? "Chọn tệp" : "Thay tệp"}
+          </span>
+        </span>
+      </label>
+
+      {hasFileName && (
+        <div className={styles.formUploadFileMeta}>
+          <span
+            className={styles.formUploadFileName}
+            title={slot.fileName}
+            data-testid={`form-upload-filename-${docKey}-${testIdSuffix}`}
+          >
+            {slot.fileName}
+          </span>
+          <span className="sr-only">{`Tên tệp đã chọn cho ${label}: ${slot.fileName}`}</span>
+          {formattedSize !== "" && (
+            <span className={styles.formUploadFileSize}>({formattedSize})</span>
+          )}
+        </div>
+      )}
+
+      <p
+        className={slot.status === "error" ? styles.documentError : styles.documentStatus}
+        role={slot.status === "error" ? "alert" : "status"}
+        data-testid={`form-upload-status-${docKey}-${testIdSuffix}`}
+      >
+        {slot.status === "idle" && "Chưa chọn tệp cho mục này."}
+        {slot.status === "selected" &&
+          "Đã chọn tệp · chờ lưu hồ sơ để tải ngầm lên máy chủ."}
+        {slot.status === "uploading" && "Đang tải tệp lên và gắn vào hồ sơ NLĐ…"}
+        {slot.status === "uploaded" && "Tải thành công · đã gắn vào hồ sơ NLĐ."}
+        {slot.status === "error" &&
+          (slot.errorMessage ?? "Tải tệp bị lỗi — có thể thử tải lại.")}
+      </p>
+
+      <div className={styles.formUploadSlotActions}>
+        {slot.status === "error" && slot.retryable && onRetry && (
+          <button
+            type="button"
+            className={styles.secondaryButton}
+            disabled={busy || uploading}
+            data-testid={`form-upload-retry-${docKey}-${testIdSuffix}`}
+            onClick={onRetry}
+          >
+            Thử tải lại
+          </button>
+        )}
+        {(slot.status === "selected" || slot.status === "error") && onCancel && (
+          <button
+            type="button"
+            className={styles.secondaryButton}
+            disabled={busy || uploading}
+            data-testid={`form-upload-cancel-${docKey}-${testIdSuffix}`}
+            onClick={onCancel}
+          >
+            Hủy tệp
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 type Props = {
   model: SpreadsheetRowModel;
   visibleRowIds: readonly string[];
@@ -38,6 +181,7 @@ type Props = {
   cccdFrontStages: WorkerPortraitStagesController;
   cccdBackStages: WorkerPortraitStagesController;
   contractStages: WorkerPortraitStagesController;
+  uploadJobManager?: FormSaveUploadJobManager;
   onActivateRow(rowId: string): void;
   onChange(rowId: string, field: string, value: string): void;
   onProviderTypeChange(rowId: string, providerType: "hrp" | "vendor" | ""): void;
@@ -59,6 +203,7 @@ export function DirectEntryMultiEntryForm({
   cccdFrontStages,
   cccdBackStages,
   contractStages,
+  uploadJobManager,
   onActivateRow,
   onChange,
   onProviderTypeChange,
@@ -66,6 +211,15 @@ export function DirectEntryMultiEntryForm({
   onDeleteRow,
   onSave,
 }: Props) {
+  const manager = uploadJobManager ?? getDefaultFormSaveUploadJobManager();
+  const uploadSnapshot = useSyncExternalStore(
+    manager.subscribe,
+    manager.getSnapshot,
+    manager.getSnapshot,
+  );
+  const [pendingDeleteRowId, setPendingDeleteRowId] = useState<string | null>(null);
+  const cancelDeleteButtonRef = useRef<HTMLButtonElement | null>(null);
+
   const handleChange = (rowId: string, field: string) =>
     (event: ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
       onChange(rowId, field, event.currentTarget.value);
@@ -80,6 +234,26 @@ export function DirectEntryMultiEntryForm({
     return status !== "" &&
       !(FORM_EMPLOYMENT_STATUS_CHOICES as readonly string[]).includes(status);
   });
+  const hasInvalidPreSaveFiles = manager.hasInvalidSelectedFiles(formRowIds);
+
+  const confirmDeleteRow = (rowId: string) => {
+    manager.clearRowFiles(rowId);
+    for (const controller of [portraitStages, cccdFrontStages, cccdBackStages, contractStages]) {
+      const slot = controller.slots.get(rowId);
+      if (slot && (slot.status === "staged" || slot.status === "stale")) {
+        controller.cancel(rowId, slot.stageId);
+      }
+    }
+    setPendingDeleteRowId(null);
+    onDeleteRow(rowId);
+  };
+
+  const pendingDeleteRowIndex =
+    pendingDeleteRowId !== null ? formRowIds.indexOf(pendingDeleteRowId) : -1;
+  const pendingDeleteRow =
+    pendingDeleteRowId !== null
+      ? model.rows.find((candidate) => candidate.clientRowId === pendingDeleteRowId) ?? null
+      : null;
 
   return (
     <section className={styles.multiEntryForm} aria-labelledby="multi-entry-form-title"
@@ -87,13 +261,72 @@ export function DirectEntryMultiEntryForm({
       <header className={styles.multiEntryFormHeader}>
         <div>
           <h2 id="multi-entry-form-title">Nhập nhiều NLĐ</h2>
-          <p>Hồ sơ hợp lệ được lưu trước; dòng còn lỗi và tệp đã chọn vẫn được giữ lại để xử lý tiếp.</p>
+          <p>Hồ sơ hợp lệ được lưu trước; các tệp đính kèm sẽ tự động tải ngầm sau khi lưu thành công.</p>
         </div>
         <button type="button" className={styles.secondaryButton} disabled={busy}
           data-testid="multi-entry-add-row" onClick={onAddRow}>
           + Thêm NLĐ
         </button>
       </header>
+
+      {uploadSnapshot.jobs.length > 0 && (
+        <div
+          className={styles.formPostSaveJobsSection}
+          data-testid="form-post-save-upload-jobs"
+          aria-label="Tiến trình tải tệp đính kèm cho hồ sơ vừa lưu"
+        >
+          <h3>Tiến trình tải tệp của hồ sơ đã lưu</h3>
+          {uploadSnapshot.jobs.map((job) =>
+            job.entries.map((entry) => (
+              <div
+                key={`${job.jobId}:${entry.entryId}`}
+                className={styles.formPostSaveJobCard}
+                data-testid={`form-post-save-entry-${entry.entryId}`}
+              >
+                <p className={styles.documentStatus} role="status">
+                  {`Hồ sơ đã lưu #${entry.workerOrder} · Đã tải ${job.uploadedFiles}/${job.totalFiles} tệp`}
+                  {job.failedFiles > 0
+                    ? ` · ${job.failedFiles} tệp lỗi (hồ sơ đã lưu an toàn, có thể thử tải lại từng tệp)`
+                    : ""}
+                </p>
+                <div className={styles.formUploadGrid}>
+                  {FORM_DOCUMENT_TYPES.map((documentType) => (
+                    <FormDocumentUploadSlot
+                      key={`${entry.entryId}-${documentType}`}
+                      documentType={documentType}
+                      testIdSuffix={`saved-${entry.entryId}`}
+                      slot={entry.slots[documentType]}
+                      busy={false}
+                      onSelectFile={(file) => {
+                        void manager.replacePostSaveSlotFile(
+                          job.jobId,
+                          entry.entryId,
+                          documentType,
+                          file,
+                        );
+                      }}
+                      onRetry={() => {
+                        void manager.retryPostSaveSlot(
+                          job.jobId,
+                          entry.entryId,
+                          documentType,
+                        );
+                      }}
+                      onCancel={() => {
+                        manager.cancelPostSaveSlot(
+                          job.jobId,
+                          entry.entryId,
+                          documentType,
+                        );
+                      }}
+                    />
+                  ))}
+                </div>
+              </div>
+            )),
+          )}
+        </div>
+      )}
 
       {formRowIds.length === 0 && <p>Chưa có dòng mới. Chọn “Thêm NLĐ” để bắt đầu.</p>}
       <ol className={styles.mobileStagedList} data-testid="multi-entry-form-rows">
@@ -108,7 +341,7 @@ export function DirectEntryMultiEntryForm({
           const unsupportedStatus = rawStatus !== "" &&
             !(FORM_EMPLOYMENT_STATUS_CHOICES as readonly string[]).includes(rawStatus);
           const currentStatus = unsupportedStatus ? "" : rawStatus || "Đang làm";
-          const hasDocumentBinding = validation.rows.some((candidate) => candidate.clientRowId === rowId);
+          const rowSlots = uploadSnapshot.preSaveByRowId[rowId] ?? manager.getRowSlots(rowId);
           const fieldLabel = (label: string) => (
             <><span>{label}</span><span className={styles.requiredStar} aria-hidden="true"> *</span>
               <span className="sr-only"> (bắt buộc)</span></>
@@ -199,44 +432,37 @@ export function DirectEntryMultiEntryForm({
                     <input autoComplete="tel" inputMode="tel" value={cells.phone ?? ""}
                       onChange={handleChange(rowId, "phone")} />
                   </Field>
+                  <Field label="Giới tính">
+                    <select value={cells.gender ?? ""} onChange={handleChange(rowId, "gender")}>
+                      <option value="">—</option><option value="Nam">Nam</option><option value="Nữ">Nữ</option><option value="Khác">Khác</option>
+                      {(cells.gender ?? "") !== "" && !["Nam", "Nữ", "Khác"].includes(cells.gender ?? "") &&
+                        <option value={cells.gender} disabled>{cells.gender}</option>}
+                    </select>
+                  </Field>
 
                   <div className={styles.formUploadSection}>
                     <h3>Tải hồ sơ lên</h3>
                     <div className={styles.formUploadGrid}>
-                      <div className={styles.formUploadCard}>
-                        {hasDocumentBinding ? (
-                          <WorkerPortraitStageSlot rowKey={rowId} testIdSuffix={rowId}
-                            slot={portraitStages.slots.get(rowId)} busy={busy}
-                            retryable={portraitStages.retryableRows.has(rowId)}
-                            onStage={portraitStages.stage} onRetry={portraitStages.retryStage}
-                            onCancel={portraitStages.cancel} />
-                        ) : (
-                          <p className={styles.documentStatus}>Nhập thông tin NLĐ trước khi chọn tệp.</p>
-                        )}
-                      </div>
-                      {hasDocumentBinding ? <WorkerDocumentStageSlot rowKey={rowId}
-                        testIdSuffix={rowId + "-cccd-front"} documentType="CCCD_FRONT"
-                        slot={cccdFrontStages.slots.get(rowId)} busy={busy}
-                        retryable={cccdFrontStages.retryableRows.has(rowId)}
-                        onStage={cccdFrontStages.stage} onRetry={cccdFrontStages.retryStage}
-                        onCancel={cccdFrontStages.cancel} /> : null}
-                      {hasDocumentBinding ? <WorkerDocumentStageSlot rowKey={rowId}
-                        testIdSuffix={rowId + "-cccd-back"} documentType="CCCD_BACK"
-                        slot={cccdBackStages.slots.get(rowId)} busy={busy}
-                        retryable={cccdBackStages.retryableRows.has(rowId)}
-                        onStage={cccdBackStages.stage} onRetry={cccdBackStages.retryStage}
-                        onCancel={cccdBackStages.cancel} /> : null}
-                      {hasDocumentBinding ? <WorkerDocumentStageSlot rowKey={rowId}
-                        testIdSuffix={rowId + "-contract"} documentType="EMPLOYMENT_CONTRACT"
-                        slot={contractStages.slots.get(rowId)} busy={busy}
-                        retryable={contractStages.retryableRows.has(rowId)}
-                        onStage={contractStages.stage} onRetry={contractStages.retryStage}
-                        onCancel={contractStages.cancel} /> : null}
+                      {FORM_DOCUMENT_TYPES.map((documentType) => (
+                        <FormDocumentUploadSlot
+                          key={`${rowId}-${documentType}`}
+                          documentType={documentType}
+                          testIdSuffix={rowId}
+                          slot={rowSlots[documentType]}
+                          busy={busy}
+                          onSelectFile={(file) => {
+                            manager.selectPreSaveFile(rowId, documentType, file);
+                          }}
+                          onCancel={() => {
+                            manager.cancelPreSaveFile(rowId, documentType);
+                          }}
+                        />
+                      ))}
                     </div>
                   </div>
 
                   <details className={styles.formOptionalDetails}>
-                    <summary>Thông tin thêm: tài khoản ngân hàng, ghi chú và thông tin cá nhân</summary>
+                    <summary>Thông tin thêm: tài khoản ngân hàng, ghi chú và ngày/nơi cấp, địa chỉ</summary>
                     <div className={`${styles.drawerFields} ${styles.formOptionalGrid}`}>
                       <Field label="STK">
                         <input inputMode="numeric" autoComplete="off" value={cells.account_number ?? ""}
@@ -266,19 +492,19 @@ export function DirectEntryMultiEntryForm({
                         <input autoComplete="street-address" value={cells.address ?? ""}
                           onChange={handleChange(rowId, "address")} />
                       </Field>
-                      <Field label="Giới tính">
-                        <select value={cells.gender ?? ""} onChange={handleChange(rowId, "gender")}>
-                          <option value="">—</option><option value="Nam">Nam</option><option value="Nữ">Nữ</option><option value="Khác">Khác</option>
-                          {(cells.gender ?? "") !== "" && !["Nam", "Nữ", "Khác"].includes(cells.gender ?? "") &&
-                            <option value={cells.gender} disabled>{cells.gender}</option>}
-                        </select>
-                      </Field>
                     </div>
                   </details>
                 </fieldset>
                 <div className={styles.formRowActions}>
-                  <button type="button" className={styles.secondaryButton} disabled={busy}
-                    onClick={() => onDeleteRow(rowId)}>Xóa dòng này</button>
+                  <button
+                    type="button"
+                    className={styles.secondaryButton}
+                    disabled={busy}
+                    data-testid={`form-delete-row-trigger-${rowId}`}
+                    onClick={() => setPendingDeleteRowId(rowId)}
+                  >
+                    Xóa dòng này
+                  </button>
                 </div>
               </details>
             </li>
@@ -286,11 +512,70 @@ export function DirectEntryMultiEntryForm({
         })}
       </ol>
 
+      <AlertDialog.Root
+        open={pendingDeleteRowId !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingDeleteRowId(null);
+        }}
+      >
+        <AlertDialog.Portal>
+          <AlertDialog.Overlay className={styles.formDeleteConfirmOverlay} />
+          <AlertDialog.Content
+            className={styles.formDeleteConfirmDialog}
+            data-testid="form-delete-row-dialog"
+            onOpenAutoFocus={(event) => {
+              event.preventDefault();
+              cancelDeleteButtonRef.current?.focus();
+            }}
+          >
+            <AlertDialog.Title className={styles.formDeleteConfirmTitle}>
+              Xác nhận xóa dòng đang nhập?
+            </AlertDialog.Title>
+            <AlertDialog.Description className={styles.formDeleteConfirmDescription}>
+              {pendingDeleteRow !== null
+                ? `Bạn có chắc muốn xóa dòng NLĐ ${pendingDeleteRowIndex + 1} (${pendingDeleteRow.cells.display_name || (pendingDeleteRow.cells.national_id ? `CCCD ${pendingDeleteRow.cells.national_id}` : "Chưa nhập họ tên")})? Dữ liệu đã nhập và các tệp đã chọn ở dòng này sẽ bị hủy.`
+                : "Dữ liệu đã nhập và các tệp đã chọn ở dòng này sẽ bị hủy."}
+            </AlertDialog.Description>
+            <div className={styles.formDeleteConfirmActions}>
+              <AlertDialog.Cancel asChild>
+                <button
+                  ref={cancelDeleteButtonRef}
+                  type="button"
+                  className={styles.formDeleteCancelButtonProminent}
+                  data-testid="form-delete-row-cancel"
+                >
+                  Hủy
+                </button>
+              </AlertDialog.Cancel>
+              <AlertDialog.Action asChild>
+                <button
+                  type="button"
+                  className={styles.formDeleteConfirmButtonSubtle}
+                  data-testid="form-delete-row-confirm"
+                  onClick={() => {
+                    if (pendingDeleteRowId !== null) {
+                      confirmDeleteRow(pendingDeleteRowId);
+                    }
+                  }}
+                >
+                  Xóa dòng
+                </button>
+              </AlertDialog.Action>
+            </div>
+          </AlertDialog.Content>
+        </AlertDialog.Portal>
+      </AlertDialog.Root>
+
       {portraitStages.staleCount > 0 && (
         <button type="button" className={styles.secondaryButton} data-testid="form-portrait-cleanup-retry"
           onClick={portraitStages.retryCleanup}>Thử dọn ảnh NLĐ cũ chưa hủy được</button>
       )}
       {portraitStages.message !== "" && <p className={styles.documentStatus} role="status">{portraitStages.message}</p>}
+      {hasInvalidPreSaveFiles && (
+        <p role="alert" className={styles.documentError} data-testid="form-invalid-files-error">
+          Có tệp đính kèm không hợp lệ. Hãy thay tệp đúng định dạng/dung lượng hoặc bấm Hủy tệp trước khi lưu.
+        </p>
+      )}
       {hasUnsupportedEmploymentStatus && <p role="alert" className={styles.documentError}>
         Trạng thái chỉ nhận “Đang làm” hoặc “Đang chờ việc”. Hãy chọn lại ở các dòng được báo lỗi.
       </p>}
@@ -299,7 +584,7 @@ export function DirectEntryMultiEntryForm({
           + Thêm NLĐ nữa
         </button>
         <button type="button" className={styles.primaryButton} data-testid="form-save-valid-rows"
-          disabled={busy || !canSave || hasUnsupportedEmploymentStatus}
+          disabled={busy || !canSave || hasUnsupportedEmploymentStatus || hasInvalidPreSaveFiles}
           aria-busy={busy} onClick={onSave}>
           {busy ? "Đang lưu…" : "Lưu các NLĐ hợp lệ"}
         </button>

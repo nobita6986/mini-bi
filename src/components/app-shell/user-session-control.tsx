@@ -17,6 +17,7 @@ import { useRouter } from "next/navigation";
 import { DropdownMenu } from "radix-ui";
 
 import { useNotify, type NotifyApi } from "@/components/ui/notify-provider";
+import { getDefaultFormSaveUploadJobManager } from "@/lib/direct-entry/form-save-upload-job-manager";
 
 type SessionState = "loading" | "auth" | "anon" | "unavailable";
 
@@ -36,6 +37,7 @@ export async function executeSessionLogout({
     method: "POST", credentials: "same-origin",
   });
   if (res.status === 204) {
+    getDefaultFormSaveUploadJobManager().resetForSessionChange();
     notify.clear();
     router.replace("/login");
     router.refresh();
