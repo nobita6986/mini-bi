@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  CCCD_REVIEW_MANUAL_RESOLUTION_MIGRATION_NAME,
+  CCCD_REVIEW_MANUAL_RESOLUTION_RPC_SIGNATURE,
   PRE_WAVE2_CCCD_REVIEW_MIGRATION_NAME,
   PRE_WAVE2_CCCD_REVIEW_RPC_SIGNATURES,
 } from "./lib/migration-validation.mjs";
@@ -131,7 +133,11 @@ test("Pre-Wave-2 migration enforces Forced RLS, default-deny table ACLs, and ser
     }
   }
 
-  for (const sig of PRE_WAVE2_CCCD_REVIEW_RPC_SIGNATURES) {
+  assert.ok(migrations.migrationNames.includes(CCCD_REVIEW_MANUAL_RESOLUTION_MIGRATION_NAME));
+  for (const sig of [
+    ...PRE_WAVE2_CCCD_REVIEW_RPC_SIGNATURES,
+    CCCD_REVIEW_MANUAL_RESOLUTION_RPC_SIGNATURE,
+  ]) {
     const { rows } = await db.query(
       `select p.prosecdef,
               p.proconfig,
@@ -489,6 +495,19 @@ test("MISMATCH and QR_UNREADABLE queue, creator scope vs out-of-scope isolation,
     ),
     (err) => err.code === "42501",
   );
+  await assert.rejects(
+    db.query(
+      "select public.direct_entry_apply_cccd_manual_resolution($1::uuid, $2::uuid, $3::uuid, $4::integer, $5::jsonb, 'idem-manual-deny')",
+      [
+        ACTORS.otherOwner.auth_subject,
+        ACTORS.otherOwner.app_user_id,
+        entryId,
+        afterMismatch[0].version,
+        JSON.stringify({ national_id: "079095009922", display_name: "Tên ngoài phạm vi" }),
+      ],
+    ),
+    (err) => err.code === "42501",
+  );
 
   // 3. Creator resolves via UPDATE_ENTERED_CCCD to match QR ("079095009922") with apply_blank_fields_from_qr = true
   const resolvedUpdate = await db.query(
@@ -526,6 +545,88 @@ test("MISMATCH and QR_UNREADABLE queue, creator scope vs out-of-scope isolation,
     ],
   );
   assert.equal(replayedUpdate.rows[0].data.reused, true);
+
+  const manualPayload = {
+    national_id: "079095004466",
+    display_name: "Nguyễn Thị Minh Anh",
+    date_of_birth: "09/12/1998",
+    gender: "FEMALE",
+    address: null,
+    national_id_issued_at: "10/02/2024",
+    reason: "Đã đối chiếu CCCD bản chính với người lao động",
+  };
+  const manualResolution = await db.query(
+    "select public.direct_entry_apply_cccd_manual_resolution($1::uuid, $2::uuid, $3::uuid, $4::integer, $5::jsonb, 'idem-manual-save-1') as data",
+    [
+      ACTORS.owner.auth_subject,
+      ACTORS.owner.app_user_id,
+      entryId,
+      resolvedUpdate.rows[0].data.entry_version,
+      JSON.stringify(manualPayload),
+    ],
+  );
+  assert.equal(manualResolution.rows[0].data.action, "MANUAL_UPDATE_DETAILS");
+  assert.equal(manualResolution.rows[0].data.reconciliation.status, "RESOLVED_EDITED_CCCD");
+  assert.equal(manualResolution.rows[0].data.reconciliation.resolution_action, "MANUAL_UPDATE_DETAILS");
+  assert.ok(manualResolution.rows[0].data.changed_fields.includes("national_id"));
+  const afterLateQr = await db.query(
+    "select public.direct_entry_complete_cccd_qr_extraction(" +
+      "$1::uuid, $2::uuid, $3::uuid, $4::uuid, 'SUCCEEDED', null, null, $5::jsonb, true, null, 'idem-qr-after-manual') as data",
+    [
+      ACTORS.owner.auth_subject,
+      ACTORS.owner.app_user_id,
+      entryId,
+      front.documentId,
+      JSON.stringify({
+        ...QR_CANDIDATE_MISMATCH,
+        national_id: manualPayload.national_id,
+        address: "Địa chỉ lấy từ QR đến muộn",
+      }),
+    ],
+  );
+  assert.equal(afterLateQr.rows[0].data.reconciliation.status, "RESOLVED_EDITED_CCCD");
+  assert.equal(afterLateQr.rows[0].data.reconciliation.resolution_action, "MANUAL_UPDATE_DETAILS");
+  const manualReplay = await db.query(
+    "select public.direct_entry_apply_cccd_manual_resolution($1::uuid, $2::uuid, $3::uuid, $4::integer, $5::jsonb, 'idem-manual-save-1') as data",
+    [
+      ACTORS.owner.auth_subject,
+      ACTORS.owner.app_user_id,
+      entryId,
+      resolvedUpdate.rows[0].data.entry_version,
+      JSON.stringify(manualPayload),
+    ],
+  );
+  assert.equal(manualReplay.rows[0].data.reused, true);
+  await assert.rejects(
+    db.query(
+      "select public.direct_entry_apply_cccd_manual_resolution($1::uuid, $2::uuid, $3::uuid, $4::integer, $5::jsonb, 'idem-manual-stale')",
+      [
+        ACTORS.owner.auth_subject,
+        ACTORS.owner.app_user_id,
+        entryId,
+        resolvedUpdate.rows[0].data.entry_version,
+        JSON.stringify(manualPayload),
+      ],
+    ),
+    (err) => err.code === "40001",
+  );
+  const { rows: manuallySaved } = await db.query(
+    "select version, worker_details from public.direct_entries where entry_id = $1",
+    [entryId],
+  );
+  assert.equal(manuallySaved[0].worker_details.national_id.value, manualPayload.national_id);
+  assert.equal(manuallySaved[0].worker_details.display_name, manualPayload.display_name);
+  assert.equal(manuallySaved[0].worker_details.date_of_birth.value, manualPayload.date_of_birth);
+  assert.equal(manuallySaved[0].worker_details.gender.value, "FEMALE");
+  assert.equal(manuallySaved[0].worker_details.address.state, "omitted");
+  assert.equal(manuallySaved[0].worker_details.national_id_issued_at.value, manualPayload.national_id_issued_at);
+  assert.equal(manuallySaved[0].worker_details.phone.state, "omitted");
+  const { rows: manualAudit } = await db.query(
+    "select action, changed_fields from public.direct_entry_audit_events where resource_ref = $1 and action = 'cccd_review_manual_update_worker_details'",
+    [entryId],
+  );
+  assert.equal(manualAudit.length, 1);
+  assert.ok(manualAudit[0].changed_fields.includes("address"));
 
   // 4. Test STANDARDIZE_FROM_QR on a second MISMATCH entry
   const created2 = await createBatchV2(

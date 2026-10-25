@@ -24,6 +24,7 @@ export type CccdReviewStatusFilter = (typeof CCCD_REVIEW_STATUS_FILTERS)[number]
 export const CCCD_REVIEW_RESOLVE_ACTIONS = [
   "UPDATE_ENTERED_CCCD",
   "STANDARDIZE_FROM_QR",
+  "MANUAL_UPDATE_DETAILS",
 ] as const;
 export type CccdReviewResolveAction = (typeof CCCD_REVIEW_RESOLVE_ACTIONS)[number];
 
@@ -145,6 +146,17 @@ export type CccdReviewResolveRequest =
       action: "STANDARDIZE_FROM_QR";
       fields: CccdReviewStandardizeField[];
       reason: string | null;
+    }
+  | {
+      expected_entry_version: number;
+      action: "MANUAL_UPDATE_DETAILS";
+      national_id: string;
+      display_name: string;
+      date_of_birth: string | null;
+      gender: "MALE" | "FEMALE" | "OTHER" | null;
+      address: string | null;
+      national_id_issued_at: string | null;
+      reason: string | null;
     };
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -156,6 +168,11 @@ const RESOLVE_REQUEST_KEYS = new Set([
   "apply_blank_fields_from_qr",
   "fields",
   "reason",
+  "display_name",
+  "date_of_birth",
+  "gender",
+  "address",
+  "national_id_issued_at",
 ]);
 
 export const CCCD_REVIEW_FILTER_STATUSES = CCCD_REVIEW_STATUS_FILTERS;
@@ -396,6 +413,81 @@ export function parseCccdReviewResolveRequest(
         action: "UPDATE_ENTERED_CCCD",
         national_id: nationalId,
         apply_blank_fields: applyBlankFields,
+        reason,
+      },
+    };
+  }
+
+  if (body.action === "MANUAL_UPDATE_DETAILS") {
+    if (
+      body.fields !== undefined ||
+      body.apply_blank_fields !== undefined ||
+      body.apply_blank_fields_from_qr !== undefined
+    ) {
+      return { ok: false, code: "CCCD_REVIEW_REQUEST_INVALID" };
+    }
+    if (
+      typeof body.national_id !== "string" ||
+      !/^\d{12}$/.test(body.national_id.trim()) ||
+      body.national_id.trim() === "000000000000"
+    ) {
+      return { ok: false, code: "NATIONAL_ID_INVALID" };
+    }
+    if (
+      typeof body.display_name !== "string" ||
+      body.display_name.trim().length > 256 ||
+      /[\u0000-\u001f\u007f]/.test(body.display_name)
+    ) {
+      return { ok: false, code: "CCCD_REVIEW_REQUEST_INVALID" };
+    }
+    const optionalText = (
+      key: "date_of_birth" | "address" | "national_id_issued_at",
+      max: number,
+    ) => {
+      const value = body[key];
+      if (
+        value === undefined ||
+        value === null ||
+        (typeof value === "string" && value.trim() === "")
+      ) {
+        return { ok: true as const, value: null };
+      }
+      if (
+        typeof value !== "string" ||
+        value.trim().length > max ||
+        /[\u0000-\u001f\u007f]/.test(value)
+      ) {
+        return { ok: false as const };
+      }
+      return { ok: true as const, value: value.trim() };
+    };
+    const dob = optionalText("date_of_birth", 10);
+    const address = optionalText("address", 1024);
+    const issuedAt = optionalText("national_id_issued_at", 10);
+    const gender = body.gender;
+    if (
+      !dob.ok ||
+      !address.ok ||
+      !issuedAt.ok ||
+      (gender !== undefined &&
+        gender !== null &&
+        gender !== "MALE" &&
+        gender !== "FEMALE" &&
+        gender !== "OTHER")
+    ) {
+      return { ok: false, code: "CCCD_REVIEW_REQUEST_INVALID" };
+    }
+    return {
+      ok: true,
+      value: {
+        expected_entry_version: body.expected_entry_version,
+        action: "MANUAL_UPDATE_DETAILS",
+        national_id: body.national_id.trim(),
+        display_name: body.display_name.trim(),
+        date_of_birth: dob.value,
+        gender: gender === undefined ? null : gender as "MALE" | "FEMALE" | "OTHER" | null,
+        address: address.value,
+        national_id_issued_at: issuedAt.value,
         reason,
       },
     };

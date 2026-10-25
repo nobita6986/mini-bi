@@ -208,5 +208,20 @@ Trả về trạng thái giải mã QR theo từng ảnh và đối tượng t�
       "reason": "Chuẩn hóa theo dữ liệu QR CCCD"
     }
     ```
+  - Hành động 3 — Nhập thông tin NLĐ thủ công khi QR không đọc được hoặc sai (`MANUAL_UPDATE_DETAILS`):
+    ```json
+    {
+      "expected_entry_version": 3,
+      "action": "MANUAL_UPDATE_DETAILS",
+      "national_id": "079095008811",
+      "display_name": "Nguyễn Văn An",
+      "date_of_birth": "15/08/1995",
+      "gender": "MALE",
+      "address": "Hà Nội",
+      "national_id_issued_at": "10/02/2024",
+      "reason": "Đã đối chiếu với bản chính"
+    }
+    ```
+    CCCD phải có đúng 12 chữ số; các trường cá nhân còn lại có thể để trống. Thao tác cập nhật trực tiếp trong phạm vi quyền hiện hành, ghi revision/audit và không chờ duyệt. Kết quả nhập tay được giữ nguyên nếu kết quả QR đến muộn.
 - **`GET /api/direct-entry/entries/{entryId}/documents/{documentId}/cccd-preview`**
   - Trả về binary ảnh CCCD (`image/jpeg` hoặc `image/png`) với `Cache-Control: private, no-store` để hiển thị đối chiếu trong màn hình Review (không dùng URL công khai).

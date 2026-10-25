@@ -232,6 +232,41 @@ test("cccd-review-contract parses queue query and resolve requests", () => {
     reason: "Chuẩn hóa theo QR",
   });
   assert.equal(stdReq.ok, true);
+
+  const manualReq = parseCccdReviewResolveRequest({
+    expected_entry_version: 4,
+    action: "MANUAL_UPDATE_DETAILS",
+    national_id: "079095008811",
+    display_name: "Nguyễn Văn An",
+    date_of_birth: "15/08/1995",
+    gender: "MALE",
+    address: "Hà Nội",
+    national_id_issued_at: null,
+    reason: "Đã đối chiếu bản chính",
+  });
+  assert.deepEqual(manualReq, {
+    ok: true,
+    value: {
+      expected_entry_version: 4,
+      action: "MANUAL_UPDATE_DETAILS",
+      national_id: "079095008811",
+      display_name: "Nguyễn Văn An",
+      date_of_birth: "15/08/1995",
+      gender: "MALE",
+      address: "Hà Nội",
+      national_id_issued_at: null,
+      reason: "Đã đối chiếu bản chính",
+    },
+  });
+  assert.deepEqual(
+    parseCccdReviewResolveRequest({
+      expected_entry_version: 4,
+      action: "MANUAL_UPDATE_DETAILS",
+      national_id: "123",
+      display_name: "",
+    }),
+    { ok: false, code: "NATIONAL_ID_INVALID" },
+  );
 });
 
 test("createCccdReviewRepository projects SQL RPC queue & resolution responses and get/post API handlers enforce security guards", async () => {
@@ -346,12 +381,27 @@ test("createCccdReviewRepository projects SQL RPC queue & resolution responses a
     },
   };
 
-  const reviewRepository = createCccdReviewRepository(async (name) => {
+  const rpcCalls = [];
+  const reviewRepository = createCccdReviewRepository(async (name, args) => {
+    rpcCalls.push({ name, args });
     if (name === "direct_entry_list_cccd_review_queue") {
       return { data: sqlQueuePayload, error: null };
     }
     if (name === "direct_entry_resolve_cccd_review") {
       return { data: sqlResolvePayload, error: null };
+    }
+    if (name === "direct_entry_apply_cccd_manual_resolution") {
+      return {
+        data: {
+          ...sqlResolvePayload,
+          action: "MANUAL_UPDATE_DETAILS",
+          reconciliation: {
+            ...sqlResolvePayload.reconciliation,
+            resolution_action: "MANUAL_UPDATE_DETAILS",
+          },
+        },
+        error: null,
+      };
     }
     return { data: null, error: { code: "P0002" } };
   });
@@ -420,6 +470,40 @@ test("createCccdReviewRepository projects SQL RPC queue & resolution responses a
   assert.equal(resolveBody.ok, true);
   assert.equal(resolveBody.reconciliation.status, "RESOLVED_UPDATED_CCCD");
   assert.deepEqual(resolveBody.changed_fields, ["national_id", "display_name"]);
+
+  const manualResolveRes = await postDirectEntryCccdReviewResolution(
+    new Request(`https://app.example/api/direct-entry/entries/${ENTRY_ID}/cccd-review`, {
+      method: "POST",
+      headers: {
+        origin: "https://app.example",
+        host: "app.example",
+        "content-type": "application/json",
+        "idempotency-key": "idem-review-manual-1",
+      },
+      body: JSON.stringify({
+        expected_entry_version: 3,
+        action: "MANUAL_UPDATE_DETAILS",
+        national_id: "079095008811",
+        display_name: "Nguyễn Văn An",
+        date_of_birth: "15/08/1995",
+        gender: "MALE",
+        address: "Hà Nội",
+        national_id_issued_at: null,
+        reason: "Đã đối chiếu bản chính",
+      }),
+    }),
+    ENTRY_ID,
+    "true",
+    dependencies,
+  );
+  assert.equal(manualResolveRes.status, 200);
+  const manualResolveBody = await manualResolveRes.json();
+  assert.equal(manualResolveBody.action, "MANUAL_UPDATE_DETAILS");
+  assert.equal(manualResolveBody.reconciliation.status, "RESOLVED_UPDATED_CCCD");
+  const manualRpcCall = rpcCalls.find((call) => call.name === "direct_entry_apply_cccd_manual_resolution");
+  assert.ok(manualRpcCall);
+  assert.equal("p_action" in manualRpcCall.args, false, "manual RPC uses its six-argument SQL signature");
+  assert.equal(manualRpcCall.args.p_payload.display_name, "Nguyễn Văn An");
 });
 
 test("UI source guards: Form mode orders CCCD (required) before Họ và tên (optional) with Giới tính at the end, and Review panel shows full CCCD with confirmation and no bypass", async () => {
@@ -448,6 +532,8 @@ test("UI source guards: Form mode orders CCCD (required) before Họ và tên (o
   assert.match(panelSrc, /cccd-preview/);
   assert.match(panelSrc, /UPDATE_ENTERED_CCCD/);
   assert.match(panelSrc, /STANDARDIZE_FROM_QR/);
+  assert.match(panelSrc, /MANUAL_UPDATE_DETAILS/);
+  assert.match(panelSrc, /Địa chỉ thường trú/);
   assert.doesNotMatch(panelSrc, /IGNORE_MISMATCH/);
 
   const tabsSrc = await readFile(

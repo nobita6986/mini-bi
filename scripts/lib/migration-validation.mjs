@@ -187,6 +187,10 @@ export const PRE_WAVE2_CCCD_REVIEW_RPC_SIGNATURES = Object.freeze([
   "public.direct_entry_list_cccd_review_queue(uuid, uuid, text, integer, integer)",
   "public.direct_entry_resolve_cccd_review(uuid, uuid, uuid, integer, text, jsonb, text)",
 ]);
+export const CCCD_REVIEW_MANUAL_RESOLUTION_MIGRATION_NAME =
+  "20261026220000_hf_cccd_review_manual_resolution.sql";
+export const CCCD_REVIEW_MANUAL_RESOLUTION_RPC_SIGNATURE =
+  "public.direct_entry_apply_cccd_manual_resolution(uuid, uuid, uuid, integer, jsonb, text)";
 export const F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES = Object.freeze([
   "public.work_report_list_templates(uuid, uuid)",
   "public.work_report_get_template(uuid, uuid, uuid)",
@@ -415,7 +419,8 @@ export async function verifyS0T1CHistoricalCompatibility(
     vfin02ProjectLedgersApplied = false,
     hfVfin02ImplicitVendorProjectApplied = false,
     cccdQrAsyncStage1Applied = false,
-    preWave2CccdReviewApplied = false } = {},
+    preWave2CccdReviewApplied = false,
+    cccdReviewManualResolutionApplied = false } = {},
 ) {
   const baseAllowlist = extractS0T1CAllowlistSignatures(migrationSql);
   if (baseAllowlist.length === 0) {
@@ -462,6 +467,9 @@ export async function verifyS0T1CHistoricalCompatibility(
       : []),
     ...(preWave2CccdReviewApplied
       ? PRE_WAVE2_CCCD_REVIEW_RPC_SIGNATURES
+      : []),
+    ...(cccdReviewManualResolutionApplied
+      ? [CCCD_REVIEW_MANUAL_RESOLUTION_RPC_SIGNATURE]
       : []),
   ];
 
@@ -691,6 +699,8 @@ export async function verifyAppliedMigrationChecksum(
           appliedMap.has(CCCD_QR_ASYNC_STAGE1_MIGRATION_NAME),
         preWave2CccdReviewApplied:
           appliedMap.has(PRE_WAVE2_CCCD_REVIEW_MIGRATION_NAME),
+        cccdReviewManualResolutionApplied:
+          appliedMap.has(CCCD_REVIEW_MANUAL_RESOLUTION_MIGRATION_NAME),
       },
     );
     if (postconditions.ok) {
