@@ -139,6 +139,28 @@ export async function finalizeDirectEntryDocument(
       return mapFailure(finalized.kind);
     }
     await storage.deleteStaged(document.storage_key).catch(() => undefined);
+    if (
+      (document.document_type === "CCCD_FRONT" || document.document_type === "CCCD_BACK") &&
+      (document.mime_type === "image/jpeg" || document.mime_type === "image/png") &&
+      typeof dependencies.onCccdImageFinalized === "function"
+    ) {
+      try {
+        Promise.resolve(
+          dependencies.onCccdImageFinalized({
+            auth_subject: actor.auth_subject,
+            app_user_id: actor.app_user_id,
+            entry_id: entryId,
+            document_id: documentId,
+            document_type: document.document_type,
+            image_bytes: finalBytes,
+          }),
+        ).catch(() => {
+          console.error("[direct-entry] cccd qr background trigger failed");
+        });
+      } catch {
+        console.error("[direct-entry] cccd qr background trigger failed");
+      }
+    }
     return json(lifecycleBody(finalized.data, finalized.data.reused), 200);
   } catch {
     console.error("[direct-entry] document finalize failed");

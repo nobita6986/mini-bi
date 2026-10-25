@@ -2,6 +2,8 @@ import "server-only";
 
 import { getDirectEntryActor } from "@/lib/auth/direct-entry-session";
 import { createDirectEntryActorRepository } from "@/lib/direct-entry/actor-context-repository";
+import { triggerBackgroundCccdQrExtraction } from "@/lib/direct-entry/cccd-qr-api";
+import { createServiceCccdQrRepository } from "@/lib/direct-entry/cccd-qr-repository";
 import { finalizeDirectEntryDocument } from "@/lib/direct-entry/document-finalize-api";
 import { createR2DocumentStorage } from "@/lib/direct-entry/r2-document-storage";
 import { createDirectEntryWriteRepository } from "@/lib/direct-entry/write-repository";
@@ -24,5 +26,10 @@ export async function POST(
     resolveSession: () => getDirectEntryActor(createDirectEntryActorRepository()),
     repository: createDirectEntryWriteRepository(),
     storage: createR2DocumentStorage(),
+    onCccdImageFinalized: (input) =>
+      triggerBackgroundCccdQrExtraction({
+        ...input,
+        qrRepository: createServiceCccdQrRepository(),
+      }),
   });
 }

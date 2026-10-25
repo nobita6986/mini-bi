@@ -16,6 +16,14 @@ export type DocumentApiDependencies = {
   resolveSession(): Promise<DirectEntrySessionResult>;
   repository: DirectEntryRepository;
   storage: DocumentObjectStorage;
+  onCccdImageFinalized?: (input: {
+    auth_subject: string;
+    app_user_id: string;
+    entry_id: string;
+    document_id: string;
+    document_type: "CCCD_FRONT" | "CCCD_BACK";
+    image_bytes: Uint8Array;
+  }) => void | Promise<void>;
 };
 
 export function json(body: unknown, status: number, headers: Record<string, string> = {}): Response {
