@@ -5,6 +5,7 @@ import { AccountUnavailable } from "@/components/auth/access-denied";
 import { TemporaryUnavailable } from "@/components/auth/temporary-unavailable";
 import { DashboardView } from "@/components/dashboard/dashboard-view";
 import {
+  canViewCccdReviewReport,
   canViewDeepWorkforceReport,
   canViewDuplicateCccdReport,
   canViewOffboardingReport,
@@ -18,11 +19,11 @@ export const dynamic = "force-dynamic";
 export const metadata = { title: "Tổng quan tuyển dụng — Hệ thống báo cáo HRP" };
 
 type SearchParams = Record<string, string | string[] | undefined>;
-type DashboardTab = "general" | "deep" | "team" | "duplicate-cccd" | "offboarding";
+type DashboardTab = "general" | "deep" | "team" | "cccd-review" | "duplicate-cccd" | "offboarding";
 
 function normalizedDashboardTab(value: string | string[] | undefined): DashboardTab | null {
   return typeof value === "string" &&
-    (value === "general" || value === "deep" || value === "team" || value === "duplicate-cccd" || value === "offboarding") ? value : null;
+    (value === "general" || value === "deep" || value === "team" || value === "cccd-review" || value === "duplicate-cccd" || value === "offboarding") ? value : null;
 }
 
 function normalizedDashboardPath(params: SearchParams, tab: DashboardTab, removeSource: boolean): string {
@@ -73,6 +74,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   }
   // P3.1-HF-R3-R1: the CCCD report tab is server-gated. An unauthorized deep link is
   // normalized back to the general tab; the CCCD API/RPC still enforces independently.
+  const canViewCccdReview = canViewCccdReviewReport(actor);
+  if (tab === "cccd-review" && !canViewCccdReview) {
+    redirect(normalizedDashboardPath(params, "general", false));
+  }
   const canViewDuplicateCccd = canViewDuplicateCccdReport(actor);
   if (tab === "duplicate-cccd" && !canViewDuplicateCccd) {
     redirect(normalizedDashboardPath(params, "general", false));
@@ -86,7 +91,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
     redirect(normalizedDashboardPath(params, "general", false));
   }
   // `source` is a general-dashboard filter; the deep, team and CCCD tabs never consume it.
-  if ((tab === "deep" || tab === "team" || tab === "duplicate-cccd" || tab === "offboarding") && sourcePresent) {
+  if ((tab === "deep" || tab === "team" || tab === "cccd-review" || tab === "duplicate-cccd" || tab === "offboarding") && sourcePresent) {
     redirect(normalizedDashboardPath(params, tab, true));
   }
   const [report, options] = await Promise.all([
@@ -101,6 +106,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
       report={report}
       optionsResult={options}
       audience={report.ok ? report.audience : null}
+      canViewCccdReview={canViewCccdReview}
       canViewDuplicateCccd={canViewDuplicateCccd}
       canViewOffboarding={canViewOffboarding}
     />

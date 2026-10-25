@@ -9,6 +9,7 @@ import { isCanonicalNationalId } from "../contracts/national-id.ts";
 
 export const WORKER_PROFILE_CONTRACT_VERSION = "worker-profile/1.0" as const;
 export const SERVER_GENERATED_EMPLOYEE_CODE_CONTRACT_VERSION = "worker-profile/1.1" as const;
+export const CCCD_REQUIRED_FULL_PROFILE_CONTRACT_VERSION = "worker-profile/1.2" as const;
 export const FULL_PROFILE_MAX_ROWS = 100;
 export const FULL_PROFILE_MAX_BODY_BYTES = 4 * 1024 * 1024;
 
@@ -81,6 +82,8 @@ export type ServerGeneratedFullProfileRpcRow = Omit<FullProfileRpcRow, "employee
   provider_type: "hrp" | "vendor";
 };
 
+export type CccdRequiredFullProfileRpcRow = ServerGeneratedFullProfileRpcRow;
+
 export type FullProfilePayload =
   | {
     contract_version: typeof WORKER_PROFILE_CONTRACT_VERSION;
@@ -89,6 +92,10 @@ export type FullProfilePayload =
   | {
     contract_version: typeof SERVER_GENERATED_EMPLOYEE_CODE_CONTRACT_VERSION;
     rows: ServerGeneratedFullProfileRpcRow[];
+  }
+  | {
+    contract_version: typeof CCCD_REQUIRED_FULL_PROFILE_CONTRACT_VERSION;
+    rows: CccdRequiredFullProfileRpcRow[];
   };
 
 export type ContractIssue = {
@@ -160,7 +167,12 @@ function optionalFreeDate(
   return parsed;
 }
 
-function normalizeWorker(value: unknown, path: string, issues: ContractIssue[]) {
+function normalizeWorker(
+  value: unknown,
+  path: string,
+  issues: ContractIssue[],
+  options: { requireCccd12?: boolean } = {},
+) {
   const input = value === undefined ? {} : value;
   if (!isRecord(input) || !hasOnlyKeys(input, WORKER_KEYS)) {
     issues.push({ code: "BATCH_INVALID", path });
@@ -185,7 +197,17 @@ function normalizeWorker(value: unknown, path: string, issues: ContractIssue[]) 
   } else if (gender.value.state === "provided") {
     gender.value = { state: "provided", value: gender.value.value.trim().toUpperCase() };
   }
-  if (nationalId.value.state === "provided" && !isCanonicalNationalId(nationalId.value.value)) {
+  if (options.requireCccd12) {
+    if (
+      nationalId.value.state !== "provided" ||
+      !/^\d{12}$/.test(nationalId.value.value) ||
+      nationalId.value.value === "000000000000"
+    ) {
+      if (!nationalId.issue) {
+        issues.push({ code: "NATIONAL_ID_INVALID", path: `${path}.national_id` });
+      }
+    }
+  } else if (nationalId.value.state === "provided" && !isCanonicalNationalId(nationalId.value.value)) {
     issues.push({ code: "NATIONAL_ID_INVALID", path: `${path}.national_id` });
   }
   if (issuedPlace.value.state === "provided" &&
@@ -262,8 +284,14 @@ function normalizeEmployment(
   value: unknown,
   path: string,
   issues: ContractIssue[],
+  options: { requireActiveInitialStatus?: boolean } = {},
 ): FullProfileRpcRow["employment"] {
-  if (value === undefined || value === null) return null;
+  if (value === undefined || value === null) {
+    if (options.requireActiveInitialStatus) {
+      issues.push({ code: "BATCH_INVALID", path });
+    }
+    return null;
+  }
   if (!isRecord(value) ||
       !hasOnlyKeys(value, new Set(["initial_status", "leave_date", "leave_reason_text"]))) {
     issues.push({ code: "BATCH_INVALID", path });
@@ -272,6 +300,10 @@ function normalizeEmployment(
   const status = value.initial_status == null ||
     (typeof value.initial_status === "string" && value.initial_status.trim() === "")
     ? "ON" : value.initial_status;
+  if (options.requireActiveInitialStatus && status !== "UNCONFIRMED" && status !== "ON") {
+    issues.push({ code: "BATCH_INVALID", path });
+    return null;
+  }
   if (status !== "UNCONFIRMED" && status !== "ON" && status !== "OFF") {
     issues.push({ code: "BATCH_INVALID", path });
     return null;
@@ -305,7 +337,10 @@ export function parseFullProfilePayload(value: unknown): FullProfileParseResult 
       issues: [{ code: hasForbiddenKey(value) ? "CLIENT_AUTHORITY_FIELD_FORBIDDEN" : "BATCH_INVALID", path: "body" }],
     };
   }
-  const generatedCodes = value.contract_version === SERVER_GENERATED_EMPLOYEE_CODE_CONTRACT_VERSION;
+  const cccdRequired = value.contract_version === CCCD_REQUIRED_FULL_PROFILE_CONTRACT_VERSION;
+  const generatedCodes =
+    value.contract_version === SERVER_GENERATED_EMPLOYEE_CODE_CONTRACT_VERSION ||
+    cccdRequired;
   if (value.contract_version !== WORKER_PROFILE_CONTRACT_VERSION && !generatedCodes) {
     return { ok: false, issues: [{ code: "CONTRACT_VERSION_UNSUPPORTED", path: "contract_version" }] };
   }
@@ -346,14 +381,19 @@ export function parseFullProfilePayload(value: unknown): FullProfileParseResult 
         documentStageIds = documentStageValue as Partial<Record<DocumentType, string>>;
       }
     }
+    const displayNameValid =
+      typeof display_name === "string" &&
+      display_name.length <= 256 &&
+      (cccdRequired
+        ? display_name.length === 0 || display_name.trim().length >= 1
+        : display_name.trim().length >= 1);
     if (typeof project_id !== "string" || !CATALOG_ID.test(project_id) ||
         typeof recruiter_id !== "string" || !UUID.test(recruiter_id) ||
         typeof first_work_date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(first_work_date) ||
         !isRealCalendarDate(first_work_date) ||
         (!generatedCodes && typeof employee_code !== "string") ||
         (generatedCodes && provider_type !== "hrp" && provider_type !== "vendor") ||
-        typeof display_name !== "string" ||
-        display_name.trim().length < 1 || display_name.length > 256 ||
+        !displayNameValid ||
         (portraitStageId !== undefined &&
           (typeof portraitStageId !== "string" || !UUID.test(portraitStageId))) ||
         !isCanonicalLaborTypeKey(labor_type)) {
@@ -371,7 +411,9 @@ export function parseFullProfilePayload(value: unknown): FullProfileParseResult 
       seenCodes.add(employee_code as string);
     }
 
-    const worker = normalizeWorker(item.worker, `${path}.worker`, issues);
+    const worker = normalizeWorker(item.worker, `${path}.worker`, issues, {
+      requireCccd12: cccdRequired,
+    });
     const generalNote = optionalText(item.general_note, `${path}.general_note`, 4000);
     if (generalNote.issue) issues.push(generalNote.issue);
     if (generalNote.value.state === "unknown" ||
@@ -383,7 +425,9 @@ export function parseFullProfilePayload(value: unknown): FullProfileParseResult 
       issues.push({ code: "GENERAL_NOTE_INVALID", path: `${path}.general_note` });
     }
     const payment = normalizePayment(item.payment, `${path}.payment`, issues);
-    const employment = normalizeEmployment(item.employment, `${path}.employment`, issues);
+    const employment = normalizeEmployment(item.employment, `${path}.employment`, issues, {
+      requireActiveInitialStatus: cccdRequired,
+    });
     const normalizedRow = {
       ...(typeof portraitStageId === "string" ? { portrait_stage_id: portraitStageId } : {}),
       ...(documentStageIds ? { document_stage_ids: documentStageIds } : {}),
@@ -391,7 +435,7 @@ export function parseFullProfilePayload(value: unknown): FullProfileParseResult 
       first_work_date,
       recruiter_id,
       labor_type: labor_type as LaborType,
-      display_name,
+      display_name: (display_name as string).trim(),
       worker_details: worker ?? {
         gender: { state: "omitted" },
         date_of_birth: { state: "omitted" },
@@ -411,6 +455,15 @@ export function parseFullProfilePayload(value: unknown): FullProfileParseResult 
   });
 
   if (issues.length > 0) return { ok: false, issues };
+  if (cccdRequired) {
+    return {
+      ok: true,
+      payload: {
+        contract_version: CCCD_REQUIRED_FULL_PROFILE_CONTRACT_VERSION,
+        rows: rows as CccdRequiredFullProfileRpcRow[],
+      },
+    };
+  }
   return generatedCodes
     ? {
       ok: true,

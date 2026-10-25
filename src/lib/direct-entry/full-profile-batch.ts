@@ -15,6 +15,7 @@
  * Khong dua bytes/base64 cua CCCD vao JSON batch.
  */
 import {
+  CCCD_REQUIRED_FULL_PROFILE_CONTRACT_VERSION,
   FULL_PROFILE_MAX_BODY_BYTES,
   FULL_PROFILE_MAX_ROWS,
   SERVER_GENERATED_EMPLOYEE_CODE_CONTRACT_VERSION,
@@ -97,6 +98,11 @@ export type ServerGeneratedFullProfileRequestRow = Omit<FullProfileRequestRow, "
 
 export type ServerGeneratedFullProfileRequestBody = {
   contract_version: typeof SERVER_GENERATED_EMPLOYEE_CODE_CONTRACT_VERSION;
+  rows: readonly ServerGeneratedFullProfileRequestRow[];
+};
+
+export type CccdRequiredFullProfileRequestBody = {
+  contract_version: typeof CCCD_REQUIRED_FULL_PROFILE_CONTRACT_VERSION;
   rows: readonly ServerGeneratedFullProfileRequestRow[];
 };
 
@@ -266,6 +272,25 @@ export function buildServerGeneratedFullProfileRequestBody(
   }
   if (projected.length < 1 || projected.length > FULL_PROFILE_MAX_ROWS) return null;
   return { contract_version: SERVER_GENERATED_EMPLOYEE_CODE_CONTRACT_VERSION, rows: projected };
+}
+
+export function buildCccdRequiredFullProfileRequestBody(
+  rows: readonly WorkerProfilePreviewRow[],
+  portraitStageIds?: ReadonlyMap<number, string>,
+  defaultInitialStatus?: "UNCONFIRMED" | "ON",
+  documentStageIds?: ReadonlyMap<number, Partial<Record<DocumentType, string>>>,
+): CccdRequiredFullProfileRequestBody | null {
+  const generated = buildServerGeneratedFullProfileRequestBody(
+    rows,
+    portraitStageIds,
+    defaultInitialStatus,
+    documentStageIds,
+  );
+  if (generated === null) return null;
+  return {
+    contract_version: CCCD_REQUIRED_FULL_PROFILE_CONTRACT_VERSION,
+    rows: generated.rows,
+  };
 }
 
 /* ------------------------------------------------------------------ blockers */
@@ -442,6 +467,10 @@ export async function postFullProfileBatch(input: {
   rows: readonly FullProfileRequestRow[] | readonly ServerGeneratedFullProfileRequestRow[];
   idempotencyKey: string;
   fetchImpl: FullProfileFetch;
+  contractVersion?:
+    | typeof WORKER_PROFILE_CONTRACT_VERSION
+    | typeof SERVER_GENERATED_EMPLOYEE_CODE_CONTRACT_VERSION
+    | typeof CCCD_REQUIRED_FULL_PROFILE_CONTRACT_VERSION;
 }): Promise<FullProfileResult> {
   if (input.rows.length < 1 || input.rows.length > FULL_PROFILE_MAX_ROWS) {
     return { kind: "rejected", code: "BATCH_SIZE_INVALID" };
@@ -450,9 +479,11 @@ export async function postFullProfileBatch(input: {
     return { kind: "rejected", code: "IDEMPOTENCY_KEY_INVALID" };
   }
   const generated = input.rows.length > 0 && "provider_type" in input.rows[0]!;
-  const contractVersion = generated
-    ? SERVER_GENERATED_EMPLOYEE_CODE_CONTRACT_VERSION
-    : WORKER_PROFILE_CONTRACT_VERSION;
+  const contractVersion =
+    input.contractVersion ??
+    (generated
+      ? SERVER_GENERATED_EMPLOYEE_CODE_CONTRACT_VERSION
+      : WORKER_PROFILE_CONTRACT_VERSION);
   const body = JSON.stringify({ contract_version: contractVersion, rows: input.rows });
   if (new TextEncoder().encode(body).byteLength > FULL_PROFILE_MAX_BODY_BYTES) {
     return { kind: "rejected", code: "BODY_TOO_LARGE" };
@@ -495,11 +526,17 @@ export async function postFullProfileBatch(input: {
  */
 export async function fullProfileIntentDigest(
   rows: readonly FullProfileRequestRow[] | readonly ServerGeneratedFullProfileRequestRow[],
+  contractVersionOverride?:
+    | typeof WORKER_PROFILE_CONTRACT_VERSION
+    | typeof SERVER_GENERATED_EMPLOYEE_CODE_CONTRACT_VERSION
+    | typeof CCCD_REQUIRED_FULL_PROFILE_CONTRACT_VERSION,
 ): Promise<string | null> {
   try {
-    const contractVersion = rows.length > 0 && "provider_type" in rows[0]!
-      ? SERVER_GENERATED_EMPLOYEE_CODE_CONTRACT_VERSION
-      : WORKER_PROFILE_CONTRACT_VERSION;
+    const contractVersion =
+      contractVersionOverride ??
+      (rows.length > 0 && "provider_type" in rows[0]!
+        ? SERVER_GENERATED_EMPLOYEE_CODE_CONTRACT_VERSION
+        : WORKER_PROFILE_CONTRACT_VERSION);
     const bytes = new TextEncoder().encode(JSON.stringify({
       contract_version: contractVersion,
       rows,

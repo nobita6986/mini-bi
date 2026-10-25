@@ -93,6 +93,7 @@ import {
 } from "@/components/direct-entry/direct-entry-spreadsheet-grid";
 import { DdmmDateInput } from "@/components/direct-entry/direct-entry-ddmm-date-input";
 import { buildSpreadsheetValidation } from "@/lib/direct-entry/direct-entry-grid-validation";
+import { buildFormProfileValidation } from "@/lib/direct-entry/form-profile-validation";
 import {
   DRAFT_EDITABLE_GRID_FIELDS,
   applyLiveGridPaste,
@@ -129,6 +130,7 @@ import {
 import { buildCompanyDisplayNames } from "@/lib/display/company-display-name";
 import { findCatalogOptionByStoredValue } from "@/lib/direct-entry/catalog-search";
 import {
+  buildCccdRequiredFullProfileRequestBody,
   buildServerGeneratedFullProfileRequestBody,
   fullProfileErrorMessage,
   fullProfileIntentDigest,
@@ -1238,12 +1240,18 @@ export function DirectEntryLive() {
   }, [currentCatalog]);
 
   // Validation tai cho: chi chay tren staged rows KHONG trong, va tai dung pipeline P1.6.
-  const stagedValidation = useMemo(() => buildSpreadsheetValidation({
-    rows: stagedModel.rows,
-    referenceDate: today,
-    catalogFor: stagedCatalogSource,
-    existing: rows.map((row) => ({ employeeCode: row.employeeCode })),
-  }), [rows, stagedCatalogSource, stagedModel, today]);
+  const isFormModeValidation =
+    inputMode === "form" && editingDraftSubmissionId === null && quickEditClientRowId === null;
+  const stagedValidation = useMemo(
+    () =>
+      (isFormModeValidation ? buildFormProfileValidation : buildSpreadsheetValidation)({
+        rows: stagedModel.rows,
+        referenceDate: today,
+        catalogFor: stagedCatalogSource,
+        existing: rows.map((row) => ({ employeeCode: row.employeeCode })),
+      }),
+    [isFormModeValidation, rows, stagedCatalogSource, stagedModel, today],
+  );
 
   // W2S1: portrait staging cho CA bang nhap nhieu dong va quick-add — dung chung mot controller.
   const portraitRowBindings = useMemo(() => buildPortraitRowBindings({
@@ -2054,22 +2062,35 @@ export function DirectEntryLive() {
       return;
     }
     const stageControllers = [portraitStages, cccdFrontStages, cccdBackStages, contractStages];
-    if (savedClientRowIds.some((rowId) => stageControllers.some(
+    const blockingStageControllers = inputMode === "form"
+      ? [portraitStages, contractStages]
+      : stageControllers;
+    if (savedClientRowIds.some((rowId) => blockingStageControllers.some(
       (controller) => controller.slots.get(rowId)?.status === "staging"))) {
       setStagedMessageWithTone("Đang tải hồ sơ lên bản nháp. Chờ hoàn tất rồi hãy lưu các dòng.", "info");
       return;
     }
-    const body = buildServerGeneratedFullProfileRequestBody(
-      validPreviewRows,
-      portraitStageIdsBySourceRow,
-      inputMode === "form" ? "ON" : undefined,
-      documentStageIdsBySourceRow,
-    );
+    const body = inputMode === "form"
+      ? buildCccdRequiredFullProfileRequestBody(
+        validPreviewRows,
+        portraitStageIdsBySourceRow,
+        "ON",
+        documentStageIdsBySourceRow,
+      )
+      : buildServerGeneratedFullProfileRequestBody(
+        validPreviewRows,
+        portraitStageIdsBySourceRow,
+        undefined,
+        documentStageIdsBySourceRow,
+      );
     if (body === null) {
       setStagedMessageWithTone(fullProfileErrorMessage("BATCH_INVALID"), "error");
       return;
     }
-    const digest = await fullProfileIntentDigest(body.rows);
+    const digest = await fullProfileIntentDigest(
+      body.rows,
+      inputMode === "form" ? body.contract_version : undefined,
+    );
     if (digest === null) {
       setStagedMessageWithTone("Không tạo được dấu vết yêu cầu; hãy thử lại.", "error");
       return;
@@ -2083,6 +2104,7 @@ export function DirectEntryLive() {
     try {
       const result = await postFullProfileBatch({
         rows: body.rows,
+        ...(inputMode === "form" ? { contractVersion: body.contract_version } : {}),
         idempotencyKey: resolved.key,
         fetchImpl: fetch,
       });

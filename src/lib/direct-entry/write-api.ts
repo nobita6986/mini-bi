@@ -283,9 +283,16 @@ function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): 
 
 /** RPC read_projection returns the canonical worker profile after server authorization. */
 function isWorkerReadProjection(value: unknown): boolean {
-  return isRecord(value) &&
-    !Object.keys(value).some((key) => !WORKER_PROJECTION_KEYS.has(key)) &&
-    validateWorkerDetails(value as WorkerDetails).length === 0;
+  if (!isRecord(value) || Object.keys(value).some((key) => !WORKER_PROJECTION_KEYS.has(key))) {
+    return false;
+  }
+  if (typeof value.display_name === "string" && value.display_name === "") {
+    return validateWorkerDetails({
+      ...(value as WorkerDetails),
+      display_name: "Placeholder",
+    }).length === 0;
+  }
+  return validateWorkerDetails(value as WorkerDetails).length === 0;
 }
 
 function isGeneralNoteReadProjection(value: unknown): boolean {

@@ -7,12 +7,15 @@ import {
   isCccdQrErrorCode,
   isCccdQrErrorField,
   isCccdQrStatus,
+  isCccdReconciliationStatus,
+  normalizeCccdReconciliationStatus,
   type CccdQrCandidateData,
   type CccdQrDocumentType,
   type CccdQrErrorCode,
   type CccdQrErrorField,
   type CccdQrFieldMergePreview,
   type CccdQrStatus,
+  type CccdReconciliationStatus,
 } from "./cccd-qr-contract.ts";
 import type { OperationResult } from "./write-repository.ts";
 
@@ -21,6 +24,21 @@ type Rpc = (name: string, args: Record<string, unknown>) => Promise<{
   error: { code?: string; message?: string } | null;
 }>;
 
+export type CccdReconciliationSummary = {
+  entry_id: string;
+  status: CccdReconciliationStatus;
+  entered_national_id_masked: string | null;
+  qr_national_id_masked: string | null;
+  qr_document_id: string | null;
+  qr_document_type: CccdQrDocumentType | null;
+  qr_extraction_id: string | null;
+  resolved_action: string | null;
+  resolved_by_user_id: string | null;
+  resolved_at: string | null;
+  resolution_reason: string | null;
+  updated_at: string;
+};
+
 export type CccdQrExtractionRecord = {
   extraction_id: string;
   entry_id: string;
@@ -28,6 +46,7 @@ export type CccdQrExtractionRecord = {
   document_type: CccdQrDocumentType;
   document_version: number;
   status: CccdQrStatus;
+  reconciliation_status?: CccdReconciliationStatus;
   error_code: CccdQrErrorCode | null;
   error_field: CccdQrErrorField | null;
   candidate_data: CccdQrCandidateData | null;
@@ -57,6 +76,7 @@ export type CccdQrCompletionResult = {
   entry_id: string;
   entry_version: number;
   reused: boolean;
+  reconciliation?: CccdReconciliationSummary | null;
   extraction: CccdQrExtractionRecord;
 };
 
@@ -70,6 +90,7 @@ export type CccdQrReadEligibleDocument = {
 export type CccdQrReadResult = {
   entry_id: string;
   entry_version: number;
+  reconciliation?: CccdReconciliationSummary | null;
   latest: CccdQrExtractionRecord | null;
   extractions: CccdQrExtractionRecord[];
   eligible_documents: CccdQrReadEligibleDocument[];
@@ -166,7 +187,7 @@ function projectFieldMergePreview(value: unknown): CccdQrFieldMergePreview | nul
   const validStatus = (s: unknown): s is "eligible_blank" | "kept_existing" | "applied_to_blank" =>
     s === "eligible_blank" || s === "kept_existing" || s === "applied_to_blank";
   if (
-    value.display_name !== "kept_existing" ||
+    !validStatus(value.display_name) ||
     !validStatus(value.national_id) ||
     !validStatus(value.date_of_birth) ||
     !validStatus(value.gender) ||
@@ -176,12 +197,63 @@ function projectFieldMergePreview(value: unknown): CccdQrFieldMergePreview | nul
     return null;
   }
   return {
-    display_name: "kept_existing",
+    display_name: value.display_name,
     national_id: value.national_id,
     date_of_birth: value.date_of_birth,
     gender: value.gender,
     address: value.address,
     national_id_issued_at: value.national_id_issued_at,
+  };
+}
+
+export function projectReconciliationSummary(value: unknown): CccdReconciliationSummary | null {
+  if (!isRecord(value)) return null;
+  const status = normalizeCccdReconciliationStatus(
+    value.status ?? value.reconciliation_status,
+  );
+  const qrDocumentId = (value.qr_document_id ?? value.matched_document_id ?? null) as unknown;
+  const qrDocumentType = (value.qr_document_type ?? value.matched_document_type ?? null) as unknown;
+  const qrExtractionId = (value.qr_extraction_id ?? null) as unknown;
+  const resolvedAction = (value.resolved_action ?? value.resolution_action ?? null) as unknown;
+  const resolutionReason = (value.resolution_reason ?? value.resolution_note ?? null) as unknown;
+  const enteredMasked = (value.entered_national_id_masked ?? null) as unknown;
+  const qrMasked = (value.qr_national_id_masked ?? null) as unknown;
+  const resolvedByUserId = (value.resolved_by_user_id ?? null) as unknown;
+  const resolvedAt = (value.resolved_at ?? null) as unknown;
+
+  if (
+    typeof value.entry_id !== "string" ||
+    !UUID_REGEX.test(value.entry_id) ||
+    !status ||
+    (enteredMasked !== null && typeof enteredMasked !== "string") ||
+    (qrMasked !== null && typeof qrMasked !== "string") ||
+    (qrDocumentId !== null &&
+      (typeof qrDocumentId !== "string" || !UUID_REGEX.test(qrDocumentId))) ||
+    (qrDocumentType !== null && !isCccdQrDocumentType(qrDocumentType)) ||
+    (qrExtractionId !== null &&
+      (typeof qrExtractionId !== "string" || !UUID_REGEX.test(qrExtractionId))) ||
+    (resolvedAction !== null && typeof resolvedAction !== "string") ||
+    (resolvedByUserId !== null &&
+      (typeof resolvedByUserId !== "string" || !UUID_REGEX.test(resolvedByUserId))) ||
+    (resolvedAt !== null && typeof resolvedAt !== "string") ||
+    (resolutionReason !== null && typeof resolutionReason !== "string") ||
+    typeof value.updated_at !== "string"
+  ) {
+    return null;
+  }
+  return {
+    entry_id: value.entry_id,
+    status,
+    entered_national_id_masked: enteredMasked,
+    qr_national_id_masked: qrMasked,
+    qr_document_id: qrDocumentId,
+    qr_document_type: qrDocumentType,
+    qr_extraction_id: qrExtractionId,
+    resolved_action: resolvedAction,
+    resolved_by_user_id: resolvedByUserId,
+    resolved_at: resolvedAt,
+    resolution_reason: resolutionReason,
+    updated_at: value.updated_at,
   };
 }
 
@@ -254,6 +326,13 @@ export function projectExtractionRecord(value: unknown): CccdQrExtractionRecord 
     return null;
   }
 
+  let reconciliationStatus: CccdReconciliationStatus | undefined;
+  if (value.reconciliation_status !== undefined && value.reconciliation_status !== null) {
+    const normalized = normalizeCccdReconciliationStatus(value.reconciliation_status);
+    if (!normalized) return null;
+    reconciliationStatus = normalized;
+  }
+
   return {
     extraction_id: value.extraction_id,
     entry_id: value.entry_id,
@@ -261,6 +340,7 @@ export function projectExtractionRecord(value: unknown): CccdQrExtractionRecord 
     document_type: value.document_type,
     document_version: value.document_version,
     status: value.status,
+    ...(reconciliationStatus ? { reconciliation_status: reconciliationStatus } : {}),
     error_code: errorCode,
     error_field: errorField,
     candidate_data: candidateData,
@@ -329,10 +409,21 @@ function projectCompletionResult(value: unknown): CccdQrCompletionResult | null 
   }
   const extraction = projectExtractionRecord(value.extraction);
   if (!extraction) return null;
+  let reconciliation: CccdReconciliationSummary | null | undefined;
+  if (value.reconciliation !== undefined) {
+    if (value.reconciliation === null) {
+      reconciliation = null;
+    } else {
+      const projectedRec = projectReconciliationSummary(value.reconciliation);
+      if (!projectedRec) return null;
+      reconciliation = projectedRec;
+    }
+  }
   return {
     entry_id: value.entry_id,
     entry_version: value.entry_version,
     reused: value.reused,
+    ...(reconciliation !== undefined ? { reconciliation } : {}),
     extraction,
   };
 }
@@ -349,6 +440,17 @@ function projectReadResult(value: unknown): CccdQrReadResult | null {
     !Array.isArray(value.eligible_documents)
   ) {
     return null;
+  }
+
+  let reconciliation: CccdReconciliationSummary | null | undefined;
+  if (value.reconciliation !== undefined) {
+    if (value.reconciliation === null) {
+      reconciliation = null;
+    } else {
+      const projectedRec = projectReconciliationSummary(value.reconciliation);
+      if (!projectedRec) return null;
+      reconciliation = projectedRec;
+    }
   }
 
   let latest: CccdQrExtractionRecord | null = null;
@@ -389,6 +491,7 @@ function projectReadResult(value: unknown): CccdQrReadResult | null {
   return {
     entry_id: value.entry_id,
     entry_version: value.entry_version,
+    ...(reconciliation !== undefined ? { reconciliation } : {}),
     latest,
     extractions,
     eligible_documents: eligibleDocuments,

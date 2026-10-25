@@ -65,6 +65,7 @@ export type CccdQrParseResult =
   | { ok: false; error_code: CccdQrErrorCode; error_field: CccdQrErrorField };
 
 export const CCCD_QR_MERGEABLE_WORKER_FIELDS = [
+  "display_name",
   "national_id",
   "date_of_birth",
   "gender",
@@ -73,13 +74,77 @@ export const CCCD_QR_MERGEABLE_WORKER_FIELDS = [
 ] as const;
 export type CccdQrMergeableWorkerField = (typeof CCCD_QR_MERGEABLE_WORKER_FIELDS)[number];
 
+export const CCCD_RECONCILIATION_STATUSES = [
+  "PENDING",
+  "MATCHED_INITIAL",
+  "MISMATCH",
+  "QR_UNREADABLE",
+  "RESOLVED_UPDATED_CCCD",
+  "RESOLVED_FROM_QR",
+  "RESOLVED_REPLACED_IMAGE",
+] as const;
+export type CccdReconciliationStatus = (typeof CCCD_RECONCILIATION_STATUSES)[number];
+
+export function isCccdReconciliationStatus(value: unknown): value is CccdReconciliationStatus {
+  return (
+    typeof value === "string" &&
+    (CCCD_RECONCILIATION_STATUSES as readonly string[]).includes(value)
+  );
+}
+
+export function normalizeCccdReconciliationStatus(
+  value: unknown,
+): CccdReconciliationStatus | null {
+  if (value === "RESOLVED_EDITED_CCCD") {
+    return "RESOLVED_UPDATED_CCCD";
+  }
+  return isCccdReconciliationStatus(value) ? value : null;
+}
+
+export const CCCD_QR_EXTRACTION_STATUS_LABELS: Readonly<Record<CccdQrStatus, string>> =
+  Object.freeze({
+    PENDING: "Đang chờ đọc QR",
+    SUCCEEDED: "Đọc QR thành công",
+    NO_QR_FOUND: "Không phát hiện mã QR",
+    INVALID_QR: "Mã QR không hợp lệ",
+    FAILED_RETRYABLE: "Lỗi tạm thời (có thể thử lại)",
+  });
+
+export const CCCD_QR_FAILURE_LABELS: Readonly<Record<CccdQrErrorCode, string>> = Object.freeze({
+  QR_NOT_DETECTED: "Không tìm thấy mã QR trên ảnh CCCD.",
+  QR_IMAGE_UNREADABLE: "Ảnh bị mờ hoặc không thể giải mã.",
+  QR_PAYLOAD_EMPTY: "Nội dung mã QR trống.",
+  QR_FORMAT_INVALID: "Định dạng dữ liệu QR không đúng chuẩn CCCD.",
+  QR_FIELD_MISSING: "Thiếu trường thông tin bắt buộc trong mã QR.",
+  QR_NATIONAL_ID_INVALID: "Số CCCD trong mã QR không hợp lệ (cần đúng 12 chữ số).",
+  QR_NAME_INVALID: "Họ và tên trong mã QR không hợp lệ.",
+  QR_DOB_INVALID: "Ngày sinh trong mã QR không hợp lệ.",
+  QR_GENDER_INVALID: "Giới tính trong mã QR không hợp lệ.",
+  QR_ADDRESS_INVALID: "Địa chỉ thường trú trong mã QR không hợp lệ.",
+  QR_ISSUE_DATE_INVALID: "Ngày cấp CCCD trong mã QR không hợp lệ.",
+  QR_STORAGE_UNAVAILABLE: "Tạm thời chưa đọc được tệp ảnh từ kho lưu trữ.",
+  QR_DECODE_FAILED: "Giải mã QR thất bại. Có thể thử lại hoặc tải ảnh rõ nét hơn.",
+});
+
+export const CCCD_RECONCILIATION_STATUS_LABELS: Readonly<
+  Record<CccdReconciliationStatus, string>
+> = Object.freeze({
+  PENDING: "Chờ đọc QR",
+  MATCHED_INITIAL: "Khớp ban đầu",
+  MISMATCH: "Lệch CCCD",
+  QR_UNREADABLE: "Không đọc được QR",
+  RESOLVED_UPDATED_CCCD: "Đã sửa CCCD",
+  RESOLVED_FROM_QR: "Đã chuẩn hóa từ QR",
+  RESOLVED_REPLACED_IMAGE: "Đã tải lại ảnh khớp",
+});
+
 export type CccdQrFieldMergeStatus =
   | "eligible_blank"
   | "kept_existing"
   | "applied_to_blank";
 
 export type CccdQrFieldMergePreview = {
-  display_name: "kept_existing";
+  display_name: CccdQrFieldMergeStatus;
   national_id: CccdQrFieldMergeStatus;
   date_of_birth: CccdQrFieldMergeStatus;
   gender: CccdQrFieldMergeStatus;
@@ -321,13 +386,18 @@ export function buildCccdQrFieldMergePreview(
 ): CccdQrFieldMergePreview {
   const appliedSet = new Set(appliedFields);
   const details = isRecord(workerDetails) ? workerDetails : {};
-  const statusFor = (field: CccdQrMergeableWorkerField): CccdQrFieldMergeStatus => {
+  const statusFor = (field: Exclude<CccdQrMergeableWorkerField, "display_name">): CccdQrFieldMergeStatus => {
     if (appliedSet.has(field)) return "applied_to_blank";
     return isBlankWorkerDetailField(details[field]) ? "eligible_blank" : "kept_existing";
   };
+  const displayNameStatus: CccdQrFieldMergeStatus = appliedSet.has("display_name")
+    ? "applied_to_blank"
+    : typeof details.display_name === "string" && details.display_name.trim().length === 0
+      ? "eligible_blank"
+      : "kept_existing";
 
   return {
-    display_name: "kept_existing",
+    display_name: displayNameStatus,
     national_id: statusFor("national_id"),
     date_of_birth: statusFor("date_of_birth"),
     gender: statusFor("gender"),

@@ -11,7 +11,7 @@ import type { DirectEntryRepository } from "./write-repository.ts";
 import type { DocumentObjectStorage } from "./r2-document-storage.ts";
 import { inspectDocumentContent, sha256Hex } from "./document-r2-contract.ts";
 import type { createWorkerPortraitStageRepository } from "./worker-portrait-stage-repository.ts";
-import { finalizeDirectEntryDocument } from "./document-finalize-api.ts";
+import { finalizeDirectEntryDocument, type CccdFinalizeTriggerInput } from "./document-finalize-api.ts";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SAFE_CLIENT_CODES = new Set([
@@ -36,6 +36,7 @@ type Dependencies = {
   portraitStages?: ReturnType<typeof createWorkerPortraitStageRepository>;
   documentRepository?: DirectEntryRepository;
   documentStorage?: DocumentObjectStorage;
+  onCccdImageFinalized?: (input: CccdFinalizeTriggerInput) => void;
 };
 
 async function reconcileRejectedPortraitStage(
@@ -334,9 +335,11 @@ export async function postFullProfileBatch(
       console.error("[direct-entry] full-profile batch unavailable");
       return fail("BATCH_UNAVAILABLE", 500);
     }
-    const expectedYears = parsed.payload.contract_version === "worker-profile/1.1"
-      ? parsed.payload.rows.map((row) => row.first_work_date.slice(0, 4))
-      : undefined;
+    const expectedYears =
+      parsed.payload.contract_version === "worker-profile/1.1" ||
+      parsed.payload.contract_version === "worker-profile/1.2"
+        ? parsed.payload.rows.map((row) => row.first_work_date.slice(0, 4))
+        : undefined;
     const projection = projectResult(result.data, parsed.payload.rows.length, expectedYears);
     if (!projection) {
       console.error("[direct-entry] full-profile batch returned malformed projection");
@@ -409,6 +412,7 @@ export async function postFullProfileBatch(
             resolveSession: dependencies.resolveSession,
             repository: dependencies.documentRepository!,
             storage: dependencies.documentStorage!,
+            onCccdImageFinalized: dependencies.onCccdImageFinalized,
           },
         );
         if (!finalized.ok) {
