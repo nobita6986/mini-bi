@@ -68,7 +68,13 @@ async function readErrorCode(response: Response): Promise<string | null> {
   }
 }
 
-function ReconciliationBadge({ status }: { status: CccdReconciliationStatus }) {
+function ReconciliationBadge({
+  status,
+  resolvedAction,
+}: {
+  status: CccdReconciliationStatus;
+  resolvedAction: string | null;
+}) {
   const toneClass =
     status === "MISMATCH"
       ? "border-status-danger-border bg-status-danger-bg text-status-danger-text"
@@ -81,7 +87,9 @@ function ReconciliationBadge({ status }: { status: CccdReconciliationStatus }) {
     <span
       className={`inline-flex whitespace-nowrap rounded-full border px-2.5 py-1 text-xs font-medium ${toneClass}`}
     >
-      {CCCD_RECONCILIATION_STATUS_LABELS[status]}
+      {resolvedAction === "MANUAL_UPDATE_DETAILS"
+        ? "Đã nhập thông tin thủ công"
+        : CCCD_RECONCILIATION_STATUS_LABELS[status]}
     </span>
   );
 }
@@ -147,15 +155,25 @@ export function CccdReviewPanel() {
   const notify = useNotify();
 
   const [selectedItem, setSelectedItem] = useState<CccdReviewQueueItem | null>(null);
-  const [actionMode, setActionMode] = useState<"UPDATE_ENTERED_CCCD" | "STANDARDIZE_FROM_QR">(
+  const [actionMode, setActionMode] = useState<
+    "UPDATE_ENTERED_CCCD" | "STANDARDIZE_FROM_QR" | "MANUAL_UPDATE_DETAILS"
+  >(
     "UPDATE_ENTERED_CCCD",
   );
   const [editedCccd, setEditedCccd] = useState("");
+  const [manualDetails, setManualDetails] = useState({
+    national_id: "",
+    display_name: "",
+    date_of_birth: "",
+    gender: "" as "" | "MALE" | "FEMALE" | "OTHER",
+    address: "",
+    national_id_issued_at: "",
+  });
   const [applyBlankFromQr, setApplyBlankFromQr] = useState(true);
   const [selectedQrFields, setSelectedQrFields] = useState<CccdReviewStandardizeField[]>([]);
   const [actionReason, setActionReason] = useState("");
   const [confirmStep, setConfirmStep] = useState<
-    null | "UPDATE_ENTERED_CCCD" | "STANDARDIZE_FROM_QR"
+    null | "UPDATE_ENTERED_CCCD" | "STANDARDIZE_FROM_QR" | "MANUAL_UPDATE_DETAILS"
   >(null);
   const [actionSubmitting, setActionSubmitting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -259,6 +277,14 @@ export function CccdReviewPanel() {
     setPreviewUrls({});
     setSelectedItem(item);
     setEditedCccd(item.entered.national_id ?? "");
+    setManualDetails({
+      national_id: item.entered.national_id ?? "",
+      display_name: item.entered.display_name,
+      date_of_birth: item.entered.date_of_birth ?? "",
+      gender: item.entered.gender ?? "",
+      address: item.entered.address ?? "",
+      national_id_issued_at: item.entered.national_id_issued_at ?? "",
+    });
     setApplyBlankFromQr(true);
     const defaultQrFields = CCCD_REVIEW_STANDARDIZE_FIELDS.filter((field) => {
       const qrVal = qrValueForField(item, field);
@@ -482,6 +508,18 @@ export function CccdReviewPanel() {
       setConfirmStep("UPDATE_ENTERED_CCCD");
       return;
     }
+    if (actionMode === "MANUAL_UPDATE_DETAILS") {
+      if (!isCanonicalNationalId(manualDetails.national_id.trim())) {
+        setActionError("Số CCCD phải gồm đúng 12 chữ số hợp lệ (không chấp nhận 000000000000).");
+        return;
+      }
+      if (manualDetails.display_name.trim().length > 256) {
+        setActionError("Họ và tên không được vượt quá 256 ký tự.");
+        return;
+      }
+      setConfirmStep("MANUAL_UPDATE_DETAILS");
+      return;
+    }
     if (!selectedItem.qr.candidate_data) {
       setActionError("Hồ sơ chưa có dữ liệu QR hợp lệ để chuẩn hóa.");
       return;
@@ -507,7 +545,19 @@ export function CccdReviewPanel() {
             apply_blank_fields_from_qr: applyBlankFromQr,
             reason: actionReason.trim() === "" ? null : actionReason.trim(),
           }
-        : {
+        : confirmStep === "MANUAL_UPDATE_DETAILS"
+          ? {
+              action: "MANUAL_UPDATE_DETAILS" as const,
+              expected_entry_version: selectedItem.entry_version,
+              national_id: manualDetails.national_id.trim(),
+              display_name: manualDetails.display_name.trim(),
+              date_of_birth: manualDetails.date_of_birth.trim() || null,
+              gender: manualDetails.gender || null,
+              address: manualDetails.address.trim() || null,
+              national_id_issued_at: manualDetails.national_id_issued_at.trim() || null,
+              reason: actionReason.trim() === "" ? null : actionReason.trim(),
+            }
+          : {
             action: "STANDARDIZE_FROM_QR" as const,
             expected_entry_version: selectedItem.entry_version,
             fields: selectedQrFields,
@@ -545,7 +595,9 @@ export function CccdReviewPanel() {
         title:
           confirmStep === "UPDATE_ENTERED_CCCD"
             ? "Đã cập nhật số CCCD và đối chiếu lại hồ sơ."
-            : "Đã chuẩn hóa thông tin hồ sơ NLĐ từ dữ liệu QR.",
+            : confirmStep === "MANUAL_UPDATE_DETAILS"
+              ? "Đã lưu thông tin NLĐ nhập thủ công."
+              : "Đã chuẩn hóa thông tin hồ sơ NLĐ từ dữ liệu QR.",
       });
       setConfirmStep(null);
       setSelectedItem(null);
@@ -733,7 +785,7 @@ export function CccdReviewPanel() {
                         {item.qr.candidate_data?.national_id ?? item.qr.national_id ?? "—"}
                       </td>
                       <td className="px-3 py-3">
-                        <ReconciliationBadge status={item.reconciliation_status} />
+                        <ReconciliationBadge status={item.reconciliation_status} resolvedAction={item.resolved_action} />
                       </td>
                       <td className="px-3 py-3 text-xs text-muted">
                         <div>Mặt trước: {frontStatus}</div>
@@ -968,7 +1020,7 @@ export function CccdReviewPanel() {
                 3. Xử lý trực tiếp thông tin hồ sơ NLĐ
               </h4>
               <p className="text-xs text-muted">
-                Mọi thao tác sửa số CCCD hoặc chuẩn hóa dữ liệu từ QR đều yêu cầu xác nhận rõ ràng và ghi vết lịch sử kiểm toán. Hệ thống không cho phép bỏ qua lệch CCCD mà không xử lý nguyên nhân.
+                Mọi thao tác đều được xác nhận, lưu lịch sử kiểm toán và áp dụng ngay trong phạm vi hồ sơ bạn được phép xử lý. Nếu QR không đọc được hoặc thông tin sai, người nhập có thể nhập thông tin đúng tại đây.
               </p>
 
               <div className="flex flex-wrap gap-2" role="group" aria-label="Chọn cách xử lý">
@@ -1003,6 +1055,21 @@ export function CccdReviewPanel() {
                 >
                     Chuẩn hóa thông tin từ QR
                   </button>
+                <button
+                  type="button"
+                  data-testid="cccd-review-mode-manual-details"
+                  aria-pressed={actionMode === "MANUAL_UPDATE_DETAILS"}
+                  onClick={() => {
+                    setActionMode("MANUAL_UPDATE_DETAILS");
+                    setConfirmStep(null);
+                    setActionError(null);
+                  }}
+                  className={
+                    actionMode === "MANUAL_UPDATE_DETAILS" ? primaryButtonClass : buttonClass
+                  }
+                >
+                  Nhập/sửa thông tin thủ công
+                </button>
                 </div>
 
                 {actionMode === "UPDATE_ENTERED_CCCD" ? (
@@ -1038,7 +1105,7 @@ export function CccdReviewPanel() {
                       </span>
                     </label>
                   </div>
-                ) : (
+                ) : actionMode === "STANDARDIZE_FROM_QR" ? (
                   <div className="space-y-3 pt-1">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <span className="font-medium text-foreground">
@@ -1121,6 +1188,99 @@ export function CccdReviewPanel() {
                       })}
                     </div>
                   </div>
+                ) : (
+                  <div className="grid grid-cols-1 gap-3 pt-1 sm:grid-cols-2">
+                    <label className="block space-y-1">
+                      <span className="font-medium text-foreground">Số CCCD (12 chữ số) *</span>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        maxLength={12}
+                        value={manualDetails.national_id}
+                        onChange={(event) => {
+                          const value = event.currentTarget.value;
+                          setConfirmStep(null);
+                          setManualDetails((current) => ({ ...current, national_id: value }));
+                        }}
+                        className="w-full rounded-md border border-border bg-surface px-3 py-2 font-mono text-sm text-foreground"
+                      />
+                    </label>
+                    <label className="block space-y-1">
+                      <span className="font-medium text-foreground">Họ và tên</span>
+                      <input
+                        type="text"
+                        maxLength={256}
+                        value={manualDetails.display_name}
+                        onChange={(event) => {
+                          const value = event.currentTarget.value;
+                          setConfirmStep(null);
+                          setManualDetails((current) => ({ ...current, display_name: value }));
+                        }}
+                        className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-foreground"
+                      />
+                    </label>
+                    <label className="block space-y-1">
+                      <span className="font-medium text-foreground">Ngày sinh</span>
+                      <input
+                        type="text"
+                        maxLength={10}
+                        placeholder="dd/mm/yyyy"
+                        value={manualDetails.date_of_birth}
+                        onChange={(event) => {
+                          const value = event.currentTarget.value;
+                          setConfirmStep(null);
+                          setManualDetails((current) => ({ ...current, date_of_birth: value }));
+                        }}
+                        className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-foreground"
+                      />
+                    </label>
+                    <label className="block space-y-1">
+                      <span className="font-medium text-foreground">Giới tính</span>
+                      <select
+                        value={manualDetails.gender}
+                        onChange={(event) => {
+                          const value = event.currentTarget.value as typeof manualDetails.gender;
+                          setConfirmStep(null);
+                          setManualDetails((current) => ({ ...current, gender: value }));
+                        }}
+                        className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-foreground"
+                      >
+                        <option value="">Chưa chọn</option>
+                        <option value="MALE">Nam</option>
+                        <option value="FEMALE">Nữ</option>
+                        <option value="OTHER">Khác</option>
+                      </select>
+                    </label>
+                    <label className="block space-y-1 sm:col-span-2">
+                      <span className="font-medium text-foreground">Địa chỉ thường trú</span>
+                      <textarea
+                        maxLength={1024}
+                        rows={3}
+                        value={manualDetails.address}
+                        onChange={(event) => {
+                          const value = event.currentTarget.value;
+                          setConfirmStep(null);
+                          setManualDetails((current) => ({ ...current, address: value }));
+                        }}
+                        className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-foreground"
+                      />
+                    </label>
+                    <label className="block space-y-1">
+                      <span className="font-medium text-foreground">Ngày cấp CCCD</span>
+                      <input
+                        type="text"
+                        maxLength={10}
+                        placeholder="dd/mm/yyyy"
+                        value={manualDetails.national_id_issued_at}
+                        onChange={(event) => {
+                          const value = event.currentTarget.value;
+                          setConfirmStep(null);
+                          setManualDetails((current) => ({ ...current, national_id_issued_at: value }));
+                        }}
+                        className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-foreground"
+                      />
+                    </label>
+                  </div>
                 )}
 
                 <label className="block space-y-1">
@@ -1152,7 +1312,9 @@ export function CccdReviewPanel() {
                     >
                       {actionMode === "UPDATE_ENTERED_CCCD"
                         ? "Tiếp tục xác nhận sửa CCCD"
-                        : "Tiếp tục xác nhận chuẩn hóa từ QR"}
+                        : actionMode === "MANUAL_UPDATE_DETAILS"
+                          ? "Tiếp tục xác nhận lưu thông tin"
+                          : "Tiếp tục xác nhận chuẩn hóa từ QR"}
                     </button>
                   </div>
                 ) : (
@@ -1164,9 +1326,11 @@ export function CccdReviewPanel() {
                     <p className="font-semibold text-status-warning-text">
                       {confirmStep === "UPDATE_ENTERED_CCCD"
                         ? `Xác nhận cập nhật số CCCD từ "${selectedItem.entered.national_id ?? "—"}" sang "${editedCccd.trim()}" và đối chiếu lại với QR?`
-                        : `Xác nhận áp dụng ${selectedQrFields.length} trường từ dữ liệu QR (${selectedQrFields
-                            .map((f) => CCCD_REVIEW_STANDARDIZE_FIELD_LABELS[f])
-                            .join(", ")}) vào hồ sơ NLĐ?`}
+                        : confirmStep === "MANUAL_UPDATE_DETAILS"
+                          ? "Xác nhận lưu trực tiếp thông tin NLĐ vừa nhập? Thao tác sẽ cập nhật hồ sơ và ghi lịch sử kiểm toán."
+                          : `Xác nhận áp dụng ${selectedQrFields.length} trường từ dữ liệu QR (${selectedQrFields
+                              .map((f) => CCCD_REVIEW_STANDARDIZE_FIELD_LABELS[f])
+                              .join(", ")}) vào hồ sơ NLĐ?`}
                     </p>
                     <div className="flex justify-end gap-2">
                       <button

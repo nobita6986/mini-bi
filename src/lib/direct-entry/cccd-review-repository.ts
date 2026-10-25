@@ -42,7 +42,7 @@ export type CccdReviewResolveResult = {
   entry_id: string;
   entry_version: number;
   reused: boolean;
-  action: "UPDATE_ENTERED_CCCD" | "STANDARDIZE_FROM_QR";
+  action: "UPDATE_ENTERED_CCCD" | "STANDARDIZE_FROM_QR" | "MANUAL_UPDATE_DETAILS";
   changed_fields: string[];
   reconciliation: CccdReconciliationSummary;
 };
@@ -758,16 +758,17 @@ function projectQueueResponse(
 
 function projectResolveResult(
   value: unknown,
-  fallbackAction?: "UPDATE_ENTERED_CCCD" | "STANDARDIZE_FROM_QR",
+  fallbackAction?: "UPDATE_ENTERED_CCCD" | "STANDARDIZE_FROM_QR" | "MANUAL_UPDATE_DETAILS",
 ): CccdReviewResolveResult | null {
   if (!isRecord(value)) return null;
   const reconciliation = projectReconciliationSummary(value.reconciliation);
   if (!reconciliation) return null;
   const action =
-    value.action === "UPDATE_ENTERED_CCCD" || value.action === "STANDARDIZE_FROM_QR"
+    value.action === "UPDATE_ENTERED_CCCD" || value.action === "STANDARDIZE_FROM_QR" || value.action === "MANUAL_UPDATE_DETAILS"
       ? value.action
       : reconciliation.resolved_action === "UPDATE_ENTERED_CCCD" ||
-          reconciliation.resolved_action === "STANDARDIZE_FROM_QR"
+          reconciliation.resolved_action === "STANDARDIZE_FROM_QR" ||
+          reconciliation.resolved_action === "MANUAL_UPDATE_DETAILS"
         ? reconciliation.resolved_action
         : fallbackAction;
   if (
@@ -849,22 +850,39 @@ export function createCccdReviewRepository(rpc?: Rpc): CccdReviewRepository {
                 reason: input.request.reason,
                 note: input.request.reason,
               }
-            : {
+            : input.request.action === "MANUAL_UPDATE_DETAILS"
+              ? {
+                  national_id: input.request.national_id,
+                  display_name: input.request.display_name,
+                  date_of_birth: input.request.date_of_birth,
+                  gender: input.request.gender,
+                  address: input.request.address,
+                  national_id_issued_at: input.request.national_id_issued_at,
+                  reason: input.request.reason,
+                  note: input.request.reason,
+                }
+              : {
                 fields: input.request.fields,
                 overwrite_existing: true,
                 reason: input.request.reason,
                 note: input.request.reason,
               };
 
-        const { data, error } = await callRpc("direct_entry_resolve_cccd_review", {
+        const rpcName = input.request.action === "MANUAL_UPDATE_DETAILS"
+          ? "direct_entry_apply_cccd_manual_resolution"
+          : "direct_entry_resolve_cccd_review";
+        const rpcArgs = {
           p_auth_subject: input.auth_subject,
           p_app_user_id: input.app_user_id,
           p_entry_id: input.entry_id,
           p_expected_entry_version: input.request.expected_entry_version,
-          p_action: input.request.action,
           p_payload: payload,
           p_idempotency_key: input.idempotency_key,
-        });
+        };
+        if (rpcName === "direct_entry_resolve_cccd_review") {
+          Object.assign(rpcArgs, { p_action: input.request.action });
+        }
+        const { data, error } = await callRpc(rpcName, rpcArgs);
         if (error) {
           const classified = classifyReviewError(error);
           return {

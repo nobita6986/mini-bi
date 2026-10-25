@@ -286,10 +286,9 @@ export function parseCccdQrPayload(
   }
 
   const segments = stripped.split("|");
-  // Allow an optional trailing empty segment only when a trailing pipe was encoded after the 7th field.
-  const parts = segments.length === 8 && segments[7].trim() === ""
-    ? segments.slice(0, 7)
-    : segments;
+  // Some CCCD QR payloads append several empty reserved fields after the 7 used fields.
+  while (segments.length > 7 && segments.at(-1)?.trim() === "") segments.pop();
+  const parts = segments;
 
   if (parts.length < 7) {
     return { ok: false, error_code: "QR_FIELD_MISSING", error_field: "payload" };

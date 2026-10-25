@@ -73,6 +73,21 @@ test("parseCccdQrPayload accepts and discards any value in the unused old CMND s
   assert.equal(Object.hasOwn(result.data, "legacy_national_id"), false);
 });
 
+test("parseCccdQrPayload ignores trailing empty reserved QR fields but rejects extra populated fields", () => {
+  const payload =
+    "079095001234|025123456|Nguyễn Văn An|15081995|Nam|TP.HCM|20102021";
+  const accepted = parseCccdQrPayload(`${payload}||||`, { referenceDateIso: REFERENCE_DATE });
+  assert.equal(accepted.ok, true);
+  if (accepted.ok) assert.equal(accepted.data.national_id, "079095001234");
+
+  const rejected = parseCccdQrPayload(`${payload}|||EXTRA`, { referenceDateIso: REFERENCE_DATE });
+  assert.deepEqual(rejected, {
+    ok: false,
+    error_code: "QR_FORMAT_INVALID",
+    error_field: "payload",
+  });
+});
+
 test("parseCccdQrPayload rejects malformed structure, invalid fields, and never leaks PII in error objects", () => {
   const cases = [
     {
