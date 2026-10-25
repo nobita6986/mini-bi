@@ -182,12 +182,16 @@ type Props = {
   cccdBackStages: WorkerPortraitStagesController;
   contractStages: WorkerPortraitStagesController;
   uploadJobManager?: FormSaveUploadJobManager;
+  officialEntryIds: readonly string[];
+  canSubmitOfficial: boolean;
+  officialSubmitBusy: boolean;
   onActivateRow(rowId: string): void;
   onChange(rowId: string, field: string, value: string): void;
   onProviderTypeChange(rowId: string, providerType: "hrp" | "vendor" | ""): void;
   onAddRow(): void;
   onDeleteRow(rowId: string): void;
   onSave(): void;
+  onSubmitOfficial(): void;
 };
 
 export function DirectEntryMultiEntryForm({
@@ -204,12 +208,16 @@ export function DirectEntryMultiEntryForm({
   cccdBackStages,
   contractStages,
   uploadJobManager,
+  officialEntryIds,
+  canSubmitOfficial,
+  officialSubmitBusy,
   onActivateRow,
   onChange,
   onProviderTypeChange,
   onAddRow,
   onDeleteRow,
   onSave,
+  onSubmitOfficial,
 }: Props) {
   const manager = uploadJobManager ?? getDefaultFormSaveUploadJobManager();
   const uploadSnapshot = useSyncExternalStore(
@@ -235,6 +243,10 @@ export function DirectEntryMultiEntryForm({
       !(FORM_EMPLOYMENT_STATUS_CHOICES as readonly string[]).includes(status);
   });
   const hasInvalidPreSaveFiles = manager.hasInvalidSelectedFiles(formRowIds);
+  const officialUploadJobs = uploadSnapshot.jobs.filter((job) =>
+    job.entries.some((entry) => officialEntryIds.includes(entry.entryId)),
+  );
+  const officialUploadsPending = officialUploadJobs.some((job) => job.status !== "completed");
 
   const confirmDeleteRow = (rowId: string) => {
     manager.clearRowFiles(rowId);
@@ -583,12 +595,59 @@ export function DirectEntryMultiEntryForm({
         <button type="button" className={styles.secondaryButton} disabled={busy} onClick={onAddRow}>
           + Thêm NLĐ nữa
         </button>
-        <button type="button" className={styles.primaryButton} data-testid="form-save-valid-rows"
+        <button type="button" className={styles.secondaryButton} data-testid="form-save-valid-rows"
           disabled={busy || !canSave || hasUnsupportedEmploymentStatus || hasInvalidPreSaveFiles}
           aria-busy={busy} onClick={onSave}>
-          {busy ? "Đang lưu…" : "Lưu các NLĐ hợp lệ"}
+          {busy ? "Đang lưu…" : "Lưu nháp"}
         </button>
+        <AlertDialog.Root>
+          <AlertDialog.Trigger asChild>
+            <button
+              type="button"
+              className={styles.primaryButton}
+              data-testid="form-submit-official"
+              disabled={busy || officialSubmitBusy || !canSubmitOfficial || officialUploadsPending ||
+                hasUnsupportedEmploymentStatus || hasInvalidPreSaveFiles}
+              aria-busy={officialSubmitBusy}
+            >
+              {officialSubmitBusy ? "Đang gửi chính thức…" : "Gửi chính thức"}
+            </button>
+          </AlertDialog.Trigger>
+          <AlertDialog.Portal>
+            <AlertDialog.Overlay className={styles.drawerOverlay} />
+            <AlertDialog.Content className={styles.confirmDialog}>
+              <AlertDialog.Title className={styles.drawerTitle}>
+                Gửi chính thức đợt nhập liệu?
+              </AlertDialog.Title>
+              <AlertDialog.Description className={styles.drawerDescription}>
+                Hồ sơ hợp lệ sẽ được lưu thành bản nháp rồi chuyển thẳng sang trạng thái đã gửi chính thức,
+                không qua bước chờ người khác duyệt. Hãy kiểm tra thông tin trước khi tiếp tục.
+              </AlertDialog.Description>
+              <div className={styles.drawerActions}>
+                <AlertDialog.Cancel asChild>
+                  <button type="button" className={styles.secondaryButton}>Hủy</button>
+                </AlertDialog.Cancel>
+                <AlertDialog.Action asChild>
+                  <button
+                    type="button"
+                    className={styles.primaryButton}
+                    data-testid="form-submit-official-confirm"
+                    disabled={officialSubmitBusy}
+                    onClick={onSubmitOfficial}
+                  >
+                    Gửi chính thức
+                  </button>
+                </AlertDialog.Action>
+              </div>
+            </AlertDialog.Content>
+          </AlertDialog.Portal>
+        </AlertDialog.Root>
       </footer>
+      {officialUploadsPending && (
+        <p className={styles.documentStatus} role="status" data-testid="official-submit-waits-for-uploads">
+          Ảnh của bản nháp đang tải hoặc cần thử lại. Hoàn tất tải ảnh trước khi gửi chính thức.
+        </p>
+      )}
       {message !== "" && <p className={messageTone === "error" ? styles.documentError : styles.documentStatus}
         role={messageTone === "error" ? "alert" : "status"}>{message}</p>}
     </section>

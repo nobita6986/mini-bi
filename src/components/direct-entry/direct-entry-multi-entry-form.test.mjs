@@ -77,6 +77,14 @@ test("multi-entry form reuses the staged row model, validation, and server catal
   assert.match(form, /onProviderTypeChange\(rowId/);
 });
 
+test("Form keeps save-draft and official submission as two explicit steps; Grid retains its existing preflight", () => {
+  assert.match(form, /className=\{styles\.secondaryButton\} data-testid="form-save-valid-rows"[\s\S]*?Lưu nháp/);
+  assert.match(form, /data-testid="form-submit-official"[\s\S]*?Gửi chính thức/);
+  assert.match(live, /onSave=\{\(\) => void onStagedSave\(\)\}/);
+  assert.doesNotMatch(live, /onStagedSave\(true\)/);
+  assert.match(live, /preflightBeforeSubmit=\{inputMode !== "form"\}/);
+});
+
 test("Requirement 1: Giới tính is placed at the end of the main personal info group (outside Thông tin thêm) and serializes Nam/Nữ/Khác", () => {
   for (const label of [
     "Dự án",

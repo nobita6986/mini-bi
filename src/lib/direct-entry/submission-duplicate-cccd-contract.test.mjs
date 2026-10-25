@@ -58,6 +58,13 @@ test("D31-D32: a valid preflight projects with the Vietnamese label mapping", ()
   assert.equal(unconfirmed.conflicts[0].project_display, null);
   assert.equal(Object.isFrozen(EMPLOYMENT_STATUS_LABELS), true);
   assert.deepEqual(Object.keys(EMPLOYMENT_STATUS_LABELS), ["ON", "UNCONFIRMED"]);
+
+  const blankName = projectDuplicateCccdPreflight(preflight({
+    conflicts: [conflict({ draft_display_name: null })],
+  }), { submission_id: submissionId });
+  assert.equal(blankName.conflicts[0].draft_display_name, "");
+  assert.equal(duplicateCccdModalMessage(blankName.conflicts[0]),
+    "NLĐ trong bản nháp có số CCCD trùng với một NLĐ đang làm việc tại dự án Project A.");
 });
 
 test("D33: an OFF status is never a valid conflict item", () => {

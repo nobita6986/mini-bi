@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * P3.1-HF-R1 - Modal canh bao CCCD trung khi trinh duyet (DRAFT -> REVIEW).
+ * P3.1-HF-R1 - Modal canh bao CCCD trung truoc khi gui chinh thuc (DRAFT -> SUBMITTED).
  *
  * Component trinh bay + Radix AlertDialog. Khong goi API, khong tu danh gia quyen, khong tu
  * submit khi dong: dong modal (Escape hoac "Quay lai kiem tra") tuong duong huy va khong de lai
@@ -22,6 +22,8 @@ import styles from "./direct-entry-shell.module.css";
 export type DuplicateCccdDialogProps = {
   preflight: DuplicateCccdPreflight | null;
   submitting: boolean;
+  confirmationQuestion?: string;
+  confirmationLabel?: string;
   onBack: () => void;
   onConfirm: () => void;
   onOpenChange: (open: boolean) => void;
@@ -30,6 +32,8 @@ export type DuplicateCccdDialogProps = {
 export function DirectEntryDuplicateCccdDialog({
   preflight,
   submitting,
+  confirmationQuestion,
+  confirmationLabel,
   onBack,
   onConfirm,
   onOpenChange,
@@ -47,7 +51,7 @@ export function DirectEntryDuplicateCccdDialog({
               {duplicateCccdModalTitle()}
             </AlertDialog.Title>
             <AlertDialog.Description className={styles.drawerDescription}>
-              {duplicateCccdModalQuestion()}
+              {confirmationQuestion ?? duplicateCccdModalQuestion()}
             </AlertDialog.Description>
             <ul className={styles.proposerConfirmList}>
               {preflight.conflicts.map((conflict) => (
@@ -84,7 +88,9 @@ export function DirectEntryDuplicateCccdDialog({
                   aria-busy={submitting}
                   onClick={onConfirm}
                 >
-                  {submitting ? "Đang trình duyệt…" : "Vẫn trình duyệt"}
+                  {submitting
+                    ? confirmationLabel ? "Đang gửi chính thức…" : "Đang trình duyệt…"
+                    : confirmationLabel ?? "Vẫn trình duyệt"}
                 </button>
               </AlertDialog.Action>
             </div>

@@ -50,12 +50,16 @@ export type SubmissionListProps = {
   busySubmissionId: string | null;
   blockedSubmissionIds: ReadonlySet<string>;
   compact?: boolean;
+  preflightBeforeSubmit?: boolean;
+  officialSubmitLabel?: string;
+  duplicateConfirmationQuestion?: string;
+  duplicateConfirmationLabel?: string;
   queueFilter: SubmissionQueueFilter;
   onQueueFilterChange: (filter: SubmissionQueueFilter) => void;
   onLoadMore: () => void;
   /**
-   * Preflight read-only truoc khi trinh duyet. Tra ve null khi server tu choi hoac du lieu
-   * khong projection duoc - khi do khong mo modal nao va khong submit.
+   * Preflight read-only khi cần xác nhận CCCD trùng. Trả về null khi server từ chối hoặc dữ liệu
+   * không projection được - khi đó không mở modal và không submit.
    */
   onPreflight: (submission: SubmissionReadItem) => Promise<DuplicateCccdPreflight | null>;
   onTransition: (input: SubmissionTransitionRequest) => Promise<TransitionOutcome>;
@@ -84,6 +88,10 @@ export function DirectEntrySubmissionList({
   busySubmissionId,
   blockedSubmissionIds,
   compact = false,
+  preflightBeforeSubmit = true,
+  officialSubmitLabel,
+  duplicateConfirmationQuestion,
+  duplicateConfirmationLabel,
   queueFilter,
   onQueueFilterChange,
   onLoadMore,
@@ -100,16 +108,20 @@ export function DirectEntrySubmissionList({
   const [checkingId, setCheckingId] = useState<string | null>(null);
   const [blockedNotice, setBlockedNotice] = useState<string | null>(null);
 
-  async function requestAction(submission: SubmissionReadItem, action: SubmissionAction) {
+  async function requestAction(
+    submission: SubmissionReadItem,
+    action: SubmissionAction,
+    forcePreflight = false,
+  ) {
     const submittingDraft = submission.state === "DRAFT" && action.target_state === "SUBMITTED";
     if (submittingDraft && blockedSubmissionIds.has(submission.submission_id)) {
       setBlockedNotice(
-        "Còn dòng chưa được máy chủ xác nhận trong đợt này. Hãy lưu nháp trước khi gửi duyệt.",
+        "Còn dòng chưa được máy chủ xác nhận trong đợt này. Hãy lưu nháp trước khi gửi chính thức.",
       );
       return;
     }
     setBlockedNotice(null);
-    if (!submittingDraft) {
+    if (!submittingDraft || (!preflightBeforeSubmit && !forcePreflight)) {
       setPending({ submission, action });
       return;
     }
@@ -132,7 +144,7 @@ export function DirectEntrySubmissionList({
     setPending(null);
     const outcome = await onTransition(current);
     if (outcome === "duplicate-changed") {
-      await requestAction(current.submission, current.action);
+      await requestAction(current.submission, current.action, true);
     }
   }
 
@@ -150,7 +162,7 @@ export function DirectEntrySubmissionList({
     if (outcome === "duplicate-changed") {
       // Refresh the server version and conflict set; require another explicit confirmation.
       setPendingDuplicate(null);
-      await requestAction(current.submission, current.action);
+      await requestAction(current.submission, current.action, true);
       return;
     }
     setPendingDuplicate(null);
@@ -278,11 +290,21 @@ export function DirectEntrySubmissionList({
                   </div>
                 )}
                 {actions.map((action) => {
+                  const displayedAction = action.target_state === "SUBMITTED" && officialSubmitLabel
+                    ? {
+                        ...action,
+                        label: officialSubmitLabel,
+                        confirm_title: "Gửi chính thức đợt nhập liệu?",
+                        confirm_description:
+                          "Đợt nhập liệu sẽ được chuyển thẳng sang trạng thái đã gửi chính thức, không qua bước chờ duyệt.",
+                        confirm_label: officialSubmitLabel,
+                      }
+                    : action;
                   const checking = checkingId === submission.submission_id;
                   const working = busy || checking;
                   return (
                     <button
-                      key={action.target_state}
+                      key={displayedAction.target_state}
                       type="button"
                       className={action.target_state === "SUBMITTED"
                         ? submission.state === "DRAFT"
@@ -291,9 +313,9 @@ export function DirectEntrySubmissionList({
                         : styles.secondaryButton}
                       aria-busy={working}
                       disabled={working}
-                      onClick={() => void requestAction(submission, action)}
+                      onClick={() => void requestAction(submission, displayedAction)}
                     >
-                      {working ? (checking ? "Đang kiểm tra…" : "Đang gửi…") : action.label}
+                      {working ? (checking ? "Đang kiểm tra…" : "Đang gửi…") : displayedAction.label}
                     </button>
                   );
                 })}
@@ -406,6 +428,8 @@ export function DirectEntrySubmissionList({
       <DirectEntryDuplicateCccdDialog
         preflight={pendingDuplicate?.preflight ?? null}
         submitting={duplicateBusy}
+        confirmationQuestion={duplicateConfirmationQuestion}
+        confirmationLabel={duplicateConfirmationLabel}
         onBack={() => setPendingDuplicate(null)}
         onConfirm={() => void confirmDuplicate()}
         onOpenChange={(open) => {
