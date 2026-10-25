@@ -1,3 +1,5 @@
+begin;
+
 -- =============================================================================
 -- PRE-W2-HF: Fix stage submission guard (full_profile_batch_create_v2 action),
 -- stage replay idempotency, and SECURITY DEFINER function/table owner alignment
@@ -125,72 +127,39 @@ $batch$;
 
 do $owner_align$
 declare
+  v_base_owner_oid oid;
   v_base_owner name;
-  v_fn regprocedure;
-  v_rel record;
+  v_proc record;
 begin
-  select pg_catalog.pg_get_userbyid(c.relowner)
-    into v_base_owner
+  select c.relowner, r.rolname
+    into v_base_owner_oid, v_base_owner
     from pg_catalog.pg_class c
-    join pg_catalog.pg_namespace n on n.oid = c.relnamespace
-   where n.nspname = 'public'
-     and c.relname = 'direct_entry_app_users';
+    join pg_catalog.pg_roles r on r.oid = c.relowner
+   where c.oid = 'public.direct_entry_app_users'::pg_catalog.regclass;
 
-  if v_base_owner is null then
-    return;
+  if v_base_owner_oid is not null
+     and pg_catalog.pg_has_role(current_user, v_base_owner_oid, 'SET') then
+    for v_proc in
+      select p.oid::pg_catalog.regprocedure::text as sig
+        from pg_catalog.pg_proc p
+        join pg_catalog.pg_namespace n on n.oid = p.pronamespace
+       where n.nspname = 'public'
+         and p.proowner <> v_base_owner_oid
+         and p.proname in (
+           'direct_entry_worker_document_stage_submission_guard',
+           'direct_entry_create_full_profile_batch_with_portrait_stages',
+           'direct_entry__internal_normalize_cccd_digits',
+           'direct_entry_get_entry_cccd_reconciliation'
+         )
+    loop
+      execute pg_catalog.format('alter function %s owner to %I', v_proc.sig, v_base_owner);
+    end loop;
   end if;
-
-  for v_rel in
-    select c.oid::regclass as tbl
-      from pg_catalog.pg_class c
-      join pg_catalog.pg_namespace n on n.oid = c.relnamespace
-     where n.nspname = 'public'
-       and c.relkind = 'r'
-       and c.relname in (
-         'direct_entries',
-         'direct_entry_submissions',
-         'direct_entry_worker_portrait_stages',
-         'direct_entry_document_versions',
-         'direct_entry_document_events',
-         'direct_entry_cccd_qr_extractions',
-         'direct_entry_cccd_reconciliations'
-       )
-  loop
-    execute pg_catalog.format('alter table %s owner to %I', v_rel.tbl, v_base_owner);
-    execute pg_catalog.format('grant select, insert, update, delete on table %s to %I', v_rel.tbl, v_base_owner);
-  end loop;
-
-  for v_fn in
-    select p.oid::regprocedure
-      from pg_catalog.pg_proc p
-      join pg_catalog.pg_namespace n on n.oid = p.pronamespace
-     where n.nspname = 'public'
-       and p.proname in (
-         'direct_entry_valid_worker_details',
-         'direct_entry_create_full_profile_batch',
-         'direct_entry_create_full_profile_batch_v2',
-         'direct_entry_create_full_profile_batch_v2_unscoped_h03',
-         'direct_entry_create_full_profile_batch_with_portrait_stages',
-         'direct_entry_update_draft_row_full_profile',
-         'direct_entry_assert_document_upload_access',
-         'direct_entry_reserve_document_direct_upload',
-         'direct_entry_finalize_document_direct_upload',
-         'direct_entry_document_direct_context',
-         'direct_entry__internal_normalize_cccd_digits',
-         'direct_entry__internal_version_compatible_after_qr_autofill',
-         'direct_entry__internal_recompute_cccd_reconciliation',
-         'direct_entry_prepare_cccd_qr_extraction',
-         'direct_entry_complete_cccd_qr_extraction',
-         'direct_entry_get_entry_cccd_reconciliation',
-         'direct_entry_list_cccd_review_queue',
-         'direct_entry_resolve_cccd_review'
-       )
-  loop
-    execute pg_catalog.format('alter function %s owner to %I', v_fn, v_base_owner);
-    execute pg_catalog.format('grant execute on function %s to %I', v_fn, v_base_owner);
-  end loop;
 end;
 $owner_align$;
+
+revoke all on function public.direct_entry_worker_document_stage_submission_guard()
+  from public, anon, authenticated, service_role;
 
 revoke all on function public.direct_entry_create_full_profile_batch_with_portrait_stages(
   uuid, uuid, text, jsonb, text, uuid[]
@@ -198,3 +167,5 @@ revoke all on function public.direct_entry_create_full_profile_batch_with_portra
 grant execute on function public.direct_entry_create_full_profile_batch_with_portrait_stages(
   uuid, uuid, text, jsonb, text, uuid[]
 ) to service_role;
+
+commit;
