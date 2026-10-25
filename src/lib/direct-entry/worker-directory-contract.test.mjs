@@ -13,7 +13,7 @@ import {
 const entryId = "c1000000-0000-4000-8000-000000000001";
 const recruiterId = "d1000000-0000-4000-8000-000000000001";
 const requestId = "e1000000-0000-4000-8000-000000000001";
-const cursor = "20261008:" + entryId;
+const cursor = "2026-10-08T09:00:00.000000Z|" + entryId;
 const decidedAt = "2026-10-08T09:00:00.000000Z";
 
 const row = {
@@ -87,7 +87,7 @@ test("query accepts only the documented scope/filter/paging keys", () => {
     "scope=managed&page_size=" + (WORKER_DIRECTORY_MAX_PAGE_SIZE + 1),
     "scope=managed&page_size=abc",
     "scope=managed&cursor=nope",
-    "scope=managed&cursor=20261008:not-a-uuid",
+    "scope=managed&cursor=2026-10-08T09:00:00.000000Z|not-a-uuid",
     "scope=managed&project_id=bad project",
     "scope=managed&recruiter_id=not-a-uuid",
     "scope=managed&employment_status=MAYBE",

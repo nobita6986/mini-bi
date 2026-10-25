@@ -29,7 +29,7 @@ const W02_MIGRATION = "20261008110000_p2_5_w02_multi_manager_project_authority.s
 
 const AUTH_PROLOGUE =
   "create role anon; create role authenticated; create role service_role;" +
-  " create schema auth; create table auth.users (id uuid primary key);";
+  " create schema auth; create table auth.users (id uuid primary key, email text);";
 
 function uuid(n) {
   return "00000000-0000-4000-8000-" + String(n).padStart(12, "0");
@@ -67,7 +67,7 @@ async function seed(db) {
   for (const [auth, app] of [[ADMIN_AUTH, ADMIN_APP], [MGR_A_AUTH, MGR_A_APP],
     [MGR_B_AUTH, MGR_B_APP], [UPLOADER_AUTH, UPLOADER_APP], [PLAIN_AUTH, PLAIN_APP],
     [REVIEWER_AUTH, REVIEWER_APP]]) {
-    await db.query("insert into auth.users (id) values ($1)", [auth]);
+    await db.query("insert into auth.users (id,email) values ($1,$2)", [auth, `user-${app.slice(-2)}@example.test`]);
     await db.query(
       "insert into public.direct_entry_app_users (app_user_id,auth_subject,enabled,display_name)" +
       " values ($1,$2,true,'Synthetic Account')", [app, auth]);
@@ -119,7 +119,7 @@ let lastSibling = null;
 async function addWorker(db, {
   project = PROJ_A, recruiter = REC_A, createdBy = UPLOADER_APP,
   workDate = "2026-10-01", state = "SUBMITTED", deleted = false,
-  payment = null,
+  payment = null, createdAt = null,
 }) {
   entrySeq += 1;
   const n = entrySeq;
@@ -134,8 +134,8 @@ async function addWorker(db, {
     await db.query(
       "insert into public.direct_entries (entry_id, submission_id, candidate_id, created_by_user_id," +
       " project_id, first_work_date, employee_code, worker_details, recruiter_id, team_id," +
-      " provider_type, labor_type)" +
-      " values ($1,$2,$3,$4,$5,$6::date,$7,$8,$9,$10,'hrp','TEMPORARY')",
+      " provider_type, labor_type, created_at)" +
+      " values ($1,$2,$3,$4,$5,$6::date,$7,$8,$9,$10,'hrp','TEMPORARY',coalesce($11::timestamptz,now()))",
       [entry, submission, candidate, createdBy, project, workDate,
         "hrp-" + year + "-" + String(300000 + n),
         JSON.stringify({ display_name: "Worker " + n,
@@ -143,7 +143,7 @@ async function addWorker(db, {
           national_id: { state: "provided", value: String(100000000000 + n) },
           address: { state: "provided", value: "1 Synthetic Street " + n },
           phone: { state: "provided", value: "0900" + String(100000 + n) } }),
-        recruiter, TEAM]);
+        recruiter, TEAM, createdAt]);
     if (state !== "DRAFT") {
       await seedLegacyReviewSubmission(db, submission);
     }
@@ -167,14 +167,14 @@ async function addWorker(db, {
       await db.query(
         "insert into public.direct_entries (entry_id, submission_id, candidate_id," +
         " created_by_user_id, project_id, first_work_date, employee_code, worker_details," +
-        " recruiter_id, team_id, provider_type, labor_type)" +
-        " values ($1,$2,$3,$4,$5,$6::date,$7,$8,$9,$10,'hrp','TEMPORARY')",
+        " recruiter_id, team_id, provider_type, labor_type, created_at)" +
+        " values ($1,$2,$3,$4,$5,$6::date,$7,$8,$9,$10,'hrp','TEMPORARY',coalesce($11::timestamptz,now()))",
         [sibling, submission, candidate, createdBy, project, workDate,
           "hrp-" + year + "-" + String(400000 + n),
           JSON.stringify({ display_name: "Worker " + n + " sibling",
             date_of_birth: { state: "omitted" }, national_id: { state: "omitted" },
             address: { state: "omitted" }, phone: { state: "omitted" } }),
-          recruiter, TEAM]);
+          recruiter, TEAM, createdAt]);
       // direct_entries has an OCC trigger: every mutation must advance the version.
       await db.query(
         "update public.direct_entries set deleted_at = now(), version = version + 1" +
@@ -516,14 +516,25 @@ test("W03: pagination is keyset, stable and bounded; filters are server-side", a
     await seed(db);
     await assignManager(db, { project: PROJ_A, recruiter: REC_A, key: "assign-a" });
     const codesInOrder = [];
+    const createdAtByWorkDate = new Map([
+      ["2026-10-01", "2026-10-08T09:00:00.000000Z"],
+      ["2026-10-02", "2026-10-04T09:00:00.000000Z"],
+      ["2026-10-03", "2026-10-07T09:00:00.000000Z"],
+      ["2026-10-04", "2026-10-03T09:00:00.000000Z"],
+      ["2026-10-05", "2026-10-05T09:00:00.000000Z"],
+    ]);
     for (const day of ["2026-10-01", "2026-10-02", "2026-10-03", "2026-10-04", "2026-10-05"]) {
       const entry = await addWorker(db, {
         project: PROJ_A, recruiter: day === "2026-10-03" ? REC_B : REC_A, workDate: day,
+        createdAt: createdAtByWorkDate.get(day),
       });
       codesInOrder.push(entry);
     }
     await addWorker(db, { project: PROJ_A, workDate: "2026-10-06", state: "REVIEW" });
-    const deletedEntry = await addWorker(db, { project: PROJ_A, workDate: "2026-10-07", deleted: true });
+    const deletedEntry = await addWorker(db, {
+      project: PROJ_A, workDate: "2026-10-07", deleted: true,
+      createdAt: "2026-10-06T09:00:00.000000Z",
+    });
     const liveSibling = lastSibling;
     await addWorker(db, { project: PROJ_B, workDate: "2026-10-08" });
 
@@ -532,9 +543,9 @@ test("W03: pagination is keyset, stable and bounded; filters are server-side", a
     assert.equal(first.has_more, true);
     assert.deepEqual(first.summary, { total_workers: 6, project_count: 1, recruiter_count: 2 },
       "summary covers every authorized, filtered row rather than only this page");
-    assert.deepEqual(first.items.map((row) => row.first_work_date),
-      ["2026-10-07", "2026-10-05"], "newest first, stable ordering");
-    assert.match(first.next_cursor, /^[0-9]{8}:[0-9a-f-]{36}$/);
+    assert.deepEqual(first.items.map((row) => row.entry_id),
+      [codesInOrder[0], codesInOrder[2]], "newest entry time first, independent of first work date");
+    assert.match(first.next_cursor, /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6}Z\|[0-9a-f-]{36}$/);
 
     const seen = [...first.items.map((row) => row.entry_id)];
     let cursor = first.next_cursor;
@@ -547,7 +558,8 @@ test("W03: pagination is keyset, stable and bounded; filters are server-side", a
       cursor = page.next_cursor;
       guard += 1;
     }
-    assert.deepEqual(seen, [liveSibling, ...[...codesInOrder].reverse()],
+    assert.deepEqual(seen, [codesInOrder[0], codesInOrder[2], liveSibling,
+      codesInOrder[4], codesInOrder[1], codesInOrder[3]],
       "the full scan returns every eligible row exactly once");
     assert.equal(new Set(seen).size, seen.length, "no duplicate row across pages");
 
@@ -555,6 +567,14 @@ test("W03: pagination is keyset, stable and bounded; filters are server-side", a
     assert.equal(seen.length, 6);
     assert.equal(seen.includes(deletedEntry), false, "a soft-deleted row is not a worker");
     assert.equal(seen.includes(liveSibling), true, "its live sibling still is");
+
+    const auditEntry = await db.query(
+      "select public.direct_entry_read_projection($1::uuid,$2::uuid,$3::uuid) as data",
+      [ADMIN_AUTH, ADMIN_APP, liveSibling]);
+    assert.equal(auditEntry.rows[0].data.created_at, "2026-10-06T09:00:00.000000Z");
+    assert.deepEqual(auditEntry.rows[0].data.created_by, {
+      display_name: "Recruiter C", login_id: `user-${UPLOADER_APP.slice(-2)}`,
+    }, "authorized detail exposes only the creator display and login id, not its database key");
 
     // Bounds and validation are server-side.
     for (const pageSize of [0, 101]) {

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type ChangeEvent } from "react";
 
 import { Alert } from "@/components/ui/alert";
 import { Card, CardHeader } from "@/components/ui/card";
+import { buttonClasses } from "@/components/ui/button";
 import { FormDialog } from "@/components/ui/form-dialog";
 import { useNotify } from "@/components/ui/notify-provider";
 import { EmptyState } from "@/components/reporting/empty-state";
@@ -796,7 +797,7 @@ export function CccdReviewPanel() {
                           type="button"
                           data-testid={`cccd-review-open-${item.entry_id}`}
                           onClick={() => openReviewItem(item)}
-                          className={buttonClass}
+                          className={buttonClasses({ variant: "secondary", size: "sm" })}
                         >
                           Xem &amp; xử lý
                         </button>

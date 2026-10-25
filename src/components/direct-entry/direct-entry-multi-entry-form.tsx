@@ -610,7 +610,7 @@ export function DirectEntryMultiEntryForm({
                 hasUnsupportedEmploymentStatus || hasInvalidPreSaveFiles}
               aria-busy={officialSubmitBusy}
             >
-              {officialSubmitBusy ? "Đang gửi chính thức…" : "Gửi chính thức"}
+              {officialSubmitBusy ? "Đang lưu và gửi…" : "Gửi chính thức"}
             </button>
           </AlertDialog.Trigger>
           <AlertDialog.Portal>

@@ -132,7 +132,7 @@ test("W06-R2: initial tab tu actor projection — reviewer vao thang scope=all",
 
 test("W06-R2: append page dedupe theo stable id, khong trung/khong sot", () => {
   const page1 = { items: [row(), row({ entry_id: "22222222-2222-4222-8222-222222222222" })],
-    next_cursor: "20261008120000000000:11111111-1111-4111-8111-111111111111", has_more: true };
+    next_cursor: "2026-10-08T12:00:00.000000Z|11111111-1111-4111-8111-111111111111", has_more: true };
   const after1 = applyPage(emptyTabPage(), page1, workerRowKey, false);
   assert.equal(after1.items.length, 2);
   assert.equal(after1.hasMore, true);
@@ -155,7 +155,7 @@ test("W06-R2: append page dedupe theo stable id, khong trung/khong sot", () => {
 
 test("W06-R2: doi tab/filter reset cursor; beginLoad(append) giu items", () => {
   const loaded = applyPage(emptyTabPage(), { items: [row()],
-    next_cursor: "20261008120000000000:11111111-1111-4111-8111-111111111111", has_more: true },
+    next_cursor: "2026-10-08T12:00:00.000000Z|11111111-1111-4111-8111-111111111111", has_more: true },
     workerRowKey, false);
   const reset = resetTabPage();
   assert.deepEqual(reset.items, []);
@@ -200,7 +200,7 @@ test("W06-R2: query builder chi gui cursor khi co (khong mang cursor scope cu)",
 
 test("HF-R4: project and recruiter filters stay server-side and reset the page cursor", () => {
   const loaded = applyPage(emptyTabPage(), {
-    items: [row()], next_cursor: "20261008120000000000:11111111-1111-4111-8111-111111111111",
+    items: [row()], next_cursor: "2026-10-08T12:00:00.000000Z|11111111-1111-4111-8111-111111111111",
     has_more: true,
   }, workerRowKey, false);
   const changed = updateWorkerDirectoryFilter({
