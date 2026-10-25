@@ -66,9 +66,16 @@ export type WorkerDetailEmployment = {
   version: number;
 };
 
+export type WorkerDetailCreator = {
+  displayName: string | null;
+  loginId: string | null;
+};
+
 export type WorkerDetailProjection = {
   entryId: string;
   entryVersion: number;
+  createdAt: string;
+  createdBy: WorkerDetailCreator;
   worker: WorkerDetailWorker;
   employment: WorkerDetailEmployment;
   /** `hrp` | `vendor` do server quyet dinh (khong suy tu UI). */
@@ -82,6 +89,7 @@ export type WorkerDetailProjection = {
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHA256 = /^[a-f0-9]{64}$/;
 const ISO_DATE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
+const ISO_UTC_MICROS = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6}Z$/;
 const DOCUMENT_TYPES: readonly WorkerDetailDocumentType[] = [
   "CCCD_FRONT", "CCCD_BACK", "EMPLOYMENT_CONTRACT",
 ];
@@ -249,6 +257,16 @@ function projectEmployment(value: unknown): WorkerDetailEmployment | null {
   return { status: value.status, effective_date: value.effective_date, version: value.version };
 }
 
+function projectCreator(value: unknown): WorkerDetailCreator | null {
+  if (!isRecord(value) || !hasExactKeys(value, ["display_name", "login_id"])) return null;
+  if ((value.display_name !== null && (typeof value.display_name !== "string" ||
+      value.display_name.length < 1 || value.display_name.length > 256)) ||
+      (value.login_id !== null && (typeof value.login_id !== "string" ||
+        value.login_id.length < 1 || value.login_id.length > 256)) ||
+      (value.display_name === null && value.login_id === null)) return null;
+  return { displayName: value.display_name as string | null, loginId: value.login_id as string | null };
+}
+
 /**
  * Doc body `{ ok: true, entry: {...} }` cua GET /api/direct-entry/entries/{entryId}.
  * Tra null (fail-closed) khi thieu/sai kieu, sai entry_id, hoac co field la.
@@ -258,6 +276,10 @@ export function projectWorkerDetail(value: unknown, expectedEntryId: string): Wo
   const entry = value.entry;
   if (entry.entry_id !== expectedEntryId) return null;
   if (!isPositiveInt(entry.version)) return null;
+  if (typeof entry.created_at !== "string" || !ISO_UTC_MICROS.test(entry.created_at) ||
+      !Number.isFinite(Date.parse(entry.created_at))) return null;
+  const createdBy = projectCreator(entry.created_by);
+  if (createdBy === null) return null;
   const worker = projectWorker(entry.worker_details);
   if (worker === null) return null;
   const employment = projectEmployment(entry.employment_status);
@@ -271,6 +293,8 @@ export function projectWorkerDetail(value: unknown, expectedEntryId: string): Wo
   return {
     entryId: entry.entry_id,
     entryVersion: entry.version,
+    createdAt: entry.created_at,
+    createdBy,
     worker,
     employment,
     providerType: entry.provider_type,

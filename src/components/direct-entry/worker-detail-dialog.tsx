@@ -33,6 +33,7 @@ import {
   PAYMENT_STATE_LABELS,
 } from "@/lib/direct-entry/change-request-read-projection";
 import { genderUiLabel } from "@/lib/direct-entry/display-labels";
+import { formatHcmDateTime } from "@/lib/direct-entry/submission-lifecycle";
 import {
   bankAccountSummary,
   lastDecisionLabel,
@@ -263,6 +264,15 @@ function WorkerDetailBody({
           <dt>Trạng thái làm việc</dt>
           <dd>{workerStatusLabel(detail.employment.status) +
             " (hiệu lực " + detail.employment.effective_date + ")"}</dd>
+          <dt>Thời gian nhập liệu</dt>
+          <dd>{formatHcmDateTime(detail.createdAt)}</dd>
+          <dt>Người nhập liệu</dt>
+          <dd>{detail.createdBy.displayName ?? detail.createdBy.loginId ?? "Không xác định"}
+            {detail.createdBy.displayName && detail.createdBy.loginId &&
+              detail.createdBy.displayName !== detail.createdBy.loginId
+              ? ` · ${detail.createdBy.loginId}`
+              : ""}
+          </dd>
         </dl>
       </section>
 

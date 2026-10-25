@@ -73,7 +73,7 @@ test("listWorkers calls only its RPC with the server actor and exact query", asy
   const requested = {
     ...actor, ...query, scope: "recruited", project_id: "proj_a",
     recruiter_id: recruiterId, employment_status: "ON", search: "000021",
-    cursor: "20261008:" + entryId,
+    cursor: "2026-10-08T09:00:00.000000Z|" + entryId,
   };
   const result = await repository.listWorkers(requested);
   assert.equal(result.ok, true);
@@ -88,7 +88,7 @@ test("listWorkers calls only its RPC with the server actor and exact query", asy
       p_recruiter_id: recruiterId,
       p_employment_status: "ON",
       p_search: "000021",
-      p_cursor: "20261008:" + entryId,
+      p_cursor: "2026-10-08T09:00:00.000000Z|" + entryId,
       p_page_size: 25,
     },
   }]);

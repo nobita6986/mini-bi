@@ -9,7 +9,7 @@ const actor = {
 };
 const entryId = "c1000000-0000-4000-8000-000000000001";
 const recruiterId = "d1000000-0000-4000-8000-000000000001";
-const cursor = "20261008:" + entryId;
+const cursor = "2026-10-08T09:00:00.000000Z|" + entryId;
 
 const row = {
   entry_id: entryId,

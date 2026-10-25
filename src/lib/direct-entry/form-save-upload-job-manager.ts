@@ -81,6 +81,17 @@ export type FormSaveUploadSnapshot = {
   readonly jobs: readonly FormPostSaveUploadJobState[];
 };
 
+export function formUploadCompletionForEntries(
+  snapshot: FormSaveUploadSnapshot,
+  entryIds: readonly string[],
+): "complete" | "pending" | "error" {
+  const ids = new Set(entryIds);
+  const jobs = snapshot.jobs.filter((job) =>
+    job.entries.some((entry) => ids.has(entry.entryId)));
+  if (jobs.some((job) => job.status === "error")) return "error";
+  return jobs.some((job) => job.status === "uploading") ? "pending" : "complete";
+}
+
 export function createIdleFormUploadSlot(
   documentType: FormDocumentType,
 ): FormUploadSlotState {
@@ -252,6 +263,7 @@ export type FormSaveUploadJobManagerOptions = {
 export type FormSaveUploadJobManager = {
   getSnapshot(): FormSaveUploadSnapshot;
   subscribe(listener: () => void): () => void;
+  waitForEntriesUploadCompletion(entryIds: readonly string[]): Promise<boolean>;
   getRowSlots(clientRowId: string): Readonly<Record<FormDocumentType, FormUploadSlotState>>;
   selectPreSaveFile(
     clientRowId: string,
@@ -1292,6 +1304,21 @@ export function createFormSaveUploadJobManager(
       return () => {
         listeners.delete(listener);
       };
+    },
+    waitForEntriesUploadCompletion(entryIds) {
+      return new Promise((resolve) => {
+        let active = true;
+        const check = () => {
+          if (!active) return;
+          const status = formUploadCompletionForEntries(cachedSnapshot, entryIds);
+          if (status === "pending") return;
+          active = false;
+          listeners.delete(check);
+          resolve(status === "complete");
+        };
+        listeners.add(check);
+        check();
+      });
     },
     getRowSlots,
     selectPreSaveFile,

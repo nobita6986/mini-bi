@@ -15,6 +15,7 @@ import { projectPaymentProjection } from "./payment-contract.ts";
 
 const MAX_BODY_BYTES = 64 * 1024;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const ISO_UTC_MICROS = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6}Z$/;
 const ROW_KEYS = new Set([
   "project_id", "first_work_date", "employee_code", "worker", "recruiter_id", "labor_type",
 ]);
@@ -235,7 +236,7 @@ export async function postDirectEntryBatch(
 
 const ENTRY_UUID = UUID;
 const ENTRY_KEYS = new Set([
-  "entry_id", "submission_id", "project_id", "first_work_date", "employee_code",
+  "entry_id", "submission_id", "created_at", "created_by", "project_id", "first_work_date", "employee_code",
   "worker_details", "recruiter_id", "team_id", "provider_type", "labor_type",
   "labor_type_display", "general_note", "version", "scope_kind", "payment", "employment_status",
   "documents", "worker_portrait",
@@ -300,6 +301,17 @@ function isGeneralNoteReadProjection(value: unknown): boolean {
   return isRecord(value) && hasExactKeys(value, ["present"]) && value.present === true;
 }
 
+function isCreatorReadProjection(value: unknown): boolean {
+  return isRecord(value) &&
+    Object.keys(value).length === 2 &&
+    Object.keys(value).every((key) => key === "display_name" || key === "login_id") &&
+    (value.display_name === null || (typeof value.display_name === "string" &&
+      value.display_name.length > 0 && value.display_name.length <= 256)) &&
+    (value.login_id === null || (typeof value.login_id === "string" &&
+      value.login_id.length > 0 && value.login_id.length <= 256)) &&
+    (value.display_name !== null || value.login_id !== null);
+}
+
 /** Current R4 RPC may return bank_name text in addition to the older catalog bank_id shape. */
 function isPaymentReadProjection(value: unknown): boolean {
   return value === null || projectPaymentProjection(value) !== null;
@@ -308,6 +320,8 @@ function isPaymentReadProjection(value: unknown): boolean {
 export function projectEntry(value: unknown): Record<string, unknown> | null {
   if (!isRecord(value) || Object.keys(value).some((key) => !ENTRY_KEYS.has(key)) ||
       !ENTRY_UUID.test(String(value.entry_id)) || !ENTRY_UUID.test(String(value.submission_id)) ||
+      typeof value.created_at !== "string" || !ISO_UTC_MICROS.test(value.created_at) ||
+      !isCreatorReadProjection(value.created_by) ||
       typeof value.project_id !== "string" || typeof value.first_work_date !== "string" ||
       !isRealCalendarDate(value.first_work_date) ||
       typeof value.employee_code !== "string" ||

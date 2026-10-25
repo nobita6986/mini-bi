@@ -2268,7 +2268,11 @@ export function DirectEntryLive() {
         // Refresh both projections before resolving selection: document upload
         // stays fail-closed unless isRowEditable can confirm that submission is
         // DRAFT, and the list loaded at page entry cannot contain this batch.
-        await Promise.all([reloadDrafts(), loadSubmissions("replace")]);
+        try {
+          await Promise.all([reloadDrafts(), loadSubmissions("replace")]);
+        } catch {
+          setLifecycleMessage("Đã lưu hồ sơ. Không tải lại được danh sách; hãy làm mới trang để đồng bộ.");
+        }
         // Map lai selection: chi giu persisted row co entry_id trung khop;
         // KHONG doan theo row index/ho ten/CCCD.
         if (selectedClientRowId !== null && savedRowSet.has(selectedClientRowId)) {
@@ -2281,7 +2285,7 @@ export function DirectEntryLive() {
             setSavedCtaClientRowId(null);
           }
         }
-        return;
+        return { submissionId: result.submissionId, entryIds: savedEntryIds };
       }
       if (result.kind === "retry") {
         void Promise.all([reloadDrafts(), loadSubmissions("replace")]);
@@ -2308,32 +2312,30 @@ export function DirectEntryLive() {
     if (officialSubmitBusy || stagedInFlight.current) return;
     setOfficialSubmitBusy(true);
     try {
-      if (selectNonEmptySpreadsheetRows(stagedModel).length > 0) {
-        setStagedMessageWithTone("Hãy bấm Lưu nháp trước, rồi gửi chính thức bản nháp đã lưu.", "info");
+      const hasStagedRows = selectNonEmptySpreadsheetRows(stagedModel).length > 0;
+      const targetDraft = hasStagedRows ? await onStagedSave() : lastSavedFormDraft;
+      if (!targetDraft) {
+        if (!hasStagedRows) {
+          setStagedMessageWithTone("Chưa có hồ sơ hợp lệ để gửi chính thức.", "info");
+        }
         return;
       }
-      if (!lastSavedFormDraft) {
-        setStagedMessageWithTone("Hãy lưu nháp trước khi gửi chính thức.", "info");
-        return;
-      }
-      const snapshot = getDefaultFormSaveUploadJobManager().getSnapshot();
-      const uploadPending = snapshot.jobs.some((job) =>
-        job.entries.some((entry) => lastSavedFormDraft.entryIds.includes(entry.entryId)) &&
-        job.status !== "completed",
-      );
-      if (uploadPending) {
+      setStagedMessageWithTone("Đã lưu nháp. Đang chờ tải ảnh và tài liệu trước khi gửi chính thức…", "info");
+      const uploadsComplete = await getDefaultFormSaveUploadJobManager()
+        .waitForEntriesUploadCompletion(targetDraft.entryIds);
+      if (!uploadsComplete) {
         setStagedMessageWithTone(
-          "Ảnh của bản nháp đang tải hoặc cần thử lại. Hoàn tất tải ảnh trước khi gửi chính thức.",
-          "info",
+          "Bản nháp đã được lưu nhưng có tệp chưa tải thành công. Hãy thử tải lại tệp trước khi gửi chính thức.",
+          "error",
         );
         return;
       }
-      await submitOfficialFormDraft(lastSavedFormDraft.submissionId);
+      await submitOfficialFormDraft(targetDraft.submissionId);
     } finally {
       setOfficialSubmitBusy(false);
     }
   }, [lastSavedFormDraft, officialSubmitBusy, setStagedMessageWithTone,
-    stagedModel, submitOfficialFormDraft]);
+    stagedModel, submitOfficialFormDraft, onStagedSave]);
 
   /**
    * P1.7-H05-R1: nut "Lưu NLĐ" trong quick editor chi validate va gui DUNG ROW
@@ -2652,9 +2654,12 @@ export function DirectEntryLive() {
               cccdFrontStages={cccdFrontStages}
               cccdBackStages={cccdBackStages}
               contractStages={contractStages}
-              officialEntryIds={lastSavedFormDraft?.entryIds ?? []}
-              canSubmitOfficial={lastSavedFormDraft !== null &&
-                selectNonEmptySpreadsheetRows(stagedModel).length === 0}
+              officialEntryIds={selectNonEmptySpreadsheetRows(stagedModel).length > 0
+                ? []
+                : lastSavedFormDraft?.entryIds ?? []}
+              canSubmitOfficial={selectNonEmptySpreadsheetRows(stagedModel).length > 0
+                ? loadState === "ready" && stagedValidation.canSave && hasActiveLaborTypes
+                : lastSavedFormDraft !== null}
               officialSubmitBusy={officialSubmitBusy}
               onActivateRow={activateStagedRowLazyDefaults}
               onChange={onMobileStagedChange}

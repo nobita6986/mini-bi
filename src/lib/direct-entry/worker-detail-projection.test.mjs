@@ -88,6 +88,8 @@ function entryBody(overrides = {}) {
     entry: {
       entry_id: ENTRY_ID,
       version: 3,
+      created_at: "2026-10-25T09:15:00.123456Z",
+      created_by: { display_name: "Nguyễn Văn B", login_id: "nguyenvb" },
       worker_details: fullWorker(),
       employment_status: { status: "ON", effective_date: "2026-01-01", version: 2 },
       provider_type: "hrp",
@@ -103,6 +105,8 @@ test("projectWorkerDetail: entry hợp lệ được chiếu đầy đủ nhóm 
   assert.ok(detail);
   assert.equal(detail.entryId, ENTRY_ID);
   assert.equal(detail.entryVersion, 3);
+  assert.equal(detail.createdAt, "2026-10-25T09:15:00.123456Z");
+  assert.deepEqual(detail.createdBy, { displayName: "Nguyễn Văn B", loginId: "nguyenvb" });
   assert.equal(detail.providerType, "hrp");
   assert.equal(detail.providerLabel, "HRP");
   assert.equal(detail.employment.status, "ON");
@@ -133,6 +137,11 @@ test("projectWorkerDetail: thiếu document_view (worker_portrait null) vẫn ch
   const detail = projectWorkerDetail(entryBody({ worker_portrait: null }), ENTRY_ID);
   assert.ok(detail);
   assert.equal(detail.portrait, null);
+});
+
+test("projectWorkerDetail: thiếu hoặc sai audit metadata thì fail-closed", () => {
+  assert.equal(projectWorkerDetail(entryBody({ created_at: "2026-10-25" }), ENTRY_ID), null);
+  assert.equal(projectWorkerDetail(entryBody({ created_by: { display_name: "Người nhập" } }), ENTRY_ID), null);
 });
 
 test("projectWorkerDetail: thiếu hẳn khóa worker_portrait => fail-closed", () => {

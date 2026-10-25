@@ -14,6 +14,7 @@ import {
 } from "../../lib/direct-entry/full-profile-batch.ts";
 import {
   createFormSaveUploadJobManager,
+  formUploadCompletionForEntries,
   FORM_DOCUMENT_LABELS,
   FORM_DOCUMENT_TYPES,
   formUploadSlotStatusLabel,
@@ -77,12 +78,28 @@ test("multi-entry form reuses the staged row model, validation, and server catal
   assert.match(form, /onProviderTypeChange\(rowId/);
 });
 
-test("Form keeps save-draft and official submission as two explicit steps; Grid retains its existing preflight", () => {
+test("Form official submit saves staged rows first and waits for their background files; Grid retains its preflight", () => {
   assert.match(form, /className=\{styles\.secondaryButton\} data-testid="form-save-valid-rows"[\s\S]*?Lưu nháp/);
   assert.match(form, /data-testid="form-submit-official"[\s\S]*?Gửi chính thức/);
   assert.match(live, /onSave=\{\(\) => void onStagedSave\(\)\}/);
+  assert.match(live, /const targetDraft = hasStagedRows \? await onStagedSave\(\) : lastSavedFormDraft/);
+  assert.match(live, /waitForEntriesUploadCompletion\(targetDraft\.entryIds\)/);
+  assert.match(live, /submitOfficialFormDraft\(targetDraft\.submissionId\)/);
   assert.doesNotMatch(live, /onStagedSave\(true\)/);
   assert.match(live, /preflightBeforeSubmit=\{inputMode !== "form"\}/);
+  assert.match(form, /Đang lưu và gửi…/);
+});
+
+test("Form submission waits only for uploads bound to the submitted entries and stops on a failed job", () => {
+  const job = (entryId, status) => ({
+    jobId: "job", toastId: null, status, totalFiles: 1, uploadedFiles: 0, failedFiles: 0,
+    entries: [{ entryId }],
+  });
+  const snapshot = (jobs) => ({ preSaveByRowId: {}, jobs });
+  assert.equal(formUploadCompletionForEntries(snapshot([job("entry-a", "uploading")]), ["entry-a"]), "pending");
+  assert.equal(formUploadCompletionForEntries(snapshot([job("entry-a", "completed")]), ["entry-a"]), "complete");
+  assert.equal(formUploadCompletionForEntries(snapshot([job("entry-a", "error")]), ["entry-a"]), "error");
+  assert.equal(formUploadCompletionForEntries(snapshot([job("other", "uploading")]), ["entry-a"]), "complete");
 });
 
 test("Requirement 1: Giới tính is placed at the end of the main personal info group (outside Thông tin thêm) and serializes Nam/Nữ/Khác", () => {

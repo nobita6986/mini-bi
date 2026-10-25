@@ -236,6 +236,8 @@ test("read validates UUID before session and keeps the restricted projection", a
   const projection = {
     entry_id: entryId,
     submission_id: batchResult.submission_id,
+    created_at: "2026-10-25T09:15:00.123456Z",
+    created_by: { display_name: "Người nhập", login_id: "nhaplieu" },
     project_id: "project_synthetic_01",
     first_work_date: "2026-10-15",
     employee_code: "hrp-2026-000001",
@@ -440,6 +442,8 @@ test("entry detail remains readable with CCCD documents only for the authorized 
   deps.repository.readEntry = async () => ({ ok: true, data: {
     entry_id: entryId,
     submission_id: batchResult.submission_id,
+    created_at: "2026-10-25T09:15:00.123456Z",
+    created_by: { display_name: "Người nhập", login_id: "nhaplieu" },
     project_id: "project_synthetic_01",
     first_work_date: "2026-10-15",
     employee_code: "hrp-2026-000001",

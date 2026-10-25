@@ -76,6 +76,10 @@ test("W2S1: dialog dùng đúng projection server, không gọi API/RPC trực t
   assert.doesNotMatch(dialog, /redacted|presenceOnly|view_pii|view_payment/);
   assert.match(dialog, /detail\.worker\.national_id/);
   assert.match(dialog, /detail\.worker\.date_of_birth/);
+  assert.match(dialog, /Thời gian nhập liệu/);
+  assert.match(dialog, /formatHcmDateTime\(detail\.createdAt\)/);
+  assert.match(dialog, /Người nhập liệu/);
+  assert.match(dialog, /detail\.createdBy\.displayName/);
 });
 
 test("W2S1: CCCD preview dùng route riêng; KHÔNG dùng portrait preview cho CCCD", () => {

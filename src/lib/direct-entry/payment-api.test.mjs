@@ -19,6 +19,8 @@ const payment = {
 const readProjection = {
   entry_id: entryId,
   submission_id: "a1000000-0000-4000-8000-000000000001",
+  created_at: "2026-10-25T09:15:00.123456Z",
+  created_by: { display_name: "Người nhập giả", login_id: "nguoinhapgia" },
   project_id: "project_synthetic_01",
   first_work_date: "2026-10-15",
   employee_code: "hrp-2026-000001",
