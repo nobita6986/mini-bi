@@ -86,14 +86,16 @@ function isBoundedText(value: unknown, max: number): value is string {
 function projectConflict(value: unknown): DuplicateCccdConflict | null {
   if (!isRecord(value) || !hasExactKeys(value, DUPLICATE_CCCD_CONFLICT_KEYS)) return null;
   if (typeof value.conflict_ref !== "string" || !CONFLICT_REF.test(value.conflict_ref)) return null;
-  if (!isBoundedText(value.draft_display_name, DUPLICATE_CCCD_MAX_NAME_LENGTH)) return null;
+  // worker-profile/1.2 permits a blank name; SQL projects that value as null.
+  const draftDisplayName = value.draft_display_name === null ? "" : value.draft_display_name;
+  if (!isBoundedText(draftDisplayName, DUPLICATE_CCCD_MAX_NAME_LENGTH)) return null;
   if (value.project_display !== null &&
       !isBoundedText(value.project_display, DUPLICATE_CCCD_MAX_PROJECT_LENGTH)) return null;
   if (!isStatus(value.employment_status)) return null;
   if (typeof value.cccd_last4 !== "string" || !LAST4.test(value.cccd_last4)) return null;
   return {
     conflict_ref: value.conflict_ref,
-    draft_display_name: value.draft_display_name,
+    draft_display_name: draftDisplayName,
     project_display: value.project_display,
     employment_status: value.employment_status,
     employment_status_label: EMPLOYMENT_STATUS_LABELS[value.employment_status],

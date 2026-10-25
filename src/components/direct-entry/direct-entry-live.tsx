@@ -13,6 +13,7 @@ import { DirectEntryChangeRequestProposer } from "@/components/direct-entry/dire
 import { DirectEntrySubmittedDocumentManager } from "@/components/direct-entry/direct-entry-submitted-document-manager";
 import { DirectEntrySubmissionList, type SubmissionTransitionRequest,
   type TransitionOutcome } from "@/components/direct-entry/direct-entry-submission-list";
+import { DirectEntryDuplicateCccdDialog } from "@/components/direct-entry/direct-entry-duplicate-cccd-dialog";
 import { DirectEntryWorkerDocuments } from "@/components/direct-entry/direct-entry-worker-documents";
 import { useNotify } from "@/components/ui/notify-provider";
 import { StatusBanner } from "@/components/ui/status-banner";
@@ -48,6 +49,7 @@ import {
   mergeReloadedDrafts,
   resolveIntentKey,
   shortRef,
+  actionsForSubmission,
   transitionErrorMessage,
   type TransitionIntentKeyState,
 } from "@/lib/direct-entry/submission-lifecycle";
@@ -335,6 +337,16 @@ export function DirectEntryLive() {
   const inFlight = useRef(new Set<string>());
   const [submissions, setSubmissions] = useState<SubmissionReadItem[]>([]);
   const submissionsRef = useRef<SubmissionReadItem[]>([]);
+  const [lastSavedFormDraft, setLastSavedFormDraft] = useState<{
+    submissionId: string;
+    entryIds: readonly string[];
+  } | null>(null);
+  const [officialSubmitBusy, setOfficialSubmitBusy] = useState(false);
+  const [pendingFormDuplicate, setPendingFormDuplicate] = useState<{
+    submission: SubmissionReadItem;
+    action: SubmissionTransitionRequest["action"];
+    preflight: DuplicateCccdPreflight;
+  } | null>(null);
   const [editingDraftSubmissionId, setEditingDraftSubmissionId] = useState<string | null>(null);
   const [submissionQueue, setSubmissionQueue] = useState<SubmissionQueueFilter>("ACTIVE");
   const submissionQueueRef = useRef<SubmissionQueueFilter>("ACTIVE");
@@ -465,11 +477,13 @@ export function DirectEntryLive() {
       );
       if (!response.ok || !page) throw new Error("SUBMISSIONS_UNAVAILABLE");
       if (requestId !== submissionLoadRequestRef.current) return;
-      setSubmissions((current) => {
-        if (mode === "replace") return page.items;
-        const seen = new Set(current.map((item) => item.submission_id));
-        return [...current, ...page.items.filter((item) => !seen.has(item.submission_id))];
-      });
+      const nextItems = mode === "replace"
+        ? page.items
+        : [...submissionsRef.current, ...page.items.filter((item) =>
+            !submissionsRef.current.some((current) => current.submission_id === item.submission_id),
+          )];
+      submissionsRef.current = nextItems;
+      setSubmissions(nextItems);
       cursorRef.current = page.next_cursor;
       setSubmissionHasMore(page.has_more);
       setSubmissionListState("ready");
@@ -558,11 +572,13 @@ export function DirectEntryLive() {
           return "failed";
         }
         intentKeys.current.set(submissionId, clearIntentKey(resolved.state, intent));
-        setSubmissions((current) => current.map((item) =>
+        const updatedSubmissions = submissionsRef.current.map((item) =>
           item.submission_id === updated.submission_id
             ? { ...item, state: updated.state, version: updated.version }
             : item,
-        ));
+        );
+        submissionsRef.current = updatedSubmissions;
+        setSubmissions(updatedSubmissions);
         if (updated.state === "REVIEW") {
           setRows((current) => dropSubmissionRows(current, updated.submission_id));
           setLifecycleMessage(
@@ -575,6 +591,9 @@ export function DirectEntryLive() {
             "Đã trả đợt " + shortRef(updated.submission_id) + " về bản nháp và tải lại bản nháp máy chủ.",
           );
         } else {
+          setLastSavedFormDraft((current) =>
+            current?.submissionId === updated.submission_id ? null : current,
+          );
           setLifecycleMessage(
             "Đã gửi chính thức đợt " + shortRef(updated.submission_id) +
               ". Đợt ở trạng thái cuối; thay đổi sau đó phải đi qua yêu cầu thay đổi.",
@@ -605,10 +624,17 @@ export function DirectEntryLive() {
     }
   }, [loadSubmissions, reloadDrafts]);
 
-  /**
-   * P3.1-HF-R1: preflight read-only truoc khi trinh duyet. Tra ve null (va da bao loi cho nguoi
-   * dung) khi server tu choi hoac response khong projection duoc - khi do KHONG mo modal nao.
-   */
+  /** P3.1-HF-R1: read-only preflight dùng khi máy chủ yêu cầu xác nhận CCCD trùng. */
+  const blockedSubmissionIds = useMemo(() => {
+    const blocked = new Set<string>();
+    for (const submission of submissions) {
+      if (confirmBlockReason(rows, submission.submission_id) !== null) {
+        blocked.add(submission.submission_id);
+      }
+    }
+    return blocked;
+  }, [rows, submissions]);
+
   const preflightDuplicateCccd = useCallback(async (
     submission: SubmissionReadItem,
   ): Promise<DuplicateCccdPreflight | null> => {
@@ -649,6 +675,69 @@ export function DirectEntryLive() {
     }
   }, [loadSubmissions]);
 
+  const openFormDuplicateConfirmation = useCallback(async (
+    submission: SubmissionReadItem,
+    action: SubmissionTransitionRequest["action"],
+  ) => {
+    const preflight = await preflightDuplicateCccd(submission);
+    if (preflight === null) return;
+    if (preflight.conflict_count === 0) {
+      setLifecycleMessage("Danh sách CCCD trùng vừa thay đổi. Hãy bấm Gửi chính thức để thử lại.");
+      return;
+    }
+    setPendingFormDuplicate({
+      submission: { ...submission, version: preflight.version },
+      action,
+      preflight,
+    });
+  }, [preflightDuplicateCccd]);
+
+  const submitOfficialFormDraft = useCallback(async (submissionId: string) => {
+    let submission = submissionsRef.current.find((item) => item.submission_id === submissionId);
+    if (!submission) {
+      await loadSubmissions("replace", "ACTIVE");
+      submission = submissionsRef.current.find((item) => item.submission_id === submissionId);
+    }
+    if (!submission || submission.state !== "DRAFT") {
+      setLifecycleMessage("Không tìm thấy bản nháp còn hiệu lực để gửi chính thức. Hãy tải lại danh sách.");
+      return;
+    }
+    if (blockedSubmissionIds.has(submissionId)) {
+      setLifecycleMessage("Còn hồ sơ chưa lưu trong đợt này. Hãy lưu nháp trước khi gửi chính thức.");
+      return;
+    }
+    const action = actionsForSubmission(submission).find((item) => item.target_state === "SUBMITTED");
+    if (!action) {
+      setLifecycleMessage("Bản nháp này hiện không được phép gửi chính thức.");
+      return;
+    }
+    const outcome = await runTransition({ submission, action });
+    if (outcome === "duplicate-changed") {
+      await openFormDuplicateConfirmation(submission, action);
+    } else if (outcome === "applied") {
+      setLastSavedFormDraft(null);
+    }
+  }, [blockedSubmissionIds, loadSubmissions, openFormDuplicateConfirmation, runTransition]);
+
+  const confirmFormDuplicateSubmission = useCallback(async () => {
+    const current = pendingFormDuplicate;
+    if (!current) return;
+    setPendingFormDuplicate(null);
+    const outcome = await runTransition({
+      submission: current.submission,
+      action: current.action,
+      acknowledgement: {
+        fingerprint: current.preflight.fingerprint,
+        count: current.preflight.conflict_count,
+      },
+    });
+    if (outcome === "duplicate-changed") {
+      await openFormDuplicateConfirmation(current.submission, current.action);
+    } else if (outcome === "applied") {
+      setLastSavedFormDraft(null);
+    }
+  }, [openFormDuplicateConfirmation, pendingFormDuplicate, runTransition]);
+
   const reloadAfterChangeRequestMutation = useCallback(async (message: string) => {
     if (message.startsWith("Đã tạo yêu cầu thay đổi")) {
       notify.success({ title: message, dedupeKey: "de-cr-created" });
@@ -656,16 +745,6 @@ export function DirectEntryLive() {
     setChangeRequestNotice(message);
     await loadSubmissions("replace");
   }, [loadSubmissions, notify]);
-
-  const blockedSubmissionIds = useMemo(() => {
-    const blocked = new Set<string>();
-    for (const submission of submissions) {
-      if (confirmBlockReason(rows, submission.submission_id) !== null) {
-        blocked.add(submission.submission_id);
-      }
-    }
-    return blocked;
-  }, [rows, submissions]);
 
   const onPaymentEntryVersionChange = useCallback((rowId: string, entryVersion: number) => {
     invalidateStagedUndo();
@@ -1837,9 +1916,14 @@ export function DirectEntryLive() {
           submission.submission_id,
           clearIntentKey(resolved.state, intent),
         );
-        setSubmissions((current) => current.filter(
+        const remainingSubmissions = submissionsRef.current.filter(
           (item) => item.submission_id !== submission.submission_id,
-        ));
+        );
+        submissionsRef.current = remainingSubmissions;
+        setSubmissions(remainingSubmissions);
+        setLastSavedFormDraft((current) =>
+          current?.submissionId === submission.submission_id ? null : current,
+        );
         // Bo tham chieu UI dang tro toi dot vua xoa + rows cua dot do.
         setEditingDraftSubmissionId((current) =>
           current === submission.submission_id ? null : current);
@@ -2140,6 +2224,9 @@ export function DirectEntryLive() {
         // selection cho persisted row tuong ung (việc mapping xem row index
         // hay tên đều bị hủy bỏ; chi dung entry_id server-issued).
         const savedEntryIds = result.entryIds;
+        if (inputMode === "form") {
+          setLastSavedFormDraft({ submissionId: result.submissionId, entryIds: savedEntryIds });
+        }
         const stagedToEntry = new Map<string, string>();
         const savedEntriesForUpload: { clientRowId: string; entryId: string; initialEntryVersion: number }[] = [];
         for (let index = 0; index < savedClientRowIds.length; index += 1) {
@@ -2216,6 +2303,37 @@ export function DirectEntryLive() {
     portraitStageIdsBySourceRow, portraitStages, reconcileStagedDocuments, saveRow,
     selectedClientRowId, setSelectedClientRowId, setStagedMessage, setStagedModel, stagedModel,
     setStagedMessageWithTone, stagedValidation]);
+
+  const onSubmitOfficial = useCallback(async () => {
+    if (officialSubmitBusy || stagedInFlight.current) return;
+    setOfficialSubmitBusy(true);
+    try {
+      if (selectNonEmptySpreadsheetRows(stagedModel).length > 0) {
+        setStagedMessageWithTone("Hãy bấm Lưu nháp trước, rồi gửi chính thức bản nháp đã lưu.", "info");
+        return;
+      }
+      if (!lastSavedFormDraft) {
+        setStagedMessageWithTone("Hãy lưu nháp trước khi gửi chính thức.", "info");
+        return;
+      }
+      const snapshot = getDefaultFormSaveUploadJobManager().getSnapshot();
+      const uploadPending = snapshot.jobs.some((job) =>
+        job.entries.some((entry) => lastSavedFormDraft.entryIds.includes(entry.entryId)) &&
+        job.status !== "completed",
+      );
+      if (uploadPending) {
+        setStagedMessageWithTone(
+          "Ảnh của bản nháp đang tải hoặc cần thử lại. Hoàn tất tải ảnh trước khi gửi chính thức.",
+          "info",
+        );
+        return;
+      }
+      await submitOfficialFormDraft(lastSavedFormDraft.submissionId);
+    } finally {
+      setOfficialSubmitBusy(false);
+    }
+  }, [lastSavedFormDraft, officialSubmitBusy, setStagedMessageWithTone,
+    stagedModel, submitOfficialFormDraft]);
 
   /**
    * P1.7-H05-R1: nut "Lưu NLĐ" trong quick editor chi validate va gui DUNG ROW
@@ -2445,6 +2563,7 @@ export function DirectEntryLive() {
               if (queue === submissionQueue) return;
               cursorRef.current = null;
               submissionQueueRef.current = queue;
+              submissionsRef.current = [];
               setSubmissions([]);
               setSubmissionHasMore(false);
               setSubmissionQueue(queue);
@@ -2456,6 +2575,12 @@ export function DirectEntryLive() {
             hasMore={submissionHasMore}
             busySubmissionId={busySubmissionId}
             blockedSubmissionIds={blockedSubmissionIds}
+            preflightBeforeSubmit={inputMode !== "form"}
+            officialSubmitLabel={inputMode === "form" ? "Gửi chính thức" : undefined}
+            duplicateConfirmationQuestion={inputMode === "form"
+              ? "Bạn chắc chắn vẫn muốn gửi chính thức hồ sơ này?"
+              : undefined}
+            duplicateConfirmationLabel={inputMode === "form" ? "Vẫn gửi chính thức" : undefined}
             onLoadMore={() => void loadSubmissions("append")}
             onPreflight={preflightDuplicateCccd}
             onTransition={(input) => runTransition(input)}
@@ -2463,6 +2588,18 @@ export function DirectEntryLive() {
             onRequestChange={(submission) => setProposerSubmission(submission)}
             onManageDocuments={(submission) => setManageDocumentsSubmission(submission)}
             onDeleteDraft={(submission) => onDeleteDraftSubmission(submission)}
+          />
+          <DirectEntryDuplicateCccdDialog
+            preflight={pendingFormDuplicate?.preflight ?? null}
+            submitting={pendingFormDuplicate !== null &&
+              busySubmissionId === pendingFormDuplicate.submission.submission_id}
+            confirmationQuestion="Bạn chắc chắn vẫn muốn gửi chính thức hồ sơ này?"
+            confirmationLabel="Vẫn gửi chính thức"
+            onBack={() => setPendingFormDuplicate(null)}
+            onConfirm={() => void confirmFormDuplicateSubmission()}
+            onOpenChange={(open) => {
+              if (!open) setPendingFormDuplicate(null);
+            }}
           />
           {submissionDeleteNotice !== null && (
             <p
@@ -2515,12 +2652,17 @@ export function DirectEntryLive() {
               cccdFrontStages={cccdFrontStages}
               cccdBackStages={cccdBackStages}
               contractStages={contractStages}
+              officialEntryIds={lastSavedFormDraft?.entryIds ?? []}
+              canSubmitOfficial={lastSavedFormDraft !== null &&
+                selectNonEmptySpreadsheetRows(stagedModel).length === 0}
+              officialSubmitBusy={officialSubmitBusy}
               onActivateRow={activateStagedRowLazyDefaults}
               onChange={onMobileStagedChange}
               onProviderTypeChange={onStagedProviderTypeChange}
               onAddRow={addFormRow}
               onDeleteRow={deleteFormRow}
               onSave={() => void onStagedSave()}
+              onSubmitOfficial={() => void onSubmitOfficial()}
             />
           )}
           <section className={styles.gridSection} data-input-mode={inputMode}

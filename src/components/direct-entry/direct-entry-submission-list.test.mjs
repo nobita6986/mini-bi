@@ -342,7 +342,7 @@ test("PRE-W2-HF: live gửi expected_version + Idempotency-Key và chỉ bỏ đ
   assert.match(liveComponent,
     /deleteDraftSubmission\(\{[\s\S]{0,240}expectedVersion: submission\.version,[\s\S]{0,240}idempotencyKey: resolved\.key/);
   const deletedBranch = liveComponent.indexOf('if (result.kind === "deleted")');
-  const remove = liveComponent.indexOf("setSubmissions((current) => current.filter(", deletedBranch);
+  const remove = liveComponent.indexOf("submissionsRef.current = remainingSubmissions;", deletedBranch);
   const failure = liveComponent.indexOf("draftSubmissionDeleteErrorMessage(result)", deletedBranch);
   assert.ok(deletedBranch > 0 && remove > deletedBranch && failure > remove,
     "chi bo dot trong nhanh deleted; nhanh loi chi bao message");
