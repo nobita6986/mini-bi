@@ -174,6 +174,13 @@ export const HF_VFIN_02_IMPLICIT_VENDOR_PROJECT_RPC_SIGNATURES = Object.freeze(
     !signature.startsWith("public.vendor_finance_set_project_vendor_link_admin("),
   ),
 );
+export const CCCD_QR_ASYNC_STAGE1_MIGRATION_NAME =
+  "20261026150000_cccd_qr_async_stage1.sql";
+export const CCCD_QR_ASYNC_STAGE1_RPC_SIGNATURES = Object.freeze([
+  "public.direct_entry_prepare_cccd_qr_extraction(uuid, uuid, uuid, uuid, text)",
+  "public.direct_entry_complete_cccd_qr_extraction(uuid, uuid, uuid, uuid, text, text, text, jsonb, boolean, integer, text)",
+  "public.direct_entry_get_cccd_qr_extractions(uuid, uuid, uuid, uuid)",
+]);
 export const F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES = Object.freeze([
   "public.work_report_list_templates(uuid, uuid)",
   "public.work_report_get_template(uuid, uuid, uuid)",
@@ -400,7 +407,8 @@ export async function verifyS0T1CHistoricalCompatibility(
     vfin01BackendApplied = false,
     hfWorkReportsGroupsAndAnalyticsOptionsApplied = false,
     vfin02ProjectLedgersApplied = false,
-    hfVfin02ImplicitVendorProjectApplied = false } = {},
+    hfVfin02ImplicitVendorProjectApplied = false,
+    cccdQrAsyncStage1Applied = false } = {},
 ) {
   const baseAllowlist = extractS0T1CAllowlistSignatures(migrationSql);
   if (baseAllowlist.length === 0) {
@@ -441,6 +449,9 @@ export async function verifyS0T1CHistoricalCompatibility(
         : []),
     ...(hfWorkReportsGroupsAndAnalyticsOptionsApplied
       ? HF_WORK_REPORTS_GROUPS_AND_ANALYTICS_OPTIONS_RPC_SIGNATURES
+      : []),
+    ...(cccdQrAsyncStage1Applied
+      ? CCCD_QR_ASYNC_STAGE1_RPC_SIGNATURES
       : []),
   ];
 
@@ -666,6 +677,8 @@ export async function verifyAppliedMigrationChecksum(
           appliedMap.has(VFIN_02_PROJECT_LEDGERS_MIGRATION_NAME),
         hfVfin02ImplicitVendorProjectApplied:
           appliedMap.has(HF_VFIN_02_IMPLICIT_VENDOR_PROJECT_MIGRATION_NAME),
+        cccdQrAsyncStage1Applied:
+          appliedMap.has(CCCD_QR_ASYNC_STAGE1_MIGRATION_NAME),
       },
     );
     if (postconditions.ok) {

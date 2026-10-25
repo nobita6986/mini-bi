@@ -53,6 +53,8 @@ import {
   VFIN_02_PROJECT_LEDGERS_RPC_SIGNATURES,
   HF_VFIN_02_IMPLICIT_VENDOR_PROJECT_MIGRATION_NAME,
   HF_VFIN_02_IMPLICIT_VENDOR_PROJECT_RPC_SIGNATURES,
+  CCCD_QR_ASYNC_STAGE1_MIGRATION_NAME,
+  CCCD_QR_ASYNC_STAGE1_RPC_SIGNATURES,
   OFFBOARDING_REPORT_MIGRATION_NAME,
   OFFBOARDING_REPORT_RPC_SIGNATURES,
   migrationChecksum,
@@ -798,6 +800,39 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
         /revoke all on function public\.vendor_finance__internal_can_actor_write_subledger\(jsonb, uuid, text, text, text, uuid\)\s+from public, anon, authenticated, service_role;/i,
         "VFIN-02 internal sub-ledger write guard revokes EXECUTE from all roles including service_role",
       );
+      const cccdQrStage1Migration = await readFile(
+        path.join(MIGRATION_DIR, CCCD_QR_ASYNC_STAGE1_MIGRATION_NAME),
+        "utf8",
+      );
+      const cccdQrStage1Normalized = cccdQrStage1Migration
+        .replace(/\s+/g, " ")
+        .replace(/\(\s+/g, "(")
+        .replace(/\s+\)/g, ")")
+        .toLowerCase();
+      for (const sig of CCCD_QR_ASYNC_STAGE1_RPC_SIGNATURES) {
+        const sigGrant = `grant execute on function ${sig.toLowerCase()} to service_role;`;
+        const sigRevoke = `revoke all on function ${sig.toLowerCase()} from public, anon, authenticated, service_role;`;
+        assert.ok(
+          cccdQrStage1Normalized.includes(sigGrant),
+          `CCCD QR Stage 1 RPC ${sig} is explicitly granted only to service_role`,
+        );
+        assert.ok(
+          cccdQrStage1Normalized.includes(sigRevoke),
+          `CCCD QR Stage 1 RPC ${sig} revokes client and inherited EXECUTE before granting service_role`,
+        );
+      }
+      assert.ok(
+        cccdQrStage1Normalized.includes(
+          "revoke all on function public.direct_entry__internal_assert_cccd_qr_read_access(uuid, uuid, uuid) from public, anon, authenticated, service_role;",
+        ),
+        "CCCD QR Stage 1 internal read-access helper revokes EXECUTE from all roles including service_role",
+      );
+      assert.ok(
+        cccdQrStage1Normalized.includes(
+          "revoke all on function public.direct_entry__internal_project_cccd_qr_extraction(public.direct_entry_cccd_qr_extractions, jsonb) from public, anon, authenticated, service_role;",
+        ),
+        "CCCD QR Stage 1 internal projection helper revokes EXECUTE from all roles including service_role",
+      );
 
       expectedSignatures.push(R1_2_SERVICE_RPC, ...F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES,
         F1_WORK_REPORTS_ASSIGNMENT_OPTIONS_RPC_SIGNATURE,
@@ -816,7 +851,8 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
         ...ATTENDANCE_SELF_HISTORY_RPC_SIGNATURES,
         ...ORG_SHELL_01_DEPARTMENTS_RPC_SIGNATURES,
         ...HF_VFIN_02_IMPLICIT_VENDOR_PROJECT_RPC_SIGNATURES,
-        ...HF_WORK_REPORTS_GROUPS_AND_ANALYTICS_OPTIONS_RPC_SIGNATURES);
+        ...HF_WORK_REPORTS_GROUPS_AND_ANALYTICS_OPTIONS_RPC_SIGNATURES,
+        ...CCCD_QR_ASYNC_STAGE1_RPC_SIGNATURES);
       assert.ok(expectedSignatures.length > 0, "the explicit server/invoker allowlist is not empty");
       assert.equal(new Set(expectedSignatures).size, expectedSignatures.length, "the allowlist has no duplicates");
       const { rows: resolvedExpected } = await client.query(
@@ -849,7 +885,8 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
           ...ATTENDANCE_SELF_HISTORY_RPC_SIGNATURES,
           ...ORG_SHELL_01_DEPARTMENTS_RPC_SIGNATURES,
           ...HF_VFIN_02_IMPLICIT_VENDOR_PROJECT_RPC_SIGNATURES,
-          ...HF_WORK_REPORTS_GROUPS_AND_ANALYTICS_OPTIONS_RPC_SIGNATURES].sort(),
+          ...HF_WORK_REPORTS_GROUPS_AND_ANALYTICS_OPTIONS_RPC_SIGNATURES,
+          ...CCCD_QR_ASYNC_STAGE1_RPC_SIGNATURES].sort(),
         "only explicitly reviewed post-S0 RPCs add service_role grants after the S0 baseline",
       );
       const removedSourceService = sourceService
