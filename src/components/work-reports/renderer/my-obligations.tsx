@@ -1,15 +1,62 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { StatusBadge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useNotify } from "@/components/ui/notify-provider";
 import { StatusBanner } from "@/components/ui/status-banner";
 import { WorkReportFormRenderer, type WorkReportRendererDetail } from "./work-report-form-renderer";
 
 type Obligation = {
-  obligation_id: string; template_name: string; period_key: string; period_start_date: string; period_end_date: string;
-  due_at: string; obligation_status: string; submission_state: string; submission_version: number | null;
+  obligation_id: string;
+  template_name: string;
+  period_key: string;
+  period_start_date: string;
+  period_end_date: string;
+  due_at: string;
+  obligation_status: string;
+  submission_state: string;
+  submission_version: number | null;
+  is_overdue?: boolean;
 };
+
+function isActionableObligation(item: Obligation): boolean {
+  if (item.obligation_status !== "ACTIVE") return false;
+  if (item.is_overdue) return false;
+  return (
+    item.submission_state === "NOT_STARTED" ||
+    item.submission_state === "DRAFT" ||
+    item.submission_state === "REJECTED"
+  );
+}
+
+function isHistoryObligation(item: Obligation): boolean {
+  if (item.is_overdue) return true;
+  if (item.obligation_status !== "ACTIVE") return true;
+  return !isActionableObligation(item);
+}
+
+function submissionStateLabel(item: Obligation): string {
+  if (item.is_overdue) {
+    if (item.submission_state === "DRAFT") return "Quá hạn · Bản nháp chưa nộp";
+    return "Quá hạn · Chưa nộp";
+  }
+  switch (item.submission_state) {
+    case "NOT_STARTED":
+      return "Chưa bắt đầu";
+    case "DRAFT":
+      return "Đang lưu nháp";
+    case "REJECTED":
+      return "Cần chỉnh sửa & nộp lại";
+    case "SUBMITTED":
+    case "PENDING_REVIEW":
+      return "Đã nộp · Chờ duyệt";
+    case "APPROVED":
+      return "Đã duyệt";
+    default:
+      return item.submission_state;
+  }
+}
 
 export function MyObligations({ history = false }: { history?: boolean }) {
   const notify = useNotify();
@@ -54,13 +101,17 @@ export function MyObligations({ history = false }: { history?: boolean }) {
     }
   }
 
-  const visibleItems = items.filter((item) => history
-    ? item.submission_state !== "NOT_STARTED"
-    : item.obligation_status === "ACTIVE");
+  const visibleItems = items.filter((item) =>
+    history ? isHistoryObligation(item) : isActionableObligation(item),
+  );
 
   return <div className="space-y-5">
     <div className="flex flex-wrap items-center justify-between gap-2">
-      <p className="text-sm text-muted">{history ? "Các báo cáo đã lưu hoặc nộp." : "Nghĩa vụ báo cáo được giao cho tài khoản của bạn."}</p>
+      <p className="text-sm text-muted">
+        {history
+          ? "Các báo cáo đã nộp và các kỳ báo cáo đã quá hạn của bạn."
+          : "Nghĩa vụ báo cáo cần thực hiện trong kỳ hiện hành."}
+      </p>
       <Button variant="secondary" size="sm" onClick={() => void refresh()} disabled={busy}>{busy ? "Đang tải…" : "Tải lại"}</Button>
     </div>
     {error ? <StatusBanner tone="error">{error}</StatusBanner> : null}
@@ -68,9 +119,27 @@ export function MyObligations({ history = false }: { history?: boolean }) {
     {!busy && visibleItems.length === 0 ? <StatusBanner>Không có báo cáo nào trong danh sách này.</StatusBanner> : null}
     <ul className="divide-y divide-border rounded-xl border border-border">
       {visibleItems.map((item) => <li key={item.obligation_id} className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
-        <div><p className="font-medium">{item.template_name}</p><p className="mt-1 text-sm text-muted">Kỳ {item.period_key} · Hạn {new Date(item.due_at).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}</p>
-          <p className="mt-1 text-xs text-muted">{item.submission_state === "NOT_STARTED" ? "Chưa bắt đầu" : item.submission_state}</p></div>
-        <Button variant="outline" size="sm" onClick={() => void open(item)}>{history ? "Xem lịch sử" : item.submission_state === "NOT_STARTED" ? "Bắt đầu" : "Mở báo cáo"}</Button>
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="font-medium">{item.template_name}</p>
+            {item.is_overdue ? (
+              <StatusBadge tone="danger">Quá hạn</StatusBadge>
+            ) : item.submission_state === "REJECTED" ? (
+              <StatusBadge tone="warning">Cần nộp lại</StatusBadge>
+            ) : null}
+          </div>
+          <p className="mt-1 text-sm text-muted">Kỳ {item.period_key} · Hạn {new Date(item.due_at).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}</p>
+          <p className="mt-1 text-xs text-muted">{submissionStateLabel(item)}</p>
+        </div>
+        <Button variant="outline" size="sm" onClick={() => void open(item)}>
+          {history || item.is_overdue
+            ? "Xem lịch sử"
+            : item.submission_state === "NOT_STARTED"
+              ? "Bắt đầu"
+              : item.submission_state === "REJECTED"
+                ? "Sửa & nộp lại"
+                : "Mở báo cáo"}
+        </Button>
       </li>)}
     </ul>
     {selected ? <div className="rounded-xl border border-border bg-surface p-4 sm:p-6">

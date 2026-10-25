@@ -8,7 +8,7 @@ import { workReportViewPredicate } from "@/lib/navigation/registry-capability";
 import { resolveActorForRequest } from "@/lib/navigation/resolve-nav-actor";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Tổng hợp báo cáo — Mini BI" };
+export const metadata = { title: "Theo dõi báo cáo — Mini BI" };
 
 export default async function WorkReportAnalyticsPage() {
   if (process.env.WORK_REPORTS_API_ENABLED !== "true") notFound();
@@ -24,8 +24,9 @@ export default async function WorkReportAnalyticsPage() {
       return (
         <WorkReportsShell
           actor={actor?.ok ? actor.actor : null}
-          title="Tổng hợp & Bài nộp"
-          description="Bài nộp trong phạm vi được cấp và dashboard KPI, chỉ tiêu đã chốt."
+          active="analytics"
+          title="Theo dõi báo cáo"
+          description="Theo dõi tổng quan tiến độ, chỉ tiêu KPI và danh sách bài nộp trong phạm vi được cấp quyền."
         >
           <WorkReportAnalyticsTabs canViewSubmissions={canViewSubmissions} />
         </WorkReportsShell>

@@ -96,6 +96,31 @@ export type GroupSetActiveInput = WorkReportActorRef & {
   idempotency_key: string;
 };
 
+export type WorkReportAssignmentProgressItem = {
+  obligation_id: string;
+  assignee_app_user_id: string;
+  assignee_display_name: string;
+  period_key: string;
+  period_start_date: string;
+  period_end_date: string;
+  due_at: string;
+  reopened_until: string | null;
+  obligation_status: "ACTIVE" | "EXEMPTED" | "CANCELLED";
+  submission_state: "NOT_STARTED" | "DRAFT" | "COMPLETED" | "PENDING_REVIEW" | "APPROVED" | "REJECTED";
+  is_overdue: boolean;
+  submitted_at: string | null;
+  version: number;
+};
+
+export type WorkReportAssignmentAuditItem = {
+  event_id: string;
+  action: "ASSIGNMENT_CREATE" | "ASSIGNMENT_STATE";
+  state: "ACTIVE" | "PAUSED" | "REVOKED";
+  actor_user_id: string;
+  actor_display_name: string;
+  created_at: string;
+};
+
 export type WorkReportAssignmentSummary = {
   assignment_id: string;
   template_id: string;
@@ -104,8 +129,12 @@ export type WorkReportAssignmentSummary = {
   target_kind: "USER" | "TEAM" | "USER_SET" | "GROUP";
   target_group_id?: string | null;
   target_label: string;
+  target_member_count?: number;
   frequency: "DAILY" | "WEEKLY" | "MONTHLY" | "ONCE";
   is_mandatory: boolean;
+  due_day_offset?: number;
+  due_time_local?: string;
+  exclude_sundays?: boolean;
   effective_from: string;
   effective_to: string | null;
   state: "ACTIVE" | "PAUSED" | "REVOKED";
@@ -115,13 +144,24 @@ export type WorkReportAssignmentSummary = {
   submitted_count: number;
   not_started_count: number;
   draft_count: number;
+  overdue_count?: number;
+  rejected_count?: number;
   exempted_count: number;
   cancelled_count: number;
+  assignee_progress?: readonly WorkReportAssignmentProgressItem[];
+  audit_history?: readonly WorkReportAssignmentAuditItem[];
+};
+
+export type WorkReportAssignmentDetail = {
+  assignment_id: string;
+  assignee_progress: readonly WorkReportAssignmentProgressItem[];
+  audit_history: readonly WorkReportAssignmentAuditItem[];
 };
 
 export type AssignmentRepository = {
   listOptions(input: WorkReportActorRef & { team_id: string | null }): Promise<WorkReportRpcOutcome<WorkReportAssignmentOptions>>;
   listAssignments(input: WorkReportActorRef & { team_id: string | null }): Promise<WorkReportRpcOutcome<WorkReportAssignmentSummary[]>>;
+  getAssignmentDetail?(input: WorkReportActorRef & { assignment_id: string }): Promise<WorkReportRpcOutcome<WorkReportAssignmentDetail>>;
   listGroups(input: WorkReportActorRef): Promise<WorkReportRpcOutcome<WorkReportGroupsDirectory>>;
   createGroup(input: GroupCreateInput): Promise<WorkReportRpcOutcome<{ group_id: string; version: number }>>;
   updateGroup(input: GroupUpdateInput): Promise<WorkReportRpcOutcome<{ group_id: string; version: number }>>;
@@ -236,13 +276,59 @@ function assignmentList(value: unknown): value is { items: WorkReportAssignmentS
     ["USER", "TEAM", "USER_SET", "GROUP"].includes(String(item.target_kind)) &&
     (item.target_group_id === undefined || nullableUuid(item.target_group_id)) &&
     typeof item.target_label === "string" &&
+    (item.target_member_count === undefined || (Number.isInteger(item.target_member_count) && Number(item.target_member_count) >= 0)) &&
     ["DAILY", "WEEKLY", "MONTHLY", "ONCE"].includes(String(item.frequency)) &&
-    typeof item.is_mandatory === "boolean" && typeof item.effective_from === "string" &&
+    typeof item.is_mandatory === "boolean" &&
+    (item.due_day_offset === undefined || (Number.isInteger(item.due_day_offset) && Number(item.due_day_offset) >= 0)) &&
+    (item.due_time_local === undefined || typeof item.due_time_local === "string") &&
+    (item.exclude_sundays === undefined || typeof item.exclude_sundays === "boolean") &&
+    typeof item.effective_from === "string" &&
     (item.effective_to === null || typeof item.effective_to === "string") &&
     ["ACTIVE", "PAUSED", "REVOKED"].includes(String(item.state)) && Number.isInteger(item.version) &&
     typeof item.created_at === "string" &&
     [item.obligation_total, item.submitted_count, item.not_started_count, item.draft_count,
-      item.exempted_count, item.cancelled_count].every((count) => Number.isInteger(count) && Number(count) >= 0));
+      item.exempted_count, item.cancelled_count].every((count) => Number.isInteger(count) && Number(count) >= 0) &&
+    (item.overdue_count === undefined || (Number.isInteger(item.overdue_count) && Number(item.overdue_count) >= 0)) &&
+    (item.rejected_count === undefined || (Number.isInteger(item.rejected_count) && Number(item.rejected_count) >= 0)) &&
+    (item.assignee_progress === undefined || Array.isArray(item.assignee_progress)) &&
+    (item.audit_history === undefined || Array.isArray(item.audit_history)));
+}
+
+function assignmentDetail(value: unknown): value is WorkReportAssignmentDetail {
+  return (
+    record(value) &&
+    typeof value.assignment_id === "string" &&
+    UUID.test(value.assignment_id) &&
+    Array.isArray(value.assignee_progress) &&
+    value.assignee_progress.every(
+      (item) =>
+        record(item) &&
+        UUID.test(String(item.obligation_id)) &&
+        UUID.test(String(item.assignee_app_user_id)) &&
+        typeof item.assignee_display_name === "string" &&
+        typeof item.period_key === "string" &&
+        typeof item.period_start_date === "string" &&
+        typeof item.period_end_date === "string" &&
+        typeof item.due_at === "string" &&
+        nullableString(item.reopened_until) &&
+        ["ACTIVE", "EXEMPTED", "CANCELLED"].includes(String(item.obligation_status)) &&
+        ["NOT_STARTED", "DRAFT", "COMPLETED", "PENDING_REVIEW", "APPROVED", "REJECTED"].includes(String(item.submission_state)) &&
+        typeof item.is_overdue === "boolean" &&
+        nullableString(item.submitted_at) &&
+        Number.isInteger(item.version),
+    ) &&
+    Array.isArray(value.audit_history) &&
+    value.audit_history.every(
+      (item) =>
+        record(item) &&
+        UUID.test(String(item.event_id)) &&
+        ["ASSIGNMENT_CREATE", "ASSIGNMENT_STATE"].includes(String(item.action)) &&
+        ["ACTIVE", "PAUSED", "REVOKED"].includes(String(item.state)) &&
+        UUID.test(String(item.actor_user_id)) &&
+        typeof item.actor_display_name === "string" &&
+        typeof item.created_at === "string",
+    )
+  );
 }
 
 export function createAssignmentRepository(rpc?: Rpc): AssignmentRepository {
@@ -272,6 +358,19 @@ export function createAssignmentRepository(rpc?: Rpc): AssignmentRepository {
         return result.ok ? { ok: true, data: result.data.items } : result;
       } catch {
         console.error("[work-reports] assignment list RPC failed");
+        return { ok: false, kind: "unavailable" };
+      }
+    },
+    async getAssignmentDetail(input) {
+      try {
+        const { data, error } = await invoke("work_report_get_assignment_detail", {
+          p_auth_subject: input.auth_subject,
+          p_app_user_id: input.app_user_id,
+          p_assignment_id: input.assignment_id,
+        });
+        return outcome(data, error, assignmentDetail);
+      } catch {
+        console.error("[work-reports] assignment detail RPC failed");
         return { ok: false, kind: "unavailable" };
       }
     },

@@ -37,6 +37,7 @@ import {
   F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES,
   F2_WORK_REPORTS_REVIEW_AND_DELEGATION_RPC_SIGNATURES,
   HF_WORK_REPORTS_GROUPS_AND_ANALYTICS_OPTIONS_RPC_SIGNATURES,
+  WORK_REPORTS_ANDROID_SYNC_AND_UX_RPC_SIGNATURE,
   WORK_REPORTS_READER_CONTRACT_RPC_SIGNATURES,
 } from "./lib/migration-validation.mjs";
 import { AUTH_PROLOGUE } from "./lib/s04c-read-fixture.mjs";
@@ -228,7 +229,8 @@ test("F1 schema, forced RLS, table privilege revocation and RPC allowlist match 
       F1_WORK_REPORTS_ASSIGNMENT_TRACKING_RPC_SIGNATURE, ...F1_5_WORK_REPORTS_ANALYTICS_RPC_SIGNATURES,
       ...F2_WORK_REPORTS_REVIEW_AND_DELEGATION_RPC_SIGNATURES,
       ...WORK_REPORTS_READER_CONTRACT_RPC_SIGNATURES,
-      ...HF_WORK_REPORTS_GROUPS_AND_ANALYTICS_OPTIONS_RPC_SIGNATURES]],
+      ...HF_WORK_REPORTS_GROUPS_AND_ANALYTICS_OPTIONS_RPC_SIGNATURES,
+      WORK_REPORTS_ANDROID_SYNC_AND_UX_RPC_SIGNATURE]],
   );
   const serviceExec = fnRows.filter((r) => r.service_exec).map((r) => r.signature).sort();
   assert.deepEqual(serviceExec, expectedFnRows.map((r) => r.signature).sort());
@@ -675,7 +677,18 @@ test("assignments, obligations, snapshot_team_id immutability, deadline/reopen/e
   assert.equal(leaderAssignments[0].result.items.length, 1);
   assert.equal(leaderAssignments[0].result.items[0].assignment_id, assignmentId);
   assert.equal(leaderAssignments[0].result.items[0].target_label, "Staff A1, Staff A2");
-  assert.equal(leaderAssignments[0].result.items[0].obligation_total, 0);
+  assert.equal(leaderAssignments[0].result.items[0].obligation_total, 2, "auto-materializes current business date obligations on assignment creation");
+  assert.equal(leaderAssignments[0].result.items[0].target_member_count, 2);
+  assert.equal("assignee_progress" in leaderAssignments[0].result.items[0], false, "list_assignments does not preload assignee_progress");
+  assert.equal("audit_history" in leaderAssignments[0].result.items[0], false, "list_assignments does not preload audit_history");
+  const { rows: leaderAsgDetail } = await db.query(
+    "select public.work_report_get_assignment_detail($1::uuid, $2::uuid, $3::uuid) as result",
+    [LEADER_A.auth, LEADER_A.app, assignmentId],
+  );
+  assert.ok(Array.isArray(leaderAsgDetail[0].result.assignee_progress));
+  assert.equal(leaderAsgDetail[0].result.assignee_progress.length, 2);
+  assert.ok(Array.isArray(leaderAsgDetail[0].result.audit_history));
+  assert.equal(leaderAsgDetail[0].result.audit_history[0].action, "ASSIGNMENT_CREATE");
   await assert.rejects(
     db.query("select public.work_report_list_assignments($1::uuid, $2::uuid, $3::uuid)",
       [LEADER_A.auth, LEADER_A.app, TEAM_B]),
@@ -702,8 +715,8 @@ test("assignments, obligations, snapshot_team_id immutability, deadline/reopen/e
     [LEADER_A.auth, LEADER_A.app, TEAM_A],
   );
   const tracked = progressRows[0].result.items.find((item) => item.assignment_id === assignmentId);
-  assert.equal(tracked.obligation_total, 2);
-  assert.equal(tracked.not_started_count, 2);
+  assert.equal(tracked.obligation_total, 4);
+  assert.equal(tracked.not_started_count, 4);
   assert.equal(tracked.submitted_count, 0);
 
   // Re-running materialization for the same window is idempotent (inserted_count = 0)
@@ -1713,5 +1726,188 @@ test("HF: multi-team custom report groups, multi-line labels, deduplication, his
     `update public.recruiter_team_memberships set is_current = true, valid_to = null
       where recruiter_id = $1::uuid and team_id = $2::uuid`,
     [STAFF_A2.recruiter, TEAM_A],
+  );
+});
+
+test("Android sync: auto-materialize on create/reactivate, 7-day per-actor backfill on list_my_obligations, concurrent idempotency, and server is_overdue across REJECTED/reopen", async () => {
+  const schema = structuredClone(RECRUITMENT_DAILY_TEMPLATE_SCHEMA);
+  const contract = buildWorkReportMetricContract(schema);
+  const { rows: tplRows } = await db.query(
+    `select public.work_report_create_template(
+       $1::uuid, $2::uuid, 'ANDROID_SYNC_DAILY_TPL', 'Báo cáo đồng bộ Android',
+       'Kiểm thử auto-materialize và is_overdue', 'DAILY', $3::jsonb, $4::jsonb, $5
+     ) as result`,
+    [ADMIN.auth, ADMIN.app, JSON.stringify(schema), JSON.stringify(contract), KEY("android_tpl_create")],
+  );
+  const syncTplId = tplRows[0].result.template_id;
+  const syncVerId = tplRows[0].result.draft_version_id;
+  await db.query(
+    `update public.work_report_template_versions set requires_review = true where version_id = $1::uuid`,
+    [syncVerId],
+  );
+  await db.query(
+    `select public.work_report_publish_template($1::uuid, $2::uuid, $3::uuid, $4::uuid, 1, $5)`,
+    [ADMIN.auth, ADMIN.app, syncTplId, syncVerId, KEY("android_tpl_pub")],
+  );
+
+  const { rows: todayRows } = await db.query(
+    `select (now() at time zone 'Asia/Ho_Chi_Minh')::date::text as today,
+            ((now() at time zone 'Asia/Ho_Chi_Minh')::date - 4)::text as four_days_ago`,
+  );
+  const todayStr = todayRows[0].today;
+  const fourDaysAgoStr = todayRows[0].four_days_ago;
+
+  // 1) Creating an assignment effective 4 days ago immediately materializes today's obligation for STAFF_B1
+  const { rows: createAsgRows } = await db.query(
+    `select public.work_report_create_assignment(
+       $1::uuid, $2::uuid, $3::uuid, 'USER', $4::uuid, null, null,
+       'DAILY', true, 1, '23:59:59'::time, false, $5::date, null, $6
+     ) as result`,
+    [ADMIN.auth, ADMIN.app, syncTplId, STAFF_B1.app, fourDaysAgoStr, KEY("android_asg_create")],
+  );
+  const syncAsgId = createAsgRows[0].result.assignment_id;
+
+  const { rows: immediateObs } = await db.query(
+    `select period_key from public.work_report_obligations
+      where assignment_id = $1::uuid and assignee_app_user_id = $2::uuid`,
+    [syncAsgId, STAFF_B1.app],
+  );
+  assert.deepEqual(
+    immediateObs.map((r) => r.period_key),
+    [todayStr],
+    "creating an assignment effective today immediately materializes today's period without manual ensure",
+  );
+
+  // 2) STAFF_B1 opening work_report_list_my_obligations backfills missing obligations in the 7-day window (5 days total: today-4..today)
+  //    and is idempotent under concurrent calls
+  const [listCall1, listCall2] = await Promise.all([
+    db.query(
+      `select public.work_report_list_my_obligations($1::uuid, $2::uuid, 'ACTIVE') as result`,
+      [STAFF_B1.auth, STAFF_B1.app],
+    ),
+    db.query(
+      `select public.work_report_list_my_obligations($1::uuid, $2::uuid, 'ACTIVE') as result`,
+      [STAFF_B1.auth, STAFF_B1.app],
+    ),
+  ]);
+  const b1SyncObs = listCall1.rows[0].result.items.filter((i) => i.template_id === syncTplId);
+  const b1SyncObs2 = listCall2.rows[0].result.items.filter((i) => i.template_id === syncTplId);
+  assert.equal(b1SyncObs.length, 5, "backfills 5 daily obligations from effective_from (today-4) through today");
+  assert.equal(b1SyncObs2.length, 5, "concurrent list_my_obligations is idempotent");
+
+  // 3) Verify server is_overdue semantics across NOT_STARTED, DRAFT, reopened_until, and REJECTED
+  const targetOb = b1SyncObs.find((i) => i.period_key === todayStr);
+  assert.ok(targetOb);
+  assert.equal(typeof targetOb.is_overdue, "boolean");
+
+  // Force due_at in the past -> NOT_STARTED obligation has is_overdue = true
+  await db.query(
+    `update public.work_report_obligations
+        set due_at = now() - interval '2 hours', reopened_until = null
+      where obligation_id = $1::uuid`,
+    [targetOb.obligation_id],
+  );
+  const { rows: overdueNotStarted } = await db.query(
+    `select public.work_report_list_my_obligations($1::uuid, $2::uuid, 'ACTIVE') as list_res,
+            public.work_report_get_submission($1::uuid, $2::uuid, $3::uuid) as detail_res`,
+    [STAFF_B1.auth, STAFF_B1.app, targetOb.obligation_id],
+  );
+  const listedOverdue = overdueNotStarted[0].list_res.items.find((i) => i.obligation_id === targetOb.obligation_id);
+  assert.equal(listedOverdue.is_overdue, true, "NOT_STARTED past due_at has is_overdue = true");
+  assert.equal(overdueNotStarted[0].detail_res.obligation.is_overdue, true);
+
+  // Reopen obligation until 1 hour in the future -> is_overdue becomes false, allowing draft save & submit
+  const { rows: reopenRes } = await db.query(
+    `select public.work_report_change_obligation_status(
+       $1::uuid, $2::uuid, $3::uuid, $4, 'REOPEN', 'Mở lại hạn nộp trên Android',
+       (now() + interval '1 hour'), $5
+     ) as result`,
+    [ADMIN.auth, ADMIN.app, targetOb.obligation_id, listedOverdue.version, KEY("android_reopen")],
+  );
+  assert.equal(reopenRes[0].result.status, "ACTIVE");
+
+  const { rows: afterReopen } = await db.query(
+    `select public.work_report_list_my_obligations($1::uuid, $2::uuid, 'ACTIVE') as list_res,
+            public.work_report_get_submission($1::uuid, $2::uuid, $3::uuid) as detail_res`,
+    [STAFF_B1.auth, STAFF_B1.app, targetOb.obligation_id],
+  );
+  assert.equal(
+    afterReopen[0].list_res.items.find((i) => i.obligation_id === targetOb.obligation_id).is_overdue,
+    false,
+    "reopened obligation within reopened_until has is_overdue = false",
+  );
+  assert.equal(afterReopen[0].detail_res.obligation.is_overdue, false);
+
+  // Submit while reopened -> state is PENDING_REVIEW, is_overdue = false
+  const { rows: subRows } = await db.query(
+    `select public.work_report_submit($1::uuid, $2::uuid, $3::uuid, $4::jsonb, null, $5) as result`,
+    [
+      STAFF_B1.auth,
+      STAFF_B1.app,
+      targetOb.obligation_id,
+      JSON.stringify({ calls_made: 11, interested_candidates: 3, workers_started: 1, notes: "Nộp từ Android" }),
+      KEY("android_submit_1"),
+    ],
+  );
+  assert.equal(subRows[0].result.state, "PENDING_REVIEW");
+
+  // Expire reopened_until and reject the submission -> REJECTED submission keeps is_overdue = false so assignee can amend & resubmit
+  await db.query(
+    `update public.work_report_obligations
+        set due_at = now() - interval '3 hours', reopened_until = now() - interval '1 hour'
+      where obligation_id = $1::uuid`,
+    [targetOb.obligation_id],
+  );
+  await db.query(
+    `select public.work_report_decide_review($1::uuid, $2::uuid, $3::uuid, 'REJECTED', 'Cần chỉnh lại số liệu', $4, $5)`,
+    [ADMIN.auth, ADMIN.app, targetOb.obligation_id, subRows[0].result.version, KEY("android_reject_1")],
+  );
+
+  const { rows: afterReject } = await db.query(
+    `select public.work_report_list_my_obligations($1::uuid, $2::uuid, 'ACTIVE') as list_res,
+            public.work_report_get_submission($1::uuid, $2::uuid, $3::uuid) as detail_res`,
+    [STAFF_B1.auth, STAFF_B1.app, targetOb.obligation_id],
+  );
+  const rejectedItem = afterReject[0].list_res.items.find((i) => i.obligation_id === targetOb.obligation_id);
+  assert.equal(rejectedItem.submission_state, "REJECTED");
+  assert.equal(rejectedItem.is_overdue, false, "REJECTED obligation keeps is_overdue = false even after due_at so assignee can resubmit");
+  assert.equal(afterReject[0].detail_res.obligation.is_overdue, false);
+
+  // 4) Assignment list RPC is lightweight (does not preload assignee_progress / audit_history),
+  //    while work_report_get_assignment_detail returns bounded latest-period progress per assignee and audit history.
+  const { rows: listAsgRows } = await db.query(
+    `select public.work_report_list_assignments($1::uuid, $2::uuid, null) as result`,
+    [ADMIN.auth, ADMIN.app],
+  );
+  const listedSyncAsg = listAsgRows[0].result.items.find((a) => a.assignment_id === syncAsgId);
+  assert.ok(listedSyncAsg, "syncAsgId is returned in work_report_list_assignments");
+  assert.equal("assignee_progress" in listedSyncAsg, false, "list_assignments does not preload assignee_progress");
+  assert.equal("audit_history" in listedSyncAsg, false, "list_assignments does not preload audit_history");
+  assert.equal(listedSyncAsg.rejected_count, 1);
+
+  const { rows: detailAsgRows } = await db.query(
+    `select public.work_report_get_assignment_detail($1::uuid, $2::uuid, $3::uuid) as result`,
+    [ADMIN.auth, ADMIN.app, syncAsgId],
+  );
+  const asgDetail = detailAsgRows[0].result;
+  assert.equal(asgDetail.assignment_id, syncAsgId);
+  assert.equal(
+    asgDetail.assignee_progress.length,
+    1,
+    "work_report_get_assignment_detail bounds assignee_progress to latest period per assignee (1 row despite 5 periods)",
+  );
+  assert.equal(asgDetail.assignee_progress[0].assignee_app_user_id, STAFF_B1.app);
+  assert.equal(asgDetail.assignee_progress[0].period_key, todayStr);
+  assert.equal(asgDetail.assignee_progress[0].submission_state, "REJECTED");
+  assert.ok(asgDetail.audit_history.length >= 1, "audit_history includes creation event");
+  assert.equal(asgDetail.audit_history[0].action, "ASSIGNMENT_CREATE");
+
+  // Out-of-scope leader is denied access to assignment detail
+  await assert.rejects(
+    db.query(
+      `select public.work_report_get_assignment_detail($1::uuid, $2::uuid, $3::uuid)`,
+      [LEADER_A.auth, LEADER_A.app, syncAsgId],
+    ),
+    (err) => err.code === "42501" && err.message.includes("WORK_REPORT_SCOPE_DENIED"),
   );
 });

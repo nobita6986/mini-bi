@@ -59,6 +59,8 @@ import {
   PRE_WAVE2_CCCD_REVIEW_RPC_SIGNATURES,
   CCCD_REVIEW_MANUAL_RESOLUTION_MIGRATION_NAME,
   CCCD_REVIEW_MANUAL_RESOLUTION_RPC_SIGNATURE,
+  WORK_REPORTS_ANDROID_SYNC_AND_UX_MIGRATION_NAME,
+  WORK_REPORTS_ANDROID_SYNC_AND_UX_RPC_SIGNATURE,
   OFFBOARDING_REPORT_MIGRATION_NAME,
   OFFBOARDING_REPORT_RPC_SIGNATURES,
   migrationChecksum,
@@ -893,6 +895,28 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
         "Pre-Wave-2 CCCD Review internal reconciliation helper revokes EXECUTE from all roles including service_role",
       );
 
+      const workReportsAndroidSyncMigration = await readFile(
+        path.join(MIGRATION_DIR, WORK_REPORTS_ANDROID_SYNC_AND_UX_MIGRATION_NAME),
+        "utf8",
+      );
+      const workReportsAndroidSyncNormalized = workReportsAndroidSyncMigration
+        .replace(/\s+/g, " ")
+        .replace(/\(\s+/g, "(")
+        .replace(/\s+\)/g, ")")
+        .toLowerCase();
+      assert.ok(
+        workReportsAndroidSyncNormalized.includes(
+          `grant execute on function ${WORK_REPORTS_ANDROID_SYNC_AND_UX_RPC_SIGNATURE} to service_role;`,
+        ),
+        "work_report_get_assignment_detail RPC is explicitly granted only to service_role",
+      );
+      assert.ok(
+        workReportsAndroidSyncNormalized.includes(
+          `revoke all on function ${WORK_REPORTS_ANDROID_SYNC_AND_UX_RPC_SIGNATURE} from public, anon, authenticated, service_role;`,
+        ),
+        "work_report_get_assignment_detail RPC revokes client and inherited EXECUTE before granting service_role",
+      );
+
       expectedSignatures.push(R1_2_SERVICE_RPC, ...F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES,
         F1_WORK_REPORTS_ASSIGNMENT_OPTIONS_RPC_SIGNATURE,
         F1_WORK_REPORTS_ASSIGNMENT_TRACKING_RPC_SIGNATURE,
@@ -913,7 +937,8 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
         ...HF_WORK_REPORTS_GROUPS_AND_ANALYTICS_OPTIONS_RPC_SIGNATURES,
         ...CCCD_QR_ASYNC_STAGE1_RPC_SIGNATURES,
         ...PRE_WAVE2_CCCD_REVIEW_RPC_SIGNATURES,
-        CCCD_REVIEW_MANUAL_RESOLUTION_RPC_SIGNATURE);
+        CCCD_REVIEW_MANUAL_RESOLUTION_RPC_SIGNATURE,
+        WORK_REPORTS_ANDROID_SYNC_AND_UX_RPC_SIGNATURE);
       assert.ok(expectedSignatures.length > 0, "the explicit server/invoker allowlist is not empty");
       assert.equal(new Set(expectedSignatures).size, expectedSignatures.length, "the allowlist has no duplicates");
       const { rows: resolvedExpected } = await client.query(
@@ -949,7 +974,8 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
           ...HF_WORK_REPORTS_GROUPS_AND_ANALYTICS_OPTIONS_RPC_SIGNATURES,
           ...CCCD_QR_ASYNC_STAGE1_RPC_SIGNATURES,
           ...PRE_WAVE2_CCCD_REVIEW_RPC_SIGNATURES,
-          CCCD_REVIEW_MANUAL_RESOLUTION_RPC_SIGNATURE].sort(),
+          CCCD_REVIEW_MANUAL_RESOLUTION_RPC_SIGNATURE,
+          WORK_REPORTS_ANDROID_SYNC_AND_UX_RPC_SIGNATURE].sort(),
         "only explicitly reviewed post-S0 RPCs add service_role grants after the S0 baseline",
       );
       const removedSourceService = sourceService

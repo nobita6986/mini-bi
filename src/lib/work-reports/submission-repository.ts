@@ -6,8 +6,12 @@ import { validateWorkReportSchema } from "./schema-validator.ts";
 
 type Rpc = (name: string, args: Record<string, unknown>) => Promise<{
   data: unknown;
-  error: { code?: string } | null;
+  error: { code?: string; message?: string } | null;
 }>;
+
+export type WorkReportSubmissionRpcOutcome<T> =
+  | WorkReportRpcOutcome<T>
+  | { ok: false; kind: "deadline-passed" };
 
 export type WorkReportObligation = {
   obligation_id: string;
@@ -23,6 +27,7 @@ export type WorkReportObligation = {
   is_mandatory: boolean;
   obligation_status: "ACTIVE" | "EXEMPTED" | "CANCELLED";
   reopened_until: string | null;
+  is_overdue: boolean;
   version: number;
   submission_id: string | null;
   submission_state: "NOT_STARTED" | "DRAFT" | "COMPLETED" | "PENDING_REVIEW" | "APPROVED" | "REJECTED";
@@ -49,12 +54,12 @@ export type WorkReportSubmissionDetail = {
 };
 
 export type SubmissionRepository = {
-  listMine(input: WorkReportActorRef & { status: string | null }): Promise<WorkReportRpcOutcome<WorkReportObligation[]>>;
-  get(input: WorkReportActorRef & { obligation_id: string }): Promise<WorkReportRpcOutcome<WorkReportSubmissionDetail>>;
+  listMine(input: WorkReportActorRef & { status: string | null }): Promise<WorkReportSubmissionRpcOutcome<WorkReportObligation[]>>;
+  get(input: WorkReportActorRef & { obligation_id: string }): Promise<WorkReportSubmissionRpcOutcome<WorkReportSubmissionDetail>>;
   saveDraft(input: WorkReportActorRef & { obligation_id: string; payload_json: Record<string, unknown>;
-    expected_version: number | null; idempotency_key: string }): Promise<WorkReportRpcOutcome<Record<string, unknown>>>;
+    expected_version: number | null; idempotency_key: string }): Promise<WorkReportSubmissionRpcOutcome<Record<string, unknown>>>;
   submit(input: WorkReportActorRef & { obligation_id: string; payload_json: Record<string, unknown>;
-    expected_version: number | null; idempotency_key: string }): Promise<WorkReportRpcOutcome<Record<string, unknown>>>;
+    expected_version: number | null; idempotency_key: string }): Promise<WorkReportSubmissionRpcOutcome<Record<string, unknown>>>;
 };
 
 function serviceRpc(): Rpc {
@@ -66,8 +71,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function classify(error: { code?: string }): WorkReportRpcOutcome<never> {
+function classify(error: { code?: string; message?: string }): WorkReportSubmissionRpcOutcome<never> {
   if (error.code === "40001" || error.code === "23505") return { ok: false, kind: "conflict" };
+  if (error.code === "42501" && error.message?.includes("WORK_REPORT_DEADLINE_PASSED")) {
+    return { ok: false, kind: "deadline-passed" };
+  }
   if (error.code === "42501") return { ok: false, kind: "denied" };
   if (error.code === "P0002") return { ok: false, kind: "not-found" };
   if (error.code === "22023") return { ok: false, kind: "invalid" };
@@ -84,7 +92,9 @@ function isObligation(value: unknown): value is WorkReportObligation {
     typeof value.period_start_date === "string" && typeof value.period_end_date === "string" &&
     typeof value.due_at === "string" && typeof value.is_mandatory === "boolean" &&
     ["ACTIVE", "EXEMPTED", "CANCELLED"].includes(String(value.obligation_status)) &&
-    (value.reopened_until === null || typeof value.reopened_until === "string") && Number.isInteger(value.version) &&
+    (value.reopened_until === null || typeof value.reopened_until === "string") &&
+    (value.is_overdue === undefined || typeof value.is_overdue === "boolean") &&
+    Number.isInteger(value.version) &&
     (value.submission_id === null || (typeof value.submission_id === "string" && UUID.test(value.submission_id))) &&
     ["NOT_STARTED", "DRAFT", "COMPLETED", "PENDING_REVIEW", "APPROVED", "REJECTED"].includes(String(value.submission_state)) &&
     (value.submission_version === null || Number.isInteger(value.submission_version)) &&
@@ -99,7 +109,9 @@ function isLatestReviewEvent(value: unknown): value is WorkReportLatestReviewEve
 }
 
 function isDetail(value: unknown): value is WorkReportSubmissionDetail {
-  return isRecord(value) && isRecord(value.obligation) && isRecord(value.template) &&
+  return isRecord(value) && isRecord(value.obligation) &&
+    (value.obligation.is_overdue === undefined || typeof value.obligation.is_overdue === "boolean") &&
+    isRecord(value.template) &&
     typeof value.template.template_code === "string" && typeof value.template.display_name === "string" &&
     validateWorkReportSchema(value.template.schema_json).ok && Array.isArray(value.revisions) && value.revisions.every((revision) =>
       isRecord(revision) && typeof revision.revision_id === "string" && UUID.test(revision.revision_id) &&
@@ -127,7 +139,7 @@ function validWrite(value: unknown): value is Record<string, unknown> {
 export function createSubmissionRepository(rpc?: Rpc): SubmissionRepository {
   let call = rpc;
   const invoke: Rpc = async (name, args) => { call ??= serviceRpc(); return call(name, args); };
-  const run = async <T>(name: string, args: Record<string, unknown>, valid: (value: unknown) => value is T): Promise<WorkReportRpcOutcome<T>> => {
+  const run = async <T>(name: string, args: Record<string, unknown>, valid: (value: unknown) => value is T): Promise<WorkReportSubmissionRpcOutcome<T>> => {
     try {
       const { data, error } = await invoke(name, args);
       if (error) return classify(error);
@@ -141,12 +153,27 @@ export function createSubmissionRepository(rpc?: Rpc): SubmissionRepository {
     listMine(input) {
       return run("work_report_list_my_obligations", {
         p_auth_subject: input.auth_subject, p_app_user_id: input.app_user_id, p_status: input.status,
-      }, isObligationList).then((result) => result.ok ? { ok: true, data: result.data.items } : result);
+      }, isObligationList).then((result) => result.ok ? {
+        ok: true,
+        data: result.data.items.map((item) => ({
+          ...item,
+          is_overdue: Boolean(item.is_overdue),
+        })),
+      } : result);
     },
     get(input) {
       return run("work_report_get_submission", {
         p_auth_subject: input.auth_subject, p_app_user_id: input.app_user_id, p_obligation_id: input.obligation_id,
-      }, isDetail);
+      }, isDetail).then((result) => result.ok ? {
+        ok: true,
+        data: {
+          ...result.data,
+          obligation: {
+            ...result.data.obligation,
+            is_overdue: Boolean(result.data.obligation.is_overdue),
+          },
+        },
+      } : result);
     },
     saveDraft(input) {
       return run("work_report_save_draft", {

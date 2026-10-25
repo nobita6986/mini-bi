@@ -223,7 +223,7 @@ export const NAV_ENTRIES: ReadonlyArray<NavEntry> = [
   },
   {
     id: "work-report-reviews",
-    label: "Duyệt báo cáo",
+    label: "Cần duyệt",
     path: "/work-reports/reviews",
     description:
       "Mở hàng đợi báo cáo đang chờ duyệt theo quyền review và phạm vi hiệu lực do máy chủ chiếu.",
