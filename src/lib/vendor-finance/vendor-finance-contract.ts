@@ -175,15 +175,10 @@ export type VendorFinanceErrorCode =
   | "VENDOR_FINANCE_PROJECT_ACCOUNTANT_INACTIVE"
   | "VENDOR_FINANCE_PROJECT_ALREADY_ASSIGNED"
   | "VENDOR_FINANCE_PROJECT_ASSIGNMENT_OVERLAP"
-  | "VENDOR_FINANCE_PROJECT_VENDOR_UNLINKED"
-  | "VENDOR_FINANCE_PROJECT_VENDOR_INACTIVE"
   | "VENDOR_FINANCE_SUBLEDGER_NOT_FOUND"
   | "VENDOR_FINANCE_ASSIGNMENT_INVALID"
   | "VENDOR_FINANCE_ASSIGNMENT_NOT_FOUND"
   | "VENDOR_FINANCE_ASSIGNMENT_VERSION_CONFLICT"
-  | "VENDOR_FINANCE_LINK_INVALID"
-  | "VENDOR_FINANCE_LINK_TARGET_INACTIVE"
-  | "VENDOR_FINANCE_LINK_VERSION_CONFLICT"
   | "VENDOR_FINANCE_GLOBAL_ROLE_INVALID"
   | "VENDOR_FINANCE_GLOBAL_ROLE_NOT_FOUND"
   | "VENDOR_FINANCE_GLOBAL_ROLE_ALREADY_ASSIGNED"
@@ -259,7 +254,6 @@ export function vendorFinanceHttpStatusForError(code: VendorFinanceErrorCode): n
     case "VENDOR_FINANCE_PROJECT_ALREADY_ASSIGNED":
     case "VENDOR_FINANCE_PROJECT_ASSIGNMENT_OVERLAP":
     case "VENDOR_FINANCE_ASSIGNMENT_VERSION_CONFLICT":
-    case "VENDOR_FINANCE_LINK_VERSION_CONFLICT":
     case "VENDOR_FINANCE_GLOBAL_ROLE_ALREADY_ASSIGNED":
     case "VENDOR_FINANCE_GLOBAL_ROLE_OVERLAP":
     case "VENDOR_FINANCE_GLOBAL_ROLE_VERSION_CONFLICT":
@@ -275,11 +269,7 @@ export function vendorFinanceHttpStatusForError(code: VendorFinanceErrorCode): n
       return 413;
     case "VENDOR_FINANCE_PAYLOAD_INVALID":
     case "VENDOR_FINANCE_PROJECT_INACTIVE":
-    case "VENDOR_FINANCE_PROJECT_VENDOR_UNLINKED":
-    case "VENDOR_FINANCE_PROJECT_VENDOR_INACTIVE":
     case "VENDOR_FINANCE_ASSIGNMENT_INVALID":
-    case "VENDOR_FINANCE_LINK_INVALID":
-    case "VENDOR_FINANCE_LINK_TARGET_INACTIVE":
     case "VENDOR_FINANCE_GLOBAL_ROLE_INVALID":
     case "VENDOR_FINANCE_ACCOUNT_NOT_ELIGIBLE":
     case "VENDOR_FINANCE_ENTRY_TYPE_INVALID":
@@ -1116,64 +1106,6 @@ export function parseListProjectAccountantsAdminQuery(
   };
 }
 
-export type ListProjectVendorsAdminQuery = {
-  project_id: string;
-  search: string | null;
-  only_linked: boolean;
-  page: number;
-  page_size: number;
-};
-
-export function parseListProjectVendorsAdminQuery(
-  url: URL,
-):
-  | { ok: true; value: ListProjectVendorsAdminQuery }
-  | {
-      ok: false;
-      code:
-        | "VENDOR_FINANCE_QUERY_INVALID"
-        | "VENDOR_FINANCE_SEARCH_INVALID"
-        | "VENDOR_FINANCE_PROJECT_INVALID";
-    } {
-  if (
-    !parseUniqueAllowedQueryKeys(url, [
-      "project_id",
-      "search",
-      "only_linked",
-      "page",
-      "page_size",
-    ])
-  ) {
-    return { ok: false, code: "VENDOR_FINANCE_QUERY_INVALID" };
-  }
-  const rawProject = url.searchParams.get("project_id");
-  if (rawProject === null || rawProject === "") {
-    return { ok: false, code: "VENDOR_FINANCE_PROJECT_INVALID" };
-  }
-  const projectRes = parseProjectIdParam(rawProject);
-  if (!projectRes.ok) return projectRes;
-
-  const searchRes = parseOptionalSearchQuery(url);
-  if (!searchRes.ok) return searchRes;
-
-  const onlyLinked = parseOptionalBoolQuery(url.searchParams.get("only_linked"), false);
-  const page = parseBoundedIntParam(url.searchParams.get("page"), 1, 1, 1000);
-  const pageSize = parseBoundedIntParam(url.searchParams.get("page_size"), 50, 1, 100);
-  if (onlyLinked === null || page === null || pageSize === null) {
-    return { ok: false, code: "VENDOR_FINANCE_QUERY_INVALID" };
-  }
-  return {
-    ok: true,
-    value: {
-      project_id: projectRes.project_id,
-      search: searchRes.search,
-      only_linked: onlyLinked,
-      page,
-      page_size: pageSize,
-    },
-  };
-}
-
 export type ListGlobalRolesAdminQuery = {
   search: string | null;
   include_history: boolean;
@@ -1766,76 +1698,6 @@ export function parseEndProjectAccountantBody(
   };
 }
 
-// 7. Full-Admin Controlled Project-Vendor Link
-export type SetProjectVendorLinkBody = {
-  project_id: string;
-  vendor_id: string;
-  active: boolean;
-  expected_version: number;
-  reason: string;
-  idempotency_key: string;
-};
-
-export function parseSetProjectVendorLinkBody(
-  body: unknown,
-  idempotencyHeader: string | null,
-):
-  | { ok: true; value: SetProjectVendorLinkBody }
-  | { ok: false; code: VendorFinanceErrorCode } {
-  const forbidden = checkForbiddenVendorFinanceClientFields(body);
-  if (!forbidden.ok) return forbidden;
-  if (
-    !isRecord(body) ||
-    !exactKeys(body, [
-      "project_id",
-      "vendor_id",
-      "active",
-      "expected_version",
-      "reason",
-      "idempotency_key",
-    ])
-  ) {
-    return { ok: false, code: "VENDOR_FINANCE_PAYLOAD_INVALID" };
-  }
-
-  const projectId = parseProjectIdParam(body.project_id);
-  if (!projectId.ok) return projectId;
-
-  const vendorId = parseVendorIdParam(body.vendor_id);
-  if (!vendorId.ok) return vendorId;
-
-  if (typeof body.active !== "boolean") {
-    return { ok: false, code: "VENDOR_FINANCE_LINK_INVALID" };
-  }
-
-  if (
-    typeof body.expected_version !== "number" ||
-    !Number.isSafeInteger(body.expected_version) ||
-    body.expected_version < 0
-  ) {
-    return { ok: false, code: "VENDOR_FINANCE_LINK_INVALID" };
-  }
-
-  const reason = parseReasonText(body.reason);
-  if (!reason.ok) return reason;
-
-  const idem = resolveIdempotencyKey(idempotencyHeader, body.idempotency_key);
-  if (!idem.ok) return idem;
-
-  return {
-    ok: true,
-    value: {
-      project_id: projectId.project_id,
-      vendor_id: vendorId.vendor_id,
-      active: body.active,
-      expected_version: body.expected_version,
-      reason: reason.reason,
-      idempotency_key: idem.idempotency_key,
-    },
-  };
-}
-
-// 8. Full-Admin Global Role Designation & End
 export type AssignGlobalRoleBody = {
   account_ref: string;
   role_code: VendorFinanceGlobalRoleCode;
@@ -2071,23 +1933,6 @@ export function computeEndProjectAccountantFingerprint(input: {
   });
 }
 
-export function computeSetProjectVendorLinkFingerprint(input: {
-  project_id: string;
-  vendor_id: string;
-  active: boolean;
-  expected_version: number;
-  reason: string;
-}): string {
-  return sha256Json({
-    op: "SET_PROJECT_VENDOR_LINK",
-    project_id: input.project_id,
-    vendor_id: input.vendor_id,
-    active: input.active,
-    expected_version: input.expected_version,
-    reason: input.reason,
-  });
-}
-
 export function computeAssignGlobalRoleFingerprint(input: {
   account_ref: string;
   role_code: VendorFinanceGlobalRoleCode;
@@ -2146,11 +1991,10 @@ export type VendorFinanceAccountSummary = {
   account_enabled: boolean;
 };
 
-export type VendorFinanceContextLinkedVendorOption = {
+export type VendorFinanceContextVendorOption = {
   vendor_id: string;
   display_name: string;
-  vendor_active: boolean;
-  link_active: boolean;
+  active: boolean;
 };
 
 export type VendorFinanceContextProjectOption = {
@@ -2162,7 +2006,6 @@ export type VendorFinanceContextProjectOption = {
   has_active_accountant: boolean;
   can_record_for_project: boolean;
   can_reconcile_for_project: boolean;
-  linked_vendors: readonly VendorFinanceContextLinkedVendorOption[];
 };
 
 export type VendorFinanceContextAccountantOption = {
@@ -2183,6 +2026,7 @@ export type VendorFinanceActorContextOptionsResponse = {
   };
   has_legacy_unallocated: boolean;
   projects: readonly VendorFinanceContextProjectOption[];
+  vendors: readonly VendorFinanceContextVendorOption[];
   accountants: readonly VendorFinanceContextAccountantOption[];
 };
 
@@ -2339,7 +2183,6 @@ export type VendorFinanceDetailSubLedger = {
   project_active: boolean | null;
   accountant_ref: string | null;
   responsible_accountant_display_name: string | null;
-  link_active: boolean | null;
   is_active_assignment: boolean;
   current_balance_minor: string;
   balance_direction: VendorFinanceBalanceDirection;
@@ -2485,7 +2328,6 @@ export type VendorFinanceMonthlyReportRow = {
   vendor_id: string;
   vendor_display_name: string;
   vendor_active: boolean;
-  link_active: boolean;
   project_revenue_status: VendorFinanceProjectRevenueStatus;
   project_revenue_minor: null;
   balance_before_month_minor: string;
@@ -2568,7 +2410,7 @@ export type VendorFinanceProjectAccountantsAdminProject = {
   display_name: string;
   active: boolean;
   next_version: number;
-  linked_active_vendor_count: number;
+  transacted_vendor_count: number;
   current_assignment: VendorFinanceProjectAccountantAssignmentItem | null;
   assignments: readonly VendorFinanceProjectAccountantAssignmentItem[];
 };
@@ -2594,37 +2436,6 @@ export type VendorFinanceEndProjectAccountantResponse = {
   assignment_id: string;
   project_id: string;
   valid_to: string;
-  replayed: boolean;
-};
-
-export type VendorFinanceProjectVendorAdminItem = {
-  vendor_id: string;
-  display_name: string;
-  vendor_active: boolean;
-  linked: boolean;
-  link_active: boolean;
-  link_version: number;
-  updated_at: string | null;
-};
-
-export type VendorFinanceListProjectVendorsAdminResponse = {
-  authorization_date: string;
-  project_id: string;
-  project_display_name: string;
-  project_active: boolean;
-  page: number;
-  page_size: number;
-  total: number;
-  has_more: boolean;
-  vendors: readonly VendorFinanceProjectVendorAdminItem[];
-};
-
-export type VendorFinanceSetProjectVendorLinkResponse = {
-  link_id: string;
-  project_id: string;
-  vendor_id: string;
-  active: boolean;
-  version: number;
   replayed: boolean;
 };
 
@@ -2927,6 +2738,7 @@ export function projectActorContextOptions(
       "allowed_actions",
       "has_legacy_unallocated",
       "projects",
+      "vendors",
       "accountants",
     ]) ||
     !isRecord(value.allowed_actions) ||
@@ -2940,6 +2752,7 @@ export function projectActorContextOptions(
       "can_manage_project_assignments",
     ]) ||
     !Array.isArray(value.projects) ||
+    !Array.isArray(value.vendors) ||
     !Array.isArray(value.accountants)
   ) {
     return null;
@@ -2980,9 +2793,7 @@ export function projectActorContextOptions(
         "has_active_accountant",
         "can_record_for_project",
         "can_reconcile_for_project",
-        "linked_vendors",
-      ]) ||
-      !Array.isArray(rawProj.linked_vendors)
+      ])
     ) {
       return null;
     }
@@ -3006,28 +2817,6 @@ export function projectActorContextOptions(
     ) {
       return null;
     }
-    const linkedVendors: VendorFinanceContextLinkedVendorOption[] = [];
-    for (const rawVendor of rawProj.linked_vendors) {
-      if (
-        !isRecord(rawVendor) ||
-        !exactKeys(rawVendor, ["vendor_id", "display_name", "vendor_active", "link_active"])
-      ) {
-        return null;
-      }
-      const vendorId = isCanonicalVendorId(rawVendor.vendor_id) ? rawVendor.vendor_id : null;
-      const vendorName = nonEmptyStr(rawVendor.display_name);
-      const vendorActive = boolVal(rawVendor.vendor_active);
-      const linkActive = boolVal(rawVendor.link_active);
-      if (vendorId === null || vendorName === null || vendorActive === null || linkActive === null) {
-        return null;
-      }
-      linkedVendors.push({
-        vendor_id: vendorId,
-        display_name: vendorName,
-        vendor_active: vendorActive,
-        link_active: linkActive,
-      });
-    }
     projects.push({
       project_id: projectId,
       display_name: displayName,
@@ -3037,8 +2826,17 @@ export function projectActorContextOptions(
       has_active_accountant: hasActiveAccountant,
       can_record_for_project: canRecordProject,
       can_reconcile_for_project: canReconcileProject,
-      linked_vendors: linkedVendors,
     });
+  }
+
+  const vendors: VendorFinanceContextVendorOption[] = [];
+  for (const rawVendor of value.vendors) {
+    if (!isRecord(rawVendor) || !exactKeys(rawVendor, ["vendor_id", "display_name", "active"])) return null;
+    const vendorId = isCanonicalVendorId(rawVendor.vendor_id) ? rawVendor.vendor_id : null;
+    const displayName = nonEmptyStr(rawVendor.display_name);
+    const active = boolVal(rawVendor.active);
+    if (vendorId === null || displayName === null || active === null) return null;
+    vendors.push({ vendor_id: vendorId, display_name: displayName, active });
   }
 
   const accountants: VendorFinanceContextAccountantOption[] = [];
@@ -3065,6 +2863,7 @@ export function projectActorContextOptions(
     },
     has_legacy_unallocated: hasLegacy,
     projects,
+    vendors,
     accountants,
   };
 }
@@ -3735,7 +3534,6 @@ function projectDetailSubLedger(value: unknown): VendorFinanceDetailSubLedger | 
       "project_active",
       "accountant_ref",
       "responsible_accountant_display_name",
-      "link_active",
       "is_active_assignment",
       "current_balance_minor",
       "balance_direction",
@@ -3761,8 +3559,6 @@ function projectDetailSubLedger(value: unknown): VendorFinanceDetailSubLedger | 
     value.project_active === null ? null : (boolVal(value.project_active) ?? undefined);
   const accountantRef = nullableUuidStr(value.accountant_ref);
   const accountantName = nullableStr(value.responsible_accountant_display_name);
-  const linkActive =
-    value.link_active === null ? null : (boolVal(value.link_active) ?? undefined);
   const isActiveAssignment = boolVal(value.is_active_assignment);
   const currentBalance = signedMoneyStr(value.current_balance_minor);
   const direction = balanceDirectionVal(value.balance_direction);
@@ -3779,7 +3575,6 @@ function projectDetailSubLedger(value: unknown): VendorFinanceDetailSubLedger | 
     projectActive === undefined ||
     accountantRef === undefined ||
     accountantName === undefined ||
-    linkActive === undefined ||
     isActiveAssignment === null ||
     currentBalance === null ||
     direction === null ||
@@ -3799,7 +3594,6 @@ function projectDetailSubLedger(value: unknown): VendorFinanceDetailSubLedger | 
     project_active: projectActive,
     accountant_ref: accountantRef,
     responsible_accountant_display_name: accountantName,
-    link_active: linkActive,
     is_active_assignment: isActiveAssignment,
     current_balance_minor: currentBalance,
     balance_direction: direction,
@@ -4596,7 +4390,6 @@ export function projectMonthlyReport(value: unknown): VendorFinanceMonthlyReport
         "vendor_id",
         "vendor_display_name",
         "vendor_active",
-        "link_active",
         "project_revenue_status",
         "project_revenue_minor",
         "balance_before_month_minor",
@@ -4627,7 +4420,6 @@ export function projectMonthlyReport(value: unknown): VendorFinanceMonthlyReport
     const vendorId = isCanonicalVendorId(rawRow.vendor_id) ? rawRow.vendor_id : null;
     const vendorName = nonEmptyStr(rawRow.vendor_display_name);
     const vendorActive = boolVal(rawRow.vendor_active);
-    const linkActive = boolVal(rawRow.link_active);
     const balBefore = signedMoneyStr(rawRow.balance_before_month_minor);
     const openPay = nonNegativeMoneyStr(rawRow.opening_payable_in_month_minor);
     const openAdv = nonNegativeMoneyStr(rawRow.opening_advance_in_month_minor);
@@ -4654,7 +4446,6 @@ export function projectMonthlyReport(value: unknown): VendorFinanceMonthlyReport
       vendorId === null ||
       vendorName === null ||
       vendorActive === null ||
-      linkActive === null ||
       rawRow.project_revenue_status !== "MISSING_CANONICAL_SOURCE" ||
       rawRow.project_revenue_minor !== null ||
       balBefore === null ||
@@ -4686,7 +4477,6 @@ export function projectMonthlyReport(value: unknown): VendorFinanceMonthlyReport
       vendor_id: vendorId,
       vendor_display_name: vendorName,
       vendor_active: vendorActive,
-      link_active: linkActive,
       project_revenue_status: "MISSING_CANONICAL_SOURCE",
       project_revenue_minor: null,
       balance_before_month_minor: balBefore,
@@ -4905,7 +4695,7 @@ export function projectListProjectAccountantsAdmin(
         "display_name",
         "active",
         "next_version",
-        "linked_active_vendor_count",
+        "transacted_vendor_count",
         "current_assignment",
         "assignments",
       ]) ||
@@ -4917,7 +4707,7 @@ export function projectListProjectAccountantsAdmin(
     const displayName = nonEmptyStr(rawProj.display_name);
     const active = boolVal(rawProj.active);
     const nextVersion = posInt(rawProj.next_version);
-    const linkedCount = nonNegInt(rawProj.linked_active_vendor_count);
+    const transactedCount = nonNegInt(rawProj.transacted_vendor_count);
     const currentAssignment =
       rawProj.current_assignment === null
         ? null
@@ -4927,7 +4717,7 @@ export function projectListProjectAccountantsAdmin(
       displayName === null ||
       active === null ||
       nextVersion === null ||
-      linkedCount === null ||
+      transactedCount === null ||
       (rawProj.current_assignment !== null && currentAssignment === null)
     ) {
       return null;
@@ -4943,7 +4733,7 @@ export function projectListProjectAccountantsAdmin(
       display_name: displayName,
       active,
       next_version: nextVersion,
-      linked_active_vendor_count: linkedCount,
+      transacted_vendor_count: transactedCount,
       current_assignment: currentAssignment,
       assignments,
     });
@@ -4996,131 +4786,6 @@ export function projectEndProjectAccountantMutation(
     return null;
   }
   return { assignment_id: assignmentId, project_id: projectId, valid_to: validTo, replayed };
-}
-
-export function projectListProjectVendorsAdmin(
-  value: unknown,
-): VendorFinanceListProjectVendorsAdminResponse | null {
-  if (
-    !isRecord(value) ||
-    !exactKeys(value, [
-      "authorization_date",
-      "project_id",
-      "project_display_name",
-      "project_active",
-      "page",
-      "page_size",
-      "total",
-      "has_more",
-      "vendors",
-    ]) ||
-    !Array.isArray(value.vendors)
-  ) {
-    return null;
-  }
-  const authorizationDate = dateStr(value.authorization_date);
-  const projectId = isCanonicalProjectId(value.project_id) ? value.project_id : null;
-  const projectName = nonEmptyStr(value.project_display_name);
-  const projectActive = boolVal(value.project_active);
-  const page = posInt(value.page);
-  const pageSize = posInt(value.page_size);
-  const total = nonNegInt(value.total);
-  const hasMore = boolVal(value.has_more);
-  if (
-    authorizationDate === null ||
-    projectId === null ||
-    projectName === null ||
-    projectActive === null ||
-    page === null ||
-    pageSize === null ||
-    total === null ||
-    hasMore === null
-  ) {
-    return null;
-  }
-  const vendors: VendorFinanceProjectVendorAdminItem[] = [];
-  for (const item of value.vendors) {
-    if (
-      !isRecord(item) ||
-      !exactKeys(item, [
-        "vendor_id",
-        "display_name",
-        "vendor_active",
-        "linked",
-        "link_active",
-        "link_version",
-        "updated_at",
-      ])
-    ) {
-      return null;
-    }
-    const vendorId = isCanonicalVendorId(item.vendor_id) ? item.vendor_id : null;
-    const displayName = nonEmptyStr(item.display_name);
-    const vendorActive = boolVal(item.vendor_active);
-    const linked = boolVal(item.linked);
-    const linkActive = boolVal(item.link_active);
-    const linkVersion = nonNegInt(item.link_version);
-    const updatedAt = nullableStr(item.updated_at);
-    if (
-      vendorId === null ||
-      displayName === null ||
-      vendorActive === null ||
-      linked === null ||
-      linkActive === null ||
-      linkVersion === null ||
-      updatedAt === undefined
-    ) {
-      return null;
-    }
-    vendors.push({
-      vendor_id: vendorId,
-      display_name: displayName,
-      vendor_active: vendorActive,
-      linked,
-      link_active: linkActive,
-      link_version: linkVersion,
-      updated_at: updatedAt,
-    });
-  }
-  return {
-    authorization_date: authorizationDate,
-    project_id: projectId,
-    project_display_name: projectName,
-    project_active: projectActive,
-    page,
-    page_size: pageSize,
-    total,
-    has_more: hasMore,
-    vendors,
-  };
-}
-
-export function projectSetProjectVendorLinkMutation(
-  value: unknown,
-): VendorFinanceSetProjectVendorLinkResponse | null {
-  if (
-    !isRecord(value) ||
-    !exactKeys(value, ["link_id", "project_id", "vendor_id", "active", "version", "replayed"])
-  ) {
-    return null;
-  }
-  const linkId = uuidStr(value.link_id);
-  const projectId = isCanonicalProjectId(value.project_id) ? value.project_id : null;
-  const vendorId = isCanonicalVendorId(value.vendor_id) ? value.vendor_id : null;
-  const active = boolVal(value.active);
-  const version = posInt(value.version);
-  const replayed = boolVal(value.replayed);
-  if (
-    linkId === null ||
-    projectId === null ||
-    vendorId === null ||
-    active === null ||
-    version === null ||
-    replayed === null
-  ) {
-    return null;
-  }
-  return { link_id: linkId, project_id: projectId, vendor_id: vendorId, active, version, replayed };
 }
 
 export function projectListGlobalRolesAdmin(

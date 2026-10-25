@@ -14,13 +14,11 @@ import {
   projectEvidenceSummary,
   projectListGlobalRolesAdmin,
   projectListProjectAccountantsAdmin,
-  projectListProjectVendorsAdmin,
   projectMonthlyReport,
   projectOpeningApplyMutation,
   projectOpeningPreview,
   projectRecordEntryMutation,
   projectReverseEntryMutation,
-  projectSetProjectVendorLinkMutation,
   projectVendorFinanceEntriesPage,
   projectVendorFinanceSingleEntry,
   projectVendorFinanceVendorDetail,
@@ -47,13 +45,11 @@ import {
   type VendorFinanceLedgerScope,
   type VendorFinanceListGlobalRolesAdminResponse,
   type VendorFinanceListProjectAccountantsAdminResponse,
-  type VendorFinanceListProjectVendorsAdminResponse,
   type VendorFinanceMonthlyReportResponse,
   type VendorFinanceOpeningApplyResponse,
   type VendorFinanceOpeningPreviewResponse,
   type VendorFinanceReconciliationProjection,
   type VendorFinanceReconciliationsPageResponse,
-  type VendorFinanceSetProjectVendorLinkResponse,
   type VendorFinanceSingleEntryResponse,
   type VendorFinanceVendorDetailResponse,
   type VendorFinanceVendorListResponse,
@@ -286,28 +282,6 @@ export type VendorFinanceRepository = {
     },
   ): Promise<VendorFinanceRepoResult<VendorFinanceEndProjectAccountantResponse>>;
 
-  listProjectVendorsAdmin(
-    input: VendorFinanceActorRef & {
-      project_id: string;
-      search: string | null;
-      only_linked: boolean;
-      page: number;
-      page_size: number;
-    },
-  ): Promise<VendorFinanceRepoResult<VendorFinanceListProjectVendorsAdminResponse>>;
-
-  setProjectVendorLinkAdmin(
-    input: VendorFinanceActorRef & {
-      project_id: string;
-      vendor_id: string;
-      active: boolean;
-      expected_version: number;
-      reason: string;
-      idempotency_key: string;
-      request_fingerprint: string;
-    },
-  ): Promise<VendorFinanceRepoResult<VendorFinanceSetProjectVendorLinkResponse>>;
-
   listGlobalRolesAdmin(
     input: VendorFinanceActorRef & {
       search: string | null;
@@ -404,8 +378,6 @@ const KNOWN_RPC_TOKENS: ReadonlyArray<readonly [string, VendorFinanceErrorCode]>
   ["VENDOR_FINANCE_PROJECT_ALREADY_ASSIGNED", "VENDOR_FINANCE_PROJECT_ALREADY_ASSIGNED"],
   ["VENDOR_FINANCE_CANNOT_REVERSE_REVERSAL", "VENDOR_FINANCE_CANNOT_REVERSE_REVERSAL"],
   ["VENDOR_FINANCE_RECONCILIATION_NOT_FOUND", "VENDOR_FINANCE_RECONCILIATION_NOT_FOUND"],
-  ["VENDOR_FINANCE_PROJECT_VENDOR_UNLINKED", "VENDOR_FINANCE_PROJECT_VENDOR_UNLINKED"],
-  ["VENDOR_FINANCE_PROJECT_VENDOR_INACTIVE", "VENDOR_FINANCE_PROJECT_VENDOR_INACTIVE"],
   ["VENDOR_FINANCE_ACCOUNTANT_NOT_ELIGIBLE", "VENDOR_FINANCE_ACCOUNT_NOT_ELIGIBLE"],
   ["VENDOR_FINANCE_ENTRY_ALREADY_REVERSED", "VENDOR_FINANCE_ENTRY_ALREADY_REVERSED"],
   ["VENDOR_FINANCE_EVIDENCE_TARGET_INVALID", "VENDOR_FINANCE_EVIDENCE_TARGET_INVALID"],
@@ -413,10 +385,8 @@ const KNOWN_RPC_TOKENS: ReadonlyArray<readonly [string, VendorFinanceErrorCode]>
   ["VENDOR_FINANCE_OPENING_BATCH_INVALID", "VENDOR_FINANCE_OPENING_BATCH_INVALID"],
   ["VENDOR_FINANCE_EVIDENCE_MIME_INVALID", "VENDOR_FINANCE_EVIDENCE_MIME_INVALID"],
   ["VENDOR_FINANCE_EVIDENCE_SIZE_INVALID", "VENDOR_FINANCE_EVIDENCE_SIZE_INVALID"],
-  ["VENDOR_FINANCE_LINK_VERSION_CONFLICT", "VENDOR_FINANCE_LINK_VERSION_CONFLICT"],
   ["VENDOR_FINANCE_GLOBAL_ROLE_NOT_FOUND", "VENDOR_FINANCE_GLOBAL_ROLE_NOT_FOUND"],
   ["VENDOR_FINANCE_IDEMPOTENCY_CONFLICT", "VENDOR_FINANCE_IDEMPOTENCY_CONFLICT"],
-  ["VENDOR_FINANCE_LINK_TARGET_INACTIVE", "VENDOR_FINANCE_LINK_TARGET_INACTIVE"],
   ["VENDOR_FINANCE_ACCOUNT_NOT_ELIGIBLE", "VENDOR_FINANCE_ACCOUNT_NOT_ELIGIBLE"],
   ["VENDOR_FINANCE_ASSIGNMENT_NOT_FOUND", "VENDOR_FINANCE_ASSIGNMENT_NOT_FOUND"],
   ["VENDOR_FINANCE_GLOBAL_ROLE_OVERLAP", "VENDOR_FINANCE_GLOBAL_ROLE_OVERLAP"],
@@ -445,7 +415,6 @@ const KNOWN_RPC_TOKENS: ReadonlyArray<readonly [string, VendorFinanceErrorCode]>
   ["VENDOR_FINANCE_ADMIN_DENIED", "VENDOR_FINANCE_ADMIN_DENIED"],
   ["VENDOR_FINANCE_QUERY_INVALID", "VENDOR_FINANCE_QUERY_INVALID"],
   ["VENDOR_FINANCE_ENTRY_INVALID", "VENDOR_FINANCE_ENTRY_INVALID"],
-  ["VENDOR_FINANCE_LINK_INVALID", "VENDOR_FINANCE_LINK_INVALID"],
   ["VENDOR_FINANCE_DATE_INVALID", "VENDOR_FINANCE_DATE_INVALID"],
 ];
 
@@ -1076,44 +1045,6 @@ export function createVendorFinanceRepository(
           p_request_fingerprint: input.request_fingerprint,
         },
         projectEndProjectAccountantMutation,
-      );
-    },
-
-    listProjectVendorsAdmin(input) {
-      return callProjected(
-        "listProjectVendorsAdmin",
-        "read",
-        "vendor_finance_list_project_vendors_admin",
-        {
-          p_auth_subject: input.auth_subject,
-          p_app_user_id: input.app_user_id,
-          p_project_id: input.project_id,
-          p_search: input.search,
-          p_only_linked: input.only_linked,
-          p_page: input.page,
-          p_page_size: input.page_size,
-        },
-        projectListProjectVendorsAdmin,
-      );
-    },
-
-    setProjectVendorLinkAdmin(input) {
-      return callProjected(
-        "setProjectVendorLinkAdmin",
-        "mutation",
-        "vendor_finance_set_project_vendor_link_admin",
-        {
-          p_auth_subject: input.auth_subject,
-          p_app_user_id: input.app_user_id,
-          p_project_id: input.project_id,
-          p_vendor_id: input.vendor_id,
-          p_active: input.active,
-          p_expected_version: input.expected_version,
-          p_reason: input.reason,
-          p_idempotency_key: input.idempotency_key,
-          p_request_fingerprint: input.request_fingerprint,
-        },
-        projectSetProjectVendorLinkMutation,
       );
     },
 

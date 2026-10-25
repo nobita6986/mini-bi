@@ -1,5 +1,5 @@
 /**
- * VFIN-02 — Project-Scoped Vendor Finance Sub-Ledgers, Controlled Vendor–Project Links,
+ * VFIN-02 — Project-Scoped Vendor Finance Sub-Ledgers, Implicit Vendor–Project Eligibility,
  * Accountant Handover Isolation, Narrow Global Reconciler & Monthly Debt Report DB Suite.
  *
  * Applies the full repository migration stack on ephemeral PGlite (including pre-existing
@@ -12,10 +12,10 @@
  *      guessed allocation, mutation, or double counting; hidden from project-scoped
  *      accountants and isolated for global viewers.
  *   4. Controlled governance by Canonical Full Admin (`1 project = 1 active accountant`,
- *      controlled `vendor_finance_project_vendors` links, global role designations) and
+ *      project accountant assignments and global role designations) and
  *      fail-closed rejection of non-admin actors.
- *   5. Controlled Vendor–Project link enforcement (`VENDOR_FINANCE_PROJECT_VENDOR_UNLINKED`)
- *      on normal entries, opening balance batches (whole-batch rollback), and reconciliations.
+ *   5. Any active Vendor may be used on an active Project with an active accountant,
+ *      without creating manual Vendor–Project links.
  *   6. Hierarchy `Company -> Responsible Accountant -> Project -> Vendor` & ZERO cross-netting:
  *      same Vendor across 2 Projects & 2 Accountants (including opposite `+10M` payable vs
  *      `-4M` advance) never nets into `+6M`.
@@ -28,7 +28,7 @@
  *   9. Monthly Project Debt Report (`MISSING_CANONICAL_SOURCE` revenue honesty, non-netted
  *      component totals, `month=YYYY-MM` drill-down, and `LEGACY_UNALLOCATED` isolation).
  *  10. Forced RLS, zero direct table grants across all 10 `vendor_finance_*` tables, and
- *      `service_role`-only EXECUTE ACL matching `VFIN_02_PROJECT_LEDGERS_RPC_SIGNATURES`.
+ *      `service_role`-only EXECUTE ACL matching the post-hotfix RPC signatures.
  */
 
 import assert from "node:assert/strict";
@@ -48,12 +48,11 @@ import {
   computeRecordEntryFingerprint,
   computeReserveEvidenceFingerprint,
   computeReverseEntryFingerprint,
-  computeSetProjectVendorLinkFingerprint,
 } from "../src/lib/vendor-finance/vendor-finance-contract.ts";
 import { createVendorFinanceRepository } from "../src/lib/vendor-finance/vendor-finance-repository.ts";
 import {
   VFIN_02_PROJECT_LEDGERS_MIGRATION_NAME,
-  VFIN_02_PROJECT_LEDGERS_RPC_SIGNATURES,
+  HF_VFIN_02_IMPLICIT_VENDOR_PROJECT_RPC_SIGNATURES,
   migrationChecksum,
   migrationSqlForTransaction,
 } from "./lib/migration-validation.mjs";
@@ -335,26 +334,6 @@ const VFIN_02_RPC_BINDINGS = {
     ["p_assignment_id", "uuid"],
     ["p_expected_version", "integer"],
     ["p_valid_to", "date"],
-    ["p_reason", "text"],
-    ["p_idempotency_key", "uuid"],
-    ["p_request_fingerprint", "text"],
-  ],
-  vendor_finance_list_project_vendors_admin: [
-    ["p_auth_subject", "uuid"],
-    ["p_app_user_id", "uuid"],
-    ["p_project_id", "text"],
-    ["p_search", "text"],
-    ["p_only_linked", "boolean"],
-    ["p_page", "integer"],
-    ["p_page_size", "integer"],
-  ],
-  vendor_finance_set_project_vendor_link_admin: [
-    ["p_auth_subject", "uuid"],
-    ["p_app_user_id", "uuid"],
-    ["p_project_id", "text"],
-    ["p_vendor_id", "text"],
-    ["p_active", "boolean"],
-    ["p_expected_version", "integer"],
     ["p_reason", "text"],
     ["p_idempotency_key", "uuid"],
     ["p_request_fingerprint", "text"],
@@ -685,9 +664,33 @@ test("(#2) Full VFIN-02 acceptance: legacy isolation, controlled governance, non
     // 2. Apply VFIN-02 migration (and any subsequent migrations)
     // -------------------------------------------------------------------------
     await db.exec(targetMigration.sql);
+    await db.exec(
+      `begin;
+       select pg_catalog.set_config('vendor_finance.admin_write_marker', 'on', true);
+       insert into public.vendor_finance_project_vendors (
+         project_id, vendor_id, active, version, created_by_user_id, updated_by_user_id, reason
+       ) values ('${PRJ_1}', 'VND_SHARED', true, 1, '${FULL_ADMIN.app}'::uuid, '${FULL_ADMIN.app}'::uuid,
+         'Lịch sử mapping trước hotfix');
+       commit;`,
+    );
     for (const m of restMigrations) {
       await db.exec(m.sql);
     }
+    const { rows: preservedVendorLinkHistory } = await db.query(
+      `select project_id, vendor_id, active, version, reason
+         from public.vendor_finance_project_vendors
+        where project_id = $1 and vendor_id = $2`,
+      [PRJ_1, "VND_SHARED"],
+    );
+    assert.deepEqual(preservedVendorLinkHistory, [
+      {
+        project_id: PRJ_1,
+        vendor_id: "VND_SHARED",
+        active: true,
+        version: 1,
+        reason: "Lịch sử mapping trước hotfix",
+      },
+    ]);
 
     const postVfin02Snapshot = await captureUntouchedSnapshot(db);
     assert.deepEqual(
@@ -841,35 +844,6 @@ test("(#2) Full VFIN-02 acceptance: legacy isolation, controlled governance, non
     });
     assert.equal(assignBRes.ok, true);
 
-    // Controlled Project <-> Vendor Links (`VND_SHARED` & `VND_OPPOSITE` linked to BOTH PRJ_1 & PRJ_2)
-    for (const [prj, vid] of [
-      [PRJ_1, "VND_SHARED"],
-      [PRJ_2, "VND_SHARED"],
-      [PRJ_1, "VND_OPPOSITE"],
-      [PRJ_2, "VND_OPPOSITE"],
-    ]) {
-      const linkReason = `Khai báo quan hệ hợp lệ ${vid} <-> ${prj}`;
-      const linkRes = await repo.setProjectVendorLinkAdmin({
-        auth_subject: FULL_ADMIN.auth,
-        app_user_id: FULL_ADMIN.app,
-        project_id: prj,
-        vendor_id: vid,
-        active: true,
-        expected_version: 0,
-        reason: linkReason,
-        idempotency_key: nextUuid(),
-        request_fingerprint: computeSetProjectVendorLinkFingerprint({
-          project_id: prj,
-          vendor_id: vid,
-          active: true,
-          expected_version: 0,
-          reason: linkReason,
-        }),
-      });
-      assert.equal(linkRes.ok, true, JSON.stringify(linkRes));
-      assert.equal(linkRes.data.active, true);
-    }
-
     // Designate Global VFIN Roles:
     // - CASH_HOLDER_VIEW -> CASH_HOLDER (view + reconcile globally, NO record)
     // - CASH_HOLDER_BEHALF -> CASH_HOLDER_RECORD_BEHALF (view + reconcile + record on behalf globally)
@@ -915,21 +889,6 @@ test("(#2) Full VFIN-02 acceptance: legacy isolation, controlled governance, non
     assert.equal(adminAssignList.ok, true, JSON.stringify(adminAssignList));
     assert.equal(adminAssignList.data.projects.length, 2);
 
-    const adminLinksList = await repo.listProjectVendorsAdmin({
-      auth_subject: FULL_ADMIN.auth,
-      app_user_id: FULL_ADMIN.app,
-      project_id: PRJ_1,
-      search: null,
-      only_linked: true,
-      page: 1,
-      page_size: 25,
-    });
-    assert.equal(adminLinksList.ok, true, JSON.stringify(adminLinksList));
-    assert.deepEqual(
-      adminLinksList.data.vendors.map((v) => v.vendor_id).sort(),
-      ["VND_OPPOSITE", "VND_SHARED"],
-    );
-
     const adminRolesList = await repo.listGlobalRolesAdmin({
       auth_subject: FULL_ADMIN.auth,
       app_user_id: FULL_ADMIN.app,
@@ -969,17 +928,23 @@ test("(#2) Full VFIN-02 acceptance: legacy isolation, controlled governance, non
       },
     );
 
-    // ACCT_A context options must expose ONLY PRJ_1 and ONLY linked vendors of PRJ_1
+    // ACCT_A sees only PRJ_1; vendor eligibility is implicit, not a manual link list.
     const ctxA = await repo.listContextOptions({ auth_subject: ACCT_A.auth, app_user_id: ACCT_A.app });
     assert.equal(ctxA.ok, true, JSON.stringify(ctxA));
     assert.deepEqual(
       ctxA.data.projects.map((p) => p.project_id),
       [PRJ_1],
     );
-    assert.deepEqual(
-      ctxA.data.projects[0].linked_vendors.map((v) => v.vendor_id).sort(),
-      ["VND_OPPOSITE", "VND_SHARED"],
-    );
+    assert.equal(ctxA.data.vendors.some((v) => v.vendor_id === "VND_SHARED"), true);
+    assert.equal(ctxA.data.projects[0].linked_vendors, undefined);
+    const implicitVendorPreview = await repo.previewOpeningBatch({
+      auth_subject: ACCT_A.auth,
+      app_user_id: ACCT_A.app,
+      project_id: PRJ_1,
+      cutoff_date: "2026-10-01",
+      items: [{ vendor_id: "VND_UNLINKED", entry_type: "OPENING_PAYABLE", amount_minor: "1000000" }],
+    });
+    assert.equal(implicitVendorPreview.ok, true, JSON.stringify(implicitVendorPreview));
 
     // Cash-Holder (view + reconcile, no record)
     const accessCashView = await repo.getActorAccess({
@@ -1036,56 +1001,6 @@ test("(#2) Full VFIN-02 acceptance: legacy isolation, controlled governance, non
       assert.equal(deniedAcc.data.allowed, false);
       assert.equal(deniedAcc.data.can_view, false);
     }
-
-    // -------------------------------------------------------------------------
-    // 6. Controlled Vendor–Project Link Enforcement (Unlinked Rejected)
-    // -------------------------------------------------------------------------
-    const unlinkedReason = "Thử ghi nhận vào Vendor chưa gắn dự án PRJ_1";
-    const unlinkedRec = await repo.recordEntry({
-      auth_subject: ACCT_A.auth,
-      app_user_id: ACCT_A.app,
-      vendor_id: "VND_UNLINKED",
-      project_id: PRJ_1,
-      entry_type: "DEBT_RECORDED",
-      amount_minor: "1000000",
-      effective_date: "2026-10-05",
-      reason: unlinkedReason,
-      idempotency_key: nextUuid(),
-      request_fingerprint: computeRecordEntryFingerprint({
-        project_id: PRJ_1,
-        vendor_id: "VND_UNLINKED",
-        entry_type: "DEBT_RECORDED",
-        amount_minor: "1000000",
-        effective_date: "2026-10-05",
-        reason: unlinkedReason,
-      }),
-    });
-    assert.equal(unlinkedRec.ok, false);
-    assert.equal(unlinkedRec.code, "VENDOR_FINANCE_PROJECT_VENDOR_UNLINKED");
-
-    // Opening batch mixing a linked vendor and an unlinked vendor rolls back whole batch!
-    const mixedItems = [
-      { vendor_id: "VND_SHARED", entry_type: "OPENING_PAYABLE", amount_minor: "5000000" },
-      { vendor_id: "VND_UNLINKED", entry_type: "OPENING_PAYABLE", amount_minor: "3000000" },
-    ];
-    const mixedOpenReason = "Thử mở đầu kỳ có dòng chưa khai báo liên kết dự án";
-    const mixedOpenRes = await repo.applyOpeningBatch({
-      auth_subject: ACCT_A.auth,
-      app_user_id: ACCT_A.app,
-      project_id: PRJ_1,
-      cutoff_date: "2026-10-01",
-      items: mixedItems,
-      reason: mixedOpenReason,
-      idempotency_key: nextUuid(),
-      request_fingerprint: computeApplyOpeningBatchFingerprint({
-        project_id: PRJ_1,
-        cutoff_date: "2026-10-01",
-        items: mixedItems,
-        reason: mixedOpenReason,
-      }),
-    });
-    assert.equal(mixedOpenRes.ok, false);
-    assert.equal(mixedOpenRes.code, "VENDOR_FINANCE_PROJECT_VENDOR_UNLINKED");
 
     // -------------------------------------------------------------------------
     // 7. Hierarchy `Company -> Accountant -> Project -> Vendor` & ZERO Netting
@@ -1888,7 +1803,7 @@ test("(#2) Full VFIN-02 acceptance: legacy isolation, controlled governance, non
         where n.nspname = 'public' and p.proname like 'vendor_finance%'
         order by 1`,
     );
-    const allowlistSet = new Set(VFIN_02_PROJECT_LEDGERS_RPC_SIGNATURES);
+    const allowlistSet = new Set(HF_VFIN_02_IMPLICIT_VENDOR_PROJECT_RPC_SIGNATURES);
     const grantedSvc = [];
     for (const r of rpcAcl) {
       assert.equal(r.pub_exec, false, `PUBLIC must not execute ${r.sig}`);

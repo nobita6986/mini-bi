@@ -11,7 +11,6 @@ import {
   handleGetDownloadVendorFinanceEvidence,
   handleGetGlobalRolesAdmin,
   handleGetProjectAccountantsAdmin,
-  handleGetProjectVendorsAdmin,
   handleGetVendorFinanceContext,
   handleGetVendorFinanceEntries,
   handleGetVendorFinanceMonthlyReport,
@@ -28,7 +27,6 @@ import {
   handlePostPreviewOpeningBatch,
   handlePostReserveVendorFinanceEvidence,
   handlePostReverseVendorFinanceEntry,
-  handlePostSetProjectVendorLinkAdmin,
   handlePostVendorFinanceEntry,
   handlePostVendorReconciliation,
 } from "./vendor-finance-api.ts";
@@ -56,7 +54,6 @@ const IDEM_1 = "70000000-0000-4000-8000-000000000001";
 const IDEM_2 = "70000000-0000-4000-8000-000000000002";
 const IDEM_3 = "70000000-0000-4000-8000-000000000003";
 const ASGN_ID = "80000000-0000-4000-8000-000000000001";
-const LINK_ID = "81000000-0000-4000-8000-000000000001";
 const ROLE_ID = "82000000-0000-4000-8000-000000000001";
 const PROJECT_ID = "PRJ_NORTH";
 
@@ -106,10 +103,6 @@ const EXPECTED_ROUTE_METHODS = Object.freeze({
   },
   "src/app/api/vendor-finance/admin/project-accountants/[assignmentId]/end/route.ts": {
     POST: "handlePostEndProjectAccountantAdmin",
-  },
-  "src/app/api/vendor-finance/admin/project-vendors/route.ts": {
-    GET: "handleGetProjectVendorsAdmin",
-    POST: "handlePostSetProjectVendorLinkAdmin",
   },
   "src/app/api/vendor-finance/admin/global-roles/route.ts": {
     GET: "handleGetGlobalRolesAdmin",
@@ -278,16 +271,9 @@ function makeMockRepository({
                 has_active_accountant: true,
                 can_record_for_project: actorAccess.can_record,
                 can_reconcile_for_project: actorAccess.can_reconcile ?? actorAccess.can_record,
-                linked_vendors: [
-                  {
-                    vendor_id: "VND_ALPHA",
-                    display_name: "Công ty TNHH Alpha",
-                    vendor_active: true,
-                    link_active: true,
-                  },
-                ],
               },
             ],
+            vendors: [{ vendor_id: "VND_ALPHA", display_name: "Công ty TNHH Alpha", active: true }],
             accountants: [{ accountant_ref: ACC_A_ID, display_name: "Trần Thị Kế Toán A" }],
           },
         };
@@ -374,7 +360,6 @@ function makeMockRepository({
           project_active: true,
           accountant_ref: ACC_A_ID,
           responsible_accountant_display_name: "Trần Thị Kế Toán A",
-          link_active: true,
           is_active_assignment: true,
           current_balance_minor: "15000000",
           balance_direction: "PAYABLE",
@@ -662,37 +647,6 @@ function makeMockRepository({
           },
         };
       },
-      async listProjectVendorsAdmin(input) {
-        calls.push(["listProjectVendorsAdmin", input]);
-        return {
-          ok: true,
-          data: {
-            authorization_date: "2026-10-24",
-            project_id: input.project_id,
-            project_display_name: "Dự án Miền Bắc",
-            project_active: true,
-            page: 1,
-            page_size: 25,
-            total: 0,
-            has_more: false,
-            vendors: [],
-          },
-        };
-      },
-      async setProjectVendorLinkAdmin(input) {
-        calls.push(["setProjectVendorLinkAdmin", input]);
-        return {
-          ok: true,
-          data: {
-            link_id: LINK_ID,
-            project_id: input.project_id,
-            vendor_id: input.vendor_id,
-            active: input.active,
-            version: 1,
-            replayed: false,
-          },
-        };
-      },
       async listGlobalRolesAdmin(input) {
         calls.push(["listGlobalRolesAdmin", input]);
         return {
@@ -965,8 +919,6 @@ test("dynamic route discovery & DIRECT_ENTRY_API_ENABLED hidden 404 gate across 
       handleGetProjectAccountantsAdmin(new Request(`${ORIGIN}/api/vendor-finance/admin/project-accountants`), disabledFlag, bombDeps),
       handlePostAssignProjectAccountantAdmin(new Request(`${ORIGIN}/api/vendor-finance/admin/project-accountants`, { method: "POST", body: untouchedBody(), duplex: "half" }), disabledFlag, bombDeps),
       handlePostEndProjectAccountantAdmin(new Request(`${ORIGIN}/api/vendor-finance/admin/project-accountants/${ASGN_ID}/end`, { method: "POST", body: untouchedBody(), duplex: "half" }), ASGN_ID, disabledFlag, bombDeps),
-      handleGetProjectVendorsAdmin(new Request(`${ORIGIN}/api/vendor-finance/admin/project-vendors?project_id=${PROJECT_ID}`), disabledFlag, bombDeps),
-      handlePostSetProjectVendorLinkAdmin(new Request(`${ORIGIN}/api/vendor-finance/admin/project-vendors`, { method: "POST", body: untouchedBody(), duplex: "half" }), disabledFlag, bombDeps),
       handleGetGlobalRolesAdmin(new Request(`${ORIGIN}/api/vendor-finance/admin/global-roles`), disabledFlag, bombDeps),
       handlePostAssignGlobalRoleAdmin(new Request(`${ORIGIN}/api/vendor-finance/admin/global-roles`, { method: "POST", body: untouchedBody(), duplex: "half" }), disabledFlag, bombDeps),
       handlePostEndGlobalRoleAdmin(new Request(`${ORIGIN}/api/vendor-finance/admin/global-roles/${ROLE_ID}/end`, { method: "POST", body: untouchedBody(), duplex: "half" }), ROLE_ID, disabledFlag, bombDeps),
@@ -975,7 +927,7 @@ test("dynamic route discovery & DIRECT_ENTRY_API_ENABLED hidden 404 gate across 
       handleGetDownloadVendorFinanceEvidence(new Request(`${ORIGIN}/api/vendor-finance/evidence/${EV_ID_1}/download`), EV_ID_1, disabledFlag, bombDeps),
     ]);
 
-    assert.equal(responses.length, 23);
+    assert.equal(responses.length, 21);
     for (const res of responses) {
       assert.equal(res.status, 404);
       assert.equal(res.headers.get("cache-control"), "private, no-store");
@@ -1392,25 +1344,6 @@ test("HTTP VFIN-02 4-role authorization matrix: Full Admin, Project Accountant, 
           expected_version: 0,
           reason: "Phân công kế toán dự án",
           idempotency_key: IDEM_1,
-        }),
-      }),
-      "true",
-      adminDeps,
-    )).status,
-    201,
-  );
-  assert.equal(
-    (await handlePostSetProjectVendorLinkAdmin(
-      new Request(`${ORIGIN}/api/vendor-finance/admin/project-vendors`, {
-        method: "POST",
-        headers: SAME_ORIGIN_POST_HEADERS,
-        body: JSON.stringify({
-          project_id: PROJECT_ID,
-          vendor_id: "VND_ALPHA",
-          active: true,
-          expected_version: 0,
-          reason: "Liên kết Vendor vào dự án",
-          idempotency_key: IDEM_2,
         }),
       }),
       "true",
@@ -1958,13 +1891,13 @@ test("evidence expiry lifecycle (Blocker 2 regression): expired reservation tran
 test("createVendorFinanceRepository maps known VFIN-01 & VFIN-02 SQL tokens & fails closed on non-canonical RPC projections", async () => {
   const repoConflict = createVendorFinanceRepository(async () => ({
     data: null,
-    error: { code: "23514", message: "VENDOR_FINANCE_PROJECT_VENDOR_UNLINKED" },
+    error: { code: "23514", message: "VENDOR_FINANCE_VENDOR_INACTIVE_ENTRY_FORBIDDEN" },
   }));
   const conflictRes = await repoConflict.recordEntry({
     auth_subject: AUTH_ID,
     app_user_id: APP_ID,
     project_id: PROJECT_ID,
-    vendor_id: "VND_UNLINKED",
+    vendor_id: "VND_INACTIVE",
     entry_type: "DEBT_RECORDED",
     amount_minor: "1000",
     effective_date: "2026-10-24",
@@ -1974,7 +1907,7 @@ test("createVendorFinanceRepository maps known VFIN-01 & VFIN-02 SQL tokens & fa
   });
   assert.deepEqual(conflictRes, {
     ok: false,
-    code: "VENDOR_FINANCE_PROJECT_VENDOR_UNLINKED",
+    code: "VENDOR_FINANCE_VENDOR_INACTIVE_ENTRY_FORBIDDEN",
   });
 
   const origError = console.error;

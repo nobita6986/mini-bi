@@ -26,7 +26,6 @@ import {
   parseRecordVendorFinanceEntryBody,
   parseReserveVendorFinanceEvidenceBody,
   parseReverseVendorFinanceEntryBody,
-  parseSetProjectVendorLinkBody,
   parseSignedMinorAmount,
   projectMonthlyReport,
   projectOpeningApplyMutation,
@@ -379,19 +378,6 @@ test("reconciliation, reverse, admin governance, and evidence parsers validate p
   );
   assert.equal(endPa.ok, true);
 
-  const linkPv = parseSetProjectVendorLinkBody(
-    {
-      project_id: "PRJ_NORTH",
-      vendor_id: "VND_ALPHA",
-      active: true,
-      expected_version: 0,
-      reason: "Ký HĐ cung ứng nhân sự",
-      idempotency_key: IDEM_1,
-    },
-    null,
-  );
-  assert.equal(linkPv.ok, true);
-
   const assignGr = parseAssignGlobalRoleBody(
     {
       account_ref: ACC_A,
@@ -574,7 +560,6 @@ test("response projectors are strictly fail-closed on arithmetic mismatch, fake 
         project_active: true,
         accountant_ref: ACC_A,
         responsible_accountant_display_name: "Trần Thị Kế Toán A",
-        link_active: true,
         is_active_assignment: true,
         current_balance_minor: "10000000",
         balance_direction: "PAYABLE",
@@ -679,8 +664,6 @@ test("response projectors are strictly fail-closed on arithmetic mismatch, fake 
   // VFIN-02 HTTP error statuses
   assert.equal(vendorFinanceHttpStatusForError("VENDOR_FINANCE_RECONCILE_DENIED"), 403);
   assert.equal(vendorFinanceHttpStatusForError("VENDOR_FINANCE_ADMIN_DENIED"), 403);
-  assert.equal(vendorFinanceHttpStatusForError("VENDOR_FINANCE_PROJECT_VENDOR_UNLINKED"), 422);
   assert.equal(vendorFinanceHttpStatusForError("VENDOR_FINANCE_ASSIGNMENT_VERSION_CONFLICT"), 409);
-  assert.equal(vendorFinanceHttpStatusForError("VENDOR_FINANCE_LINK_VERSION_CONFLICT"), 409);
   assert.equal(vendorFinanceHttpStatusForError("VENDOR_FINANCE_GLOBAL_ROLE_VERSION_CONFLICT"), 409);
 });
