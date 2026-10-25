@@ -51,6 +51,8 @@ import {
   HF_WORK_REPORTS_GROUPS_AND_ANALYTICS_OPTIONS_RPC_SIGNATURES,
   VFIN_02_PROJECT_LEDGERS_MIGRATION_NAME,
   VFIN_02_PROJECT_LEDGERS_RPC_SIGNATURES,
+  HF_VFIN_02_IMPLICIT_VENDOR_PROJECT_MIGRATION_NAME,
+  HF_VFIN_02_IMPLICIT_VENDOR_PROJECT_RPC_SIGNATURES,
   OFFBOARDING_REPORT_MIGRATION_NAME,
   OFFBOARDING_REPORT_RPC_SIGNATURES,
   migrationChecksum,
@@ -778,6 +780,19 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
           `VFIN-02 RPC ${sig} revokes client and inherited EXECUTE before granting service_role`,
         );
       }
+      const hfVfin02Migration = await readFile(
+        path.join(MIGRATION_DIR, HF_VFIN_02_IMPLICIT_VENDOR_PROJECT_MIGRATION_NAME),
+        "utf8",
+      );
+      const hfVfin02Normalized = hfVfin02Migration.replace(/\s+/g, " ")
+        .replace(/\(\s+/g, "(").replace(/\s+\)/g, ")").toLowerCase();
+      assert.equal(HF_VFIN_02_IMPLICIT_VENDOR_PROJECT_RPC_SIGNATURES.length, 23);
+      for (const sig of HF_VFIN_02_IMPLICIT_VENDOR_PROJECT_RPC_SIGNATURES) {
+        assert.ok(hfVfin02Normalized.includes(`grant execute on function ${sig.toLowerCase()} to service_role;`));
+        assert.ok(hfVfin02Normalized.includes(`revoke all on function ${sig.toLowerCase()} from public, anon, authenticated, service_role;`));
+      }
+      assert.match(hfVfin02Migration, /drop function public\.vendor_finance_list_project_vendors_admin\(/i);
+      assert.match(hfVfin02Migration, /drop function public\.vendor_finance_set_project_vendor_link_admin\(/i);
       assert.match(
         vfin02Migration,
         /revoke all on function public\.vendor_finance__internal_can_actor_write_subledger\(jsonb, uuid, text, text, text, uuid\)\s+from public, anon, authenticated, service_role;/i,
@@ -800,7 +815,7 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
         ...HF_OFFBOARDING_SUPPRESSION_AND_ATTENDANCE_FILTER_RPC_SIGNATURES,
         ...ATTENDANCE_SELF_HISTORY_RPC_SIGNATURES,
         ...ORG_SHELL_01_DEPARTMENTS_RPC_SIGNATURES,
-        ...VFIN_02_PROJECT_LEDGERS_RPC_SIGNATURES,
+        ...HF_VFIN_02_IMPLICIT_VENDOR_PROJECT_RPC_SIGNATURES,
         ...HF_WORK_REPORTS_GROUPS_AND_ANALYTICS_OPTIONS_RPC_SIGNATURES);
       assert.ok(expectedSignatures.length > 0, "the explicit server/invoker allowlist is not empty");
       assert.equal(new Set(expectedSignatures).size, expectedSignatures.length, "the allowlist has no duplicates");
@@ -833,7 +848,7 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
           ...HF_OFFBOARDING_SUPPRESSION_AND_ATTENDANCE_FILTER_RPC_SIGNATURES,
           ...ATTENDANCE_SELF_HISTORY_RPC_SIGNATURES,
           ...ORG_SHELL_01_DEPARTMENTS_RPC_SIGNATURES,
-          ...VFIN_02_PROJECT_LEDGERS_RPC_SIGNATURES,
+          ...HF_VFIN_02_IMPLICIT_VENDOR_PROJECT_RPC_SIGNATURES,
           ...HF_WORK_REPORTS_GROUPS_AND_ANALYTICS_OPTIONS_RPC_SIGNATURES].sort(),
         "only explicitly reviewed post-S0 RPCs add service_role grants after the S0 baseline",
       );

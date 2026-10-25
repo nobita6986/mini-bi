@@ -488,12 +488,24 @@ export function VendorFinanceDetailView({
     : initialCanManageProjectAssignments;
   const allowedEntryTypes = allowedActions?.allowed_entry_types ?? [];
 
-  // Projects where current actor can record for this specific vendor
+  const vendorIsActive = (contextData?.vendors ?? []).some(
+    (item) => item.vendor_id === vendorId && item.active,
+  );
+
+  // Include active combinations and existing books that are limited to settlement adjustments.
   const recordableProjectsForVendor = (contextData?.projects ?? []).filter(
     (p) =>
       p.can_record_for_project &&
       p.has_active_accountant &&
-      p.linked_vendors.some((lv) => lv.vendor_id === vendorId),
+      ((p.active && vendorIsActive) ||
+        subLedgers.some(
+          (sub) =>
+            sub.ledger_scope === "PROJECT_ACCOUNTANT" &&
+            sub.project_id === p.project_id &&
+            sub.accountant_ref === p.active_accountant_ref &&
+            sub.entry_count > 0 &&
+            sub.can_record_entry,
+        )),
   );
 
   // Sub-ledgers where current actor can reconcile

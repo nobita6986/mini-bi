@@ -151,11 +151,8 @@ export function RecordVendorEntryDialog({
 
   const selectedProject =
     recordableProjects.find((p) => p.project_id === projectId) ?? null;
-  const vendorLinkInProject = selectedProject?.linked_vendors.find(
-    (lv) => lv.vendor_id === vendorId,
-  );
   const effectiveAllowedEntryTypes: readonly NormalVendorFinanceEntryType[] =
-    !vendorActive || (vendorLinkInProject && !vendorLinkInProject.link_active) || (selectedProject && !selectedProject.active)
+    !vendorActive || (selectedProject && !selectedProject.active)
       ? allowedEntryTypes.filter(
           (t) =>
             t === "PAYMENT_RECORDED" ||

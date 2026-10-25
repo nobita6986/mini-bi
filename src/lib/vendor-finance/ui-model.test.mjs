@@ -37,7 +37,6 @@ import {
   parseRecordVendorFinanceEntryBody,
   parseReserveVendorFinanceEvidenceBody,
   parseReverseVendorFinanceEntryBody,
-  parseSetProjectVendorLinkBody,
 } from "./vendor-finance-contract.ts";
 import {
   PROJECT_REVENUE_MISSING_SOURCE_LABEL_VI,
@@ -63,7 +62,6 @@ import {
   buildAdminEndProjectAccountantUrl,
   buildAdminGlobalRolesUrl,
   buildAdminProjectAccountantsUrl,
-  buildAdminProjectVendorsUrl,
   buildAssignGlobalRoleRequest,
   buildAssignProjectAccountantRequest,
   buildCreateReconciliationRequest,
@@ -82,7 +80,6 @@ import {
   buildReserveEvidenceUrl,
   buildReverseEntryRequest,
   buildReverseEntryUrl,
-  buildSetProjectVendorLinkRequest,
   buildSingleEntryUrl,
   buildVendorDetailUrl,
   buildVendorEntriesUrl,
@@ -105,7 +102,6 @@ import {
   normalizeSignedVndInput,
   parseAdminGlobalRolesEnvelope,
   parseAdminProjectAccountantsEnvelope,
-  parseAdminProjectVendorsEnvelope,
   parseAssignGlobalRoleEnvelope,
   parseAssignProjectAccountantEnvelope,
   parseCreateReconciliationEnvelope,
@@ -119,7 +115,6 @@ import {
   parseOpeningPreviewEnvelope,
   parseRecordEntryEnvelope,
   parseReverseEntryEnvelope,
-  parseSetProjectVendorLinkEnvelope,
   parseSingleEntryEnvelope,
   parseVendorDetailEnvelope,
   parseVendorEntriesPageEnvelope,
@@ -139,7 +134,6 @@ const BATCH_ID = "66666666-6666-4666-8666-666666666666";
 const IDEMPOTENCY_KEY = "77777777-7777-4777-8777-777777777777";
 const ACCOUNTANT_A_REF = "88888888-8888-4888-8888-888888888888";
 const ASSIGNMENT_ID = "99999999-9999-4999-8999-999999999999";
-const LINK_ID = "abababab-abab-4bab-8bab-abababababab";
 const ROLE_GRANT_ID = "cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd";
 const PROJECT_ID = "PRJ-NORTH-01";
 const SAMPLE_SHA256 = "a".repeat(64);
@@ -759,10 +753,6 @@ test("URL and request builders round-trip cleanly through canonical VFIN-02 back
     buildAdminEndProjectAccountantUrl(ASSIGNMENT_ID),
     `/api/vendor-finance/admin/project-accountants/${ASSIGNMENT_ID}/end`,
   );
-  assert.equal(
-    buildAdminProjectVendorsUrl({ project_id: PROJECT_ID, only_linked: true }),
-    `/api/vendor-finance/admin/project-vendors?project_id=${PROJECT_ID}&only_linked=true`,
-  );
   assert.equal(buildAdminGlobalRolesUrl(), "/api/vendor-finance/admin/global-roles");
   assert.equal(
     buildAdminEndGlobalRoleUrl(ROLE_GRANT_ID),
@@ -976,23 +966,6 @@ test("URL and request builders round-trip cleanly through canonical VFIN-02 back
     true,
   );
 
-  const setLink = buildSetProjectVendorLinkRequest({
-    project_id: PROJECT_ID,
-    vendor_id: "VND-001",
-    active: true,
-    expected_version: 0,
-    reason: "Liên kết Vendor vào dự án theo hợp đồng",
-    idempotency_key: IDEMPOTENCY_KEY,
-  });
-  assert.equal(setLink.ok, true);
-  assert.equal(
-    parseSetProjectVendorLinkBody(
-      setLink.request.body,
-      setLink.request.headers["Idempotency-Key"],
-    ).ok,
-    true,
-  );
-
   const assignRole = buildAssignGlobalRoleRequest({
     account_ref: ACCOUNTANT_A_REF,
     role_code: "GLOBAL_RECONCILER",
@@ -1074,16 +1047,9 @@ test("HTTP response envelope parsers validate all 18 VFIN-02 endpoint contracts 
             has_active_accountant: true,
             can_record_for_project: true,
             can_reconcile_for_project: true,
-            linked_vendors: [
-              {
-                vendor_id: "VND-001",
-                display_name: "Sao Việt",
-                vendor_active: true,
-                link_active: true,
-              },
-            ],
           },
         ],
+        vendors: [{ vendor_id: "VND-001", display_name: "Sao Việt", active: true }],
         accountants: [
           {
             accountant_ref: ACCOUNTANT_A_REF,
@@ -1176,7 +1142,6 @@ test("HTTP response envelope parsers validate all 18 VFIN-02 endpoint contracts 
     project_active: true,
     accountant_ref: ACCOUNTANT_A_REF,
     responsible_accountant_display_name: "Nguyễn Thị Kế Toán A",
-    link_active: true,
     is_active_assignment: true,
     current_balance_minor: "10000000",
     balance_direction: "PAYABLE",
@@ -1496,7 +1461,6 @@ test("HTTP response envelope parsers validate all 18 VFIN-02 endpoint contracts 
           vendor_id: "VND-001",
           vendor_display_name: "Sao Việt",
           vendor_active: true,
-          link_active: true,
           project_revenue_status: "MISSING_CANONICAL_SOURCE",
           project_revenue_minor: null,
           balance_before_month_minor: "0",
@@ -1568,7 +1532,7 @@ test("HTTP response envelope parsers validate all 18 VFIN-02 endpoint contracts 
             display_name: "Dự án Tuyển dụng Miền Bắc",
             active: true,
             next_version: 2,
-            linked_active_vendor_count: 1,
+            transacted_vendor_count: 1,
             current_assignment: sampleAssignment,
             assignments: [sampleAssignment],
           },
@@ -1594,45 +1558,6 @@ test("HTTP response envelope parsers validate all 18 VFIN-02 endpoint contracts 
         assignment_id: ASSIGNMENT_ID,
         project_id: PROJECT_ID,
         valid_to: "2026-10-31",
-        replayed: false,
-      },
-    }),
-  );
-  assert.ok(
-    parseAdminProjectVendorsEnvelope({
-      ok: true,
-      data: {
-        authorization_date: "2026-10-25",
-        project_id: PROJECT_ID,
-        project_display_name: "Dự án Tuyển dụng Miền Bắc",
-        project_active: true,
-        page: 1,
-        page_size: 25,
-        total: 1,
-        has_more: false,
-        vendors: [
-          {
-            vendor_id: "VND-001",
-            display_name: "Sao Việt",
-            vendor_active: true,
-            linked: true,
-            link_active: true,
-            link_version: 1,
-            updated_at: "2026-10-25T09:00:00.000Z",
-          },
-        ],
-      },
-    }),
-  );
-  assert.ok(
-    parseSetProjectVendorLinkEnvelope({
-      ok: true,
-      data: {
-        link_id: LINK_ID,
-        project_id: PROJECT_ID,
-        vendor_id: "VND-001",
-        active: true,
-        version: 1,
         replayed: false,
       },
     }),
@@ -1778,14 +1703,6 @@ test("classifyVendorFinanceError maps VFIN-01 and VFIN-02 error codes to sanitiz
   assert.equal(batchConflict.isWholeBatchRollback, true);
   assert.equal(batchConflict.shouldRotateIdempotencyKey, true);
   assert.doesNotMatch(batchConflict.message, /Key \(vendor_id\)/);
-
-  const unlinked = classifyVendorFinanceError(
-    { ok: false, code: "VENDOR_FINANCE_PROJECT_VENDOR_UNLINKED" },
-    422,
-  );
-  assert.equal(unlinked.isWholeBatchRollback, true);
-  assert.equal(unlinked.shouldRotateIdempotencyKey, true);
-  assert.match(unlinked.message, /chưa được liên kết hợp lệ với dự án/);
 
   const projectDenied = classifyVendorFinanceError(
     { ok: false, code: "VENDOR_FINANCE_PROJECT_ACCESS_DENIED" },

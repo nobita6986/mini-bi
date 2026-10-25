@@ -34,7 +34,6 @@ import type {
   RecordVendorFinanceEntryBody,
   ReserveVendorFinanceEvidenceBody,
   ReverseVendorFinanceEntryBody,
-  SetProjectVendorLinkBody,
   VendorFinanceAccountSummary,
   VendorFinanceActiveFilter,
   VendorFinanceActorContextOptionsResponse,
@@ -46,7 +45,7 @@ import type {
   VendorFinanceCategoryTotals,
   VendorFinanceCompanySummary,
   VendorFinanceContextAccountantOption,
-  VendorFinanceContextLinkedVendorOption,
+  VendorFinanceContextVendorOption,
   VendorFinanceContextProjectOption,
   VendorFinanceDetailSubLedger,
   VendorFinanceDocumentKind,
@@ -71,7 +70,6 @@ import type {
   VendorFinanceListGlobalRolesAdminResponse,
   VendorFinanceListItem,
   VendorFinanceListProjectAccountantsAdminResponse,
-  VendorFinanceListProjectVendorsAdminResponse,
   VendorFinanceListSubLedgerItem,
   VendorFinanceMonthlyLegacyRow,
   VendorFinanceMonthlyReportAccountantSummary,
@@ -82,10 +80,8 @@ import type {
   VendorFinanceOpeningPreviewResponse,
   VendorFinanceProjectAccountantAssignmentItem,
   VendorFinanceProjectAccountantsAdminProject,
-  VendorFinanceProjectVendorAdminItem,
   VendorFinanceReconciliationProjection,
   VendorFinanceReconciliationsPageResponse,
-  VendorFinanceSetProjectVendorLinkResponse,
   VendorFinanceSingleEntryResponse,
   VendorFinanceVendorDetailResponse,
   VendorFinanceVendorListResponse,
@@ -891,33 +887,6 @@ export function buildAdminEndProjectAccountantUrl(assignmentId: string): string 
   return `/api/vendor-finance/admin/project-accountants/${encodeURIComponent(assignmentId)}/end`;
 }
 
-export function buildAdminProjectVendorsUrl(params: {
-  project_id: string;
-  search?: string | null;
-  only_linked?: boolean;
-  page?: number;
-  page_size?: number;
-}): string {
-  const sp = new URLSearchParams();
-  sp.set("project_id", params.project_id);
-  if (params.search !== undefined && params.search !== null) {
-    const trimmed = params.search.trim();
-    if (trimmed.length > 0) {
-      sp.set("search", trimmed.slice(0, VFIN_UI_MAX_SEARCH_LENGTH));
-    }
-  }
-  if (params.only_linked) {
-    sp.set("only_linked", "true");
-  }
-  if (params.page && Number.isSafeInteger(params.page) && params.page > 1) {
-    sp.set("page", String(params.page));
-  }
-  if (params.page_size && Number.isSafeInteger(params.page_size)) {
-    sp.set("page_size", String(params.page_size));
-  }
-  return `/api/vendor-finance/admin/project-vendors?${sp.toString()}`;
-}
-
 export function buildAdminGlobalRolesUrl(params?: {
   search?: string | null;
   include_history?: boolean;
@@ -1459,52 +1428,6 @@ export function buildEndProjectAccountantRequest(input: {
   };
 }
 
-export function buildSetProjectVendorLinkRequest(input: {
-  project_id: string;
-  vendor_id: string;
-  active: boolean;
-  expected_version: number;
-  reason: string;
-  idempotency_key: string;
-}):
-  | { ok: true; request: BuiltJsonRequest<SetProjectVendorLinkBody> }
-  | { ok: false; message: string } {
-  const trimmedProject = input.project_id.trim();
-  if (!isCanonicalUiProjectId(trimmedProject)) {
-    return { ok: false, message: "Vui lòng chọn dự án hợp lệ." };
-  }
-  const trimmedVendor = input.vendor_id.trim();
-  if (!isCanonicalUiVendorId(trimmedVendor)) {
-    return { ok: false, message: "Mã Vendor không hợp lệ." };
-  }
-  if (!Number.isSafeInteger(input.expected_version) || input.expected_version < 0) {
-    return { ok: false, message: "Phiên bản liên kết (OCC) không hợp lệ." };
-  }
-  const reason = validateUiReasonText(input.reason);
-  if (!reason.ok) return { ok: false, message: reason.message };
-  if (!isUuidString(input.idempotency_key)) {
-    return { ok: false, message: "Mã chống gửi trùng (Idempotency-Key) không hợp lệ." };
-  }
-  const idem = input.idempotency_key.toLowerCase();
-  return {
-    ok: true,
-    request: {
-      headers: {
-        "Content-Type": "application/json",
-        "Idempotency-Key": idem,
-      },
-      body: {
-        project_id: trimmedProject,
-        vendor_id: trimmedVendor,
-        active: Boolean(input.active),
-        expected_version: input.expected_version,
-        reason: reason.reason,
-        idempotency_key: idem,
-      },
-    },
-  };
-}
-
 export function buildAssignGlobalRoleRequest(input: {
   account_ref: string;
   role_code: string;
@@ -1836,6 +1759,7 @@ export function parseVendorFinanceContextEnvelope(
       "allowed_actions",
       "has_legacy_unallocated",
       "projects",
+      "vendors",
       "accountants",
     ]) ||
     !isRecord(data.allowed_actions) ||
@@ -1849,6 +1773,7 @@ export function parseVendorFinanceContextEnvelope(
       "can_manage_project_assignments",
     ]) ||
     !Array.isArray(data.projects) ||
+    !Array.isArray(data.vendors) ||
     !Array.isArray(data.accountants)
   ) {
     return null;
@@ -1891,9 +1816,7 @@ export function parseVendorFinanceContextEnvelope(
         "has_active_accountant",
         "can_record_for_project",
         "can_reconcile_for_project",
-        "linked_vendors",
-      ]) ||
-      !Array.isArray(rawProject.linked_vendors)
+      ])
     ) {
       return null;
     }
@@ -1919,34 +1842,6 @@ export function parseVendorFinanceContextEnvelope(
       return null;
     }
 
-    const linkedVendors: VendorFinanceContextLinkedVendorOption[] = [];
-    for (const rawVendor of rawProject.linked_vendors) {
-      if (
-        !isRecord(rawVendor) ||
-        !exactKeys(rawVendor, ["vendor_id", "display_name", "vendor_active", "link_active"])
-      ) {
-        return null;
-      }
-      const vendorId = isCanonicalUiVendorId(rawVendor.vendor_id) ? rawVendor.vendor_id : null;
-      const vDisplayName = nonEmptyStr(rawVendor.display_name);
-      const vendorActive = boolVal(rawVendor.vendor_active);
-      const linkActive = boolVal(rawVendor.link_active);
-      if (
-        vendorId === null ||
-        vDisplayName === null ||
-        vendorActive === null ||
-        linkActive === null
-      ) {
-        return null;
-      }
-      linkedVendors.push({
-        vendor_id: vendorId,
-        display_name: vDisplayName,
-        vendor_active: vendorActive,
-        link_active: linkActive,
-      });
-    }
-
     projects.push({
       project_id: projectId,
       display_name: displayName,
@@ -1956,8 +1851,17 @@ export function parseVendorFinanceContextEnvelope(
       has_active_accountant: hasActiveAccountant,
       can_record_for_project: canRecordForProject,
       can_reconcile_for_project: canReconcileForProject,
-      linked_vendors: linkedVendors,
     });
+  }
+
+  const vendors: VendorFinanceContextVendorOption[] = [];
+  for (const rawVendor of data.vendors) {
+    if (!isRecord(rawVendor) || !exactKeys(rawVendor, ["vendor_id", "display_name", "active"])) return null;
+    const vendorId = isCanonicalUiVendorId(rawVendor.vendor_id) ? rawVendor.vendor_id : null;
+    const displayName = nonEmptyStr(rawVendor.display_name);
+    const active = boolVal(rawVendor.active);
+    if (vendorId === null || displayName === null || active === null) return null;
+    vendors.push({ vendor_id: vendorId, display_name: displayName, active });
   }
 
   const accountants: VendorFinanceContextAccountantOption[] = [];
@@ -1989,6 +1893,7 @@ export function parseVendorFinanceContextEnvelope(
     },
     has_legacy_unallocated: hasLegacy,
     projects,
+    vendors,
     accountants,
   };
 }
@@ -2593,7 +2498,6 @@ function parseDetailSubLedgerProjection(value: unknown): VendorFinanceDetailSubL
       "project_active",
       "accountant_ref",
       "responsible_accountant_display_name",
-      "link_active",
       "is_active_assignment",
       "current_balance_minor",
       "balance_direction",
@@ -2613,7 +2517,6 @@ function parseDetailSubLedgerProjection(value: unknown): VendorFinanceDetailSubL
   const projectActive = nullableBoolVal(value.project_active);
   const accountantRef = nullableUuidStr(value.accountant_ref);
   const responsibleName = nullableStr(value.responsible_accountant_display_name);
-  const linkActive = nullableBoolVal(value.link_active);
   const isActiveAssignment = boolVal(value.is_active_assignment);
   const currentBalance = signedMoneyStr(value.current_balance_minor);
   const direction = balanceDirectionVal(value.balance_direction);
@@ -2631,7 +2534,6 @@ function parseDetailSubLedgerProjection(value: unknown): VendorFinanceDetailSubL
     projectActive === undefined ||
     accountantRef === undefined ||
     responsibleName === undefined ||
-    linkActive === undefined ||
     isActiveAssignment === null ||
     currentBalance === null ||
     direction === null ||
@@ -2652,7 +2554,6 @@ function parseDetailSubLedgerProjection(value: unknown): VendorFinanceDetailSubL
     project_active: projectActive,
     accountant_ref: accountantRef,
     responsible_accountant_display_name: responsibleName,
-    link_active: linkActive,
     is_active_assignment: isActiveAssignment,
     current_balance_minor: currentBalance,
     balance_direction: direction,
@@ -3451,7 +3352,6 @@ export function parseMonthlyReportEnvelope(
         "vendor_id",
         "vendor_display_name",
         "vendor_active",
-        "link_active",
         "project_revenue_status",
         "project_revenue_minor",
         "balance_before_month_minor",
@@ -3482,7 +3382,6 @@ export function parseMonthlyReportEnvelope(
     const vId = isCanonicalUiVendorId(rawRow.vendor_id) ? rawRow.vendor_id : null;
     const vName = nonEmptyStr(rawRow.vendor_display_name);
     const vActive = boolVal(rawRow.vendor_active);
-    const lActive = boolVal(rawRow.link_active);
     const balBefore = signedMoneyStr(rawRow.balance_before_month_minor);
     const openPay = nonNegativeMoneyStr(rawRow.opening_payable_in_month_minor);
     const openAdv = nonNegativeMoneyStr(rawRow.opening_advance_in_month_minor);
@@ -3509,7 +3408,6 @@ export function parseMonthlyReportEnvelope(
       vId === null ||
       vName === null ||
       vActive === null ||
-      lActive === null ||
       rawRow.project_revenue_status !== "MISSING_CANONICAL_SOURCE" ||
       rawRow.project_revenue_minor !== null ||
       balBefore === null ||
@@ -3545,7 +3443,6 @@ export function parseMonthlyReportEnvelope(
       vendor_id: vId,
       vendor_display_name: vName,
       vendor_active: vActive,
-      link_active: lActive,
       project_revenue_status: "MISSING_CANONICAL_SOURCE",
       project_revenue_minor: null,
       balance_before_month_minor: balBefore,
@@ -3779,7 +3676,7 @@ export function parseAdminProjectAccountantsEnvelope(
         "display_name",
         "active",
         "next_version",
-        "linked_active_vendor_count",
+        "transacted_vendor_count",
         "current_assignment",
         "assignments",
       ]) ||
@@ -3791,7 +3688,7 @@ export function parseAdminProjectAccountantsEnvelope(
     const displayName = nonEmptyStr(rawProj.display_name);
     const active = boolVal(rawProj.active);
     const nextVersion = posInt(rawProj.next_version);
-    const linkedActiveCount = nonNegInt(rawProj.linked_active_vendor_count);
+    const transactedCount = nonNegInt(rawProj.transacted_vendor_count);
     const currentAssignment =
       rawProj.current_assignment === null
         ? null
@@ -3801,7 +3698,7 @@ export function parseAdminProjectAccountantsEnvelope(
       displayName === null ||
       active === null ||
       nextVersion === null ||
-      linkedActiveCount === null ||
+      transactedCount === null ||
       (rawProj.current_assignment !== null && currentAssignment === null)
     ) {
       return null;
@@ -3819,7 +3716,7 @@ export function parseAdminProjectAccountantsEnvelope(
       display_name: displayName,
       active,
       next_version: nextVersion,
-      linked_active_vendor_count: linkedActiveCount,
+      transacted_vendor_count: transactedCount,
       current_assignment: currentAssignment,
       assignments,
     });
@@ -3882,144 +3779,6 @@ export function parseEndProjectAccountantEnvelope(
     assignment_id: assignmentId,
     project_id: projectId,
     valid_to: validTo,
-    replayed,
-  };
-}
-
-export function parseAdminProjectVendorsEnvelope(
-  envelope: unknown,
-): VendorFinanceListProjectVendorsAdminResponse | null {
-  const data = unwrapOkDataEnvelope(envelope);
-  if (
-    !isRecord(data) ||
-    !exactKeys(data, [
-      "authorization_date",
-      "project_id",
-      "project_display_name",
-      "project_active",
-      "page",
-      "page_size",
-      "total",
-      "has_more",
-      "vendors",
-    ]) ||
-    !Array.isArray(data.vendors)
-  ) {
-    return null;
-  }
-
-  const authorizationDate = dateStr(data.authorization_date);
-  const projectId = projectIdStr(data.project_id);
-  const projectDisplayName = nonEmptyStr(data.project_display_name);
-  const projectActive = boolVal(data.project_active);
-  const page = posInt(data.page);
-  const pageSize = posInt(data.page_size);
-  const total = nonNegInt(data.total);
-  const hasMore = boolVal(data.has_more);
-
-  if (
-    authorizationDate === null ||
-    projectId === null ||
-    projectDisplayName === null ||
-    projectActive === null ||
-    page === null ||
-    pageSize === null ||
-    total === null ||
-    hasMore === null
-  ) {
-    return null;
-  }
-
-  const vendors: VendorFinanceProjectVendorAdminItem[] = [];
-  for (const rawVendor of data.vendors) {
-    if (
-      !isRecord(rawVendor) ||
-      !exactKeys(rawVendor, [
-        "vendor_id",
-        "display_name",
-        "vendor_active",
-        "linked",
-        "link_active",
-        "link_version",
-        "updated_at",
-      ])
-    ) {
-      return null;
-    }
-    const vendorId = isCanonicalUiVendorId(rawVendor.vendor_id) ? rawVendor.vendor_id : null;
-    const displayName = nonEmptyStr(rawVendor.display_name);
-    const vendorActive = boolVal(rawVendor.vendor_active);
-    const linked = boolVal(rawVendor.linked);
-    const linkActive = boolVal(rawVendor.link_active);
-    const linkVersion = nonNegInt(rawVendor.link_version);
-    const updatedAt = nullableStr(rawVendor.updated_at);
-    if (
-      vendorId === null ||
-      displayName === null ||
-      vendorActive === null ||
-      linked === null ||
-      linkActive === null ||
-      linkVersion === null ||
-      updatedAt === undefined
-    ) {
-      return null;
-    }
-    vendors.push({
-      vendor_id: vendorId,
-      display_name: displayName,
-      vendor_active: vendorActive,
-      linked,
-      link_active: linkActive,
-      link_version: linkVersion,
-      updated_at: updatedAt,
-    });
-  }
-
-  return {
-    authorization_date: authorizationDate,
-    project_id: projectId,
-    project_display_name: projectDisplayName,
-    project_active: projectActive,
-    page,
-    page_size: pageSize,
-    total,
-    has_more: hasMore,
-    vendors,
-  };
-}
-
-export function parseSetProjectVendorLinkEnvelope(
-  envelope: unknown,
-): VendorFinanceSetProjectVendorLinkResponse | null {
-  const data = unwrapOkDataEnvelope(envelope);
-  if (
-    !isRecord(data) ||
-    !exactKeys(data, ["link_id", "project_id", "vendor_id", "active", "version", "replayed"])
-  ) {
-    return null;
-  }
-  const linkId = uuidStr(data.link_id);
-  const projectId = projectIdStr(data.project_id);
-  const vendorId = isCanonicalUiVendorId(data.vendor_id) ? data.vendor_id : null;
-  const active = boolVal(data.active);
-  const version = posInt(data.version);
-  const replayed = boolVal(data.replayed);
-  if (
-    linkId === null ||
-    projectId === null ||
-    vendorId === null ||
-    active === null ||
-    version === null ||
-    replayed === null
-  ) {
-    return null;
-  }
-  return {
-    link_id: linkId,
-    project_id: projectId,
-    vendor_id: vendorId,
-    active,
-    version,
     replayed,
   };
 }
@@ -4540,22 +4299,6 @@ export function classifyVendorFinanceError(
         shouldRotateIdempotencyKey: true,
         isWholeBatchRollback: false,
       };
-    case "VENDOR_FINANCE_PROJECT_VENDOR_UNLINKED":
-      return {
-        code,
-        message:
-          "Vendor chưa được liên kết hợp lệ với dự án đã chọn. Toàn bộ thao tác đã bị từ chối.",
-        shouldRotateIdempotencyKey: true,
-        isWholeBatchRollback: true,
-      };
-    case "VENDOR_FINANCE_PROJECT_VENDOR_INACTIVE":
-      return {
-        code,
-        message:
-          "Liên kết giữa Vendor và dự án này đã ngừng hiệu lực; chỉ được ghi nhận tất toán hoặc điều chỉnh theo quy định.",
-        shouldRotateIdempotencyKey: true,
-        isWholeBatchRollback: true,
-      };
     case "VENDOR_FINANCE_SUBLEDGER_NOT_FOUND":
       return {
         code,
@@ -4576,23 +4319,6 @@ export function classifyVendorFinanceError(
         code,
         message:
           "Phân công kế toán dự án vừa được cập nhật bởi thao tác khác. Vui lòng tải lại danh sách mới nhất trước khi thực hiện lại.",
-        shouldRotateIdempotencyKey: true,
-        isWholeBatchRollback: false,
-      };
-    case "VENDOR_FINANCE_LINK_INVALID":
-    case "VENDOR_FINANCE_LINK_TARGET_INACTIVE":
-      return {
-        code,
-        message:
-          "Thông tin liên kết Dự án – Vendor không hợp lệ hoặc dự án/Vendor đã ngừng hoạt động.",
-        shouldRotateIdempotencyKey: true,
-        isWholeBatchRollback: false,
-      };
-    case "VENDOR_FINANCE_LINK_VERSION_CONFLICT":
-      return {
-        code,
-        message:
-          "Liên kết Dự án – Vendor vừa thay đổi phiên bản. Vui lòng tải lại dữ liệu trước khi thử lại.",
         shouldRotateIdempotencyKey: true,
         isWholeBatchRollback: false,
       };

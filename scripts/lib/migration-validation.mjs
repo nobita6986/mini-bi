@@ -139,6 +139,8 @@ export const HF_WORK_REPORTS_GROUPS_AND_ANALYTICS_OPTIONS_RPC_SIGNATURES = Objec
 ]);
 export const VFIN_02_PROJECT_LEDGERS_MIGRATION_NAME =
   "20261026090000_vfin_02_project_accountant_ledgers.sql";
+export const HF_VFIN_02_IMPLICIT_VENDOR_PROJECT_MIGRATION_NAME =
+  "20261026120000_hf_vfin_02_implicit_vendor_project_eligibility.sql";
 export const VFIN_02_PROJECT_LEDGERS_RPC_SIGNATURES = Object.freeze([
   "public.vendor_finance_get_actor_access(uuid, uuid)",
   "public.vendor_finance_list_actor_context_options(uuid, uuid)",
@@ -166,6 +168,12 @@ export const VFIN_02_PROJECT_LEDGERS_RPC_SIGNATURES = Object.freeze([
   "public.vendor_finance_assign_global_role_admin(uuid, uuid, uuid, text, integer, date, text, uuid, text)",
   "public.vendor_finance_end_global_role_admin(uuid, uuid, uuid, integer, date, text, uuid, text)",
 ]);
+export const HF_VFIN_02_IMPLICIT_VENDOR_PROJECT_RPC_SIGNATURES = Object.freeze(
+  VFIN_02_PROJECT_LEDGERS_RPC_SIGNATURES.filter((signature) =>
+    !signature.startsWith("public.vendor_finance_list_project_vendors_admin(") &&
+    !signature.startsWith("public.vendor_finance_set_project_vendor_link_admin("),
+  ),
+);
 export const F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES = Object.freeze([
   "public.work_report_list_templates(uuid, uuid)",
   "public.work_report_get_template(uuid, uuid, uuid)",
@@ -391,7 +399,8 @@ export async function verifyS0T1CHistoricalCompatibility(
     orgShell01DepartmentsApplied = false,
     vfin01BackendApplied = false,
     hfWorkReportsGroupsAndAnalyticsOptionsApplied = false,
-    vfin02ProjectLedgersApplied = false } = {},
+    vfin02ProjectLedgersApplied = false,
+    hfVfin02ImplicitVendorProjectApplied = false } = {},
 ) {
   const baseAllowlist = extractS0T1CAllowlistSignatures(migrationSql);
   if (baseAllowlist.length === 0) {
@@ -423,8 +432,10 @@ export async function verifyS0T1CHistoricalCompatibility(
       : []),
     ...(attendanceSelfHistoryApplied ? ATTENDANCE_SELF_HISTORY_RPC_SIGNATURES : []),
     ...(orgShell01DepartmentsApplied ? ORG_SHELL_01_DEPARTMENTS_RPC_SIGNATURES : []),
-    ...(vfin02ProjectLedgersApplied
-      ? VFIN_02_PROJECT_LEDGERS_RPC_SIGNATURES
+    ...(hfVfin02ImplicitVendorProjectApplied
+      ? HF_VFIN_02_IMPLICIT_VENDOR_PROJECT_RPC_SIGNATURES
+      : vfin02ProjectLedgersApplied
+        ? VFIN_02_PROJECT_LEDGERS_RPC_SIGNATURES
       : vfin01BackendApplied
         ? VFIN_01_BACKEND_RPC_SIGNATURES
         : []),
@@ -653,6 +664,8 @@ export async function verifyAppliedMigrationChecksum(
           appliedMap.has(HF_WORK_REPORTS_GROUPS_AND_ANALYTICS_OPTIONS_MIGRATION_NAME),
         vfin02ProjectLedgersApplied:
           appliedMap.has(VFIN_02_PROJECT_LEDGERS_MIGRATION_NAME),
+        hfVfin02ImplicitVendorProjectApplied:
+          appliedMap.has(HF_VFIN_02_IMPLICIT_VENDOR_PROJECT_MIGRATION_NAME),
       },
     );
     if (postconditions.ok) {

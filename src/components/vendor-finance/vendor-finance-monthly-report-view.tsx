@@ -389,15 +389,12 @@ export function VendorFinanceMonthlyReportView({
     }
   };
 
-  // Unique vendor options from context linked vendors
+  // Vendor options come from the visible authority scope, not a manual project mapping.
   const vendorOptions = (() => {
     const map = new Map<string, string>();
-    for (const proj of contextData?.projects ?? []) {
-      if (projectFilter && proj.project_id !== projectFilter) continue;
-      for (const lv of proj.linked_vendors) {
-        if (!map.has(lv.vendor_id)) {
-          map.set(lv.vendor_id, lv.display_name);
-        }
+    for (const vendor of contextData?.vendors ?? []) {
+      if (!map.has(vendor.vendor_id)) {
+        map.set(vendor.vendor_id, vendor.display_name);
       }
     }
     return Array.from(map.entries()).sort((a, b) => a[1].localeCompare(b[1], "vi"));

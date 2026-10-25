@@ -23,7 +23,6 @@ import {
   computeRecordEntryFingerprint,
   computeReserveEvidenceFingerprint,
   computeReverseEntryFingerprint,
-  computeSetProjectVendorLinkFingerprint,
   parseApplyOpeningBatchBody,
   parseAssignGlobalRoleBody,
   parseAssignProjectAccountantBody,
@@ -34,7 +33,6 @@ import {
   parseGetVendorFinanceVendorDetailQuery,
   parseListGlobalRolesAdminQuery,
   parseListProjectAccountantsAdminQuery,
-  parseListProjectVendorsAdminQuery,
   parseListVendorFinanceEntriesQuery,
   parseListVendorFinanceVendorsQuery,
   parseListVendorReconciliationsQuery,
@@ -44,7 +42,6 @@ import {
   parseRecordVendorFinanceEntryBody,
   parseReserveVendorFinanceEvidenceBody,
   parseReverseVendorFinanceEntryBody,
-  parseSetProjectVendorLinkBody,
   parseUuidParam,
   parseVendorIdParam,
   vendorFinanceHttpStatusForError,
@@ -1044,101 +1041,6 @@ export async function handlePostEndProjectAccountantAdmin(
   if (!saved.ok) return vfinError(saved.code);
 
   return vfinOk(saved.data, 200);
-}
-
-export async function handleGetProjectVendorsAdmin(
-  request: Request,
-  enabledFlag: string | undefined,
-  dependencies: VendorFinanceApiDependencies,
-): Promise<Response> {
-  const gate = directEntryFeatureGate(enabledFlag);
-  if (gate) return gate;
-
-  if (hasDisallowedAuthorityHeaders(request)) {
-    return vfinError("CLIENT_AUTHORITY_FIELD_FORBIDDEN");
-  }
-
-  const url = parseRequestUrl(request);
-  if (!url) return vfinError("VENDOR_FINANCE_QUERY_INVALID");
-
-  const actor = await resolveVendorFinanceAuthority(dependencies, "admin");
-  if (!actor.ok) return actor.response;
-
-  const query = parseListProjectVendorsAdminQuery(url);
-  if (!query.ok) return vfinError(query.code);
-
-  const result = await dependencies.repository.listProjectVendorsAdmin({
-    auth_subject: actor.auth_subject,
-    app_user_id: actor.app_user_id,
-    project_id: query.value.project_id,
-    search: query.value.search,
-    only_linked: query.value.only_linked,
-    page: query.value.page,
-    page_size: query.value.page_size,
-  });
-  if (!result.ok) return vfinError(result.code);
-
-  return vfinOk(result.data, 200);
-}
-
-export async function handlePostSetProjectVendorLinkAdmin(
-  request: Request,
-  enabledFlag: string | undefined,
-  dependencies: VendorFinanceApiDependencies,
-): Promise<Response> {
-  const gate = directEntryFeatureGate(enabledFlag);
-  if (gate) return gate;
-
-  if (!isSameOriginAuthRequest(request)) {
-    return vfinError("CSRF_ORIGIN_DENIED");
-  }
-
-  if (hasDisallowedAuthorityHeaders(request)) {
-    return vfinError("CLIENT_AUTHORITY_FIELD_FORBIDDEN");
-  }
-
-  const url = parseRequestUrl(request);
-  if (!url || !parseNoQueryParams(url).ok) {
-    return vfinError("VENDOR_FINANCE_QUERY_INVALID");
-  }
-
-  const actor = await resolveVendorFinanceAuthority(dependencies, "admin");
-  if (!actor.ok) return actor.response;
-
-  const boundedBody = await readBoundedJsonBody(
-    request,
-    MAX_VENDOR_FINANCE_MUTATION_JSON_BYTES,
-  );
-  if (!boundedBody.ok) return vfinError(boundedBody.code);
-
-  const parsedBody = parseSetProjectVendorLinkBody(
-    boundedBody.value,
-    request.headers.get("idempotency-key"),
-  );
-  if (!parsedBody.ok) return vfinError(parsedBody.code);
-
-  const fingerprint = computeSetProjectVendorLinkFingerprint({
-    project_id: parsedBody.value.project_id,
-    vendor_id: parsedBody.value.vendor_id,
-    active: parsedBody.value.active,
-    expected_version: parsedBody.value.expected_version,
-    reason: parsedBody.value.reason,
-  });
-
-  const saved = await dependencies.repository.setProjectVendorLinkAdmin({
-    auth_subject: actor.auth_subject,
-    app_user_id: actor.app_user_id,
-    project_id: parsedBody.value.project_id,
-    vendor_id: parsedBody.value.vendor_id,
-    active: parsedBody.value.active,
-    expected_version: parsedBody.value.expected_version,
-    reason: parsedBody.value.reason,
-    idempotency_key: parsedBody.value.idempotency_key,
-    request_fingerprint: fingerprint,
-  });
-  if (!saved.ok) return vfinError(saved.code);
-
-  return vfinOk(saved.data, saved.data.replayed ? 200 : 201);
 }
 
 export async function handleGetGlobalRolesAdmin(

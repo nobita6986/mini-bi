@@ -15,7 +15,6 @@ import {
   ArrowLeft,
   Building2,
   FileBarChart2,
-  Link2,
   Plus,
   RefreshCw,
   Search,
@@ -45,15 +44,12 @@ import { OffsetPager } from "@/components/ui/offset-pager";
 import { PageHeader, PageShell } from "@/components/ui/page-shell";
 import type {
   VendorFinanceAccountSummary,
-  VendorFinanceActorContextOptionsResponse,
   VendorFinanceGlobalRoleCandidateItem,
   VendorFinanceGlobalRoleCode,
   VendorFinanceGlobalRoleGrantItem,
   VendorFinanceListGlobalRolesAdminResponse,
   VendorFinanceListProjectAccountantsAdminResponse,
-  VendorFinanceListProjectVendorsAdminResponse,
   VendorFinanceProjectAccountantsAdminProject,
-  VendorFinanceProjectVendorAdminItem,
 } from "@/lib/vendor-finance/vendor-finance-contract";
 import {
   ADMIN_GRANT_STATE_LABELS_VI,
@@ -61,38 +57,30 @@ import {
   buildAdminEndProjectAccountantUrl,
   buildAdminGlobalRolesUrl,
   buildAdminProjectAccountantsUrl,
-  buildAdminProjectVendorsUrl,
   buildAssignGlobalRoleRequest,
   buildAssignProjectAccountantRequest,
   buildEndGlobalRoleRequest,
   buildEndProjectAccountantRequest,
-  buildSetProjectVendorLinkRequest,
-  buildVendorFinanceContextUrl,
   classifyVendorFinanceError,
   createClientIdempotencyKey,
   formatVietnamDateLabel,
   GLOBAL_ROLE_LABELS_VI,
-  isCanonicalUiProjectId,
   parseAdminGlobalRolesEnvelope,
   parseAdminProjectAccountantsEnvelope,
-  parseAdminProjectVendorsEnvelope,
   parseAssignGlobalRoleEnvelope,
   parseAssignProjectAccountantEnvelope,
   parseEndGlobalRoleEnvelope,
   parseEndProjectAccountantEnvelope,
-  parseSetProjectVendorLinkEnvelope,
-  parseVendorFinanceContextEnvelope,
   validateUiSearchInput,
   VFIN_UI_GLOBAL_ROLE_CODES,
   VFIN_UI_MAX_REASON_LENGTH,
   VFIN_UI_MAX_SEARCH_LENGTH,
 } from "@/lib/vendor-finance/ui-model";
 
-type GovernanceTabId = "assignments" | "vendors" | "global-roles";
+type GovernanceTabId = "assignments" | "global-roles";
 
 const GOVERNANCE_TABS: readonly { id: GovernanceTabId; label: string }[] = [
   { id: "assignments", label: "Phân công kế toán dự án" },
-  { id: "vendors", label: "Liên kết Dự án – Vendor" },
   { id: "global-roles", label: "Vai trò xem / đối soát toàn cục" },
 ];
 
@@ -122,26 +110,20 @@ export function VendorFinanceGovernanceView() {
   const tabBaseId = useId();
   const tabRefs = useRef<Record<GovernanceTabId, HTMLButtonElement | null>>({
     assignments: null,
-    vendors: null,
     "global-roles": null,
   });
 
   const initialTabParam = searchParams.get("tab");
-  const initialProjectParam = searchParams.get("projectId") ?? "";
 
   const [activeTab, setActiveTab] = useState<GovernanceTabId>(() => {
     if (
       initialTabParam === "assignments" ||
-      initialTabParam === "vendors" ||
       initialTabParam === "global-roles"
     ) {
       return initialTabParam;
     }
     return "assignments";
   });
-
-  const [contextData, setContextData] =
-    useState<VendorFinanceActorContextOptionsResponse | null>(null);
 
   // --- Tab 1: Project Accountant Assignments state ---
   const [paSearchInput, setPaSearchInput] = useState("");
@@ -159,26 +141,6 @@ export function VendorFinanceGovernanceView() {
     useState<VendorFinanceProjectAccountantsAdminProject | null>(null);
   const [endTargetProject, setEndTargetProject] =
     useState<VendorFinanceProjectAccountantsAdminProject | null>(null);
-
-  // --- Tab 2: Controlled Project-Vendor Links state ---
-  const [pvProjectId, setPvProjectId] = useState<string>(() =>
-    isCanonicalUiProjectId(initialProjectParam) ? initialProjectParam : "",
-  );
-  const [pvSearchInput, setPvSearchInput] = useState("");
-  const [pvDebouncedSearch, setPvDebouncedSearch] = useState("");
-  const [pvOnlyLinked, setPvOnlyLinked] = useState(false);
-  const [pvPage, setPvPage] = useState(1);
-  const [pvReloadTick, setPvReloadTick] = useState(0);
-  const [pvData, setPvData] =
-    useState<VendorFinanceListProjectVendorsAdminResponse | null>(null);
-  const [pvLoading, setPvLoading] = useState(false);
-  const [pvError, setPvError] = useState<string | null>(null);
-
-  const [linkDialogTarget, setLinkDialogTarget] = useState<{
-    projectId: string;
-    projectDisplayName: string;
-    vendor: VendorFinanceProjectVendorAdminItem;
-  } | null>(null);
 
   // --- Tab 3: Global Roles state ---
   const [grSearchInput, setGrSearchInput] = useState("");
@@ -206,46 +168,11 @@ export function VendorFinanceGovernanceView() {
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      setPvDebouncedSearch(pvSearchInput);
-      setPvPage(1);
-    }, 280);
-    return () => window.clearTimeout(timer);
-  }, [pvSearchInput]);
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
       setGrDebouncedSearch(grSearchInput);
       setGrPage(1);
     }, 280);
     return () => window.clearTimeout(timer);
   }, [grSearchInput]);
-
-  // Load context options once for project selector fallback
-  useEffect(() => {
-    const controller = new AbortController();
-    const run = async () => {
-      try {
-        const res = await fetch(buildVendorFinanceContextUrl(), {
-          method: "GET",
-          cache: "no-store",
-          signal: controller.signal,
-        });
-        if (!res.ok) return;
-        const parsed = parseVendorFinanceContextEnvelope(await readSafeJson(res));
-        if (parsed && !controller.signal.aborted) {
-          setContextData(parsed);
-          setPvProjectId((prev) => {
-            if (prev) return prev;
-            return parsed.projects[0]?.project_id ?? "";
-          });
-        }
-      } catch {
-        // Non-blocking context helper
-      }
-    };
-    void run();
-    return () => controller.abort();
-  }, [paReloadTick, pvReloadTick]);
 
   // Fetch Tab 1: Project Accountant Assignments
   useEffect(() => {
@@ -293,7 +220,6 @@ export function VendorFinanceGovernanceView() {
           return;
         }
         setPaData(parsed);
-        setPvProjectId((prev) => prev || parsed.projects[0]?.project_id || "");
         setPaLoading(false);
       } catch {
         if (controller.signal.aborted) return;
@@ -305,72 +231,6 @@ export function VendorFinanceGovernanceView() {
     void run();
     return () => controller.abort();
   }, [paDebouncedSearch, paIncludeHistory, paPage, paReloadTick]);
-
-  // Fetch Tab 2: Project-Vendor Links
-  useEffect(() => {
-    const searchCheck = validateUiSearchInput(pvDebouncedSearch);
-    const controller = new AbortController();
-
-    const run = async () => {
-      await Promise.resolve();
-      if (controller.signal.aborted) return;
-
-      if (!isCanonicalUiProjectId(pvProjectId)) {
-        setPvData(null);
-        setPvError(null);
-        setPvLoading(false);
-        return;
-      }
-
-      if (!searchCheck.ok) {
-        setPvError(searchCheck.message);
-        setPvLoading(false);
-        return;
-      }
-
-      setPvLoading(true);
-      setPvError(null);
-
-      try {
-        const url = buildAdminProjectVendorsUrl({
-          project_id: pvProjectId,
-          search: searchCheck.search,
-          only_linked: pvOnlyLinked,
-          page: pvPage,
-          page_size: PAGE_SIZE,
-        });
-        const response = await fetch(url, {
-          method: "GET",
-          cache: "no-store",
-          signal: controller.signal,
-        });
-        const payload = await readSafeJson(response);
-        if (controller.signal.aborted) return;
-
-        if (!response.ok) {
-          const classified = classifyVendorFinanceError(payload, response.status);
-          setPvError(classified.message);
-          setPvLoading(false);
-          return;
-        }
-        const parsed = parseAdminProjectVendorsEnvelope(payload);
-        if (!parsed) {
-          setPvError("Dữ liệu liên kết Dự án – Vendor trả về không đúng định dạng quy định.");
-          setPvLoading(false);
-          return;
-        }
-        setPvData(parsed);
-        setPvLoading(false);
-      } catch {
-        if (controller.signal.aborted) return;
-        setPvError("Không thể kết nối tới máy chủ để tải liên kết Dự án – Vendor.");
-        setPvLoading(false);
-      }
-    };
-
-    void run();
-    return () => controller.abort();
-  }, [pvProjectId, pvDebouncedSearch, pvOnlyLinked, pvPage, pvReloadTick]);
 
   // Fetch Tab 3: Global Roles
   useEffect(() => {
@@ -449,36 +309,10 @@ export function VendorFinanceGovernanceView() {
     }
   };
 
-  // Build project options list combining context projects + loaded admin projects
-  const projectOptionMap = new Map<
-    string,
-    { project_id: string; display_name: string; active: boolean }
-  >();
-  for (const p of contextData?.projects ?? []) {
-    projectOptionMap.set(p.project_id, {
-      project_id: p.project_id,
-      display_name: p.display_name,
-      active: p.active,
-    });
-  }
-  for (const p of paData?.projects ?? []) {
-    if (!projectOptionMap.has(p.project_id)) {
-      projectOptionMap.set(p.project_id, {
-        project_id: p.project_id,
-        display_name: p.display_name,
-        active: p.active,
-      });
-    }
-  }
-  const projectOptions = Array.from(projectOptionMap.values()).sort((a, b) =>
-    a.display_name.localeCompare(b.display_name, "vi"),
-  );
-
   const eligibleAccountantRefSet = new Set(
     (paData?.eligible_accountants ?? []).map((a) => a.account_ref),
   );
   const paPageCount = paData ? Math.max(1, Math.ceil(paData.total / paData.page_size)) : 1;
-  const pvPageCount = pvData ? Math.max(1, Math.ceil(pvData.total / pvData.page_size)) : 1;
   const grPageCount = grData ? Math.max(1, Math.ceil(grData.total / grData.page_size)) : 1;
 
   const computeEndGlobalRoleExpectedVersion = (role: VendorFinanceGlobalRoleGrantItem): number => {
@@ -499,7 +333,6 @@ export function VendorFinanceGovernanceView() {
 
   const refreshAllGovernanceData = () => {
     setPaReloadTick((t) => t + 1);
-    setPvReloadTick((t) => t + 1);
     setGrReloadTick((t) => t + 1);
   };
 
@@ -725,7 +558,7 @@ export function VendorFinanceGovernanceView() {
                         Thời gian hiệu lực
                       </th>
                       <th scope="col" className={`${DATA_TABLE_TH_CLASS} text-right`}>
-                        Vendor liên kết
+                        Vendor đã phát sinh giao dịch
                       </th>
                       <th scope="col" className={`${DATA_TABLE_TH_CLASS} text-right`}>
                         Thao tác
@@ -788,23 +621,10 @@ export function VendorFinanceGovernanceView() {
                               )}
                             </td>
                             <td className={`${DATA_TABLE_TD_CLASS} text-right font-mono tabular-nums`}>
-                              {project.linked_active_vendor_count}
+                              {project.transacted_vendor_count}
                             </td>
                             <td className={`${DATA_TABLE_TD_CLASS} text-right`}>
                               <RowActionCluster className="justify-end">
-                                <Button
-                                  type="button"
-                                  variant="secondary"
-                                  size="sm"
-                                  onClick={() => {
-                                    setPvProjectId(project.project_id);
-                                    setPvPage(1);
-                                    setActiveTab("vendors");
-                                  }}
-                                >
-                                  <Link2 className="h-3.5 w-3.5" aria-hidden="true" />
-                                  Liên kết Vendor
-                                </Button>
                                 {current ? (
                                   <Button
                                     type="button"
@@ -883,278 +703,6 @@ export function VendorFinanceGovernanceView() {
               ariaLabel="Phân trang danh sách dự án"
               disabled={paLoading}
               onPageChange={(next) => setPaPage(next)}
-            />
-          </Card>
-        ) : null}
-      </section>
-
-      {/* TAB 2: CONTROLLED PROJECT - VENDOR LINKS */}
-      <section
-        id={`${tabBaseId}-panel-vendors`}
-        role="tabpanel"
-        aria-labelledby={`${tabBaseId}-tab-vendors`}
-        hidden={activeTab !== "vendors"}
-        data-ui-panel-motion="true"
-        data-testid="vfin-governance-panel-vendors"
-        className="space-y-4"
-      >
-        <FilterToolbar
-          actions={
-            <div
-              role="group"
-              aria-label="Phạm vi hiển thị Vendor"
-              className="inline-flex self-end rounded-xl border border-border bg-surface p-1 gap-1"
-            >
-              <button
-                type="button"
-                aria-pressed={!pvOnlyLinked}
-                onClick={() => {
-                  setPvOnlyLinked(false);
-                  setPvPage(1);
-                }}
-                className={`min-h-9 rounded-lg px-3 text-xs sm:text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 ${
-                  !pvOnlyLinked
-                    ? "bg-primary text-white"
-                    : "text-foreground hover:bg-muted/10"
-                }`}
-              >
-                Tất cả Vendor
-              </button>
-              <button
-                type="button"
-                aria-pressed={pvOnlyLinked}
-                onClick={() => {
-                  setPvOnlyLinked(true);
-                  setPvPage(1);
-                }}
-                className={`min-h-9 rounded-lg px-3 text-xs sm:text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 ${
-                  pvOnlyLinked
-                    ? "bg-primary text-white"
-                    : "text-foreground hover:bg-muted/10"
-                }`}
-              >
-                Chỉ Vendor đã liên kết
-              </button>
-            </div>
-          }
-        >
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-            <div className="min-w-[230px]">
-              <label
-                htmlFor={`${tabBaseId}-pv-project`}
-                className="block text-xs font-medium text-muted mb-1"
-              >
-                Dự án cần quản lý liên kết Vendor
-              </label>
-              <select
-                id={`${tabBaseId}-pv-project`}
-                data-testid="vfin-admin-project-vendor-select"
-                value={pvProjectId}
-                onChange={(e) => {
-                  setPvProjectId(e.target.value);
-                  setPvPage(1);
-                }}
-                className="min-h-11 sm:min-h-10 w-full rounded-xl border border-border bg-surface px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-              >
-                <option value="">— Chọn dự án —</option>
-                {projectOptions.map((p) => (
-                  <option key={p.project_id} value={p.project_id}>
-                    {p.display_name} ({p.project_id}){!p.active ? " · Ngừng HĐ" : ""}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="relative flex-1 min-w-[220px]">
-              <label htmlFor={`${tabBaseId}-pv-search`} className="sr-only">
-                Tìm Vendor để liên kết
-              </label>
-              <Search
-                className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted"
-                aria-hidden="true"
-              />
-              <input
-                id={`${tabBaseId}-pv-search`}
-                type="search"
-                maxLength={VFIN_UI_MAX_SEARCH_LENGTH}
-                value={pvSearchInput}
-                onChange={(e) => setPvSearchInput(e.target.value)}
-                placeholder="Tìm theo tên hoặc mã Vendor..."
-                className="min-h-11 sm:min-h-10 w-full rounded-xl border border-border bg-surface pl-9 pr-9 text-sm text-foreground placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-              />
-              {pvSearchInput ? (
-                <button
-                  type="button"
-                  aria-label="Xóa từ khóa tìm Vendor"
-                  onClick={() => setPvSearchInput("")}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg p-1.5 text-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-                >
-                  <X className="h-4 w-4" aria-hidden="true" />
-                </button>
-              ) : null}
-            </div>
-          </div>
-        </FilterToolbar>
-
-        <Alert tone="info" title="Nguồn chuẩn quan hệ Dự án – Vendor">
-          Hệ thống chỉ cho phép ghi nhận thu/chi, công nợ đầu kỳ và đối soát đối với cặp{" "}
-          <strong>(Dự án, Vendor)</strong> đã được Admin khai báo liên kết hợp lệ tại đây; không tự
-          động suy diễn từ dữ liệu tuyển dụng hoặc tên gần giống.
-        </Alert>
-
-        {!pvProjectId ? (
-          <Card className="p-6 text-center text-sm text-muted">
-            Vui lòng chọn một dự án ở bộ lọc phía trên để xem và khai báo liên kết Vendor.
-          </Card>
-        ) : null}
-
-        {pvError ? (
-          <Alert tone="error" role="alert" title="Không thể tải danh sách liên kết Dự án – Vendor">
-            <p>{pvError}</p>
-            <div className="mt-2">
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                onClick={() => setPvReloadTick((t) => t + 1)}
-              >
-                Thử lại
-              </Button>
-            </div>
-          </Alert>
-        ) : null}
-
-        {pvLoading && !pvData && pvProjectId ? (
-          <Card className="p-6 text-sm text-muted" aria-busy="true">
-            Đang tải danh sách Vendor cho dự án đã chọn...
-          </Card>
-        ) : null}
-
-        {pvData ? (
-          <Card className="p-4 sm:p-5">
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-              <div className="text-sm font-semibold text-foreground">
-                Dự án: {pvData.project_display_name}{" "}
-                <span className="font-mono text-xs text-muted">({pvData.project_id})</span>
-              </div>
-              <StatusBadge tone={pvData.project_active ? "success" : "neutral"}>
-                {pvData.project_active ? "Dự án đang hoạt động" : "Dự án ngừng hoạt động"}
-              </StatusBadge>
-            </div>
-
-            {pvData.vendors.length === 0 ? (
-              <p className="py-8 text-center text-sm text-muted">
-                Không có Vendor nào khớp điều kiện tra cứu hiện tại.
-              </p>
-            ) : (
-              <DataTableContainer>
-                <table
-                  className={DATA_TABLE_CLASS}
-                  aria-label="Bảng khai báo liên kết Dự án – Vendor"
-                >
-                  <thead className={DATA_TABLE_HEAD_CLASS}>
-                    <tr>
-                      <th scope="col" className={DATA_TABLE_TH_CLASS}>
-                        Vendor
-                      </th>
-                      <th scope="col" className={DATA_TABLE_TH_CLASS}>
-                        Trạng thái Vendor
-                      </th>
-                      <th scope="col" className={DATA_TABLE_TH_CLASS}>
-                        Trạng thái liên kết dự án
-                      </th>
-                      <th scope="col" className={`${DATA_TABLE_TH_CLASS} text-right`}>
-                        Phiên bản OCC
-                      </th>
-                      <th scope="col" className={`${DATA_TABLE_TH_CLASS} text-right`}>
-                        Thao tác
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {pvData.vendors.map((vendor) => (
-                      <tr key={vendor.vendor_id} className={DATA_TABLE_ROW_CLASS}>
-                        <td className={DATA_TABLE_TD_CLASS}>
-                          <Link
-                            href={`/finance/vendors/${encodeURIComponent(vendor.vendor_id)}`}
-                            className="font-semibold text-foreground hover:text-primary underline-offset-2 hover:underline"
-                          >
-                            {vendor.display_name}
-                          </Link>
-                          <div className="mt-0.5 font-mono text-xs text-muted">
-                            {vendor.vendor_id}
-                          </div>
-                        </td>
-                        <td className={DATA_TABLE_TD_CLASS}>
-                          <StatusBadge tone={vendor.vendor_active ? "success" : "neutral"}>
-                            {vendor.vendor_active ? "Đang hoạt động" : "Ngừng hoạt động"}
-                          </StatusBadge>
-                        </td>
-                        <td className={DATA_TABLE_TD_CLASS}>
-                          {vendor.linked ? (
-                            vendor.link_active ? (
-                              <StatusBadge tone="success">Đang liên kết</StatusBadge>
-                            ) : (
-                              <StatusBadge tone="warning">Đã ngừng liên kết</StatusBadge>
-                            )
-                          ) : (
-                            <StatusBadge tone="neutral">Chưa liên kết</StatusBadge>
-                          )}
-                        </td>
-                        <td className={`${DATA_TABLE_TD_CLASS} text-right font-mono tabular-nums`}>
-                          v{vendor.link_version}
-                        </td>
-                        <td className={`${DATA_TABLE_TD_CLASS} text-right`}>
-                          <RowActionCluster className="justify-end">
-                            {vendor.link_active ? (
-                              <Button
-                                type="button"
-                                variant="secondary"
-                                size="sm"
-                                onClick={() =>
-                                  setLinkDialogTarget({
-                                    projectId: pvData.project_id,
-                                    projectDisplayName: pvData.project_display_name,
-                                    vendor,
-                                  })
-                                }
-                              >
-                                Ngừng liên kết
-                              </Button>
-                            ) : (
-                              <Button
-                                type="button"
-                                variant="primary"
-                                size="sm"
-                                disabled={!pvData.project_active || !vendor.vendor_active}
-                                onClick={() =>
-                                  setLinkDialogTarget({
-                                    projectId: pvData.project_id,
-                                    projectDisplayName: pvData.project_display_name,
-                                    vendor,
-                                  })
-                                }
-                              >
-                                <Link2 className="h-3.5 w-3.5" aria-hidden="true" />
-                                Liên kết vào dự án
-                              </Button>
-                            )}
-                          </RowActionCluster>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </DataTableContainer>
-            )}
-
-            <OffsetPager
-              page={pvData.page}
-              pageCount={pvPageCount}
-              total={pvData.total}
-              ariaLabel="Phân trang liên kết Dự án – Vendor"
-              disabled={pvLoading}
-              onPageChange={(next) => setPvPage(next)}
             />
           </Card>
         ) : null}
@@ -1429,29 +977,6 @@ export function VendorFinanceGovernanceView() {
             notify.success({
               title: "Đã kết thúc phân công kế toán dự án",
               description: `Bạn có thể phân công kế toán tiếp nhận mới cho dự án ${name}.`,
-            });
-          }}
-        />
-      ) : null}
-
-      {/* DIALOG 2: SET / UNSET PROJECT-VENDOR LINK */}
-      {linkDialogTarget ? (
-        <SetProjectVendorLinkDialog
-          open={Boolean(linkDialogTarget)}
-          onOpenChange={(open) => {
-            if (!open) setLinkDialogTarget(null);
-          }}
-          target={linkDialogTarget}
-          onCompleted={(nextActive) => {
-            const vendorName = linkDialogTarget.vendor.display_name;
-            const projName = linkDialogTarget.projectDisplayName;
-            setLinkDialogTarget(null);
-            refreshAllGovernanceData();
-            notify.success({
-              title: nextActive
-                ? "Đã liên kết Vendor vào dự án"
-                : "Đã ngừng liên kết Vendor khỏi dự án",
-              description: `${vendorName} · ${projName}`,
             });
           }}
         />
@@ -1810,150 +1335,6 @@ function EndProjectAccountantDialog({
           </Button>
           <Button type="submit" variant="primary" disabled={submitting}>
             {submitting ? "Đang xử lý..." : "Xác nhận kết thúc phân công"}
-          </Button>
-        </div>
-      </form>
-    </FormDialog>
-  );
-}
-
-function SetProjectVendorLinkDialog({
-  open,
-  onOpenChange,
-  target,
-  onCompleted,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  target: {
-    projectId: string;
-    projectDisplayName: string;
-    vendor: VendorFinanceProjectVendorAdminItem;
-  };
-  onCompleted: (nextActive: boolean) => void;
-}) {
-  const formId = useId();
-  const nextActive = !target.vendor.link_active;
-  const [reason, setReason] = useState("");
-  const [idempotencyKey, setIdempotencyKey] = useState(() => createClientIdempotencyKey());
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const handleSubmit = async (event: FormEvent) => {
-    event.preventDefault();
-    if (submitting) return;
-    setError(null);
-
-    const built = buildSetProjectVendorLinkRequest({
-      project_id: target.projectId,
-      vendor_id: target.vendor.vendor_id,
-      active: nextActive,
-      expected_version: target.vendor.link_version,
-      reason,
-      idempotency_key: idempotencyKey,
-    });
-    if (!built.ok) {
-      setError(built.message);
-      return;
-    }
-
-    setSubmitting(true);
-    try {
-      const response = await fetch("/api/vendor-finance/admin/project-vendors", {
-        method: "POST",
-        headers: built.request.headers,
-        body: JSON.stringify(built.request.body),
-      });
-      const payload = await readSafeJson(response);
-      if (!response.ok) {
-        const classified = classifyVendorFinanceError(payload, response.status);
-        if (classified.shouldRotateIdempotencyKey) {
-          setIdempotencyKey(createClientIdempotencyKey());
-        }
-        setError(classified.message);
-        setSubmitting(false);
-        return;
-      }
-      const parsed = parseSetProjectVendorLinkEnvelope(payload);
-      if (!parsed) {
-        setError("Phản hồi cập nhật liên kết Dự án – Vendor không hợp lệ.");
-        setSubmitting(false);
-        return;
-      }
-      setSubmitting(false);
-      onCompleted(nextActive);
-    } catch {
-      setError("Mất kết nối mạng khi cập nhật liên kết. Bạn có thể bấm gửi lại an toàn.");
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <FormDialog
-      open={open}
-      onOpenChange={(next) => {
-        if (!submitting) onOpenChange(next);
-      }}
-      closeDisabled={submitting}
-      dataTestId="vfin-project-vendor-link-dialog"
-      title={
-        nextActive
-          ? `Liên kết Vendor vào dự án — ${target.projectDisplayName}`
-          : `Ngừng liên kết Vendor khỏi dự án — ${target.projectDisplayName}`
-      }
-      description={`Vendor: ${target.vendor.display_name} (${target.vendor.vendor_id}) · Phiên bản hiện tại v${target.vendor.link_version}`}
-    >
-      <form onSubmit={handleSubmit} className="space-y-4">
-        {error ? (
-          <Alert tone="error" role="alert" title="Không thể cập nhật liên kết">
-            {error}
-          </Alert>
-        ) : null}
-
-        {!nextActive ? (
-          <Alert tone="warning" title="Lưu ý khi ngừng liên kết">
-            Sau khi ngừng liên kết, dự án chỉ cho phép ghi nhận các bút toán tất toán hoặc điều
-            chỉnh giảm công nợ còn tồn theo quy định; không được phát sinh công nợ mới hoặc tạm ứng
-            mới.
-          </Alert>
-        ) : null}
-
-        <div>
-          <label
-            htmlFor={`${formId}-reason`}
-            className="block text-sm font-medium text-foreground mb-1"
-          >
-            Lý do {nextActive ? "khai báo liên kết" : "ngừng liên kết"}{" "}
-            <span className="text-danger">*</span>
-          </label>
-          <textarea
-            id={`${formId}-reason`}
-            required
-            rows={3}
-            maxLength={VFIN_UI_MAX_REASON_LENGTH}
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            disabled={submitting}
-            placeholder="Nhập căn cứ hợp đồng / điều phối Vendor tham gia dự án..."
-            className="w-full rounded-xl border border-border bg-surface p-3 text-sm text-foreground placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-          />
-        </div>
-
-        <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border pt-3">
-          <Button
-            type="button"
-            variant="secondary"
-            disabled={submitting}
-            onClick={() => onOpenChange(false)}
-          >
-            Hủy
-          </Button>
-          <Button type="submit" variant="primary" disabled={submitting}>
-            {submitting
-              ? "Đang lưu..."
-              : nextActive
-                ? "Xác nhận liên kết"
-                : "Xác nhận ngừng liên kết"}
           </Button>
         </div>
       </form>

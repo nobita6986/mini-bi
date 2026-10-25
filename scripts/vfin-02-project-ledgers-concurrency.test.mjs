@@ -38,9 +38,8 @@ import {
   computeAssignGlobalRoleFingerprint,
   computeAssignProjectAccountantFingerprint,
   computeRecordEntryFingerprint,
-  computeSetProjectVendorLinkFingerprint,
 } from "../src/lib/vendor-finance/vendor-finance-contract.ts";
-import { VFIN_02_PROJECT_LEDGERS_MIGRATION_NAME } from "./lib/migration-validation.mjs";
+import { HF_VFIN_02_IMPLICIT_VENDOR_PROJECT_MIGRATION_NAME } from "./lib/migration-validation.mjs";
 
 const ROOT = process.cwd();
 const MIGRATION_DIR = path.join(ROOT, "supabase", "migrations");
@@ -150,10 +149,10 @@ async function applyMigrations(client) {
   const names = (await readdir(MIGRATION_DIR))
     .filter((name) => name.endsWith(".sql"))
     .sort();
-  const targetIndex = names.indexOf(VFIN_02_PROJECT_LEDGERS_MIGRATION_NAME);
+  const targetIndex = names.indexOf(HF_VFIN_02_IMPLICIT_VENDOR_PROJECT_MIGRATION_NAME);
   assert.ok(
     targetIndex >= 0,
-    `migration inventory must include ${VFIN_02_PROJECT_LEDGERS_MIGRATION_NAME}`,
+    `migration inventory must include ${HF_VFIN_02_IMPLICIT_VENDOR_PROJECT_MIGRATION_NAME}`,
   );
   for (const name of names.slice(0, targetIndex + 1)) {
     await client.query(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
@@ -166,8 +165,6 @@ const APPLY_OPENING_SQL =
   "select public.vendor_finance_apply_opening_batch($1::uuid, $2::uuid, $3::text, $4::date, $5::jsonb, $6::text, $7::uuid, $8::text) as data";
 const ASSIGN_ACCT_SQL =
   "select public.vendor_finance_assign_project_accountant_admin($1::uuid, $2::uuid, $3::text, $4::uuid, $5::integer, $6::date, $7::text, $8::uuid, $9::text) as data";
-const LINK_VENDOR_SQL =
-  "select public.vendor_finance_set_project_vendor_link_admin($1::uuid, $2::uuid, $3::text, $4::text, $5::boolean, $6::integer, $7::text, $8::uuid, $9::text) as data";
 const ASSIGN_GLOBAL_ROLE_SQL =
   "select public.vendor_finance_assign_global_role_admin($1::uuid, $2::uuid, $3::uuid, $4::text, $5::integer, $6::date, $7::text, $8::uuid, $9::text) as data";
 
@@ -276,7 +273,7 @@ async function seedFixture(client) {
     ]);
   }
 
-  // Create canonical Vendors & controlled Vendor-Project links on PRJ_1 and PRJ_2
+  // Create canonical Vendors; active Vendor–Project eligibility is implicit.
   const vendors = [
     ["VND_RACE_SHARED", "NCC Đua Song Song Hai Dự Án"],
     ["VND_RACE_OPEN_OVERLAP", "NCC Đua Số Dư Đầu Kỳ Theo Dự Án"],
@@ -290,26 +287,6 @@ async function seedFixture(client) {
        )`,
       [ADMIN_1.auth, ADMIN_1.app, vid, vname, nextUuid()],
     );
-    for (const prj of [PRJ_1, PRJ_2]) {
-      const linkReason = `Liên kết có kiểm soát ${vid} vào ${prj}`;
-      await client.query(LINK_VENDOR_SQL, [
-        ADMIN_1.auth,
-        ADMIN_1.app,
-        prj,
-        vid,
-        true,
-        0,
-        linkReason,
-        nextUuid(),
-        computeSetProjectVendorLinkFingerprint({
-          project_id: prj,
-          vendor_id: vid,
-          active: true,
-          expected_version: 0,
-          reason: linkReason,
-        }),
-      ]);
-    }
   }
 }
 
