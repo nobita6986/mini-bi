@@ -92,6 +92,8 @@ function entryProjection(laborType, laborTypeDisplay = LABOR_TYPE_DISPLAY_FIXTUR
   return {
     entry_id: ENTRY_ID,
     submission_id: SUBMISSION_ID,
+    created_at: "2026-10-25T09:15:00.123456Z",
+    created_by: { display_name: "Người nhập giả", login_id: "nguoinhapgia" },
     project_id: "project_synthetic_01",
     first_work_date: FIRST_WORK_DATE,
     employee_code: EMPLOYEE_CODE,
