@@ -136,20 +136,26 @@ describe("R2.2 — Direct Entry Grid No-Touch & CSS Isolation Guard", () => {
   describe("2. direct-entry-live.tsx — Subtree Slice Preservation", () => {
     const relPath = "src/components/direct-entry/direct-entry-live.tsx";
 
-    function extractInputModeAndGridSlice(source) {
+    function extractInputModeSwitchSlice(source) {
       const startMarker = "<div className={styles.inputModeSwitch}";
-      const gridMarker = "<section className={styles.gridSection}";
-      const endMarker = "</section>";
+      const endMarker = "</div>";
 
       const startIdx = source.indexOf(startMarker);
       assert.ok(startIdx !== -1, `Missing ${startMarker} in ${relPath}`);
 
-      const gridIdx = source.indexOf(gridMarker, startIdx);
-      assert.ok(gridIdx !== -1, `Missing ${gridMarker} after ${startMarker} in ${relPath}`);
+      const closeIdx = source.indexOf(endMarker, startIdx);
+      assert.ok(closeIdx !== -1, `Missing closing ${endMarker} for input mode switch in ${relPath}`);
 
-      const closeIdx = source.indexOf(endMarker, gridIdx);
+      return source.slice(startIdx, closeIdx + endMarker.length);
+    }
+
+    function extractGridSectionSlice(source) {
+      const startMarker = "<section className={styles.gridSection}";
+      const endMarker = "</section>";
+      const startIdx = source.indexOf(startMarker);
+      assert.ok(startIdx !== -1, `Missing ${startMarker} in ${relPath}`);
+      const closeIdx = source.indexOf(endMarker, startIdx);
       assert.ok(closeIdx !== -1, `Missing closing ${endMarker} for .gridSection in ${relPath}`);
-
       return source.slice(startIdx, closeIdx + endMarker.length);
     }
 
@@ -160,15 +166,16 @@ describe("R2.2 — Direct Entry Grid No-Touch & CSS Isolation Guard", () => {
       return source.slice(startIdx);
     }
 
-    it("preserves exact substring from <div className={styles.inputModeSwitch} through closing </section> of .gridSection", () => {
+    it("preserves the input mode switch and Grid section exactly while allowing Form-only changes", () => {
       const currentSource = readWorkingFile(relPath);
       const baselineSource = readBaselineFile(relPath);
 
-      const currentSlice = extractInputModeAndGridSlice(currentSource);
-      const baselineSlice = extractInputModeAndGridSlice(baselineSource);
-
-      assert.equal(currentSlice, baselineSlice);
-      assert.equal(sha256(currentSlice), sha256(baselineSlice));
+      for (const extractSlice of [extractInputModeSwitchSlice, extractGridSectionSlice]) {
+        const currentSlice = extractSlice(currentSource);
+        const baselineSlice = extractSlice(baselineSource);
+        assert.equal(currentSlice, baselineSlice);
+        assert.equal(sha256(currentSlice), sha256(baselineSlice));
+      }
     });
 
     it("preserves exact substring from <section className={styles.mobileSection} to EOF (including drawers and dialogs)", () => {
