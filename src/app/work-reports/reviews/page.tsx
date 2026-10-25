@@ -7,7 +7,7 @@ import { resolveActorForRequest } from "@/lib/navigation/resolve-nav-actor";
 import { workReportReviewPredicate } from "@/lib/navigation/registry-capability";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Duyệt báo cáo — Mini BI" };
+export const metadata = { title: "Cần duyệt báo cáo — Mini BI" };
 
 export default async function WorkReportReviewsPage() {
   if (process.env.WORK_REPORTS_API_ENABLED !== "true") notFound();
@@ -22,8 +22,9 @@ export default async function WorkReportReviewsPage() {
   return workReportReviewPredicate(resolution.actor) ? (
     <WorkReportsShell
       actor={resolution.actor}
-      title="Duyệt báo cáo"
-      description="Hàng đợi và nội dung do máy chủ giới hạn theo phạm vi duyệt hiện hành."
+      active="reviews"
+      title="Cần duyệt"
+      description="Hàng đợi và nội dung báo cáo chờ duyệt do máy chủ giới hạn theo phạm vi duyệt hiện hành."
     >
       <ReviewInbox />
     </WorkReportsShell>

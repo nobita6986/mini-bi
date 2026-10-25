@@ -14,7 +14,7 @@ const shell = await readFile(new URL("../work-reports-shell.tsx", import.meta.ur
 const reviewsPage = await readFile(new URL("../../../app/work-reports/reviews/page.tsx", import.meta.url), "utf8");
 const delegationsPage = await readFile(new URL("../../../app/work-reports/delegations/page.tsx", import.meta.url), "utf8");
 
-test("analytics page stays capability gated and hosts two server-scoped tabs", () => {
+test("analytics page stays capability gated and hosts two server-scoped tabs (Tổng quan / Bài nộp)", () => {
   assert.match(page, /decideWorkReportAnalyticsPageAccess/);
   assert.match(page, /WORK_REPORTS_API_ENABLED/);
   assert.match(page, /workReportViewPredicate\(actor\.actor\)/);
@@ -23,9 +23,9 @@ test("analytics page stays capability gated and hosts two server-scoped tabs", (
   assert.match(tabs, /role="tab"/);
   assert.match(tabs, /role="tabpanel"/);
   assert.match(tabs, /Bài nộp/);
-  assert.match(tabs, /Tổng hợp/);
+  assert.match(tabs, /Tổng quan/);
   assert.match(tabs, /useState<"submissions" \| "summary">/);
-  // The original analytics dashboard stays the "Tổng hợp" tab.
+  // The analytics dashboard renders under the "Tổng quan" tab.
   assert.match(component, /\/api\/work-reports\/analytics\/overview/);
   assert.match(component, /\/api\/work-reports\/analytics\/breakdown/);
 });

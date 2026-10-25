@@ -9,7 +9,7 @@ import type { WorkReportTemplateSchema, WorkReportField } from "@/lib/work-repor
 
 export type WorkReportRendererDetail = {
   obligation: { obligation_id: string; period_key: string; due_at: string; obligation_status: string;
-    period_start_date?: string; period_end_date?: string; reopened_until: string | null; version: number };
+    period_start_date?: string; period_end_date?: string; reopened_until: string | null; is_overdue?: boolean; version: number };
   template: { display_name: string; schema_json: WorkReportTemplateSchema };
   submission: { submission_id: string; state: string; draft_payload_json: Record<string, unknown> | null;
     first_submitted_at: string | null; latest_submitted_at: string | null; is_late: boolean;
@@ -71,18 +71,21 @@ export function WorkReportFormRenderer({ detail, onSaved }: { detail: WorkReport
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState<number | null>(null);
+  const [serverDeadlinePassed, setServerDeadlinePassed] = useState(false);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 60_000);
     return () => window.clearInterval(timer);
   }, []);
 
-  // The RPC remains authoritative; this clock only hides actions known to be closed.
-  const canEdit = detail.obligation.obligation_status === "ACTIVE" && (detail.submission?.state === "REJECTED" || now === null ||
+  const isOverdue = Boolean(detail.obligation.is_overdue) || serverDeadlinePassed;
+  // The RPC remains authoritative; server `is_overdue` plus this clock hides actions known to be closed.
+  const canEdit = !isOverdue && detail.obligation.obligation_status === "ACTIVE" && (detail.submission?.state === "REJECTED" || now === null ||
     now <= Date.parse(detail.obligation.due_at) ||
     (detail.obligation.reopened_until !== null && now <= Date.parse(detail.obligation.reopened_until)));
 
   async function save(action: "draft" | "submit") {
+    if (!canEdit) return;
     setBusy(true); setError(null);
     if (action === "submit") {
       const validation = validateWorkReportSubmission(schema, payload, {
@@ -106,8 +109,11 @@ export function WorkReportFormRenderer({ detail, onSaved }: { detail: WorkReport
       onSaved?.();
     } catch (cause) {
       const code = cause instanceof Error ? cause.message : "WORK_REPORT_UNAVAILABLE";
+      if (code === "WORK_REPORT_DEADLINE_PASSED") {
+        setServerDeadlinePassed(true);
+      }
       const msg = code === "WORK_REPORT_VERSION_CONFLICT" ? "Bản báo cáo đã được cập nhật ở nơi khác. Tải lại trước khi tiếp tục."
-        : code === "WORK_REPORT_DEADLINE_PASSED" ? "Đã quá hạn nộp báo cáo."
+        : code === "WORK_REPORT_DEADLINE_PASSED" ? "Đã quá hạn nộp báo cáo. Nghĩa vụ đã chuyển sang trạng thái quá hạn (chỉ xem)."
           : "Không lưu được báo cáo. Vui lòng thử lại.";
       setError(msg);
       if (code === "WORK_REPORT_VERSION_CONFLICT") notify.warning({ title: msg });
@@ -117,14 +123,18 @@ export function WorkReportFormRenderer({ detail, onSaved }: { detail: WorkReport
 
   return <section className="space-y-5" aria-labelledby="work-report-form-title">
     <div><h2 id="work-report-form-title" className="text-lg font-semibold">{detail.template.display_name}</h2>
-      <p className="mt-1 text-sm text-muted">Kỳ {detail.obligation.period_key} · Hạn nộp {new Date(detail.obligation.due_at).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}</p>
+      <p className="mt-1 text-sm text-muted">Kỳ {detail.obligation.period_key} · Hạn nộp {new Date(detail.obligation.due_at).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}{isOverdue ? " · Quá hạn" : ""}</p>
       {detail.submission ? <p className="mt-1 text-sm text-muted">Trạng thái: {detail.submission.state}{detail.submission.is_late ? " · Nộp muộn" : ""}{detail.submission.has_post_deadline_amendment ? " · Có chỉnh sửa sau hạn" : ""}</p> : null}
     </div>
     {detail.submission?.state === "REJECTED" ? <StatusBanner tone="warning" title="Báo cáo cần nộp lại">
       {detail.latest_review_event?.reason?.trim() || "Báo cáo đã bị từ chối. Hãy chỉnh sửa và nộp lại."}
     </StatusBanner> : null}
     {error ? <StatusBanner tone="error">{error}</StatusBanner> : null}
-    {!canEdit ? <StatusBanner tone="warning">Nghĩa vụ đã đóng hoặc quá hạn. Chỉ có thể xem.</StatusBanner> : null}
+    {!canEdit ? <StatusBanner tone="warning" title={isOverdue ? "Kỳ báo cáo đã quá hạn" : undefined}>
+      {isOverdue
+        ? "Nghĩa vụ đã đóng hoặc quá hạn. Chỉ có thể xem lại thông tin hoặc bản nháp đã lưu, không thể lưu nháp hay nộp mới."
+        : "Nghĩa vụ đã đóng hoặc quá hạn. Chỉ có thể xem."}
+    </StatusBanner> : null}
     {schema.sections.map((section) => <fieldset key={section.section_key} className="space-y-4 rounded-xl border border-border p-4" disabled={!canEdit || busy}>
       <legend className="px-1 font-medium">{section.label}</legend>
       {section.description ? <p className="text-sm text-muted">{section.description}</p> : null}

@@ -713,7 +713,7 @@ test("ACL, Full Admin & Team Leader scoping, filter_options isolation, submitted
     );
     assert.deepEqual(
       adminAll.filter_options.assignees.map((a) => a.app_user_id).sort(),
-      [STAFF_A1.app, STAFF_A2.app, STAFF_B1.app, UNASSIGNED_TEAM_STAFF.app].sort(),
+      [LEADER_A.app, STAFF_A1.app, STAFF_A2.app, STAFF_B1.app, UNASSIGNED_TEAM_STAFF.app].sort(),
       "assignees filter options never dump the global direct_entry_app_users directory",
     );
     assert.equal(adminAll.filter_options.templates.length, 2);
@@ -754,7 +754,7 @@ test("ACL, Full Admin & Team Leader scoping, filter_options isolation, submitted
     ]);
     assert.deepEqual(
       leaderAResult.filter_options.assignees.map((a) => a.app_user_id).sort(),
-      [STAFF_A1.app, STAFF_A2.app].sort(),
+      [LEADER_A.app, STAFF_A1.app, STAFF_A2.app].sort(),
       "Team Leader A filter_options must never leak Team B or unassigned assignees",
     );
 
