@@ -3427,7 +3427,7 @@ begin
        select 1
          from public.vendor_finance_entries e2
         where e2.opening_batch_id = b.batch_id
-          and e2.contract_type = 'UNCLASSIFIED'
+          and e2.contract_type <> p_target_contract_type
      );
 
   insert into public.vendor_finance_subledger_classifications (

@@ -1992,6 +1992,10 @@ test("(#3) Full VFIN-03 acceptance: contract-type sub-ledgers (SEASONAL vs OFFIC
       ["VND_DUAL_CONTRACT", "Công ty Song Hành Thời Vụ & Chính Thức"],
       ["VND_PRE_VFIN03", "Công ty Dữ Liệu Sổ Dự Án Trước VFIN-03"],
       ["VND_PRE_COLLIDE", "Công ty Kiểm Tra Trùng Sổ Đích Khi Phân Loại"],
+      ["VND_PRE_BATCH_MIX_A", "Công ty Lô Mở Sổ Cũ Khác Loại HĐ - A"],
+      ["VND_PRE_BATCH_MIX_B", "Công ty Lô Mở Sổ Cũ Khác Loại HĐ - B"],
+      ["VND_PRE_BATCH_SAME_A", "Công ty Lô Mở Sổ Cũ Cùng Loại HĐ - A"],
+      ["VND_PRE_BATCH_SAME_B", "Công ty Lô Mở Sổ Cũ Cùng Loại HĐ - B"],
     ]) {
       await db.query(
         `select public.direct_entry_create_vendor(
@@ -2087,6 +2091,46 @@ test("(#3) Full VFIN-03 acceptance: contract-type sub-ledgers (SEASONAL vs OFFIC
        )`,
       [ACCT_A.auth, ACCT_A.app, PRJ_1, nextUuid(), "4".repeat(64)],
     );
+
+    // Seed two pre-VFIN-03 multi-vendor opening batches on PRJ_2 (ACCT_B) to test batch contract_type
+    // classification when vendors in the same batch are classified into different vs identical contract types
+    const { rows: mixedBatchSeed } = await db.query(
+      `select public.vendor_finance_apply_opening_batch(
+         $1::uuid, $2::uuid, $3::text, '2026-10-01'::date, $4::jsonb,
+         'Lô mở đầu kỳ VFIN-02 gồm 2 NCC sẽ phân loại khác loại HĐ', $5::uuid, $6::text
+       ) as payload`,
+      [
+        ACCT_B.auth,
+        ACCT_B.app,
+        PRJ_2,
+        JSON.stringify([
+          { vendor_id: "VND_PRE_BATCH_MIX_A", entry_type: "OPENING_PAYABLE", amount_minor: "3000000" },
+          { vendor_id: "VND_PRE_BATCH_MIX_B", entry_type: "OPENING_PAYABLE", amount_minor: "4000000" },
+        ]),
+        nextUuid(),
+        "5".repeat(64),
+      ],
+    );
+    const mixedLegacyBatchId = mixedBatchSeed[0].payload.batch.batch_id;
+
+    const { rows: sameBatchSeed } = await db.query(
+      `select public.vendor_finance_apply_opening_batch(
+         $1::uuid, $2::uuid, $3::text, '2026-10-01'::date, $4::jsonb,
+         'Lô mở đầu kỳ VFIN-02 gồm 2 NCC sẽ phân loại cùng loại HĐ', $5::uuid, $6::text
+       ) as payload`,
+      [
+        ACCT_B.auth,
+        ACCT_B.app,
+        PRJ_2,
+        JSON.stringify([
+          { vendor_id: "VND_PRE_BATCH_SAME_A", entry_type: "OPENING_PAYABLE", amount_minor: "1500000" },
+          { vendor_id: "VND_PRE_BATCH_SAME_B", entry_type: "OPENING_PAYABLE", amount_minor: "2500000" },
+        ]),
+        nextUuid(),
+        "6".repeat(64),
+      ],
+    );
+    const sameLegacyBatchId = sameBatchSeed[0].payload.batch.batch_id;
 
     const { rows: preVfin03EntriesSnapshot } = await db.query(
       `select entry_id::text as entry_id, vendor_id, vendor_sequence::int as seq, document_no,
@@ -2689,6 +2733,115 @@ test("(#3) Full VFIN-03 acceptance: contract-type sub-ledgers (SEASONAL vs OFFIC
     assert.deepEqual(
       monthlyUnclassified.data.rows.map((r) => `${r.vendor_id}:${r.contract_type}:${r.closing_balance_minor}`),
       ["VND_PRE_COLLIDE:UNCLASSIFIED:5000000"],
+    );
+
+    // 6d. Multi-vendor legacy opening batch metadata regression:
+    // - When a pre-VFIN-03 opening batch contains 2 vendors classified into DIFFERENT contract types
+    //   (`VND_PRE_BATCH_MIX_A -> SEASONAL`, `VND_PRE_BATCH_MIX_B -> OFFICIAL`), the batch row in
+    //   `vendor_finance_opening_batches` MUST remain `UNCLASSIFIED` (never falsely labeled `OFFICIAL`).
+    // - When all vendors in a pre-VFIN-03 opening batch are classified into the SAME contract type
+    //   (`VND_PRE_BATCH_SAME_A -> SEASONAL`, `VND_PRE_BATCH_SAME_B -> SEASONAL`), the batch row transitions
+    //   to `SEASONAL` only after every entry in the batch has `contract_type = 'SEASONAL'`.
+    for (const [vid, targetType] of [
+      ["VND_PRE_BATCH_MIX_A", "SEASONAL"],
+      ["VND_PRE_BATCH_MIX_B", "OFFICIAL"],
+    ]) {
+      const r = `Phân loại ${vid} sang ${targetType} trên PRJ_2`;
+      const res = await repo.classifyUnclassifiedSubLedger({
+        auth_subject: ACCT_B.auth,
+        app_user_id: ACCT_B.app,
+        vendor_id: vid,
+        project_id: PRJ_2,
+        accountant_ref: ACCT_B.app,
+        target_contract_type: targetType,
+        reason: r,
+        idempotency_key: nextUuid(),
+        request_fingerprint: computeClassifySubLedgerFingerprint({
+          project_id: PRJ_2,
+          accountant_ref: ACCT_B.app,
+          vendor_id: vid,
+          target_contract_type: targetType,
+          reason: r,
+        }),
+      });
+      assert.equal(res.ok, true, JSON.stringify(res));
+    }
+
+    const { rows: mixedBatchRow } = await db.query(
+      `select contract_type from public.vendor_finance_opening_batches where batch_id = $1::uuid`,
+      [mixedLegacyBatchId],
+    );
+    assert.equal(
+      mixedBatchRow[0].contract_type,
+      "UNCLASSIFIED",
+      "Mixed-contract-type legacy opening batch must remain UNCLASSIFIED instead of taking the last vendor's target contract type",
+    );
+    const { rows: mixedBatchEntries } = await db.query(
+      `select vendor_id, contract_type
+         from public.vendor_finance_entries
+        where opening_batch_id = $1::uuid
+        order by vendor_id asc`,
+      [mixedLegacyBatchId],
+    );
+    assert.deepEqual(mixedBatchEntries, [
+      { vendor_id: "VND_PRE_BATCH_MIX_A", contract_type: "SEASONAL" },
+      { vendor_id: "VND_PRE_BATCH_MIX_B", contract_type: "OFFICIAL" },
+    ]);
+
+    const sameReasonA = "Phân loại VND_PRE_BATCH_SAME_A sang SEASONAL trên PRJ_2";
+    const sameResA = await repo.classifyUnclassifiedSubLedger({
+      auth_subject: ACCT_B.auth,
+      app_user_id: ACCT_B.app,
+      vendor_id: "VND_PRE_BATCH_SAME_A",
+      project_id: PRJ_2,
+      accountant_ref: ACCT_B.app,
+      target_contract_type: "SEASONAL",
+      reason: sameReasonA,
+      idempotency_key: nextUuid(),
+      request_fingerprint: computeClassifySubLedgerFingerprint({
+        project_id: PRJ_2,
+        accountant_ref: ACCT_B.app,
+        vendor_id: "VND_PRE_BATCH_SAME_A",
+        target_contract_type: "SEASONAL",
+        reason: sameReasonA,
+      }),
+    });
+    assert.equal(sameResA.ok, true, JSON.stringify(sameResA));
+
+    const { rows: sameBatchAfterFirst } = await db.query(
+      `select contract_type from public.vendor_finance_opening_batches where batch_id = $1::uuid`,
+      [sameLegacyBatchId],
+    );
+    assert.equal(sameBatchAfterFirst[0].contract_type, "UNCLASSIFIED");
+
+    const sameReasonB = "Phân loại VND_PRE_BATCH_SAME_B sang SEASONAL trên PRJ_2";
+    const sameResB = await repo.classifyUnclassifiedSubLedger({
+      auth_subject: ACCT_B.auth,
+      app_user_id: ACCT_B.app,
+      vendor_id: "VND_PRE_BATCH_SAME_B",
+      project_id: PRJ_2,
+      accountant_ref: ACCT_B.app,
+      target_contract_type: "SEASONAL",
+      reason: sameReasonB,
+      idempotency_key: nextUuid(),
+      request_fingerprint: computeClassifySubLedgerFingerprint({
+        project_id: PRJ_2,
+        accountant_ref: ACCT_B.app,
+        vendor_id: "VND_PRE_BATCH_SAME_B",
+        target_contract_type: "SEASONAL",
+        reason: sameReasonB,
+      }),
+    });
+    assert.equal(sameResB.ok, true, JSON.stringify(sameResB));
+
+    const { rows: sameBatchAfterSecond } = await db.query(
+      `select contract_type from public.vendor_finance_opening_batches where batch_id = $1::uuid`,
+      [sameLegacyBatchId],
+    );
+    assert.equal(
+      sameBatchAfterSecond[0].contract_type,
+      "SEASONAL",
+      "Homogeneous legacy opening batch must update to SEASONAL once all entries in the batch are SEASONAL",
     );
   } finally {
     await db.close();
