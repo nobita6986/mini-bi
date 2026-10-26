@@ -293,12 +293,12 @@ test("F2 review nav includes canonical Full Admin, direct and server-projected d
   assert.equal(workReportDelegationPredicate(delegated), false, "effective delegated review does not grant delegation management");
 });
 
-test("review inbox nav link is visible only for directly or effectively projected reviewers", () => {
+test("review inbox navigation stays hidden even for directly or effectively projected reviewers", () => {
   const reviewer = makeActor(["report_review"], [{ kind: "team", reference: "team-1" }]);
   const directResult = filterEntriesForActor({
     viewport: "desktop", directEntryEnabled: true, actor: reviewer, decide: decideFor(reviewer, "desktop"),
   });
-  assert.ok(directResult.some((entry) => entry.path === "/work-reports/reviews"));
+  assert.ok(!directResult.some((entry) => entry.path === "/work-reports/reviews"));
 
   const delegated = {
     capabilities: [], scopes: [{ kind: "own" }],
@@ -307,7 +307,7 @@ test("review inbox nav link is visible only for directly or effectively projecte
   const delegatedResult = filterEntriesForActor({
     viewport: "mobile", directEntryEnabled: true, actor: delegated, decide: decideFor(delegated, "mobile"),
   });
-  assert.ok(delegatedResult.some((entry) => entry.path === "/work-reports/reviews"));
+  assert.ok(!delegatedResult.some((entry) => entry.path === "/work-reports/reviews"));
 
   const staff = { capabilities: [], scopes: [], hasWorkReportObligations: true };
   const staffResult = filterEntriesForActor({

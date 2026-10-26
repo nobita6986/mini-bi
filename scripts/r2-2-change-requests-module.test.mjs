@@ -333,11 +333,14 @@ test("WP-2.2.3: shared UI primitives are genuinely reused across >= 2 consumer m
   const vendorManager = readRepoFile("src/components/admin/vendor-catalog-manager.tsx");
   const projectTeamManager = readRepoFile("src/components/admin/project-team-scope-manager.tsx");
   const formBuilderSource = readRepoFile("src/components/work-reports/form-builder/form-builder.tsx");
+  const reviewInboxSource = readRepoFile("src/components/work-reports/renderer/review-inbox.tsx");
+  const obligationsSource = readRepoFile("src/components/work-reports/renderer/my-obligations.tsx");
 
   assert.match(workspaceSource, /from "@\/components\/ui\/notify-provider"/);
   assert.equal(workspaceSource.includes("change-request-workspace-notice"), false);
   assert.match(formBuilderSource, /from "@\/components\/ui\/status-banner"/);
-  assert.match(liveSource, /from "@\/components\/ui\/status-banner"/);
+  assert.match(reviewInboxSource, /from "@\/components\/ui\/status-banner"/);
+  assert.match(obligationsSource, /from "@\/components\/ui\/status-banner"/);
 
   assert.match(workspaceSource, /from "@\/components\/ui\/cursor-load-more"/);
   assert.match(workerOpsSource, /from "@\/components\/ui\/cursor-load-more"/);
