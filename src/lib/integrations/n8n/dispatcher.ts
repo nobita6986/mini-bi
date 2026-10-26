@@ -476,7 +476,7 @@ function createDefaultAdapters(
         },
         projectLimit: input.projectPageSize,
         callWorkforceRpc: (args) =>
-          sb.rpc("direct_entry_workforce_scoped_reporting", args),
+          sb.rpc("direct_entry_workforce_reporting_scoped", args),
       });
     });
   const callPipelineCheck: typeof FetchPipelineCheckFn =
@@ -3362,6 +3362,9 @@ export async function dispatchN8nBodQuery(
   const computePaginationForKeepCount = (
     keepCount: number,
   ): { hasMore: boolean; nextCursor: string | null } => {
+    if (spec.mode === "aggregate") {
+      return { hasMore: false, nextCursor: null };
+    }
     const cutBeforeEndOfBatch = keepCount < remainingBatchRows.length;
     if (!cutBeforeEndOfBatch) {
       return {
@@ -3448,7 +3451,7 @@ export async function dispatchN8nBodQuery(
         page_size: spec.page_size,
         has_more: hasMoreVal,
         next_cursor: nextCursorVal,
-        total_matching: data.total_matching,
+        total_matching: spec.mode === "aggregate" ? null : data.total_matching,
       },
       sensitivity: {
         requested_sensitive_fields: spec.requestedSensitiveFields,
