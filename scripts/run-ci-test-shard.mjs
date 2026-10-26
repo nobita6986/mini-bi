@@ -91,6 +91,7 @@ const TEST_WEIGHTS = {
   "test:vfin-02": 14.0,
   "test:pre-wave2-cccd-review": 8.0,
   "test:leave-management-wp1": 10.0,
+  "test:leave-management-wp2-ui": 2.0,
 };
 
 const target = process.argv[2];

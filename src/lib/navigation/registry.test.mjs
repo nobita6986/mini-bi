@@ -17,9 +17,9 @@ const {
 const { isDirectEntryUiEnabled } = await import("../direct-entry/ui-model.ts");
 
 test("CURRENT_NAV_ENTRIES chứa các entry hiện hành trong một registry", () => {
-  assert.equal(CURRENT_NAV_ENTRIES.length, 9, "phải có đúng 9 entries current");
+  assert.equal(CURRENT_NAV_ENTRIES.length, 10, "phải có đúng 10 entries current");
   const ids = CURRENT_NAV_ENTRIES.map((e) => e.id).sort();
-  assert.deepEqual(ids, ["admin", "change-requests", "dashboard", "direct-entry", "finance", "project-operations", "work-report-reviews", "work-reports", "worker-operations"],
+  assert.deepEqual(ids, ["admin", "change-requests", "dashboard", "direct-entry", "finance", "leave", "project-operations", "work-report-reviews", "work-reports", "worker-operations"],
     `got ids: ${ids.join(",")}`);
 });
 
@@ -111,7 +111,7 @@ test("Desktop viewport theo feature flag, luôn giữ Dashboard và không có P
   assert.ok(!desktop.some((e) => e.id === "pipeline-check"));
   assert.ok(desktop.some((e) => e.id === "dashboard"));
   assert.ok(desktop.some((e) => e.id === "direct-entry"));
-  assert.deepEqual(entriesForViewport("desktop", false).map((entry) => entry.id), ["dashboard", "work-reports", "work-report-reviews", "finance", "admin"]);
+  assert.deepEqual(entriesForViewport("desktop", false).map((entry) => entry.id), ["dashboard", "work-reports", "work-report-reviews", "finance", "leave", "admin"]);
 });
 
 test("Mobile viewport theo feature flag, luôn giữ Dashboard và không có Pipeline Check", () => {
@@ -119,15 +119,15 @@ test("Mobile viewport theo feature flag, luôn giữ Dashboard và không có Pi
   assert.ok(!mobile.some((e) => e.id === "pipeline-check"));
   assert.ok(mobile.some((e) => e.id === "dashboard"));
   assert.ok(mobile.some((e) => e.id === "direct-entry"));
-  assert.deepEqual(entriesForViewport("mobile", false).map((entry) => entry.id), ["dashboard", "work-reports", "work-report-reviews", "finance", "admin"]);
+  assert.deepEqual(entriesForViewport("mobile", false).map((entry) => entry.id), ["dashboard", "work-reports", "work-report-reviews", "finance", "leave", "admin"]);
 });
 
 test("feature flag Direct Entry chỉ mở với giá trị chính xác true", () => {
   assert.equal(isDirectEntryUiEnabled("true"), true);
   for (const flag of [undefined, "", "false", "TRUE", "1", " true "]) {
     assert.equal(isDirectEntryUiEnabled(flag), false, String(flag));
-    assert.deepEqual(entriesForViewport("desktop", isDirectEntryUiEnabled(flag)).map((entry) => entry.id), ["dashboard", "work-reports", "work-report-reviews", "finance", "admin"]);
-    assert.deepEqual(entriesForViewport("mobile", isDirectEntryUiEnabled(flag)).map((entry) => entry.id), ["dashboard", "work-reports", "work-report-reviews", "finance", "admin"]);
+    assert.deepEqual(entriesForViewport("desktop", isDirectEntryUiEnabled(flag)).map((entry) => entry.id), ["dashboard", "work-reports", "work-report-reviews", "finance", "leave", "admin"]);
+    assert.deepEqual(entriesForViewport("mobile", isDirectEntryUiEnabled(flag)).map((entry) => entry.id), ["dashboard", "work-reports", "work-report-reviews", "finance", "leave", "admin"]);
   }
 });
 
@@ -174,6 +174,7 @@ test("registry: mỗi entry có id ổn định, label, path, icon, status, capa
         "work_reports",
         "work_report_reviews",
         "workforce_offboarding",
+        "leave",
       ].includes(entry.capability),
       `entry '${entry.id}' capability không hợp lệ: ${entry.capability}`
     );

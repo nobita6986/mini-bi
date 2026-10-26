@@ -17,6 +17,7 @@
 import type { ComponentType, SVGProps } from "react";
 import {
   Building2,
+  CalendarDays,
   ClipboardList,
   FileDiff,
   Landmark,
@@ -60,7 +61,8 @@ export type NavCapability =
   | "change_requests"
   | "work_reports"
   | "work_report_reviews"
-  | "workforce_offboarding";
+  | "workforce_offboarding"
+  | "leave";
 
 /** Icon component type — accept cả LucideIcon và custom SVG component. */
 export type NavIcon = LucideIcon | ComponentType<SVGProps<SVGSVGElement>>;
@@ -242,6 +244,17 @@ export const NAV_ENTRIES: ReadonlyArray<NavEntry> = [
     icon: Landmark,
     status: "current",
     capability: "finance",
+    visibility: { desktop: true, mobile: true },
+  },
+  {
+    id: "leave",
+    label: "Nghỉ phép",
+    path: "/leave",
+    description:
+      "Theo dõi quỹ phép cá nhân, tạo đơn xin nghỉ cả ngày hoặc nửa ngày sáng/chiều, duyệt phép theo cấp quản lý và báo cáo chốt công phép tháng.",
+    icon: CalendarDays,
+    status: "current",
+    capability: "leave",
     visibility: { desktop: true, mobile: true },
   },
   {

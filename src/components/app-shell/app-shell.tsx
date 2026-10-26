@@ -76,7 +76,8 @@ export async function AppShell({
   const vendorFinanceEnabled = process.env.DIRECT_ENTRY_API_ENABLED === "true";
   const isEntryFeatureEnabled = (entry: { id: string }) =>
     (!WORK_REPORTS_NAV_ENTRY_IDS.has(entry.id) || workReportsEnabled) &&
-    (entry.id !== "finance" || vendorFinanceEnabled);
+    (entry.id !== "finance" || vendorFinanceEnabled) &&
+    (entry.id !== "leave" || vendorFinanceEnabled);
 
   // P3-W06A R1: phan tach ro rang tang viewport va tang capability.
   // - `filterEntriesForActor` chiu trach nhiem viewport/visibility: loc
