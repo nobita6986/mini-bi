@@ -1732,7 +1732,8 @@ test("Work Reports domain datasets (templates, assignments, submissions, analyti
     },
   };
 
-  // 5a. Missing obligation_id / submission_id filter is rejected with 400 MISSING_REQUIRED_FILTER
+  // 5a. Missing obligation_id filter is rejected with 400 MISSING_REQUIRED_FILTER,
+  // and filtering by submission_id is rejected with 400 UNKNOWN_FILTER_FIELD (only obligation_id is accepted)
   const detailMissingFilterRes = await handleN8nBodQueryPost(
     makeQueryRequest({
       dataset: "work_reports_submission_detail",
@@ -1742,6 +1743,17 @@ test("Work Reports domain datasets (templates, assignments, submissions, analyti
   assert.equal(detailMissingFilterRes.status, 400);
   const detailMissingFilterBody = await detailMissingFilterRes.json();
   assert.equal(detailMissingFilterBody.error.code, "MISSING_REQUIRED_FILTER");
+
+  const detailBySubmissionIdRes = await handleN8nBodQueryPost(
+    makeQueryRequest({
+      dataset: "work_reports_submission_detail",
+      filters: [{ field: "submission_id", op: "eq", value: SUBMISSION_ID }],
+    }),
+    { env: TEST_ENV, dispatcherDeps: detailDeps },
+  );
+  assert.equal(detailBySubmissionIdRes.status, 400);
+  const detailBySubmissionIdBody = await detailBySubmissionIdRes.json();
+  assert.equal(detailBySubmissionIdBody.error.code, "UNKNOWN_FILTER_FIELD");
 
   // 5b. Default fields return metadata + template_schema_json while redacting free_text payload fields
   const detailDefaultRes = await handleN8nBodQueryPost(

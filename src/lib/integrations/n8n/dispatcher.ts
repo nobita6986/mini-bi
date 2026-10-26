@@ -2827,23 +2827,21 @@ function createDefaultAdapters(
     },
 
     async work_reports_submission_detail(spec, { actor, businessDate }) {
-      const targetId =
-        findEqFilterString(spec.filters, "obligation_id") ??
-        findEqFilterString(spec.filters, "submission_id");
-      if (!targetId) {
+      const obligationId = findEqFilterString(spec.filters, "obligation_id");
+      if (!obligationId) {
         return {
           ok: false,
           status: 400,
           code: "MISSING_REQUIRED_FILTER",
           message:
-            "Bắt buộc truyền filter obligation_id (eq) hoặc submission_id (eq) để xem chi tiết một bài nộp cụ thể.",
+            "Bắt buộc truyền filter obligation_id (eq) để xem chi tiết một bài nộp cụ thể.",
         };
       }
 
       const outcome = await workReportSubmissionRepo.get({
         auth_subject: actor.auth_subject,
         app_user_id: actor.app_user_id,
-        obligation_id: targetId,
+        obligation_id: obligationId,
       });
 
       if (!outcome.ok) {
@@ -2874,7 +2872,7 @@ function createDefaultAdapters(
         obligation_id:
           typeof obligation.obligation_id === "string"
             ? obligation.obligation_id
-            : targetId,
+            : obligationId,
         submission_id:
           submission && typeof submission.submission_id === "string"
             ? submission.submission_id

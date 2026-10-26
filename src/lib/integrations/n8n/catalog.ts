@@ -3241,7 +3241,7 @@ const DATASETS: readonly N8nDatasetSpec[] = Object.freeze([
     },
     business_rules: [
       "Không trả payload_json / draft_payload_json thô trong danh sách hàng loạt để bảo đảm giới hạn băng thông và bảo mật nội dung tự do.",
-      "Để đọc nội dung câu trả lời nhân viên đã nhập cho một bài nộp cụ thể, hãy gọi dataset work_reports_submission_detail với filter obligation_id (hoặc submission_id) và chọn trường latest_payload_json / revisions.",
+      "Để đọc nội dung câu trả lời nhân viên đã nhập cho một bài nộp cụ thể, hãy gọi dataset work_reports_submission_detail với filter obligation_id (eq) và chọn trường latest_payload_json / revisions.",
     ],
   },
   {
@@ -3249,8 +3249,8 @@ const DATASETS: readonly N8nDatasetSpec[] = Object.freeze([
     domain: "work_reports",
     title: "Chi tiết Nội dung Bài nộp Báo cáo Công việc (Single Work Report Submission Detail)",
     description:
-      "Chi tiết một nghĩa vụ và bài nộp báo cáo công việc cụ thể theo obligation_id (hoặc submission_id), bao gồm cấu trúc biểu mẫu (template_schema_json), nội dung câu trả lời đã nộp mới nhất (latest_payload_json), lịch sử các lần nộp (revisions) và kết quả duyệt mới nhất (latest_review_event). Không bao giờ trả bản nháp chưa nộp (draft_payload_json).",
-    grain: "1 dòng duy nhất cho mỗi obligation_id / submission_id được tra cứu.",
+      "Chi tiết một nghĩa vụ và bài nộp báo cáo công việc cụ thể theo obligation_id, bao gồm cấu trúc biểu mẫu (template_schema_json), nội dung câu trả lời đã nộp mới nhất (latest_payload_json), lịch sử các lần nộp (revisions) và kết quả duyệt mới nhất (latest_review_event). Không bao giờ trả bản nháp chưa nộp (draft_payload_json).",
+    grain: "1 dòng duy nhất cho mỗi obligation_id được tra cứu.",
     canonical_source: {
       name: "public.work_report_get_submission",
       kind: "rpc",
@@ -3277,9 +3277,7 @@ const DATASETS: readonly N8nDatasetSpec[] = Object.freeze([
       field("obligation_id", "string", "UUID nghĩa vụ báo cáo", {
         filterable: true,
       }),
-      field("submission_id", "string", "UUID bài nộp báo cáo (null nếu chưa nộp)", {
-        filterable: true,
-      }),
+      field("submission_id", "string", "UUID bài nộp báo cáo (null nếu chưa nộp)"),
       field("template_id", "string", "UUID mẫu báo cáo"),
       field("template_code", "string", "Mã mẫu báo cáo"),
       field("template_display_name", "string", "Tên hiển thị mẫu báo cáo"),
@@ -3367,15 +3365,9 @@ const DATASETS: readonly N8nDatasetSpec[] = Object.freeze([
         field: "obligation_id",
         type: "string",
         allowed_operators: ["eq"],
+        required: true,
         description:
-          "UUID nghĩa vụ báo cáo cần xem chi tiết (bắt buộc truyền obligation_id hoặc submission_id).",
-      },
-      {
-        field: "submission_id",
-        type: "string",
-        allowed_operators: ["eq"],
-        description:
-          "UUID bài nộp báo cáo cần xem chi tiết (có thể truyền thay cho obligation_id).",
+          "UUID nghĩa vụ báo cáo cần xem chi tiết (bắt buộc — lấy từ trường obligation_id của work_reports_submissions hoặc work_reports_assignments).",
       },
     ],
     allowed_relations: [
@@ -3400,7 +3392,7 @@ const DATASETS: readonly N8nDatasetSpec[] = Object.freeze([
       max_page_size: 1,
     },
     business_rules: [
-      "Bắt buộc truyền filter obligation_id (eq) hoặc submission_id (eq) để truy vấn đúng 1 bài nộp cụ thể; không hỗ trợ tải hàng loạt.",
+      "Bắt buộc truyền filter obligation_id (eq) để truy vấn đúng 1 bài nộp cụ thể; không hỗ trợ tải hàng loạt.",
       "Không bao giờ trả draft_payload_json chưa nộp; chỉ trả các nội dung đã thực sự submit trong latest_payload_json và revisions.",
       "Các trường latest_payload_json, revisions và latest_review_event thuộc phân loại nhạy cảm free_text nên cần liệt kê tường minh trong QuerySpec.fields khi cần đọc nội dung câu trả lời.",
     ],
@@ -3635,7 +3627,7 @@ export function getN8nBodCatalog(
         "METADATA_ONLY_NO_BULK_MEDIA: Ảnh CCCD, ảnh chân dung, ảnh chấm công và tệp chứng từ tài chính không bao giờ được trả hàng loạt trong /query; chỉ trả các cờ/đếm metadata.",
       multi_query_guidance: [
         "Để trả lời câu hỏi theo tên dự án, nhóm, người tuyển hoặc Vendor khi chưa biết ID, hãy gọi catalog_projects / catalog_teams / catalog_recruiters / catalog_vendors trước để lấy ID chuẩn, sau đó gọi dataset nghiệp vụ.",
-        "Để trả lời câu hỏi về Báo cáo công việc (work_reports), hãy gọi work_reports_templates hoặc work_reports_assignments trước để biết template_id, sau đó gọi work_reports_analytics hoặc work_reports_submissions. Khi cần đọc nội dung câu trả lời chi tiết của một bài nộp cụ thể, hãy gọi work_reports_submission_detail theo obligation_id (hoặc submission_id) và chọn trường latest_payload_json / revisions.",
+        "Để trả lời câu hỏi về Báo cáo công việc (work_reports), hãy gọi work_reports_templates hoặc work_reports_assignments trước để biết template_id, sau đó gọi work_reports_analytics hoặc work_reports_submissions. Khi cần đọc nội dung câu trả lời chi tiết của một bài nộp cụ thể, hãy gọi work_reports_submission_detail theo obligation_id và chọn trường latest_payload_json / revisions.",
         "Để trả lời câu hỏi liên domain (ví dụ: so sánh tuyển dụng, lực lượng lao động đang ON và chi phí Vendor của cùng một dự án), hãy thực hiện nhiều truy vấn /query độc lập với cùng project_id rồi tổng hợp theo khóa dự án.",
         "Khi phân tích tài chính Vendor cho BoD, luôn giữ nguyên ngữ cảnh Dự án + Kế toán phụ trách (project_id + responsible_accountant_user_id); tuyệt đối không tự cộng bù trừ số dư dương của kế toán này với số dư âm của kế toán khác.",
       ],
