@@ -2,7 +2,7 @@
 
 import { useId, useState, type FormEvent } from "react";
 import Link from "next/link";
-import { CheckCircle2, FileCheck2, ImagePlus, Printer, RotateCcw, Scale } from "lucide-react";
+import { CheckCircle2, FileCheck2, ImagePlus, Layers, Printer, RotateCcw, Scale } from "lucide-react";
 
 import { Alert } from "@/components/ui/alert";
 import { StatusBadge } from "@/components/ui/badge";
@@ -11,12 +11,15 @@ import { FormDialog } from "@/components/ui/form-dialog";
 import { useNotify } from "@/components/ui/notify-provider";
 import type {
   NormalVendorFinanceEntryType,
+  VendorFinanceClassifiedContractType,
   VendorFinanceContextProjectOption,
   VendorFinanceDetailSubLedger,
   VendorFinanceEntryProjection,
   VendorFinanceReconciliationProjection,
 } from "@/lib/vendor-finance/vendor-finance-contract";
 import {
+  buildClassifySubLedgerRequest,
+  buildClassifySubLedgerUrl,
   buildCreateReconciliationRequest,
   buildRecordEntryRequest,
   buildReverseEntryRequest,
@@ -25,6 +28,8 @@ import {
   buildVendorReconciliationsUrl,
   classifyVendorFinanceError,
   computeReconciliationDifferencePreview,
+  CONTRACT_TYPE_BADGE_TONES,
+  CONTRACT_TYPE_LABELS_VI,
   createClientIdempotencyKey,
   ENTRY_TYPE_DIRECTION_HINTS_VI,
   ENTRY_TYPE_LABELS_VI,
@@ -34,17 +39,19 @@ import {
   formatVndMinor,
   normalizePositiveVndInput,
   normalizeSignedVndInput,
+  parseClassifySubLedgerEnvelope,
   parseCreateReconciliationEnvelope,
   parseRecordEntryEnvelope,
   parseReverseEntryEnvelope,
   uploadEvidenceForCommittedTarget,
   validateEvidenceFilePreflight,
+  VFIN_UI_CLASSIFIED_CONTRACT_TYPES,
   VFIN_UI_MAX_REASON_LENGTH,
   type EvidenceUploadResumeState,
 } from "@/lib/vendor-finance/ui-model";
 
 // =============================================================================
-// 1. Record Normal Entry Dialog (Project-Scoped + Server-Derived Responsible Accountant)
+// 1. Record Normal Entry Dialog (Project-Scoped + Server-Derived Responsible Accountant + Contract Type)
 // =============================================================================
 export function RecordVendorEntryDialog({
   open,
@@ -54,6 +61,7 @@ export function RecordVendorEntryDialog({
   vendorActive,
   recordableProjects,
   initialProjectId,
+  initialContractType,
   defaultDate,
   allowedEntryTypes,
   initialEntryType,
@@ -66,6 +74,7 @@ export function RecordVendorEntryDialog({
   vendorActive: boolean;
   recordableProjects: readonly VendorFinanceContextProjectOption[];
   initialProjectId?: string | null;
+  initialContractType?: VendorFinanceClassifiedContractType | null;
   defaultDate: string;
   allowedEntryTypes: readonly NormalVendorFinanceEntryType[];
   initialEntryType?: NormalVendorFinanceEntryType;
@@ -73,6 +82,7 @@ export function RecordVendorEntryDialog({
 }) {
   const descriptionId = useId();
   const projectSelectId = useId();
+  const contractTypeSelectId = useId();
   const typeSelectId = useId();
   const amountInputId = useId();
   const dateInputId = useId();
@@ -85,12 +95,19 @@ export function RecordVendorEntryDialog({
       ? initialProjectId
       : (recordableProjects[0]?.project_id ?? "");
 
+  const resolvedDefaultContractType: VendorFinanceClassifiedContractType =
+    initialContractType && VFIN_UI_CLASSIFIED_CONTRACT_TYPES.includes(initialContractType)
+      ? initialContractType
+      : "SEASONAL";
+
   const resolvedDefaultType: NormalVendorFinanceEntryType =
     initialEntryType && allowedEntryTypes.includes(initialEntryType)
       ? initialEntryType
       : (allowedEntryTypes[0] ?? "DEBT_RECORDED");
 
   const [projectId, setProjectId] = useState<string>(resolvedDefaultProject);
+  const [contractType, setContractType] =
+    useState<VendorFinanceClassifiedContractType>(resolvedDefaultContractType);
   const [entryType, setEntryType] = useState<NormalVendorFinanceEntryType>(resolvedDefaultType);
   const [amountInput, setAmountInput] = useState("");
   const [effectiveDate, setEffectiveDate] = useState(defaultDate);
@@ -112,6 +129,7 @@ export function RecordVendorEntryDialog({
 
   const resetAll = () => {
     setProjectId(resolvedDefaultProject);
+    setContractType(resolvedDefaultContractType);
     setEntryType(resolvedDefaultType);
     setAmountInput("");
     setEffectiveDate(defaultDate);
@@ -181,6 +199,7 @@ export function RecordVendorEntryDialog({
 
     const built = buildRecordEntryRequest({
       project_id: projectId,
+      contract_type: contractType,
       entry_type: entryType,
       amount_input: amountInput,
       effective_date: effectiveDate,
@@ -237,7 +256,7 @@ export function RecordVendorEntryDialog({
       setSubmitting(false);
       notify.success({
         title: `Đã ghi nhận ${savedEntry.document_no}`,
-        description: `${savedEntry.project_display_name_snapshot ?? savedEntry.project_id} · ${ENTRY_TYPE_LABELS_VI[savedEntry.entry_type]} · ${formatVndMinor(savedEntry.amount_minor)}`,
+        description: `${savedEntry.project_display_name_snapshot ?? savedEntry.project_id} · ${CONTRACT_TYPE_LABELS_VI[savedEntry.contract_type]} · ${ENTRY_TYPE_LABELS_VI[savedEntry.entry_type]} · ${formatVndMinor(savedEntry.amount_minor)}`,
       });
       resetAll();
       onOpenChange(false);
@@ -263,7 +282,7 @@ export function RecordVendorEntryDialog({
     onDataChanged();
     notify.success({
       title: `Đã ghi nhận ${savedEntry.document_no} kèm ảnh bằng chứng`,
-      description: `${savedEntry.project_display_name_snapshot ?? savedEntry.project_id} · ${ENTRY_TYPE_LABELS_VI[savedEntry.entry_type]} · ${formatVndMinor(savedEntry.amount_minor)}`,
+      description: `${savedEntry.project_display_name_snapshot ?? savedEntry.project_id} · ${CONTRACT_TYPE_LABELS_VI[savedEntry.contract_type]} · ${ENTRY_TYPE_LABELS_VI[savedEntry.entry_type]} · ${formatVndMinor(savedEntry.amount_minor)}`,
     });
     resetAll();
     onOpenChange(false);
@@ -333,6 +352,10 @@ export function RecordVendorEntryDialog({
               · Kế toán phụ trách sổ:{" "}
               <strong className="text-foreground">
                 {committedEntry.responsible_accountant_display_name ?? "—"}
+              </strong>{" "}
+              · Loại HĐ:{" "}
+              <strong className="text-foreground">
+                {CONTRACT_TYPE_LABELS_VI[committedEntry.contract_type]}
               </strong>
             </p>
             <p className="mt-0.5 text-xs text-muted">
@@ -470,34 +493,66 @@ export function RecordVendorEntryDialog({
             ) : null}
           </div>
 
-          <div className="space-y-1.5">
-            <label htmlFor={typeSelectId} className="block text-sm font-medium text-foreground">
-              Loại bút toán <span className="text-rose-600">*</span>
-            </label>
-            <select
-              id={typeSelectId}
-              value={entryType}
-              disabled={submitting}
-              onChange={(e) => {
-                setEntryType(e.target.value as NormalVendorFinanceEntryType);
-                setErrorMsg(null);
-                rotateKey();
-              }}
-              className="min-h-11 sm:min-h-10 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-            >
-              {effectiveAllowedEntryTypes.map((type) => (
-                <option key={type} value={type}>
-                  {ENTRY_TYPE_LABELS_VI[type]}
-                </option>
-              ))}
-            </select>
-            {directionHint ? (
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <label
+                htmlFor={contractTypeSelectId}
+                className="block text-sm font-medium text-foreground"
+              >
+                Loại hợp đồng (Sổ riêng) <span className="text-rose-600">*</span>
+              </label>
+              <select
+                id={contractTypeSelectId}
+                data-testid="vfin-record-contract-type-select"
+                value={contractType}
+                disabled={submitting}
+                onChange={(e) => {
+                  setContractType(e.target.value as VendorFinanceClassifiedContractType);
+                  setErrorMsg(null);
+                  rotateKey();
+                }}
+                className="min-h-11 sm:min-h-10 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+              >
+                {VFIN_UI_CLASSIFIED_CONTRACT_TYPES.map((ct) => (
+                  <option key={ct} value={ct}>
+                    {CONTRACT_TYPE_LABELS_VI[ct]}
+                  </option>
+                ))}
+              </select>
               <p className="text-xs text-muted">
-                Quy ước sổ cái:{" "}
-                <strong className="font-mono text-foreground">({directionHint.deltaSign})</strong>{" "}
-                {directionHint.description}
+                Sổ Thời vụ và sổ Chính thức tách biệt hoàn toàn, không bù trừ chéo.
               </p>
-            ) : null}
+            </div>
+
+            <div className="space-y-1.5">
+              <label htmlFor={typeSelectId} className="block text-sm font-medium text-foreground">
+                Loại bút toán <span className="text-rose-600">*</span>
+              </label>
+              <select
+                id={typeSelectId}
+                value={entryType}
+                disabled={submitting}
+                onChange={(e) => {
+                  setEntryType(e.target.value as NormalVendorFinanceEntryType);
+                  setErrorMsg(null);
+                  rotateKey();
+                }}
+                className="min-h-11 sm:min-h-10 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+              >
+                {effectiveAllowedEntryTypes.map((type) => (
+                  <option key={type} value={type}>
+                    {ENTRY_TYPE_LABELS_VI[type]}
+                  </option>
+                ))}
+              </select>
+              {directionHint ? (
+                <p className="text-xs text-muted">
+                  Quy ước sổ cái:{" "}
+                  <strong className="font-mono text-foreground">({directionHint.deltaSign})</strong>{" "}
+                  {directionHint.description}
+                </p>
+              ) : null}
+            </div>
           </div>
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -733,7 +788,7 @@ export function ReverseVendorEntryDialog({
       onOpenChange={handleClose}
       closeDisabled={submitting}
       title={entry ? `Hoàn tác bút toán ${entry.document_no}` : "Hoàn tác bút toán"}
-      description="Hệ thống sổ cái bất biến (append-only): thao tác này sẽ tạo một bút toán REVERSAL ngược dấu trên đúng sổ dự án của chứng từ gốc và khóa hoàn tác vĩnh viễn trên bút toán gốc."
+      description="Hệ thống sổ cái bất biến (append-only): thao tác này sẽ tạo một bút toán REVERSAL ngược dấu kế thừa đúng Dự án, Kế toán phụ trách và Loại hợp đồng của chứng từ gốc; không cho phép đổi loại hợp đồng khi hoàn tác."
       descriptionId={descriptionId}
       dataTestId="vfin-reverse-entry-dialog"
     >
@@ -742,14 +797,19 @@ export function ReverseVendorEntryDialog({
           <div className="rounded-xl border border-border bg-surface-muted/60 p-3.5 text-xs space-y-1.5">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="font-mono font-semibold text-foreground">{entry.document_no}</span>
-              <StatusBadge tone="neutral">{ENTRY_TYPE_LABELS_VI[entry.entry_type]}</StatusBadge>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <StatusBadge tone={CONTRACT_TYPE_BADGE_TONES[entry.contract_type]}>
+                  {CONTRACT_TYPE_LABELS_VI[entry.contract_type]}
+                </StatusBadge>
+                <StatusBadge tone="neutral">{ENTRY_TYPE_LABELS_VI[entry.entry_type]}</StatusBadge>
+              </div>
             </div>
             <p className="text-muted">
-              Sổ hạch toán:{" "}
+              Sổ hạch toán (kế thừa cố định):{" "}
               <strong className="text-foreground">
                 {entry.ledger_scope === "LEGACY_UNALLOCATED"
-                  ? "Sổ lịch sử VFIN-01"
-                  : `${entry.project_display_name_snapshot ?? entry.project_id} · KT: ${entry.responsible_accountant_display_name ?? "—"}`}
+                  ? `Sổ lịch sử VFIN-01 · ${CONTRACT_TYPE_LABELS_VI[entry.contract_type]}`
+                  : `${entry.project_display_name_snapshot ?? entry.project_id} · KT: ${entry.responsible_accountant_display_name ?? "—"} · ${CONTRACT_TYPE_LABELS_VI[entry.contract_type]}`}
               </strong>
             </p>
             <p className="text-muted">
@@ -857,7 +917,7 @@ export function CreateVendorReconciliationDialog({
   const notify = useNotify();
 
   const makeKey = (s: VendorFinanceDetailSubLedger) =>
-    `${s.project_id ?? ""}:${s.accountant_ref ?? ""}`;
+    `${s.project_id ?? ""}:${s.accountant_ref ?? ""}:${s.contract_type}`;
 
   const defaultSubLedger =
     (initialSubLedgerKey
@@ -955,6 +1015,7 @@ export function CreateVendorReconciliationDialog({
     const built = buildCreateReconciliationRequest({
       project_id: activeSubLedger.project_id,
       accountant_ref: activeSubLedger.accountant_ref,
+      contract_type: activeSubLedger.contract_type,
       as_of_date: asOfDate,
       confirmed_balance_input: confirmedInput,
       reason,
@@ -1006,7 +1067,7 @@ export function CreateVendorReconciliationDialog({
       setSubmitting(false);
       notify.success({
         title: `Đã chốt đối soát ngày ${formatVietnamDateLabel(savedRec.as_of_date)}`,
-        description: `${savedRec.project_display_name_snapshot ?? savedRec.project_id} · Chênh lệch: ${formatSignedVndDelta(savedRec.difference_minor)}`,
+        description: `${savedRec.project_display_name_snapshot ?? savedRec.project_id} · ${CONTRACT_TYPE_LABELS_VI[savedRec.contract_type]} · Chênh lệch: ${formatSignedVndDelta(savedRec.difference_minor)}`,
       });
       resetAll();
       onOpenChange(false);
@@ -1098,6 +1159,10 @@ export function CreateVendorReconciliationDialog({
               · Kế toán phụ trách:{" "}
               <strong className="text-foreground">
                 {committedRec.responsible_accountant_display_name ?? "—"}
+              </strong>{" "}
+              · Loại HĐ:{" "}
+              <strong className="text-foreground">
+                {CONTRACT_TYPE_LABELS_VI[committedRec.contract_type]}
               </strong>
             </p>
             <p className="mt-0.5 text-xs text-muted">
@@ -1174,7 +1239,7 @@ export function CreateVendorReconciliationDialog({
 
           <div className="space-y-1.5">
             <label htmlFor={subLedgerSelectId} className="block text-sm font-medium text-foreground">
-              Sổ chi tiết cần đối soát (Dự án × Kế toán phụ trách){" "}
+              Sổ chi tiết cần đối soát (Dự án × Kế toán phụ trách × Loại hợp đồng){" "}
               <span className="text-rose-600">*</span>
             </label>
             <select
@@ -1198,7 +1263,8 @@ export function CreateVendorReconciliationDialog({
                 const k = makeKey(sub);
                 return (
                   <option key={k} value={k}>
-                    {sub.project_display_name ?? sub.project_id} ({sub.project_id}) · KT:{" "}
+                    {sub.project_display_name ?? sub.project_id} ({sub.project_id}) ·{" "}
+                    {CONTRACT_TYPE_LABELS_VI[sub.contract_type]} · KT:{" "}
                     {sub.responsible_accountant_display_name ?? "—"} · Số dư:{" "}
                     {formatVndMinor(sub.current_balance_minor)}
                   </option>
@@ -1317,6 +1383,225 @@ export function CreateVendorReconciliationDialog({
             <Button type="submit" variant="primary" loading={submitting} disabled={submitting}>
               <Scale className="h-4 w-4" aria-hidden />
               Lưu đối soát
+            </Button>
+          </div>
+        </form>
+      )}
+    </FormDialog>
+  );
+}
+
+// =============================================================================
+// 4. Classify Legacy / Unclassified Sub-Ledger Dialog
+//    (`POST /api/vendor-finance/vendors/[vendorId]/classify-contract-type`)
+// =============================================================================
+export function ClassifyVendorSubLedgerDialog({
+  open,
+  onOpenChange,
+  vendorId,
+  vendorDisplayName,
+  subLedger,
+  onClassified,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  vendorId: string;
+  vendorDisplayName: string;
+  subLedger: VendorFinanceDetailSubLedger | null;
+  onClassified: (targetContractType: VendorFinanceClassifiedContractType) => void;
+}) {
+  const descriptionId = useId();
+  const targetSelectId = useId();
+  const reasonInputId = useId();
+  const notify = useNotify();
+
+  const [targetContractType, setTargetContractType] =
+    useState<VendorFinanceClassifiedContractType>("SEASONAL");
+  const [reason, setReason] = useState("");
+  const [idempotencyKey, setIdempotencyKey] = useState(() => createClientIdempotencyKey());
+  const [submitting, setSubmitting] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const rotateKey = () => setIdempotencyKey(createClientIdempotencyKey());
+
+  const handleClose = (nextOpen: boolean) => {
+    if (submitting) return;
+    if (!nextOpen) {
+      setTargetContractType("SEASONAL");
+      setReason("");
+      setIdempotencyKey(createClientIdempotencyKey());
+      setErrorMsg(null);
+    }
+    onOpenChange(nextOpen);
+  };
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!subLedger || !subLedger.project_id || !subLedger.accountant_ref) {
+      setErrorMsg("Vui lòng chọn sổ dự án chưa phân loại hợp lệ.");
+      return;
+    }
+    setErrorMsg(null);
+
+    const built = buildClassifySubLedgerRequest({
+      project_id: subLedger.project_id,
+      accountant_ref: subLedger.accountant_ref,
+      target_contract_type: targetContractType,
+      reason,
+      idempotency_key: idempotencyKey,
+    });
+    if (!built.ok) {
+      setErrorMsg(built.message);
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const res = await fetch(buildClassifySubLedgerUrl(vendorId), {
+        method: "POST",
+        headers: built.request.headers,
+        body: JSON.stringify(built.request.body),
+      });
+      const json: unknown = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        const classified = classifyVendorFinanceError(json, res.status);
+        if (classified.shouldRotateIdempotencyKey) {
+          rotateKey();
+        }
+        setErrorMsg(classified.message);
+        setSubmitting(false);
+        return;
+      }
+
+      const parsed = parseClassifySubLedgerEnvelope(json);
+      if (!parsed) {
+        setErrorMsg("Phản hồi phân loại loại hợp đồng từ máy chủ không hợp lệ.");
+        setSubmitting(false);
+        return;
+      }
+
+      setSubmitting(false);
+      notify.success({
+        title: `Đã phân loại sổ sang ${CONTRACT_TYPE_LABELS_VI[parsed.classification.target_contract_type]}`,
+        description: `${parsed.classification.project_display_name_snapshot ?? parsed.classification.project_id} · Đã gắn nhãn ${parsed.classification.classified_entry_count} bút toán và ${parsed.classification.classified_reconciliation_count} đối soát (giữ nguyên số tiền và lịch sử).`,
+      });
+      onClassified(parsed.classification.target_contract_type);
+      handleClose(false);
+    } catch {
+      setErrorMsg(
+        "Mất kết nối mạng khi gửi yêu cầu phân loại sổ. Bạn có thể bấm Xác nhận phân loại lại an toàn (hệ thống giữ nguyên Idempotency-Key).",
+      );
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <FormDialog
+      open={open}
+      onOpenChange={handleClose}
+      closeDisabled={submitting}
+      title={`Phân loại loại hợp đồng cho sổ cũ — ${vendorDisplayName}`}
+      description="Phân loại tường minh sổ đang ở trạng thái Chưa phân loại sang Hợp đồng Thời vụ hoặc Hợp đồng Chính thức. Thao tác giữ nguyên tuyệt đối số tiền, ngày hiệu lực, số chứng từ và lịch sử bút toán, đồng thời ghi nhận đầy đủ nhật ký kiểm toán."
+      descriptionId={descriptionId}
+      dataTestId="vfin-classify-subledger-dialog"
+    >
+      {!subLedger ? null : (
+        <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4" noValidate>
+          <div className="rounded-xl border border-border bg-surface-muted/60 p-3.5 text-xs space-y-1.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="font-semibold text-foreground">
+                {subLedger.project_display_name ?? subLedger.project_id} ({subLedger.project_id})
+              </span>
+              <StatusBadge tone="warning">Nguồn: {CONTRACT_TYPE_LABELS_VI.UNCLASSIFIED}</StatusBadge>
+            </div>
+            <p className="text-muted">
+              Kế toán phụ trách sổ:{" "}
+              <strong className="text-foreground">
+                {subLedger.responsible_accountant_display_name ?? "—"}
+              </strong>
+            </p>
+            <p className="text-muted">
+              Số dư hiện tại:{" "}
+              <strong className="font-mono text-foreground">
+                {formatVndMinor(subLedger.current_balance_minor)}
+              </strong>{" "}
+              · Số bút toán giữ nguyên:{" "}
+              <strong className="font-mono text-foreground">{subLedger.entry_count}</strong>
+            </p>
+          </div>
+
+          <Alert tone="info" title="An toàn dữ liệu & Không đổi loại âm thầm">
+            <p>
+              Sau khi phân loại sang <strong>Thời vụ</strong> hoặc <strong>Chính thức</strong>, hệ
+              thống khóa phân loại một chiều (không cho phép phân loại lặp hoặc đổi sang loại khác)
+              và từ chối nếu sổ đích cùng loại hợp đồng đã có dữ liệu để tránh trộn hai chuỗi số dư.
+            </p>
+          </Alert>
+
+          {errorMsg ? (
+            <Alert tone="error" role="alert" title="Không thể phân loại sổ">
+              <p>{errorMsg}</p>
+            </Alert>
+          ) : null}
+
+          <div className="space-y-1.5">
+            <label htmlFor={targetSelectId} className="block text-sm font-medium text-foreground">
+              Loại hợp đồng đích cần gắn cho sổ này <span className="text-rose-600">*</span>
+            </label>
+            <select
+              id={targetSelectId}
+              data-testid="vfin-classify-target-contract-type-select"
+              value={targetContractType}
+              disabled={submitting}
+              onChange={(e) => {
+                setTargetContractType(e.target.value as VendorFinanceClassifiedContractType);
+                setErrorMsg(null);
+                rotateKey();
+              }}
+              className="min-h-11 sm:min-h-10 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+            >
+              {VFIN_UI_CLASSIFIED_CONTRACT_TYPES.map((ct) => (
+                <option key={ct} value={ct}>
+                  {CONTRACT_TYPE_LABELS_VI[ct]}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="space-y-1.5">
+            <label htmlFor={reasonInputId} className="block text-sm font-medium text-foreground">
+              Lý do / Căn cứ phân loại dữ liệu cũ <span className="text-rose-600">*</span>
+            </label>
+            <textarea
+              id={reasonInputId}
+              rows={3}
+              maxLength={VFIN_UI_MAX_REASON_LENGTH}
+              placeholder="Ghi rõ căn cứ hợp đồng / bảng đối chiếu xác nhận toàn bộ bút toán trên sổ này thuộc Hợp đồng Thời vụ hay Chính thức…"
+              value={reason}
+              disabled={submitting}
+              onChange={(e) => {
+                setReason(e.target.value);
+                setErrorMsg(null);
+                rotateKey();
+              }}
+              className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+            />
+          </div>
+
+          <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border pt-3">
+            <Button variant="secondary" disabled={submitting} onClick={() => handleClose(false)}>
+              Hủy
+            </Button>
+            <Button
+              type="submit"
+              variant="primary"
+              loading={submitting}
+              disabled={submitting}
+              data-testid="vfin-classify-submit-btn"
+            >
+              <Layers className="h-4 w-4" aria-hidden />
+              Xác nhận phân loại sổ
             </Button>
           </div>
         </form>

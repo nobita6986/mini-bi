@@ -8,6 +8,7 @@ import {
   projectActorContextOptions,
   projectAssignGlobalRoleMutation,
   projectAssignProjectAccountantMutation,
+  projectClassifySubLedgerMutation,
   projectCreateReconciliationMutation,
   projectEndGlobalRoleMutation,
   projectEndProjectAccountantMutation,
@@ -24,6 +25,7 @@ import {
   projectVendorFinanceVendorDetail,
   projectVendorFinanceVendorList,
   projectVendorReconciliationsPage,
+  type ClassifiedVendorFinanceContractType,
   type NormalVendorFinanceEntryType,
   type OpeningBatchItemInput,
   type VendorFinanceActiveFilter,
@@ -32,6 +34,9 @@ import {
   type VendorFinanceAssignGlobalRoleResponse,
   type VendorFinanceAssignProjectAccountantResponse,
   type VendorFinanceBalanceFilter,
+  type VendorFinanceClassifySubLedgerResponse,
+  type VendorFinanceContractType,
+  type VendorFinanceContractTypeFilter,
   type VendorFinanceEndGlobalRoleResponse,
   type VendorFinanceEndProjectAccountantResponse,
   type VendorFinanceEntriesPageResponse,
@@ -131,6 +136,7 @@ export type VendorFinanceRepository = {
       project_id: string | null;
       accountant_ref: string | null;
       ledger_scope: VendorFinanceLedgerScope | null;
+      contract_type?: VendorFinanceContractTypeFilter;
       page: number;
       page_size: number;
     },
@@ -142,6 +148,7 @@ export type VendorFinanceRepository = {
       project_id?: string | null;
       accountant_ref?: string | null;
       ledger_scope?: VendorFinanceLedgerScope | null;
+      contract_type?: VendorFinanceContractType | null;
     },
   ): Promise<VendorFinanceRepoResult<VendorFinanceVendorDetailResponse>>;
 
@@ -154,6 +161,7 @@ export type VendorFinanceRepository = {
       project_id?: string | null;
       accountant_ref?: string | null;
       ledger_scope?: VendorFinanceLedgerScope | null;
+      contract_type?: VendorFinanceContractType | null;
       month?: string | null;
     },
   ): Promise<VendorFinanceRepoResult<VendorFinanceEntriesPageResponse>>;
@@ -170,12 +178,14 @@ export type VendorFinanceRepository = {
       project_id?: string | null;
       accountant_ref?: string | null;
       ledger_scope?: VendorFinanceLedgerScope | null;
+      contract_type?: VendorFinanceContractType | null;
     },
   ): Promise<VendorFinanceRepoResult<VendorFinanceReconciliationsPageResponse>>;
 
   recordEntry(
     input: VendorFinanceActorRef & {
       project_id: string;
+      contract_type: ClassifiedVendorFinanceContractType;
       vendor_id: string;
       entry_type: NormalVendorFinanceEntryType;
       amount_minor: string;
@@ -207,6 +217,7 @@ export type VendorFinanceRepository = {
   previewOpeningBatch(
     input: VendorFinanceActorRef & {
       project_id: string;
+      contract_type: ClassifiedVendorFinanceContractType;
       cutoff_date: string;
       items: readonly OpeningBatchItemInput[];
     },
@@ -215,6 +226,7 @@ export type VendorFinanceRepository = {
   applyOpeningBatch(
     input: VendorFinanceActorRef & {
       project_id: string;
+      contract_type: ClassifiedVendorFinanceContractType;
       cutoff_date: string;
       items: readonly OpeningBatchItemInput[];
       reason: string;
@@ -227,6 +239,7 @@ export type VendorFinanceRepository = {
     input: VendorFinanceActorRef & {
       project_id: string;
       accountant_ref: string | null;
+      contract_type: VendorFinanceContractType;
       vendor_id: string;
       as_of_date: string;
       confirmed_balance_minor: string;
@@ -241,12 +254,25 @@ export type VendorFinanceRepository = {
     }>
   >;
 
+  classifyUnclassifiedSubLedger(
+    input: VendorFinanceActorRef & {
+      vendor_id: string;
+      project_id: string;
+      accountant_ref: string | null;
+      target_contract_type: ClassifiedVendorFinanceContractType;
+      reason: string;
+      idempotency_key: string;
+      request_fingerprint: string;
+    },
+  ): Promise<VendorFinanceRepoResult<VendorFinanceClassifySubLedgerResponse>>;
+
   getMonthlyReport(
     input: VendorFinanceActorRef & {
       month: string;
       project_id: string | null;
       accountant_ref: string | null;
       vendor_id: string | null;
+      contract_type?: VendorFinanceContractTypeFilter;
     },
   ): Promise<VendorFinanceRepoResult<VendorFinanceMonthlyReportResponse>>;
 
@@ -363,8 +389,10 @@ const UUID_REGEX =
 const SHA256_HEX_REGEX = /^[0-9a-f]{64}$/i;
 
 const KNOWN_RPC_TOKENS: ReadonlyArray<readonly [string, VendorFinanceErrorCode]> = [
+  ["VENDOR_FINANCE_CONTRACT_TYPE_ALREADY_CLASSIFIED", "VENDOR_FINANCE_CONTRACT_TYPE_ALREADY_CLASSIFIED"],
   ["VENDOR_FINANCE_VENDOR_INACTIVE_ENTRY_FORBIDDEN", "VENDOR_FINANCE_VENDOR_INACTIVE_ENTRY_FORBIDDEN"],
   ["VENDOR_FINANCE_OPENING_BATCH_DUPLICATE_VENDOR", "VENDOR_FINANCE_OPENING_BATCH_DUPLICATE_VENDOR"],
+  ["VENDOR_FINANCE_CONTRACT_TYPE_TARGET_NOT_EMPTY", "VENDOR_FINANCE_CONTRACT_TYPE_TARGET_NOT_EMPTY"],
   ["VENDOR_FINANCE_GLOBAL_ROLE_ALREADY_ASSIGNED", "VENDOR_FINANCE_GLOBAL_ROLE_ALREADY_ASSIGNED"],
   ["VENDOR_FINANCE_GLOBAL_ROLE_VERSION_CONFLICT", "VENDOR_FINANCE_GLOBAL_ROLE_VERSION_CONFLICT"],
   ["VENDOR_FINANCE_EVIDENCE_RESERVATION_EXPIRED", "VENDOR_FINANCE_EVIDENCE_RESERVATION_EXPIRED"],
@@ -381,6 +409,7 @@ const KNOWN_RPC_TOKENS: ReadonlyArray<readonly [string, VendorFinanceErrorCode]>
   ["VENDOR_FINANCE_ACCOUNTANT_NOT_ELIGIBLE", "VENDOR_FINANCE_ACCOUNT_NOT_ELIGIBLE"],
   ["VENDOR_FINANCE_ENTRY_ALREADY_REVERSED", "VENDOR_FINANCE_ENTRY_ALREADY_REVERSED"],
   ["VENDOR_FINANCE_EVIDENCE_TARGET_INVALID", "VENDOR_FINANCE_EVIDENCE_TARGET_INVALID"],
+  ["VENDOR_FINANCE_CONTRACT_TYPE_INVALID", "VENDOR_FINANCE_CONTRACT_TYPE_INVALID"],
   ["VENDOR_FINANCE_PROJECT_ACCESS_DENIED", "VENDOR_FINANCE_PROJECT_ACCESS_DENIED"],
   ["VENDOR_FINANCE_OPENING_BATCH_INVALID", "VENDOR_FINANCE_OPENING_BATCH_INVALID"],
   ["VENDOR_FINANCE_EVIDENCE_MIME_INVALID", "VENDOR_FINANCE_EVIDENCE_MIME_INVALID"],
@@ -798,6 +827,7 @@ export function createVendorFinanceRepository(
           p_ledger_scope: input.ledger_scope ?? "all",
           p_page: input.page,
           p_page_size: input.page_size,
+          p_contract_type: input.contract_type ?? "all",
         },
         projectVendorFinanceVendorList,
       );
@@ -815,6 +845,7 @@ export function createVendorFinanceRepository(
           p_project_id: input.project_id ?? null,
           p_accountant_user_id: input.accountant_ref ?? null,
           p_ledger_scope: input.ledger_scope ?? null,
+          p_contract_type: input.contract_type ?? null,
         },
         projectVendorFinanceVendorDetail,
       );
@@ -836,12 +867,14 @@ export function createVendorFinanceRepository(
           p_accountant_user_id: input.accountant_ref ?? null,
           p_ledger_scope: input.ledger_scope ?? null,
           p_month: input.month ?? null,
+          p_contract_type: input.contract_type ?? null,
         },
         (raw) =>
           projectVendorFinanceEntriesPage(raw, {
             project_id: input.project_id ?? null,
             accountant_ref: input.accountant_ref ?? null,
             ledger_scope: input.ledger_scope ?? null,
+            contract_type: input.contract_type ?? null,
             month: input.month ?? null,
           }),
       );
@@ -875,6 +908,7 @@ export function createVendorFinanceRepository(
           p_project_id: input.project_id ?? null,
           p_accountant_user_id: input.accountant_ref ?? null,
           p_ledger_scope: input.ledger_scope ?? null,
+          p_contract_type: input.contract_type ?? null,
         },
         projectVendorReconciliationsPage,
       );
@@ -896,6 +930,7 @@ export function createVendorFinanceRepository(
           p_reason: input.reason,
           p_idempotency_key: input.idempotency_key,
           p_request_fingerprint: input.request_fingerprint,
+          p_contract_type: input.contract_type,
         },
         projectRecordEntryMutation,
       );
@@ -930,6 +965,7 @@ export function createVendorFinanceRepository(
           p_project_id: input.project_id,
           p_cutoff_date: input.cutoff_date,
           p_items: input.items,
+          p_contract_type: input.contract_type,
         },
         projectOpeningPreview,
       );
@@ -949,6 +985,7 @@ export function createVendorFinanceRepository(
           p_reason: input.reason,
           p_idempotency_key: input.idempotency_key,
           p_request_fingerprint: input.request_fingerprint,
+          p_contract_type: input.contract_type,
         },
         projectOpeningApplyMutation,
       );
@@ -970,8 +1007,29 @@ export function createVendorFinanceRepository(
           p_reason: input.reason,
           p_idempotency_key: input.idempotency_key,
           p_request_fingerprint: input.request_fingerprint,
+          p_contract_type: input.contract_type,
         },
         projectCreateReconciliationMutation,
+      );
+    },
+
+    classifyUnclassifiedSubLedger(input) {
+      return callProjected(
+        "classifyUnclassifiedSubLedger",
+        "mutation",
+        "vendor_finance_classify_unclassified_subledger",
+        {
+          p_auth_subject: input.auth_subject,
+          p_app_user_id: input.app_user_id,
+          p_vendor_id: input.vendor_id,
+          p_project_id: input.project_id,
+          p_accountant_user_id: input.accountant_ref,
+          p_target_contract_type: input.target_contract_type,
+          p_reason: input.reason,
+          p_idempotency_key: input.idempotency_key,
+          p_request_fingerprint: input.request_fingerprint,
+        },
+        projectClassifySubLedgerMutation,
       );
     },
 
@@ -987,6 +1045,7 @@ export function createVendorFinanceRepository(
           p_project_id: input.project_id,
           p_accountant_user_id: input.accountant_ref,
           p_vendor_id: input.vendor_id,
+          p_contract_type: input.contract_type ?? "all",
         },
         projectMonthlyReport,
       );

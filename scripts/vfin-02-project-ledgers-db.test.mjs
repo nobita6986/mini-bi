@@ -42,6 +42,7 @@ import {
   computeApplyOpeningBatchFingerprint,
   computeAssignGlobalRoleFingerprint,
   computeAssignProjectAccountantFingerprint,
+  computeClassifySubLedgerFingerprint,
   computeCreateReconciliationFingerprint,
   computeEndGlobalRoleFingerprint,
   computeEndProjectAccountantFingerprint,
@@ -52,7 +53,8 @@ import {
 import { createVendorFinanceRepository } from "../src/lib/vendor-finance/vendor-finance-repository.ts";
 import {
   VFIN_02_PROJECT_LEDGERS_MIGRATION_NAME,
-  HF_VFIN_02_IMPLICIT_VENDOR_PROJECT_RPC_SIGNATURES,
+  VFIN_03_CONTRACT_TYPE_LEDGERS_MIGRATION_NAME,
+  VFIN_03_CONTRACT_TYPE_LEDGERS_RPC_SIGNATURES,
   migrationChecksum,
   migrationSqlForTransaction,
 } from "./lib/migration-validation.mjs";
@@ -213,6 +215,7 @@ const VFIN_02_RPC_BINDINGS = {
     ["p_project_id", "text"],
     ["p_accountant_user_id", "uuid"],
     ["p_ledger_scope", "text"],
+    ["p_contract_type", "text"],
     ["p_page", "integer"],
     ["p_page_size", "integer"],
   ],
@@ -223,6 +226,7 @@ const VFIN_02_RPC_BINDINGS = {
     ["p_project_id", "text"],
     ["p_accountant_user_id", "uuid"],
     ["p_ledger_scope", "text"],
+    ["p_contract_type", "text"],
   ],
   vendor_finance_list_vendor_entries: [
     ["p_auth_subject", "uuid"],
@@ -235,6 +239,7 @@ const VFIN_02_RPC_BINDINGS = {
     ["p_accountant_user_id", "uuid"],
     ["p_ledger_scope", "text"],
     ["p_month", "text"],
+    ["p_contract_type", "text"],
   ],
   vendor_finance_get_entry: [
     ["p_auth_subject", "uuid"],
@@ -250,12 +255,14 @@ const VFIN_02_RPC_BINDINGS = {
     ["p_project_id", "text"],
     ["p_accountant_user_id", "uuid"],
     ["p_ledger_scope", "text"],
+    ["p_contract_type", "text"],
   ],
   vendor_finance_record_entry: [
     ["p_auth_subject", "uuid"],
     ["p_app_user_id", "uuid"],
     ["p_vendor_id", "text"],
     ["p_project_id", "text"],
+    ["p_contract_type", "text"],
     ["p_entry_type", "text"],
     ["p_amount_minor", "text"],
     ["p_effective_date", "date"],
@@ -276,6 +283,7 @@ const VFIN_02_RPC_BINDINGS = {
     ["p_auth_subject", "uuid"],
     ["p_app_user_id", "uuid"],
     ["p_project_id", "text"],
+    ["p_contract_type", "text"],
     ["p_cutoff_date", "date"],
     ["p_items", "jsonb"],
   ],
@@ -283,6 +291,7 @@ const VFIN_02_RPC_BINDINGS = {
     ["p_auth_subject", "uuid"],
     ["p_app_user_id", "uuid"],
     ["p_project_id", "text"],
+    ["p_contract_type", "text"],
     ["p_cutoff_date", "date"],
     ["p_items", "jsonb"],
     ["p_reason", "text"],
@@ -295,8 +304,20 @@ const VFIN_02_RPC_BINDINGS = {
     ["p_vendor_id", "text"],
     ["p_project_id", "text"],
     ["p_accountant_user_id", "uuid"],
+    ["p_contract_type", "text"],
     ["p_as_of_date", "date"],
     ["p_confirmed_balance_minor", "text"],
+    ["p_reason", "text"],
+    ["p_idempotency_key", "uuid"],
+    ["p_request_fingerprint", "text"],
+  ],
+  vendor_finance_classify_unclassified_subledger: [
+    ["p_auth_subject", "uuid"],
+    ["p_app_user_id", "uuid"],
+    ["p_vendor_id", "text"],
+    ["p_project_id", "text"],
+    ["p_accountant_user_id", "uuid"],
+    ["p_target_contract_type", "text"],
     ["p_reason", "text"],
     ["p_idempotency_key", "uuid"],
     ["p_request_fingerprint", "text"],
@@ -308,6 +329,7 @@ const VFIN_02_RPC_BINDINGS = {
     ["p_project_id", "text"],
     ["p_accountant_user_id", "uuid"],
     ["p_vendor_id", "text"],
+    ["p_contract_type", "text"],
   ],
   vendor_finance_list_project_accountants_admin: [
     ["p_auth_subject", "uuid"],
@@ -941,6 +963,7 @@ test("(#2) Full VFIN-02 acceptance: legacy isolation, controlled governance, non
       auth_subject: ACCT_A.auth,
       app_user_id: ACCT_A.app,
       project_id: PRJ_1,
+      contract_type: "OFFICIAL",
       cutoff_date: "2026-10-01",
       items: [{ vendor_id: "VND_UNLINKED", entry_type: "OPENING_PAYABLE", amount_minor: "1000000" }],
     });
@@ -1014,6 +1037,7 @@ test("(#2) Full VFIN-02 acceptance: legacy isolation, controlled governance, non
       app_user_id: ACCT_A.app,
       vendor_id: "VND_SHARED",
       project_id: PRJ_1,
+      contract_type: "OFFICIAL",
       entry_type: "DEBT_RECORDED",
       amount_minor: "10000000",
       effective_date: "2026-10-05",
@@ -1022,6 +1046,7 @@ test("(#2) Full VFIN-02 acceptance: legacy isolation, controlled governance, non
       request_fingerprint: computeRecordEntryFingerprint({
         project_id: PRJ_1,
         vendor_id: "VND_SHARED",
+        contract_type: "OFFICIAL",
         entry_type: "DEBT_RECORDED",
         amount_minor: "10000000",
         effective_date: "2026-10-05",
@@ -1032,6 +1057,7 @@ test("(#2) Full VFIN-02 acceptance: legacy isolation, controlled governance, non
     assert.equal(recA1.data.entry.ledger_scope, "PROJECT_ACCOUNTANT");
     assert.equal(recA1.data.entry.project_id, PRJ_1);
     assert.equal(recA1.data.entry.accountant_ref, ACCT_A.app);
+    assert.equal(recA1.data.entry.contract_type, "OFFICIAL");
     assert.equal(recA1.data.entry.created_by_display_name, ACCT_A.name);
     assert.equal(recA1.data.entry.vendor_sequence, 1);
     assert.equal(recA1.data.entry.balance_after_minor, "10000000");
@@ -1043,6 +1069,7 @@ test("(#2) Full VFIN-02 acceptance: legacy isolation, controlled governance, non
       app_user_id: ACCT_A.app,
       vendor_id: "VND_SHARED",
       project_id: PRJ_2,
+      contract_type: "OFFICIAL",
       entry_type: "DEBT_RECORDED",
       amount_minor: "1000000",
       effective_date: "2026-10-05",
@@ -1051,6 +1078,7 @@ test("(#2) Full VFIN-02 acceptance: legacy isolation, controlled governance, non
       request_fingerprint: computeRecordEntryFingerprint({
         project_id: PRJ_2,
         vendor_id: "VND_SHARED",
+        contract_type: "OFFICIAL",
         entry_type: "DEBT_RECORDED",
         amount_minor: "1000000",
         effective_date: "2026-10-05",
@@ -1067,6 +1095,7 @@ test("(#2) Full VFIN-02 acceptance: legacy isolation, controlled governance, non
       app_user_id: ACCT_B.app,
       vendor_id: "VND_SHARED",
       project_id: PRJ_2,
+      contract_type: "OFFICIAL",
       entry_type: "DEBT_RECORDED",
       amount_minor: "20000000",
       effective_date: "2026-10-06",
@@ -1075,6 +1104,7 @@ test("(#2) Full VFIN-02 acceptance: legacy isolation, controlled governance, non
       request_fingerprint: computeRecordEntryFingerprint({
         project_id: PRJ_2,
         vendor_id: "VND_SHARED",
+        contract_type: "OFFICIAL",
         entry_type: "DEBT_RECORDED",
         amount_minor: "20000000",
         effective_date: "2026-10-06",
@@ -1094,24 +1124,28 @@ test("(#2) Full VFIN-02 acceptance: legacy isolation, controlled governance, non
       auth_subject: ACCT_A.auth,
       app_user_id: ACCT_A.app,
       project_id: PRJ_1,
+      contract_type: "OFFICIAL",
       cutoff_date: "2026-10-01",
       items: openAItems,
     });
     assert.equal(previewOpenA.ok, true, JSON.stringify(previewOpenA));
     assert.equal(previewOpenA.data.project_id, PRJ_1);
     assert.equal(previewOpenA.data.accountant_ref, ACCT_A.app);
+    assert.equal(previewOpenA.data.contract_type, "OFFICIAL");
     assert.equal(previewOpenA.data.total_payable_minor, "10000000");
 
     const applyOpenA = await repo.applyOpeningBatch({
       auth_subject: ACCT_A.auth,
       app_user_id: ACCT_A.app,
       project_id: PRJ_1,
+      contract_type: "OFFICIAL",
       cutoff_date: "2026-10-01",
       items: openAItems,
       reason: openAReason,
       idempotency_key: nextUuid(),
       request_fingerprint: computeApplyOpeningBatchFingerprint({
         project_id: PRJ_1,
+        contract_type: "OFFICIAL",
         cutoff_date: "2026-10-01",
         items: openAItems,
         reason: openAReason,
@@ -1125,12 +1159,14 @@ test("(#2) Full VFIN-02 acceptance: legacy isolation, controlled governance, non
       auth_subject: ACCT_B.auth,
       app_user_id: ACCT_B.app,
       project_id: PRJ_2,
+      contract_type: "OFFICIAL",
       cutoff_date: "2026-10-01",
       items: openBItems,
       reason: openBReason,
       idempotency_key: nextUuid(),
       request_fingerprint: computeApplyOpeningBatchFingerprint({
         project_id: PRJ_2,
+        contract_type: "OFFICIAL",
         cutoff_date: "2026-10-01",
         items: openBItems,
         reason: openBReason,
@@ -1206,9 +1242,11 @@ test("(#2) Full VFIN-02 acceptance: legacy isolation, controlled governance, non
     assert.equal(acctASharedDetail.ok, true, JSON.stringify(acctASharedDetail));
     assert.equal(acctASharedDetail.data.vendor.balance_direction, "PAYABLE");
     assert.equal(acctASharedDetail.data.vendor.current_balance_minor, "10000000");
-    assert.equal(acctASharedDetail.data.sub_ledgers.length, 1);
-    assert.equal(acctASharedDetail.data.sub_ledgers[0].project_id, PRJ_1);
-    assert.equal(acctASharedDetail.data.sub_ledgers[0].accountant_ref, ACCT_A.app);
+    assert.equal(acctASharedDetail.data.sub_ledgers.length, 2);
+    for (const sl of acctASharedDetail.data.sub_ledgers) {
+      assert.equal(sl.project_id, PRJ_1);
+      assert.equal(sl.accountant_ref, ACCT_A.app);
+    }
 
     // ACCT_A cannot fetch ACCT_B's entry by ID (`getEntry` fails closed)
     const acctAGetBEntry = await repo.getEntry({
@@ -1228,6 +1266,7 @@ test("(#2) Full VFIN-02 acceptance: legacy isolation, controlled governance, non
       app_user_id: CASH_HOLDER_VIEW.app,
       vendor_id: "VND_SHARED",
       project_id: PRJ_1,
+      contract_type: "OFFICIAL",
       entry_type: "PAYMENT_RECORDED",
       amount_minor: "1000000",
       effective_date: "2026-10-08",
@@ -1236,6 +1275,7 @@ test("(#2) Full VFIN-02 acceptance: legacy isolation, controlled governance, non
       request_fingerprint: computeRecordEntryFingerprint({
         project_id: PRJ_1,
         vendor_id: "VND_SHARED",
+        contract_type: "OFFICIAL",
         entry_type: "PAYMENT_RECORDED",
         amount_minor: "1000000",
         effective_date: "2026-10-08",
@@ -1254,6 +1294,7 @@ test("(#2) Full VFIN-02 acceptance: legacy isolation, controlled governance, non
       app_user_id: CASH_HOLDER_BEHALF.app,
       vendor_id: "VND_SHARED",
       project_id: PRJ_1,
+      contract_type: "OFFICIAL",
       entry_type: "PAYMENT_RECORDED",
       amount_minor: "3000000",
       effective_date: "2026-10-08",
@@ -1262,6 +1303,7 @@ test("(#2) Full VFIN-02 acceptance: legacy isolation, controlled governance, non
       request_fingerprint: computeRecordEntryFingerprint({
         project_id: PRJ_1,
         vendor_id: "VND_SHARED",
+        contract_type: "OFFICIAL",
         entry_type: "PAYMENT_RECORDED",
         amount_minor: "3000000",
         effective_date: "2026-10-08",
@@ -1305,6 +1347,7 @@ test("(#2) Full VFIN-02 acceptance: legacy isolation, controlled governance, non
       app_user_id: BOD_RECONCILER.app,
       vendor_id: "VND_SHARED",
       project_id: PRJ_1,
+      contract_type: "OFFICIAL",
       entry_type: "PAYMENT_RECORDED",
       amount_minor: "500000",
       effective_date: "2026-10-09",
@@ -1313,6 +1356,7 @@ test("(#2) Full VFIN-02 acceptance: legacy isolation, controlled governance, non
       request_fingerprint: computeRecordEntryFingerprint({
         project_id: PRJ_1,
         vendor_id: "VND_SHARED",
+        contract_type: "OFFICIAL",
         entry_type: "PAYMENT_RECORDED",
         amount_minor: "500000",
         effective_date: "2026-10-09",
@@ -1329,6 +1373,7 @@ test("(#2) Full VFIN-02 acceptance: legacy isolation, controlled governance, non
       vendor_id: "VND_SHARED",
       project_id: PRJ_1,
       accountant_ref: ACCT_A.app,
+      contract_type: "OFFICIAL",
       as_of_date: "2026-10-10",
       confirmed_balance_minor: "7000000",
       reason: reconP1Reason,
@@ -1337,6 +1382,7 @@ test("(#2) Full VFIN-02 acceptance: legacy isolation, controlled governance, non
         project_id: PRJ_1,
         accountant_ref: ACCT_A.app,
         vendor_id: "VND_SHARED",
+        contract_type: "OFFICIAL",
         as_of_date: "2026-10-10",
         confirmed_balance_minor: "7000000",
         reason: reconP1Reason,
@@ -1347,6 +1393,7 @@ test("(#2) Full VFIN-02 acceptance: legacy isolation, controlled governance, non
     assert.equal(reconP1.data.reconciliation.difference_minor, "0");
     assert.equal(reconP1.data.reconciliation.project_id, PRJ_1);
     assert.equal(reconP1.data.reconciliation.accountant_ref, ACCT_A.app);
+    assert.equal(reconP1.data.reconciliation.contract_type, "OFFICIAL");
     assert.equal(reconP1.data.reconciliation.created_by_display_name, BOD_RECONCILER.name);
 
     // BOD_VIEWER (view-only) MUST be denied on `createReconciliation`
@@ -1357,6 +1404,7 @@ test("(#2) Full VFIN-02 acceptance: legacy isolation, controlled governance, non
       vendor_id: "VND_SHARED",
       project_id: PRJ_1,
       accountant_ref: ACCT_A.app,
+      contract_type: "OFFICIAL",
       as_of_date: "2026-10-10",
       confirmed_balance_minor: "7000000",
       reason: bodViewReconReason,
@@ -1365,6 +1413,7 @@ test("(#2) Full VFIN-02 acceptance: legacy isolation, controlled governance, non
         project_id: PRJ_1,
         accountant_ref: ACCT_A.app,
         vendor_id: "VND_SHARED",
+        contract_type: "OFFICIAL",
         as_of_date: "2026-10-10",
         confirmed_balance_minor: "7000000",
         reason: bodViewReconReason,
@@ -1424,6 +1473,7 @@ test("(#2) Full VFIN-02 acceptance: legacy isolation, controlled governance, non
       app_user_id: ACCT_B.app,
       vendor_id: "VND_SHARED",
       project_id: PRJ_1,
+      contract_type: "OFFICIAL",
       entry_type: "PAYROLL_RECORDED",
       amount_minor: "5000000",
       effective_date: "2026-10-18",
@@ -1432,6 +1482,7 @@ test("(#2) Full VFIN-02 acceptance: legacy isolation, controlled governance, non
       request_fingerprint: computeRecordEntryFingerprint({
         project_id: PRJ_1,
         vendor_id: "VND_SHARED",
+        contract_type: "OFFICIAL",
         entry_type: "PAYROLL_RECORDED",
         amount_minor: "5000000",
         effective_date: "2026-10-18",
@@ -1461,6 +1512,7 @@ test("(#2) Full VFIN-02 acceptance: legacy isolation, controlled governance, non
       app_user_id: ACCT_A.app,
       vendor_id: "VND_SHARED",
       project_id: PRJ_1,
+      contract_type: "OFFICIAL",
       entry_type: "DEBT_RECORDED",
       amount_minor: "100000",
       effective_date: "2026-10-19",
@@ -1469,6 +1521,7 @@ test("(#2) Full VFIN-02 acceptance: legacy isolation, controlled governance, non
       request_fingerprint: computeRecordEntryFingerprint({
         project_id: PRJ_1,
         vendor_id: "VND_SHARED",
+        contract_type: "OFFICIAL",
         entry_type: "DEBT_RECORDED",
         amount_minor: "100000",
         effective_date: "2026-10-19",
@@ -1510,13 +1563,14 @@ test("(#2) Full VFIN-02 acceptance: legacy isolation, controlled governance, non
       assert.equal(e.accountant_ref, ACCT_A.app);
     }
 
-    // Reversal preserves the target entry's `(project_id, responsible_accountant_user_id)` sub-ledger!
+    // Reversal preserves the target entry's `(project_id, responsible_accountant_user_id, contract_type)` sub-ledger!
     const adjReason = "Điều chỉnh tăng phí phát sinh thêm trên PRJ_2";
     const adjEntry = await repo.recordEntry({
       auth_subject: ACCT_B.auth,
       app_user_id: ACCT_B.app,
       vendor_id: "VND_SHARED",
       project_id: PRJ_2,
+      contract_type: "OFFICIAL",
       entry_type: "ADJUSTMENT_INCREASE",
       amount_minor: "1500000",
       effective_date: "2026-10-19",
@@ -1525,6 +1579,7 @@ test("(#2) Full VFIN-02 acceptance: legacy isolation, controlled governance, non
       request_fingerprint: computeRecordEntryFingerprint({
         project_id: PRJ_2,
         vendor_id: "VND_SHARED",
+        contract_type: "OFFICIAL",
         entry_type: "ADJUSTMENT_INCREASE",
         amount_minor: "1500000",
         effective_date: "2026-10-19",
@@ -1551,6 +1606,7 @@ test("(#2) Full VFIN-02 acceptance: legacy isolation, controlled governance, non
     assert.equal(revEntry.ok, true, JSON.stringify(revEntry));
     assert.equal(revEntry.data.reversal_entry.project_id, PRJ_2);
     assert.equal(revEntry.data.reversal_entry.accountant_ref, ACCT_B.app);
+    assert.equal(revEntry.data.reversal_entry.contract_type, "OFFICIAL");
     assert.equal(revEntry.data.reversal_entry.created_by_display_name, CASH_HOLDER_BEHALF.name);
     assert.equal(revEntry.data.reversal_entry.balance_after_minor, "20000000");
 
@@ -1782,7 +1838,7 @@ test("(#2) Full VFIN-02 acceptance: legacy isolation, controlled governance, non
         where n.nspname = 'public' and c.relname like 'vendor_finance_%' and c.relkind = 'r'
         order by c.relname`,
     );
-    assert.ok(tableSec.length >= 10, `expected >= 10 vendor_finance_* tables, got ${tableSec.length}`);
+    assert.ok(tableSec.length >= 11, `expected >= 11 vendor_finance_* tables, got ${tableSec.length}`);
     for (const row of tableSec) {
       assert.equal(row.relrowsecurity, true, `${row.relname} must enable RLS`);
       assert.equal(row.relforcerowsecurity, true, `${row.relname} must force RLS`);
@@ -1803,7 +1859,7 @@ test("(#2) Full VFIN-02 acceptance: legacy isolation, controlled governance, non
         where n.nspname = 'public' and p.proname like 'vendor_finance%'
         order by 1`,
     );
-    const allowlistSet = new Set(HF_VFIN_02_IMPLICIT_VENDOR_PROJECT_RPC_SIGNATURES);
+    const allowlistSet = new Set(VFIN_03_CONTRACT_TYPE_LEDGERS_RPC_SIGNATURES);
     const grantedSvc = [];
     for (const r of rpcAcl) {
       assert.equal(r.pub_exec, false, `PUBLIC must not execute ${r.sig}`);
@@ -1814,6 +1870,979 @@ test("(#2) Full VFIN-02 acceptance: legacy isolation, controlled governance, non
       }
     }
     assert.deepEqual(grantedSvc.sort(), [...allowlistSet].sort());
+  } finally {
+    await db.close();
+  }
+});
+
+test("(#3) Full VFIN-03 acceptance: contract-type sub-ledgers (SEASONAL vs OFFICIAL), non-netting across contract types, pre-VFIN-03 UNCLASSIFIED preservation, and explicit idempotent legacy classification", async () => {
+  const db = new PGlite();
+  try {
+    await db.exec(AUTH_PROLOGUE);
+    const migrations = await loadMigrations();
+    const vfin03Idx = migrations.findIndex(
+      (m) => m.name === VFIN_03_CONTRACT_TYPE_LEDGERS_MIGRATION_NAME,
+    );
+    assert.ok(vfin03Idx >= 0, "VFIN-03 migration must exist in supabase/migrations");
+    const vfin03Migration = migrations[vfin03Idx];
+
+    // 1. Verify LF/CRLF-deterministic checksum and atomic rollback before applying VFIN-03
+    const vfin03Checksum = migrationChecksum(vfin03Migration.sql);
+    assert.match(vfin03Checksum, /^[0-9a-f]{64}$/);
+    assert.equal(
+      migrationChecksum(vfin03Migration.sql.replace(/\n/g, "\r\n")),
+      vfin03Checksum,
+      "VFIN-03 checksum must be identical across LF and CRLF checkouts",
+    );
+
+    for (const m of migrations.slice(0, vfin03Idx)) {
+      await db.exec(m.sql);
+    }
+
+    const failingVfin03Body = `${migrationSqlForTransaction(vfin03Migration.sql)}\nselect 1 / 0;\n`;
+    await assert.rejects(
+      async () => {
+        await db.exec("begin;");
+        try {
+          await db.exec(failingVfin03Body);
+          await db.exec("commit;");
+        } catch (err) {
+          await db.exec("rollback;");
+          throw err;
+        }
+      },
+      (err) => err.code === "22012",
+    );
+    const { rows: leakedClassTables } = await db.query(
+      `select tablename from pg_tables
+        where schemaname = 'public'
+          and tablename = 'vendor_finance_subledger_classifications'`,
+    );
+    assert.equal(leakedClassTables.length, 0, "failed VFIN-03 transaction must roll back cleanly");
+
+    // 2. Seed actors, projects, vendors, and PRE-VFIN-03 project sub-ledger data
+    await db.query(
+      `insert into public.teams (team_id, code, display_name, active)
+       values ('99500000-0000-4000-8000-00000000000f'::uuid, '__system_vendor__', 'System Vendor Internal', true)
+       on conflict (code) do nothing`,
+    );
+
+    for (const actor of [
+      FULL_ADMIN,
+      ACCT_A,
+      ACCT_B,
+      CASH_HOLDER_VIEW,
+      CASH_HOLDER_BEHALF,
+      BOD_RECONCILER,
+      BOD_VIEWER,
+    ]) {
+      await db.query("insert into auth.users (id) values ($1::uuid)", [actor.auth]);
+      await db.query(
+        `insert into public.direct_entry_app_users (app_user_id, auth_subject, enabled, display_name)
+         values ($1::uuid, $2::uuid, true, $3)`,
+        [actor.app, actor.auth, actor.name],
+      );
+    }
+
+    await db.query(
+      `insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from, is_current)
+       values ($1::uuid, 'entry_admin', '2026-01-01', true),
+              ($1::uuid, 'recruiter_master_manage', '2026-01-01', true),
+              ($1::uuid, 'team_master_manage', '2026-01-01', true),
+              ($1::uuid, 'catalog_master_manage', '2026-01-01', true)`,
+      [FULL_ADMIN.app],
+    );
+    await db.query(
+      `insert into public.direct_entry_scope_grants (app_user_id, scope_kind, valid_from, is_current)
+       values ($1::uuid, 'all', '2026-01-01', true)`,
+      [FULL_ADMIN.app],
+    );
+
+    await db.query(
+      `insert into public.direct_entry_projects (project_id, display_name, active, version)
+       values ($1, 'Dự Án Miền Bắc (PRJ-1)', true, 1),
+              ($2, 'Dự Án Miền Nam (PRJ-2)', true, 1)`,
+      [PRJ_1, PRJ_2],
+    );
+
+    for (const acct of [ACCT_A, ACCT_B]) {
+      const reason = `Bổ nhiệm ${acct.name} vào phòng Kế toán`;
+      await db.query(
+        `select public.org_department_assign_accounting_member(
+           $1::uuid, $2::uuid, $3::uuid, 0, '2026-01-01'::date, $4::text, $5::uuid, $6::text
+         )`,
+        [
+          FULL_ADMIN.auth,
+          FULL_ADMIN.app,
+          acct.app,
+          reason,
+          nextUuid(),
+          computeAssignAccountingMemberFingerprint({
+            actor_app_user_id: FULL_ADMIN.app,
+            account_ref: acct.app,
+            expected_pair_version: 0,
+            effective_from: "2026-01-01",
+            reason,
+          }),
+        ],
+      );
+    }
+
+    for (const [vid, vname] of [
+      ["VND_DUAL_CONTRACT", "Công ty Song Hành Thời Vụ & Chính Thức"],
+      ["VND_PRE_VFIN03", "Công ty Dữ Liệu Sổ Dự Án Trước VFIN-03"],
+      ["VND_PRE_COLLIDE", "Công ty Kiểm Tra Trùng Sổ Đích Khi Phân Loại"],
+      ["VND_PRE_BATCH_MIX_A", "Công ty Lô Mở Sổ Cũ Khác Loại HĐ - A"],
+      ["VND_PRE_BATCH_MIX_B", "Công ty Lô Mở Sổ Cũ Khác Loại HĐ - B"],
+      ["VND_PRE_BATCH_SAME_A", "Công ty Lô Mở Sổ Cũ Cùng Loại HĐ - A"],
+      ["VND_PRE_BATCH_SAME_B", "Công ty Lô Mở Sổ Cũ Cùng Loại HĐ - B"],
+    ]) {
+      await db.query(
+        `select public.direct_entry_create_vendor(
+           $1::uuid, $2::uuid, 0, $3::text, $4::text, '2026-01-01'::date, 'Tạo NCC VFIN-03', $5::text
+         )`,
+        [FULL_ADMIN.auth, FULL_ADMIN.app, vid, vname, nextUuid()],
+      );
+    }
+
+    // Assign ACCT_A -> PRJ_1 and ACCT_B -> PRJ_2, plus global roles before VFIN-03
+    for (const [prj, acct] of [
+      [PRJ_1, ACCT_A],
+      [PRJ_2, ACCT_B],
+    ]) {
+      const r = `Phân công ${acct.name} phụ trách ${prj}`;
+      await db.query(
+        `select public.vendor_finance_assign_project_accountant_admin(
+           $1::uuid, $2::uuid, $3::text, $4::uuid, 0, '2026-10-01'::date, $5::text, $6::uuid, $7::text
+         )`,
+        [
+          FULL_ADMIN.auth,
+          FULL_ADMIN.app,
+          prj,
+          acct.app,
+          r,
+          nextUuid(),
+          computeAssignProjectAccountantFingerprint({
+            project_id: prj,
+            accountant_ref: acct.app,
+            valid_from: "2026-10-01",
+            expected_version: 0,
+            reason: r,
+          }),
+        ],
+      );
+    }
+
+    for (const [person, roleCode] of [
+      [CASH_HOLDER_VIEW, "CASH_HOLDER"],
+      [CASH_HOLDER_BEHALF, "CASH_HOLDER_RECORD_BEHALF"],
+      [BOD_RECONCILER, "GLOBAL_RECONCILER"],
+      [BOD_VIEWER, "GLOBAL_VIEWER"],
+    ]) {
+      const r = `Gán ${roleCode}`;
+      await db.query(
+        `select public.vendor_finance_assign_global_role_admin(
+           $1::uuid, $2::uuid, $3::uuid, $4::text, 0, '2026-10-01'::date, $5::text, $6::uuid, $7::text
+         )`,
+        [
+          FULL_ADMIN.auth,
+          FULL_ADMIN.app,
+          person.app,
+          roleCode,
+          r,
+          nextUuid(),
+          computeAssignGlobalRoleFingerprint({
+            account_ref: person.app,
+            role_code: roleCode,
+            valid_from: "2026-10-01",
+            expected_version: 0,
+            reason: r,
+          }),
+        ],
+      );
+    }
+
+    // Seed pre-VFIN-03 entries & reconciliation on `(VND_PRE_VFIN03, PRJ_1, ACCT_A)` and `(VND_PRE_COLLIDE, PRJ_1, ACCT_A)`
+    await db.query(
+      `select public.vendor_finance_record_entry(
+         $1::uuid, $2::uuid, 'VND_PRE_VFIN03', $3::text, 'DEBT_RECORDED', '12000000',
+         '2026-10-02'::date, 'Công nợ VFIN-02 chưa có loại HĐ đợt 1', $4::uuid, $5::text
+       )`,
+      [ACCT_A.auth, ACCT_A.app, PRJ_1, nextUuid(), "1".repeat(64)],
+    );
+    await db.query(
+      `select public.vendor_finance_record_entry(
+         $1::uuid, $2::uuid, 'VND_PRE_VFIN03', $3::text, 'PAYMENT_RECORDED', '2000000',
+         '2026-10-03'::date, 'Thanh toán VFIN-02 chưa có loại HĐ đợt 1', $4::uuid, $5::text
+       )`,
+      [ACCT_A.auth, ACCT_A.app, PRJ_1, nextUuid(), "2".repeat(64)],
+    );
+    await db.query(
+      `select public.vendor_finance_create_reconciliation(
+         $1::uuid, $2::uuid, 'VND_PRE_VFIN03', $3::text, $4::uuid,
+         '2026-10-04'::date, '10000000', 'Đối soát VFIN-02 chưa có loại HĐ', $5::uuid, $6::text
+       )`,
+      [ACCT_A.auth, ACCT_A.app, PRJ_1, ACCT_A.app, nextUuid(), "3".repeat(64)],
+    );
+    await db.query(
+      `select public.vendor_finance_record_entry(
+         $1::uuid, $2::uuid, 'VND_PRE_COLLIDE', $3::text, 'DEBT_RECORDED', '5000000',
+         '2026-10-02'::date, 'Công nợ VFIN-02 trên VND_PRE_COLLIDE', $4::uuid, $5::text
+       )`,
+      [ACCT_A.auth, ACCT_A.app, PRJ_1, nextUuid(), "4".repeat(64)],
+    );
+
+    // Seed two pre-VFIN-03 multi-vendor opening batches on PRJ_2 (ACCT_B) to test batch contract_type
+    // classification when vendors in the same batch are classified into different vs identical contract types
+    const { rows: mixedBatchSeed } = await db.query(
+      `select public.vendor_finance_apply_opening_batch(
+         $1::uuid, $2::uuid, $3::text, '2026-10-01'::date, $4::jsonb,
+         'Lô mở đầu kỳ VFIN-02 gồm 2 NCC sẽ phân loại khác loại HĐ', $5::uuid, $6::text
+       ) as payload`,
+      [
+        ACCT_B.auth,
+        ACCT_B.app,
+        PRJ_2,
+        JSON.stringify([
+          { vendor_id: "VND_PRE_BATCH_MIX_A", entry_type: "OPENING_PAYABLE", amount_minor: "3000000" },
+          { vendor_id: "VND_PRE_BATCH_MIX_B", entry_type: "OPENING_PAYABLE", amount_minor: "4000000" },
+        ]),
+        nextUuid(),
+        "5".repeat(64),
+      ],
+    );
+    const mixedLegacyBatchId = mixedBatchSeed[0].payload.batch.batch_id;
+
+    const { rows: sameBatchSeed } = await db.query(
+      `select public.vendor_finance_apply_opening_batch(
+         $1::uuid, $2::uuid, $3::text, '2026-10-01'::date, $4::jsonb,
+         'Lô mở đầu kỳ VFIN-02 gồm 2 NCC sẽ phân loại cùng loại HĐ', $5::uuid, $6::text
+       ) as payload`,
+      [
+        ACCT_B.auth,
+        ACCT_B.app,
+        PRJ_2,
+        JSON.stringify([
+          { vendor_id: "VND_PRE_BATCH_SAME_A", entry_type: "OPENING_PAYABLE", amount_minor: "1500000" },
+          { vendor_id: "VND_PRE_BATCH_SAME_B", entry_type: "OPENING_PAYABLE", amount_minor: "2500000" },
+        ]),
+        nextUuid(),
+        "6".repeat(64),
+      ],
+    );
+    const sameLegacyBatchId = sameBatchSeed[0].payload.batch.batch_id;
+
+    const { rows: preVfin03EntriesSnapshot } = await db.query(
+      `select entry_id::text as entry_id, vendor_id, vendor_sequence::int as seq, document_no,
+              effective_date::text as effective_date, amount_minor::text as amount_minor,
+              balance_before_minor::text as before_minor, balance_delta_minor::text as delta_minor,
+              balance_after_minor::text as after_minor
+         from public.vendor_finance_entries
+        where vendor_id = 'VND_PRE_VFIN03'
+        order by vendor_sequence asc`,
+    );
+    assert.equal(preVfin03EntriesSnapshot.length, 2);
+
+    const preVfin03Untouched = await captureUntouchedSnapshot(db);
+
+    // 3. Apply VFIN-03 migration (and any subsequent migrations)
+    for (const m of migrations.slice(vfin03Idx)) {
+      await db.exec(m.sql);
+    }
+
+    const postVfin03Untouched = await captureUntouchedSnapshot(db);
+    assert.deepEqual(
+      postVfin03Untouched,
+      preVfin03Untouched,
+      "VFIN-03 migration must have zero drift on untouched tables",
+    );
+
+    const repo = createPgliteVfinRepo(db);
+
+    // 4. Verify pre-VFIN-03 rows are preserved as `UNCLASSIFIED` (`Chưa phân loại`)
+    //    with zero auto-guessed contract type and 100% intact amounts/dates/document_no!
+    const { rows: postMigPreEntries } = await db.query(
+      `select entry_id::text as entry_id, vendor_id, contract_type, vendor_sequence::int as seq, document_no,
+              effective_date::text as effective_date, amount_minor::text as amount_minor,
+              balance_before_minor::text as before_minor, balance_delta_minor::text as delta_minor,
+              balance_after_minor::text as after_minor
+         from public.vendor_finance_entries
+        where vendor_id = 'VND_PRE_VFIN03'
+        order by vendor_sequence asc`,
+    );
+    assert.deepEqual(
+      postMigPreEntries.map(({ contract_type, ...rest }) => {
+        assert.equal(contract_type, "UNCLASSIFIED");
+        return rest;
+      }),
+      preVfin03EntriesSnapshot,
+    );
+
+    // Verify `UNCLASSIFIED` sub-ledger is visible in `listVendors`, `getVendor`, and `getMonthlyReport`
+    const unclassifiedList = await repo.listVendors({
+      auth_subject: ACCT_A.auth,
+      app_user_id: ACCT_A.app,
+      search: "VND_PRE_VFIN03",
+      active: "all",
+      balance_filter: "all",
+      project_id: PRJ_1,
+      accountant_ref: null,
+      ledger_scope: "all",
+      contract_type: "UNCLASSIFIED",
+      page: 1,
+      page_size: 25,
+    });
+    assert.equal(unclassifiedList.ok, true, JSON.stringify(unclassifiedList));
+    assert.equal(unclassifiedList.data.vendors.length, 1);
+    assert.equal(unclassifiedList.data.vendors[0].current_balance_minor, "10000000");
+    assert.equal(unclassifiedList.data.vendors[0].sub_ledgers[0].contract_type, "UNCLASSIFIED");
+
+    const unclassifiedDetail = await repo.getVendor({
+      auth_subject: ACCT_A.auth,
+      app_user_id: ACCT_A.app,
+      vendor_id: "VND_PRE_VFIN03",
+      project_id: PRJ_1,
+      accountant_ref: ACCT_A.app,
+      ledger_scope: "PROJECT_ACCOUNTANT",
+      contract_type: "UNCLASSIFIED",
+    });
+    assert.equal(unclassifiedDetail.ok, true, JSON.stringify(unclassifiedDetail));
+    assert.equal(unclassifiedDetail.data.selected_sub_ledger?.contract_type, "UNCLASSIFIED");
+    assert.equal(unclassifiedDetail.data.selected_sub_ledger?.can_classify_contract_type, true);
+    assert.equal(unclassifiedDetail.data.selected_sub_ledger?.classification, null);
+
+    // 5. Independent `SEASONAL` (Thời vụ) and `OFFICIAL` (Chính thức) sub-ledgers on the same
+    //    `(VND_DUAL_CONTRACT, PRJ_1, ACCT_A)` — zero cross-netting!
+    const seasonalOpenItems = [
+      { vendor_id: "VND_DUAL_CONTRACT", entry_type: "OPENING_PAYABLE", amount_minor: "8000000" },
+    ];
+    const seasonalOpenReason = "Khởi tạo đầu kỳ sổ Thời vụ cho VND_DUAL_CONTRACT trên PRJ_1";
+    const applySeasonalOpen = await repo.applyOpeningBatch({
+      auth_subject: ACCT_A.auth,
+      app_user_id: ACCT_A.app,
+      project_id: PRJ_1,
+      contract_type: "SEASONAL",
+      cutoff_date: "2026-10-01",
+      items: seasonalOpenItems,
+      reason: seasonalOpenReason,
+      idempotency_key: nextUuid(),
+      request_fingerprint: computeApplyOpeningBatchFingerprint({
+        project_id: PRJ_1,
+        contract_type: "SEASONAL",
+        cutoff_date: "2026-10-01",
+        items: seasonalOpenItems,
+        reason: seasonalOpenReason,
+      }),
+    });
+    assert.equal(applySeasonalOpen.ok, true, JSON.stringify(applySeasonalOpen));
+    assert.equal(applySeasonalOpen.data.batch.contract_type, "SEASONAL");
+
+    // Re-initializing SEASONAL on the same `(VND_DUAL_CONTRACT, PRJ_1)` MUST fail
+    const dupSeasonalReason = "Thử khởi tạo đầu kỳ lần 2 trên cùng sổ Thời vụ";
+    const dupSeasonalOpen = await repo.applyOpeningBatch({
+      auth_subject: ACCT_A.auth,
+      app_user_id: ACCT_A.app,
+      project_id: PRJ_1,
+      contract_type: "SEASONAL",
+      cutoff_date: "2026-10-01",
+      items: seasonalOpenItems,
+      reason: dupSeasonalReason,
+      idempotency_key: nextUuid(),
+      request_fingerprint: computeApplyOpeningBatchFingerprint({
+        project_id: PRJ_1,
+        contract_type: "SEASONAL",
+        cutoff_date: "2026-10-01",
+        items: seasonalOpenItems,
+        reason: dupSeasonalReason,
+      }),
+    });
+    assert.equal(dupSeasonalOpen.ok, false);
+    assert.equal(dupSeasonalOpen.code, "VENDOR_FINANCE_VENDOR_ALREADY_INITIALIZED");
+
+    // Initializing `OFFICIAL` on the SAME `(VND_DUAL_CONTRACT, PRJ_1)` succeeds independently!
+    const officialOpenItems = [
+      { vendor_id: "VND_DUAL_CONTRACT", entry_type: "OPENING_ADVANCE", amount_minor: "3000000" },
+    ];
+    const officialOpenReason = "Khởi tạo dư ứng đầu kỳ sổ Chính thức cho VND_DUAL_CONTRACT trên PRJ_1";
+    const applyOfficialOpen = await repo.applyOpeningBatch({
+      auth_subject: ACCT_A.auth,
+      app_user_id: ACCT_A.app,
+      project_id: PRJ_1,
+      contract_type: "OFFICIAL",
+      cutoff_date: "2026-10-01",
+      items: officialOpenItems,
+      reason: officialOpenReason,
+      idempotency_key: nextUuid(),
+      request_fingerprint: computeApplyOpeningBatchFingerprint({
+        project_id: PRJ_1,
+        contract_type: "OFFICIAL",
+        cutoff_date: "2026-10-01",
+        items: officialOpenItems,
+        reason: officialOpenReason,
+      }),
+    });
+    assert.equal(applyOfficialOpen.ok, true, JSON.stringify(applyOfficialOpen));
+    assert.equal(applyOfficialOpen.data.batch.contract_type, "OFFICIAL");
+
+    // Record normal entries on SEASONAL (+4,000,000 -> +12,000,000, seq 2) and OFFICIAL (+1,000,000 -> -2,000,000, seq 2)
+    const seasonalRecReason = "Bảng lương công nhân thời vụ đợt 1 tháng 10";
+    const seasonalRec = await repo.recordEntry({
+      auth_subject: ACCT_A.auth,
+      app_user_id: ACCT_A.app,
+      vendor_id: "VND_DUAL_CONTRACT",
+      project_id: PRJ_1,
+      contract_type: "SEASONAL",
+      entry_type: "PAYROLL_RECORDED",
+      amount_minor: "4000000",
+      effective_date: "2026-10-06",
+      reason: seasonalRecReason,
+      idempotency_key: nextUuid(),
+      request_fingerprint: computeRecordEntryFingerprint({
+        project_id: PRJ_1,
+        vendor_id: "VND_DUAL_CONTRACT",
+        contract_type: "SEASONAL",
+        entry_type: "PAYROLL_RECORDED",
+        amount_minor: "4000000",
+        effective_date: "2026-10-06",
+        reason: seasonalRecReason,
+      }),
+    });
+    assert.equal(seasonalRec.ok, true, JSON.stringify(seasonalRec));
+    assert.equal(seasonalRec.data.entry.contract_type, "SEASONAL");
+    assert.equal(seasonalRec.data.entry.vendor_sequence, 2);
+    assert.equal(seasonalRec.data.entry.balance_after_minor, "12000000");
+
+    const officialRecReason = "Phí tuyển dụng nhân sự chính thức đợt 1 tháng 10";
+    const officialRec = await repo.recordEntry({
+      auth_subject: ACCT_A.auth,
+      app_user_id: ACCT_A.app,
+      vendor_id: "VND_DUAL_CONTRACT",
+      project_id: PRJ_1,
+      contract_type: "OFFICIAL",
+      entry_type: "DEBT_RECORDED",
+      amount_minor: "1000000",
+      effective_date: "2026-10-06",
+      reason: officialRecReason,
+      idempotency_key: nextUuid(),
+      request_fingerprint: computeRecordEntryFingerprint({
+        project_id: PRJ_1,
+        vendor_id: "VND_DUAL_CONTRACT",
+        contract_type: "OFFICIAL",
+        entry_type: "DEBT_RECORDED",
+        amount_minor: "1000000",
+        effective_date: "2026-10-06",
+        reason: officialRecReason,
+      }),
+    });
+    assert.equal(officialRec.ok, true, JSON.stringify(officialRec));
+    assert.equal(officialRec.data.entry.contract_type, "OFFICIAL");
+    assert.equal(officialRec.data.entry.vendor_sequence, 2);
+    assert.equal(officialRec.data.entry.balance_after_minor, "-2000000");
+
+    // Verify ZERO cross-netting between SEASONAL (+12M) and OFFICIAL (-2M) on the SAME Project & Vendor!
+    const dualList = await repo.listVendors({
+      auth_subject: BOD_VIEWER.auth,
+      app_user_id: BOD_VIEWER.app,
+      search: "VND_DUAL_CONTRACT",
+      active: "all",
+      balance_filter: "all",
+      project_id: PRJ_1,
+      accountant_ref: null,
+      ledger_scope: "all",
+      contract_type: "all",
+      page: 1,
+      page_size: 25,
+    });
+    assert.equal(dualList.ok, true, JSON.stringify(dualList));
+    const dualItem = dualList.data.vendors.find((v) => v.vendor_id === "VND_DUAL_CONTRACT");
+    assert.ok(dualItem);
+    assert.equal(dualItem.balance_direction, "MULTI_LEDGER");
+    assert.equal(dualItem.current_balance_minor, "0", "MUST NOT net +12M SEASONAL and -2M OFFICIAL into +10M");
+    assert.equal(dualItem.payable_total_minor, "12000000");
+    assert.equal(dualItem.advance_total_minor, "2000000");
+    assert.equal(dualItem.sub_ledgers.length, 2);
+
+    // Filtering by `contract_type: "SEASONAL"` isolates the SEASONAL sub-ledger (+12M)
+    const seasonalOnlyList = await repo.listVendors({
+      auth_subject: BOD_VIEWER.auth,
+      app_user_id: BOD_VIEWER.app,
+      search: "VND_DUAL_CONTRACT",
+      active: "all",
+      balance_filter: "all",
+      project_id: PRJ_1,
+      accountant_ref: null,
+      ledger_scope: "all",
+      contract_type: "SEASONAL",
+      page: 1,
+      page_size: 25,
+    });
+    assert.equal(seasonalOnlyList.ok, true);
+    assert.equal(seasonalOnlyList.data.vendors[0].balance_direction, "PAYABLE");
+    assert.equal(seasonalOnlyList.data.vendors[0].current_balance_minor, "12000000");
+    assert.equal(seasonalOnlyList.data.vendors[0].sub_ledgers.length, 1);
+    assert.equal(seasonalOnlyList.data.vendors[0].sub_ledgers[0].contract_type, "SEASONAL");
+
+    // Reconciliations on SEASONAL vs OFFICIAL compute independent system balances
+    const reconSeasonalReason = "Đối soát sổ Thời vụ của VND_DUAL_CONTRACT";
+    const reconSeasonal = await repo.createReconciliation({
+      auth_subject: BOD_RECONCILER.auth,
+      app_user_id: BOD_RECONCILER.app,
+      vendor_id: "VND_DUAL_CONTRACT",
+      project_id: PRJ_1,
+      accountant_ref: ACCT_A.app,
+      contract_type: "SEASONAL",
+      as_of_date: "2026-10-10",
+      confirmed_balance_minor: "12000000",
+      reason: reconSeasonalReason,
+      idempotency_key: nextUuid(),
+      request_fingerprint: computeCreateReconciliationFingerprint({
+        project_id: PRJ_1,
+        accountant_ref: ACCT_A.app,
+        vendor_id: "VND_DUAL_CONTRACT",
+        contract_type: "SEASONAL",
+        as_of_date: "2026-10-10",
+        confirmed_balance_minor: "12000000",
+        reason: reconSeasonalReason,
+      }),
+    });
+    assert.equal(reconSeasonal.ok, true, JSON.stringify(reconSeasonal));
+    assert.equal(reconSeasonal.data.reconciliation.contract_type, "SEASONAL");
+    assert.equal(reconSeasonal.data.reconciliation.system_balance_minor, "12000000");
+    assert.equal(reconSeasonal.data.reconciliation.difference_minor, "0");
+
+    const reconOfficialReason = "Đối soát sổ Chính thức của VND_DUAL_CONTRACT";
+    const reconOfficial = await repo.createReconciliation({
+      auth_subject: BOD_RECONCILER.auth,
+      app_user_id: BOD_RECONCILER.app,
+      vendor_id: "VND_DUAL_CONTRACT",
+      project_id: PRJ_1,
+      accountant_ref: ACCT_A.app,
+      contract_type: "OFFICIAL",
+      as_of_date: "2026-10-10",
+      confirmed_balance_minor: "-2000000",
+      reason: reconOfficialReason,
+      idempotency_key: nextUuid(),
+      request_fingerprint: computeCreateReconciliationFingerprint({
+        project_id: PRJ_1,
+        accountant_ref: ACCT_A.app,
+        vendor_id: "VND_DUAL_CONTRACT",
+        contract_type: "OFFICIAL",
+        as_of_date: "2026-10-10",
+        confirmed_balance_minor: "-2000000",
+        reason: reconOfficialReason,
+      }),
+    });
+    assert.equal(reconOfficial.ok, true, JSON.stringify(reconOfficial));
+    assert.equal(reconOfficial.data.reconciliation.contract_type, "OFFICIAL");
+    assert.equal(reconOfficial.data.reconciliation.system_balance_minor, "-2000000");
+    assert.equal(reconOfficial.data.reconciliation.difference_minor, "0");
+
+    // Reversal on SEASONAL entry automatically inherits `contract_type = "SEASONAL"`
+    const seasonalAdjReason = "Điều chỉnh tăng tạm sổ Thời vụ";
+    const seasonalAdj = await repo.recordEntry({
+      auth_subject: ACCT_A.auth,
+      app_user_id: ACCT_A.app,
+      vendor_id: "VND_DUAL_CONTRACT",
+      project_id: PRJ_1,
+      contract_type: "SEASONAL",
+      entry_type: "ADJUSTMENT_INCREASE",
+      amount_minor: "500000",
+      effective_date: "2026-10-11",
+      reason: seasonalAdjReason,
+      idempotency_key: nextUuid(),
+      request_fingerprint: computeRecordEntryFingerprint({
+        project_id: PRJ_1,
+        vendor_id: "VND_DUAL_CONTRACT",
+        contract_type: "SEASONAL",
+        entry_type: "ADJUSTMENT_INCREASE",
+        amount_minor: "500000",
+        effective_date: "2026-10-11",
+        reason: seasonalAdjReason,
+      }),
+    });
+    assert.equal(seasonalAdj.ok, true);
+    assert.equal(seasonalAdj.data.entry.balance_after_minor, "12500000");
+
+    const seasonalRevReason = "Hoàn tác điều chỉnh sổ Thời vụ (kế thừa cố định loại HĐ)";
+    const seasonalRev = await repo.reverseEntry({
+      auth_subject: ACCT_A.auth,
+      app_user_id: ACCT_A.app,
+      entry_id: seasonalAdj.data.entry.entry_id,
+      effective_date: "2026-10-11",
+      reason: seasonalRevReason,
+      idempotency_key: nextUuid(),
+      request_fingerprint: computeReverseEntryFingerprint({
+        entry_id: seasonalAdj.data.entry.entry_id,
+        effective_date: "2026-10-11",
+        reason: seasonalRevReason,
+      }),
+    });
+    assert.equal(seasonalRev.ok, true, JSON.stringify(seasonalRev));
+    assert.equal(seasonalRev.data.reversal_entry.contract_type, "SEASONAL");
+    assert.equal(seasonalRev.data.reversal_entry.project_id, PRJ_1);
+    assert.equal(seasonalRev.data.reversal_entry.accountant_ref, ACCT_A.app);
+    assert.equal(seasonalRev.data.reversal_entry.balance_after_minor, "12000000");
+
+    // 6. Explicit Legacy Sub-Ledger Classification (`UNCLASSIFIED -> SEASONAL | OFFICIAL`)
+    // 6a. Unauthorized actors (`ACCT_B` on `PRJ_1`, `BOD_VIEWER`, `BOD_RECONCILER`) are rejected
+    const unauthClassReason = "Kế toán B thử phân loại sổ của Kế toán A";
+    const unauthClassB = await repo.classifyUnclassifiedSubLedger({
+      auth_subject: ACCT_B.auth,
+      app_user_id: ACCT_B.app,
+      vendor_id: "VND_PRE_VFIN03",
+      project_id: PRJ_1,
+      accountant_ref: ACCT_A.app,
+      target_contract_type: "SEASONAL",
+      reason: unauthClassReason,
+      idempotency_key: nextUuid(),
+      request_fingerprint: computeClassifySubLedgerFingerprint({
+        project_id: PRJ_1,
+        accountant_ref: ACCT_A.app,
+        vendor_id: "VND_PRE_VFIN03",
+        target_contract_type: "SEASONAL",
+        reason: unauthClassReason,
+      }),
+    });
+    assert.equal(unauthClassB.ok, false);
+    assert.equal(unauthClassB.code, "VENDOR_FINANCE_PROJECT_ACCESS_DENIED");
+
+    const unauthClassBod = await repo.classifyUnclassifiedSubLedger({
+      auth_subject: BOD_RECONCILER.auth,
+      app_user_id: BOD_RECONCILER.app,
+      vendor_id: "VND_PRE_VFIN03",
+      project_id: PRJ_1,
+      accountant_ref: ACCT_A.app,
+      target_contract_type: "SEASONAL",
+      reason: unauthClassReason,
+      idempotency_key: nextUuid(),
+      request_fingerprint: computeClassifySubLedgerFingerprint({
+        project_id: PRJ_1,
+        accountant_ref: ACCT_A.app,
+        vendor_id: "VND_PRE_VFIN03",
+        target_contract_type: "SEASONAL",
+        reason: unauthClassReason,
+      }),
+    });
+    assert.equal(unauthClassBod.ok, false);
+    assert.equal(unauthClassBod.code, "VENDOR_FINANCE_RECORD_DENIED");
+
+    // 6b. Responsible accountant ACCT_A classifies `(VND_PRE_VFIN03, PRJ_1, ACCT_A)` -> `SEASONAL`
+    const classifyKey = nextUuid();
+    const classifyReason = "Xác nhận hồ sơ hợp đồng cung ứng lao động thời vụ đợt 1 trên PRJ_1";
+    const classifyFp = computeClassifySubLedgerFingerprint({
+      project_id: PRJ_1,
+      accountant_ref: ACCT_A.app,
+      vendor_id: "VND_PRE_VFIN03",
+      target_contract_type: "SEASONAL",
+      reason: classifyReason,
+    });
+    const classifyRes = await repo.classifyUnclassifiedSubLedger({
+      auth_subject: ACCT_A.auth,
+      app_user_id: ACCT_A.app,
+      vendor_id: "VND_PRE_VFIN03",
+      project_id: PRJ_1,
+      accountant_ref: ACCT_A.app,
+      target_contract_type: "SEASONAL",
+      reason: classifyReason,
+      idempotency_key: classifyKey,
+      request_fingerprint: classifyFp,
+    });
+    assert.equal(classifyRes.ok, true, JSON.stringify(classifyRes));
+    assert.equal(classifyRes.data.replayed, false);
+    assert.equal(classifyRes.data.classification.source_contract_type, "UNCLASSIFIED");
+    assert.equal(classifyRes.data.classification.target_contract_type, "SEASONAL");
+    assert.equal(classifyRes.data.classification.classified_entry_count, 2);
+    assert.equal(classifyRes.data.classification.classified_reconciliation_count, 1);
+    assert.equal(classifyRes.data.classification.closing_balance_minor, "10000000");
+    assert.equal(classifyRes.data.classification.classified_by_display_name, ACCT_A.name);
+
+    // Verify all entries of `VND_PRE_VFIN03` are now `SEASONAL` with 100% identical amounts, dates, document_no, and sequences!
+    const { rows: postClassEntries } = await db.query(
+      `select entry_id::text as entry_id, vendor_id, contract_type, vendor_sequence::int as seq, document_no,
+              effective_date::text as effective_date, amount_minor::text as amount_minor,
+              balance_before_minor::text as before_minor, balance_delta_minor::text as delta_minor,
+              balance_after_minor::text as after_minor
+         from public.vendor_finance_entries
+        where vendor_id = 'VND_PRE_VFIN03'
+        order by vendor_sequence asc`,
+    );
+    assert.deepEqual(
+      postClassEntries.map(({ contract_type, ...rest }) => {
+        assert.equal(contract_type, "SEASONAL");
+        return rest;
+      }),
+      preVfin03EntriesSnapshot,
+      "Classification must preserve exact amounts, effective_date, document_no, and sequence history",
+    );
+
+    // Verify idempotent replay with the same key & fingerprint returns `replayed: true`
+    const classifyReplay = await repo.classifyUnclassifiedSubLedger({
+      auth_subject: ACCT_A.auth,
+      app_user_id: ACCT_A.app,
+      vendor_id: "VND_PRE_VFIN03",
+      project_id: PRJ_1,
+      accountant_ref: ACCT_A.app,
+      target_contract_type: "SEASONAL",
+      reason: classifyReason,
+      idempotency_key: classifyKey,
+      request_fingerprint: classifyFp,
+    });
+    assert.equal(classifyReplay.ok, true, JSON.stringify(classifyReplay));
+    assert.equal(classifyReplay.data.replayed, true);
+    assert.deepEqual(classifyReplay.data.classification, classifyRes.data.classification);
+
+    // Verify reusing the same idempotency key with a different payload fails with `VENDOR_FINANCE_IDEMPOTENCY_CONFLICT`
+    const conflictReason = "Thử đổi sang OFFICIAL nhưng dùng lại idempotency_key";
+    const classifyIdemConflict = await repo.classifyUnclassifiedSubLedger({
+      auth_subject: ACCT_A.auth,
+      app_user_id: ACCT_A.app,
+      vendor_id: "VND_PRE_VFIN03",
+      project_id: PRJ_1,
+      accountant_ref: ACCT_A.app,
+      target_contract_type: "OFFICIAL",
+      reason: conflictReason,
+      idempotency_key: classifyKey,
+      request_fingerprint: computeClassifySubLedgerFingerprint({
+        project_id: PRJ_1,
+        accountant_ref: ACCT_A.app,
+        vendor_id: "VND_PRE_VFIN03",
+        target_contract_type: "OFFICIAL",
+        reason: conflictReason,
+      }),
+    });
+    assert.equal(classifyIdemConflict.ok, false);
+    assert.equal(classifyIdemConflict.code, "VENDOR_FINANCE_IDEMPOTENCY_CONFLICT");
+
+    // Verify duplicate classification with a new idempotency key is rejected (`VENDOR_FINANCE_CONTRACT_TYPE_ALREADY_CLASSIFIED`)
+    const reclassifyReason = "Thử phân loại lại sổ đã phân loại";
+    const reclassifyAttempt = await repo.classifyUnclassifiedSubLedger({
+      auth_subject: ACCT_A.auth,
+      app_user_id: ACCT_A.app,
+      vendor_id: "VND_PRE_VFIN03",
+      project_id: PRJ_1,
+      accountant_ref: ACCT_A.app,
+      target_contract_type: "OFFICIAL",
+      reason: reclassifyReason,
+      idempotency_key: nextUuid(),
+      request_fingerprint: computeClassifySubLedgerFingerprint({
+        project_id: PRJ_1,
+        accountant_ref: ACCT_A.app,
+        vendor_id: "VND_PRE_VFIN03",
+        target_contract_type: "OFFICIAL",
+        reason: reclassifyReason,
+      }),
+    });
+    assert.equal(reclassifyAttempt.ok, false);
+    assert.equal(reclassifyAttempt.code, "VENDOR_FINANCE_CONTRACT_TYPE_ALREADY_CLASSIFIED");
+
+    // Verify `getVendor` exposes the classification audit trail on the classified `SEASONAL` sub-ledger
+    const classifiedVendorDetail = await repo.getVendor({
+      auth_subject: ACCT_A.auth,
+      app_user_id: ACCT_A.app,
+      vendor_id: "VND_PRE_VFIN03",
+      project_id: PRJ_1,
+      accountant_ref: ACCT_A.app,
+      ledger_scope: "PROJECT_ACCOUNTANT",
+      contract_type: "SEASONAL",
+    });
+    assert.equal(classifiedVendorDetail.ok, true, JSON.stringify(classifiedVendorDetail));
+    assert.equal(classifiedVendorDetail.data.selected_sub_ledger?.contract_type, "SEASONAL");
+    assert.equal(classifiedVendorDetail.data.selected_sub_ledger?.can_classify_contract_type, false);
+    assert.equal(
+      classifiedVendorDetail.data.selected_sub_ledger?.classification?.target_contract_type,
+      "SEASONAL",
+    );
+    assert.equal(
+      classifiedVendorDetail.data.selected_sub_ledger?.classification?.classified_by_display_name,
+      ACCT_A.name,
+    );
+
+    // 6c. Collision protection (`VENDOR_FINANCE_CONTRACT_TYPE_TARGET_NOT_EMPTY`):
+    // Record a new `OFFICIAL` entry on `VND_PRE_COLLIDE`, then attempt to classify its `UNCLASSIFIED` sub-ledger -> `OFFICIAL`
+    const collideNewReason = "Bút toán mới trên sổ Chính thức của VND_PRE_COLLIDE";
+    const collideNewEntry = await repo.recordEntry({
+      auth_subject: ACCT_A.auth,
+      app_user_id: ACCT_A.app,
+      vendor_id: "VND_PRE_COLLIDE",
+      project_id: PRJ_1,
+      contract_type: "OFFICIAL",
+      entry_type: "DEBT_RECORDED",
+      amount_minor: "1000000",
+      effective_date: "2026-10-07",
+      reason: collideNewReason,
+      idempotency_key: nextUuid(),
+      request_fingerprint: computeRecordEntryFingerprint({
+        project_id: PRJ_1,
+        vendor_id: "VND_PRE_COLLIDE",
+        contract_type: "OFFICIAL",
+        entry_type: "DEBT_RECORDED",
+        amount_minor: "1000000",
+        effective_date: "2026-10-07",
+        reason: collideNewReason,
+      }),
+    });
+    assert.equal(collideNewEntry.ok, true);
+
+    const collideAttemptReason = "Thử gộp sổ UNCLASSIFIED vào sổ OFFICIAL đã có bút toán";
+    const collideAttempt = await repo.classifyUnclassifiedSubLedger({
+      auth_subject: ACCT_A.auth,
+      app_user_id: ACCT_A.app,
+      vendor_id: "VND_PRE_COLLIDE",
+      project_id: PRJ_1,
+      accountant_ref: ACCT_A.app,
+      target_contract_type: "OFFICIAL",
+      reason: collideAttemptReason,
+      idempotency_key: nextUuid(),
+      request_fingerprint: computeClassifySubLedgerFingerprint({
+        project_id: PRJ_1,
+        accountant_ref: ACCT_A.app,
+        vendor_id: "VND_PRE_COLLIDE",
+        target_contract_type: "OFFICIAL",
+        reason: collideAttemptReason,
+      }),
+    });
+    assert.equal(collideAttempt.ok, false);
+    assert.equal(collideAttempt.code, "VENDOR_FINANCE_CONTRACT_TYPE_TARGET_NOT_EMPTY");
+
+    // Meanwhile `VND_PRE_COLLIDE`'s `UNCLASSIFIED` sub-ledger remains intact (`5,000,000`) and visible in Monthly Report!
+    const monthlySeasonal = await repo.getMonthlyReport({
+      auth_subject: BOD_VIEWER.auth,
+      app_user_id: BOD_VIEWER.app,
+      month: "2026-10",
+      project_id: PRJ_1,
+      accountant_ref: null,
+      vendor_id: null,
+      contract_type: "SEASONAL",
+    });
+    assert.equal(monthlySeasonal.ok, true, JSON.stringify(monthlySeasonal));
+    assert.deepEqual(
+      monthlySeasonal.data.rows.map((r) => `${r.vendor_id}:${r.contract_type}:${r.closing_balance_minor}`).sort(),
+      ["VND_DUAL_CONTRACT:SEASONAL:12000000", "VND_PRE_VFIN03:SEASONAL:10000000"],
+    );
+
+    const monthlyUnclassified = await repo.getMonthlyReport({
+      auth_subject: BOD_VIEWER.auth,
+      app_user_id: BOD_VIEWER.app,
+      month: "2026-10",
+      project_id: PRJ_1,
+      accountant_ref: null,
+      vendor_id: null,
+      contract_type: "UNCLASSIFIED",
+    });
+    assert.equal(monthlyUnclassified.ok, true, JSON.stringify(monthlyUnclassified));
+    assert.deepEqual(
+      monthlyUnclassified.data.rows.map((r) => `${r.vendor_id}:${r.contract_type}:${r.closing_balance_minor}`),
+      ["VND_PRE_COLLIDE:UNCLASSIFIED:5000000"],
+    );
+
+    // 6d. Multi-vendor legacy opening batch metadata regression:
+    // - When a pre-VFIN-03 opening batch contains 2 vendors classified into DIFFERENT contract types
+    //   (`VND_PRE_BATCH_MIX_A -> SEASONAL`, `VND_PRE_BATCH_MIX_B -> OFFICIAL`), the batch row in
+    //   `vendor_finance_opening_batches` MUST remain `UNCLASSIFIED` (never falsely labeled `OFFICIAL`).
+    // - When all vendors in a pre-VFIN-03 opening batch are classified into the SAME contract type
+    //   (`VND_PRE_BATCH_SAME_A -> SEASONAL`, `VND_PRE_BATCH_SAME_B -> SEASONAL`), the batch row transitions
+    //   to `SEASONAL` only after every entry in the batch has `contract_type = 'SEASONAL'`.
+    for (const [vid, targetType] of [
+      ["VND_PRE_BATCH_MIX_A", "SEASONAL"],
+      ["VND_PRE_BATCH_MIX_B", "OFFICIAL"],
+    ]) {
+      const r = `Phân loại ${vid} sang ${targetType} trên PRJ_2`;
+      const res = await repo.classifyUnclassifiedSubLedger({
+        auth_subject: ACCT_B.auth,
+        app_user_id: ACCT_B.app,
+        vendor_id: vid,
+        project_id: PRJ_2,
+        accountant_ref: ACCT_B.app,
+        target_contract_type: targetType,
+        reason: r,
+        idempotency_key: nextUuid(),
+        request_fingerprint: computeClassifySubLedgerFingerprint({
+          project_id: PRJ_2,
+          accountant_ref: ACCT_B.app,
+          vendor_id: vid,
+          target_contract_type: targetType,
+          reason: r,
+        }),
+      });
+      assert.equal(res.ok, true, JSON.stringify(res));
+    }
+
+    const { rows: mixedBatchRow } = await db.query(
+      `select contract_type from public.vendor_finance_opening_batches where batch_id = $1::uuid`,
+      [mixedLegacyBatchId],
+    );
+    assert.equal(
+      mixedBatchRow[0].contract_type,
+      "UNCLASSIFIED",
+      "Mixed-contract-type legacy opening batch must remain UNCLASSIFIED instead of taking the last vendor's target contract type",
+    );
+    const { rows: mixedBatchEntries } = await db.query(
+      `select vendor_id, contract_type
+         from public.vendor_finance_entries
+        where opening_batch_id = $1::uuid
+        order by vendor_id asc`,
+      [mixedLegacyBatchId],
+    );
+    assert.deepEqual(mixedBatchEntries, [
+      { vendor_id: "VND_PRE_BATCH_MIX_A", contract_type: "SEASONAL" },
+      { vendor_id: "VND_PRE_BATCH_MIX_B", contract_type: "OFFICIAL" },
+    ]);
+
+    const sameReasonA = "Phân loại VND_PRE_BATCH_SAME_A sang SEASONAL trên PRJ_2";
+    const sameResA = await repo.classifyUnclassifiedSubLedger({
+      auth_subject: ACCT_B.auth,
+      app_user_id: ACCT_B.app,
+      vendor_id: "VND_PRE_BATCH_SAME_A",
+      project_id: PRJ_2,
+      accountant_ref: ACCT_B.app,
+      target_contract_type: "SEASONAL",
+      reason: sameReasonA,
+      idempotency_key: nextUuid(),
+      request_fingerprint: computeClassifySubLedgerFingerprint({
+        project_id: PRJ_2,
+        accountant_ref: ACCT_B.app,
+        vendor_id: "VND_PRE_BATCH_SAME_A",
+        target_contract_type: "SEASONAL",
+        reason: sameReasonA,
+      }),
+    });
+    assert.equal(sameResA.ok, true, JSON.stringify(sameResA));
+
+    const { rows: sameBatchAfterFirst } = await db.query(
+      `select contract_type from public.vendor_finance_opening_batches where batch_id = $1::uuid`,
+      [sameLegacyBatchId],
+    );
+    assert.equal(sameBatchAfterFirst[0].contract_type, "UNCLASSIFIED");
+
+    const sameReasonB = "Phân loại VND_PRE_BATCH_SAME_B sang SEASONAL trên PRJ_2";
+    const sameResB = await repo.classifyUnclassifiedSubLedger({
+      auth_subject: ACCT_B.auth,
+      app_user_id: ACCT_B.app,
+      vendor_id: "VND_PRE_BATCH_SAME_B",
+      project_id: PRJ_2,
+      accountant_ref: ACCT_B.app,
+      target_contract_type: "SEASONAL",
+      reason: sameReasonB,
+      idempotency_key: nextUuid(),
+      request_fingerprint: computeClassifySubLedgerFingerprint({
+        project_id: PRJ_2,
+        accountant_ref: ACCT_B.app,
+        vendor_id: "VND_PRE_BATCH_SAME_B",
+        target_contract_type: "SEASONAL",
+        reason: sameReasonB,
+      }),
+    });
+    assert.equal(sameResB.ok, true, JSON.stringify(sameResB));
+
+    const { rows: sameBatchAfterSecond } = await db.query(
+      `select contract_type from public.vendor_finance_opening_batches where batch_id = $1::uuid`,
+      [sameLegacyBatchId],
+    );
+    assert.equal(
+      sameBatchAfterSecond[0].contract_type,
+      "SEASONAL",
+      "Homogeneous legacy opening batch must update to SEASONAL once all entries in the batch are SEASONAL",
+    );
   } finally {
     await db.close();
   }

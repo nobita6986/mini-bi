@@ -7,12 +7,14 @@ import {
   VENDOR_FINANCE_INTERNAL_DISCLAIMER_VI,
   checkForbiddenVendorFinanceClientFields,
   computeApplyOpeningBatchFingerprint,
+  computeClassifySubLedgerFingerprint,
   computeRecordEntryFingerprint,
   decodeVendorEntriesCursor,
   encodeVendorEntriesCursor,
   parseApplyOpeningBatchBody,
   parseAssignGlobalRoleBody,
   parseAssignProjectAccountantBody,
+  parseClassifyVendorSubLedgerBody,
   parseCreateVendorReconciliationBody,
   parseEndGlobalRoleBody,
   parseEndProjectAccountantBody,
@@ -27,6 +29,7 @@ import {
   parseReserveVendorFinanceEvidenceBody,
   parseReverseVendorFinanceEntryBody,
   parseSignedMinorAmount,
+  projectClassifySubLedgerMutation,
   projectMonthlyReport,
   projectOpeningApplyMutation,
   projectVendorFinanceEntry,
@@ -53,6 +56,7 @@ function makeCanonicalEntry(overrides = {}) {
     project_display_name_snapshot: "Dự án Miền Bắc",
     accountant_ref: ACC_A,
     responsible_accountant_display_name: "Trần Thị Kế Toán A",
+    contract_type: "SEASONAL",
     vendor_sequence: 1,
     cursor_sequence: 1,
     document_no: "VFIN-2026-000001",
@@ -156,10 +160,11 @@ test("checkForbiddenVendorFinanceClientFields rejects client authority & server-
   }
 });
 
-test("parseRecordVendorFinanceEntryBody enforces project_id, normal entry enum, positive integer strings, real date, reason & idempotency match", () => {
+test("parseRecordVendorFinanceEntryBody enforces project_id, contract_type (SEASONAL|OFFICIAL), normal entry enum, positive integer strings, real date, reason & idempotency match", () => {
   const ok = parseRecordVendorFinanceEntryBody(
     {
       project_id: "PRJ_NORTH",
+      contract_type: "SEASONAL",
       entry_type: "PAYMENT_RECORDED",
       amount_minor: "25000000",
       effective_date: "2026-10-24",
@@ -170,12 +175,14 @@ test("parseRecordVendorFinanceEntryBody enforces project_id, normal entry enum, 
   );
   assert.equal(ok.ok, true);
   assert.equal(ok.value.project_id, "PRJ_NORTH");
+  assert.equal(ok.value.contract_type, "SEASONAL");
   assert.equal(ok.value.reason, "Thanh toán đợt 1");
   assert.equal(ok.value.idempotency_key, IDEM_1);
 
   // Missing project_id -> rejected
   const missingProject = parseRecordVendorFinanceEntryBody(
     {
+      contract_type: "OFFICIAL",
       entry_type: "PAYMENT_RECORDED",
       amount_minor: "25000000",
       effective_date: "2026-10-24",
@@ -186,11 +193,27 @@ test("parseRecordVendorFinanceEntryBody enforces project_id, normal entry enum, 
   );
   assert.deepEqual(missingProject, { ok: false, code: "VENDOR_FINANCE_PAYLOAD_INVALID" });
 
+  // Missing or UNCLASSIFIED contract_type on new entry -> rejected
+  const unclass = parseRecordVendorFinanceEntryBody(
+    {
+      project_id: "PRJ_NORTH",
+      contract_type: "UNCLASSIFIED",
+      entry_type: "PAYMENT_RECORDED",
+      amount_minor: "25000000",
+      effective_date: "2026-10-24",
+      reason: "Thanh toán đợt 1",
+      idempotency_key: IDEM_1,
+    },
+    null,
+  );
+  assert.deepEqual(unclass, { ok: false, code: "VENDOR_FINANCE_CONTRACT_TYPE_INVALID" });
+
   // OPENING_* and REVERSAL cannot be submitted to normal record endpoint
   for (const forbiddenType of ["OPENING_PAYABLE", "OPENING_ADVANCE", "REVERSAL"]) {
     const res = parseRecordVendorFinanceEntryBody(
       {
         project_id: "PRJ_NORTH",
+        contract_type: "OFFICIAL",
         entry_type: forbiddenType,
         amount_minor: "1000",
         effective_date: "2026-10-24",
@@ -206,6 +229,7 @@ test("parseRecordVendorFinanceEntryBody enforces project_id, normal entry enum, 
   const badDate = parseRecordVendorFinanceEntryBody(
     {
       project_id: "PRJ_NORTH",
+      contract_type: "SEASONAL",
       entry_type: "DEBT_RECORDED",
       amount_minor: "1000",
       effective_date: "2026-02-30",
@@ -220,6 +244,7 @@ test("parseRecordVendorFinanceEntryBody enforces project_id, normal entry enum, 
   const mismatch = parseRecordVendorFinanceEntryBody(
     {
       project_id: "PRJ_NORTH",
+      contract_type: "OFFICIAL",
       entry_type: "DEBT_RECORDED",
       amount_minor: "1000",
       effective_date: "2026-10-24",
@@ -231,9 +256,10 @@ test("parseRecordVendorFinanceEntryBody enforces project_id, normal entry enum, 
   assert.deepEqual(mismatch, { ok: false, code: "IDEMPOTENCY_KEY_MISMATCH" });
 });
 
-test("opening batch parsers require project_id, skip zero-amount rows in fingerprint, reject duplicate vendors, negative amounts, __system_vendor__, and all-zero batches", () => {
+test("opening batch parsers require project_id & contract_type (SEASONAL|OFFICIAL), skip zero-amount rows in fingerprint, reject duplicate vendors, negative amounts, __system_vendor__, and all-zero batches", () => {
   const previewOk = parsePreviewOpeningBatchBody({
     project_id: "PRJ_NORTH",
+    contract_type: "SEASONAL",
     cutoff_date: "2026-10-01",
     items: [
       { vendor_id: "VND_1", entry_type: "OPENING_PAYABLE", amount_minor: "1500000" },
@@ -242,10 +268,12 @@ test("opening batch parsers require project_id, skip zero-amount rows in fingerp
   });
   assert.equal(previewOk.ok, true);
   assert.equal(previewOk.value.project_id, "PRJ_NORTH");
+  assert.equal(previewOk.value.contract_type, "SEASONAL");
 
   // Duplicate vendor_id
   const dup = parsePreviewOpeningBatchBody({
     project_id: "PRJ_NORTH",
+    contract_type: "OFFICIAL",
     cutoff_date: "2026-10-01",
     items: [
       { vendor_id: "VND_1", entry_type: "OPENING_PAYABLE", amount_minor: "100" },
@@ -257,6 +285,7 @@ test("opening batch parsers require project_id, skip zero-amount rows in fingerp
   // Reserved __system_vendor__
   const sysVendor = parsePreviewOpeningBatchBody({
     project_id: "PRJ_NORTH",
+    contract_type: "SEASONAL",
     cutoff_date: "2026-10-01",
     items: [{ vendor_id: "__system_vendor__", entry_type: "OPENING_PAYABLE", amount_minor: "100" }],
   });
@@ -266,6 +295,7 @@ test("opening batch parsers require project_id, skip zero-amount rows in fingerp
   const allZero = parseApplyOpeningBatchBody(
     {
       project_id: "PRJ_NORTH",
+      contract_type: "SEASONAL",
       cutoff_date: "2026-10-01",
       items: [{ vendor_id: "VND_1", entry_type: "OPENING_PAYABLE", amount_minor: "0" }],
       reason: "Khởi tạo",
@@ -275,9 +305,10 @@ test("opening batch parsers require project_id, skip zero-amount rows in fingerp
   );
   assert.deepEqual(allZero, { ok: false, code: "VENDOR_FINANCE_OPENING_BATCH_EMPTY" });
 
-  // Deterministic fingerprint invariant to item order and zero-amount rows, bound to project_id
+  // Deterministic fingerprint invariant to item order and zero-amount rows, bound to project_id and contract_type
   const fpA = computeApplyOpeningBatchFingerprint({
     project_id: "PRJ_NORTH",
+    contract_type: "SEASONAL",
     cutoff_date: "2026-10-01",
     items: [
       { vendor_id: "VND_B", entry_type: "OPENING_ADVANCE", amount_minor: "500" },
@@ -288,6 +319,7 @@ test("opening batch parsers require project_id, skip zero-amount rows in fingerp
   });
   const fpB = computeApplyOpeningBatchFingerprint({
     project_id: "PRJ_NORTH",
+    contract_type: "SEASONAL",
     cutoff_date: "2026-10-01",
     items: [
       { vendor_id: "VND_A", entry_type: "OPENING_PAYABLE", amount_minor: "1000" },
@@ -297,6 +329,17 @@ test("opening batch parsers require project_id, skip zero-amount rows in fingerp
   });
   const fpOtherProject = computeApplyOpeningBatchFingerprint({
     project_id: "PRJ_SOUTH",
+    contract_type: "SEASONAL",
+    cutoff_date: "2026-10-01",
+    items: [
+      { vendor_id: "VND_A", entry_type: "OPENING_PAYABLE", amount_minor: "1000" },
+      { vendor_id: "VND_B", entry_type: "OPENING_ADVANCE", amount_minor: "500" },
+    ],
+    reason: "Cutover",
+  });
+  const fpOtherContract = computeApplyOpeningBatchFingerprint({
+    project_id: "PRJ_NORTH",
+    contract_type: "OFFICIAL",
     cutoff_date: "2026-10-01",
     items: [
       { vendor_id: "VND_A", entry_type: "OPENING_PAYABLE", amount_minor: "1000" },
@@ -306,9 +349,11 @@ test("opening batch parsers require project_id, skip zero-amount rows in fingerp
   });
   assert.equal(fpA, fpB);
   assert.notEqual(fpA, fpOtherProject);
+  assert.notEqual(fpA, fpOtherContract);
 
   const recFpA = computeRecordEntryFingerprint({
     project_id: "PRJ_NORTH",
+    contract_type: "SEASONAL",
     vendor_id: "VND_A",
     entry_type: "DEBT_RECORDED",
     amount_minor: "1000",
@@ -317,6 +362,16 @@ test("opening batch parsers require project_id, skip zero-amount rows in fingerp
   });
   const recFpB = computeRecordEntryFingerprint({
     project_id: "PRJ_SOUTH",
+    contract_type: "SEASONAL",
+    vendor_id: "VND_A",
+    entry_type: "DEBT_RECORDED",
+    amount_minor: "1000",
+    effective_date: "2026-10-24",
+    reason: "Test",
+  });
+  const recFpC = computeRecordEntryFingerprint({
+    project_id: "PRJ_NORTH",
+    contract_type: "OFFICIAL",
     vendor_id: "VND_A",
     entry_type: "DEBT_RECORDED",
     amount_minor: "1000",
@@ -324,13 +379,15 @@ test("opening batch parsers require project_id, skip zero-amount rows in fingerp
     reason: "Test",
   });
   assert.notEqual(recFpA, recFpB);
+  assert.notEqual(recFpA, recFpC);
 });
 
-test("reconciliation, reverse, admin governance, and evidence parsers validate project/accountant bindings, OCC versions, and MIME/size/hash bounds", () => {
+test("reconciliation, reverse, sub-ledger classification, admin governance, and evidence parsers validate project/accountant/contract_type bindings, OCC versions, and MIME/size/hash bounds", () => {
   const recNeg = parseCreateVendorReconciliationBody(
     {
       project_id: "PRJ_NORTH",
       accountant_ref: ACC_A.toUpperCase(),
+      contract_type: "OFFICIAL",
       as_of_date: "2026-10-24",
       confirmed_balance_minor: "-3500000",
       reason: "NCC xác nhận còn dư ứng 3.5M",
@@ -341,7 +398,58 @@ test("reconciliation, reverse, admin governance, and evidence parsers validate p
   assert.equal(recNeg.ok, true);
   assert.equal(recNeg.value.project_id, "PRJ_NORTH");
   assert.equal(recNeg.value.accountant_ref, ACC_A);
+  assert.equal(recNeg.value.contract_type, "OFFICIAL");
   assert.equal(recNeg.value.confirmed_balance_minor, "-3500000");
+
+  // Explicit legacy sub-ledger classification parser (UNCLASSIFIED -> SEASONAL | OFFICIAL)
+  const classifyOk = parseClassifyVendorSubLedgerBody(
+    {
+      project_id: "PRJ_NORTH",
+      accountant_ref: ACC_A,
+      target_contract_type: "SEASONAL",
+      reason: "Xác nhận chứng từ hợp đồng thời vụ T09/2026",
+      idempotency_key: IDEM_1,
+    },
+    IDEM_1,
+  );
+  assert.equal(classifyOk.ok, true);
+  assert.equal(classifyOk.value.target_contract_type, "SEASONAL");
+  assert.equal(
+    computeClassifySubLedgerFingerprint({
+      vendor_id: "VND_ALPHA",
+      project_id: "PRJ_NORTH",
+      accountant_ref: ACC_A,
+      target_contract_type: "SEASONAL",
+      reason: "Xác nhận chứng từ hợp đồng thời vụ T09/2026",
+    }).length,
+    64,
+  );
+  assert.deepEqual(
+    parseClassifyVendorSubLedgerBody(
+      {
+        project_id: "PRJ_NORTH",
+        accountant_ref: ACC_A,
+        target_contract_type: "UNCLASSIFIED",
+        reason: "Không hợp lệ",
+        idempotency_key: IDEM_1,
+      },
+      null,
+    ),
+    { ok: false, code: "VENDOR_FINANCE_CONTRACT_TYPE_INVALID" },
+  );
+
+  // Reverse body never accepts contract_type (inherits from original entry)
+  assert.deepEqual(
+    parseReverseVendorFinanceEntryBody(
+      {
+        contract_type: "OFFICIAL",
+        reason: "Nhập nhầm NCC",
+        idempotency_key: IDEM_1,
+      },
+      null,
+    ),
+    { ok: false, code: "VENDOR_FINANCE_PAYLOAD_INVALID" },
+  );
 
   const revDefaultDate = parseReverseVendorFinanceEntryBody(
     {
@@ -436,13 +544,14 @@ test("reconciliation, reverse, admin governance, and evidence parsers validate p
   });
 });
 
-test("v2 keyset cursor & monthly report query parsers bind scope (vendor, project, accountant, month) and reject cross-subledger replay", () => {
+test("v3 keyset cursor & monthly report query parsers bind scope (vendor, project, accountant, contract_type, month) and reject cross-subledger replay", () => {
   const cursor = encodeVendorEntriesCursor({
     vendor_id: "VND_ALPHA",
     before_sequence: 42,
     project_id: "PRJ_NORTH",
     accountant_ref: ACC_A,
     ledger_scope: "PROJECT_ACCOUNTANT",
+    contract_type: "SEASONAL",
     month: "2026-10",
   });
   assert.deepEqual(
@@ -450,16 +559,28 @@ test("v2 keyset cursor & monthly report query parsers bind scope (vendor, projec
       project_id: "PRJ_NORTH",
       accountant_ref: ACC_A,
       ledger_scope: "PROJECT_ACCOUNTANT",
+      contract_type: "SEASONAL",
       month: "2026-10",
     }),
     { ok: true, before_sequence: 42 },
   );
-  // Cross-project or cross-accountant cursor replay -> rejected!
+  // Cross-project, cross-accountant, or cross-contract-type cursor replay -> rejected!
   assert.deepEqual(
     decodeVendorEntriesCursor(cursor, "VND_ALPHA", {
       project_id: "PRJ_SOUTH",
       accountant_ref: ACC_A,
       ledger_scope: "PROJECT_ACCOUNTANT",
+      contract_type: "SEASONAL",
+      month: "2026-10",
+    }),
+    { ok: false, code: "VENDOR_FINANCE_CURSOR_INVALID" },
+  );
+  assert.deepEqual(
+    decodeVendorEntriesCursor(cursor, "VND_ALPHA", {
+      project_id: "PRJ_NORTH",
+      accountant_ref: ACC_A,
+      ledger_scope: "PROJECT_ACCOUNTANT",
+      contract_type: "OFFICIAL",
       month: "2026-10",
     }),
     { ok: false, code: "VENDOR_FINANCE_CURSOR_INVALID" },
@@ -470,20 +591,22 @@ test("v2 keyset cursor & monthly report query parsers bind scope (vendor, projec
   });
 
   const entriesUrl = new URL(
-    `https://bi.local/api/vendor-finance/vendors/VND_ALPHA/entries?cursor=${cursor}&project_id=PRJ_NORTH&accountant_ref=${ACC_A}&ledger_scope=PROJECT_ACCOUNTANT&month=2026-10&entry_type=PAYROLL_RECORDED&page_size=20`,
+    `https://bi.local/api/vendor-finance/vendors/VND_ALPHA/entries?cursor=${cursor}&project_id=PRJ_NORTH&accountant_ref=${ACC_A}&ledger_scope=PROJECT_ACCOUNTANT&contract_type=SEASONAL&month=2026-10&entry_type=PAYROLL_RECORDED&page_size=20`,
   );
   const parsedEntries = parseListVendorFinanceEntriesQuery(entriesUrl, "VND_ALPHA");
   assert.equal(parsedEntries.ok, true);
   assert.equal(parsedEntries.value.before_sequence, 42);
   assert.equal(parsedEntries.value.project_id, "PRJ_NORTH");
+  assert.equal(parsedEntries.value.contract_type, "SEASONAL");
   assert.equal(parsedEntries.value.month, "2026-10");
 
   const monthlyUrl = new URL(
-    `https://bi.local/api/vendor-finance/reports/monthly?month=2026-10&project_id=PRJ_NORTH&accountant_ref=${ACC_A}`,
+    `https://bi.local/api/vendor-finance/reports/monthly?month=2026-10&project_id=PRJ_NORTH&accountant_ref=${ACC_A}&contract_type=OFFICIAL`,
   );
   const parsedMonthly = parseMonthlyReportQuery(monthlyUrl);
   assert.equal(parsedMonthly.ok, true);
   assert.equal(parsedMonthly.value.month, "2026-10");
+  assert.equal(parsedMonthly.value.contract_type, "OFFICIAL");
 
   const dupParamUrl = new URL("https://bi.local/api/vendor-finance/vendors?page=1&page=2");
   assert.deepEqual(parseListVendorFinanceVendorsQuery(dupParamUrl), {
@@ -523,6 +646,7 @@ test("response projectors are strictly fail-closed on arithmetic mismatch, fake 
     project_display_name_snapshot: "Dự án Miền Bắc",
     accountant_ref: ACC_A,
     responsible_accountant_display_name: "Trần Thị Kế Toán A",
+    contract_type: "SEASONAL",
     as_of_date: "2026-10-24",
     system_balance_minor: "1000000",
     confirmed_balance_minor: "850000",
@@ -560,6 +684,7 @@ test("response projectors are strictly fail-closed on arithmetic mismatch, fake 
         project_active: true,
         accountant_ref: ACC_A,
         responsible_accountant_display_name: "Trần Thị Kế Toán A",
+        contract_type: "SEASONAL",
         is_active_assignment: true,
         current_balance_minor: "10000000",
         balance_direction: "PAYABLE",
@@ -569,6 +694,8 @@ test("response projectors are strictly fail-closed on arithmetic mismatch, fake 
         eligible_for_opening: false,
         can_record_entry: true,
         can_reconcile: true,
+        can_classify_contract_type: false,
+        classification: null,
       },
     ],
     vendor: {
@@ -609,6 +736,7 @@ test("response projectors are strictly fail-closed on arithmetic mismatch, fake 
         project_display_name_snapshot: "Dự án Miền Bắc",
         accountant_ref: ACC_A,
         responsible_accountant_display_name: "Trần Thị Kế Toán A",
+        contract_type: "SEASONAL",
         cutoff_date: "2026-10-01",
         vendor_count: 1,
         skipped_zero_count: 2,
@@ -624,6 +752,29 @@ test("response projectors are strictly fail-closed on arithmetic mismatch, fake 
     }),
   );
 
+  // Classification mutation projector validates exact keys
+  assert.ok(
+    projectClassifySubLedgerMutation({
+      classification: {
+        classification_id: BATCH_ID,
+        vendor_id: "VND_ALPHA",
+        project_id: "PRJ_NORTH",
+        project_display_name_snapshot: "Dự án Miền Bắc",
+        accountant_ref: ACC_A,
+        responsible_accountant_display_name: "Trần Thị Kế Toán A",
+        source_contract_type: "UNCLASSIFIED",
+        target_contract_type: "OFFICIAL",
+        classified_entry_count: 3,
+        classified_reconciliation_count: 1,
+        closing_balance_minor: "15000000",
+        reason: "Đối chiếu chứng từ gốc",
+        classified_by_display_name: "Trần Thị Kế Toán A",
+        classified_at: "2026-10-24T02:00:00.000Z",
+      },
+      replayed: false,
+    }),
+  );
+
   // Monthly report projector requires MISSING_CANONICAL_SOURCE and null project_revenue_minor (never fake "0")
   const validMonthly = {
     authorization_date: "2026-10-24",
@@ -634,7 +785,13 @@ test("response projectors are strictly fail-closed on arithmetic mismatch, fake 
       can_reconcile: true,
       can_manage_project_assignments: false,
     },
-    filters: { month: "2026-10", project_id: null, accountant_ref: null, vendor_id: null },
+    filters: {
+      month: "2026-10",
+      project_id: null,
+      accountant_ref: null,
+      vendor_id: null,
+      contract_type: "all",
+    },
     totals: {
       project_revenue_status: "MISSING_CANONICAL_SOURCE",
       project_revenue_minor: null,
@@ -661,9 +818,12 @@ test("response projectors are strictly fail-closed on arithmetic mismatch, fake 
     "faking project_revenue_minor as '0' must fail closed",
   );
 
-  // VFIN-02 HTTP error statuses
+  // VFIN-02 & VFIN-03 HTTP error statuses
   assert.equal(vendorFinanceHttpStatusForError("VENDOR_FINANCE_RECONCILE_DENIED"), 403);
   assert.equal(vendorFinanceHttpStatusForError("VENDOR_FINANCE_ADMIN_DENIED"), 403);
   assert.equal(vendorFinanceHttpStatusForError("VENDOR_FINANCE_ASSIGNMENT_VERSION_CONFLICT"), 409);
   assert.equal(vendorFinanceHttpStatusForError("VENDOR_FINANCE_GLOBAL_ROLE_VERSION_CONFLICT"), 409);
+  assert.equal(vendorFinanceHttpStatusForError("VENDOR_FINANCE_CONTRACT_TYPE_INVALID"), 422);
+  assert.equal(vendorFinanceHttpStatusForError("VENDOR_FINANCE_CONTRACT_TYPE_ALREADY_CLASSIFIED"), 409);
+  assert.equal(vendorFinanceHttpStatusForError("VENDOR_FINANCE_CONTRACT_TYPE_TARGET_NOT_EMPTY"), 409);
 });

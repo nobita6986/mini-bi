@@ -21,6 +21,7 @@ import {
   handlePostApplyOpeningBatch,
   handlePostAssignGlobalRoleAdmin,
   handlePostAssignProjectAccountantAdmin,
+  handlePostClassifyVendorSubLedger,
   handlePostEndGlobalRoleAdmin,
   handlePostEndProjectAccountantAdmin,
   handlePostFinalizeVendorFinanceEvidence,
@@ -81,6 +82,9 @@ const EXPECTED_ROUTE_METHODS = Object.freeze({
   "src/app/api/vendor-finance/vendors/[vendorId]/reconciliations/route.ts": {
     GET: "handleGetVendorReconciliations",
     POST: "handlePostVendorReconciliation",
+  },
+  "src/app/api/vendor-finance/vendors/[vendorId]/classify-contract-type/route.ts": {
+    POST: "handlePostClassifyVendorSubLedger",
   },
   "src/app/api/vendor-finance/entries/[entryId]/route.ts": {
     GET: "handleGetVendorFinanceSingleEntry",
@@ -164,6 +168,7 @@ function sampleEntry(overrides = {}) {
     project_display_name_snapshot: "Dự án Miền Bắc",
     accountant_ref: ACC_A_ID,
     responsible_accountant_display_name: "Trần Thị Kế Toán A",
+    contract_type: "SEASONAL",
     vendor_sequence: 1,
     cursor_sequence: 1,
     document_no: "VFIN-2026-000001",
@@ -200,6 +205,7 @@ function sampleReconciliation(overrides = {}) {
     project_display_name_snapshot: "Dự án Miền Bắc",
     accountant_ref: ACC_A_ID,
     responsible_accountant_display_name: "Trần Thị Kế Toán A",
+    contract_type: "SEASONAL",
     as_of_date: "2026-10-24",
     system_balance_minor: "15000000",
     confirmed_balance_minor: "14500000",
@@ -310,6 +316,7 @@ function makeMockRepository({
               project_id: null,
               accountant_ref: null,
               ledger_scope: "all",
+              contract_type: "all",
             },
             page: 1,
             page_size: 25,
@@ -338,6 +345,7 @@ function makeMockRepository({
                     project_display_name: "Dự án Miền Bắc",
                     accountant_ref: ACC_A_ID,
                     responsible_accountant_display_name: "Trần Thị Kế Toán A",
+                    contract_type: "SEASONAL",
                     current_balance_minor: "15000000",
                     balance_direction: "PAYABLE",
                     entry_count: 1,
@@ -360,6 +368,7 @@ function makeMockRepository({
           project_active: true,
           accountant_ref: ACC_A_ID,
           responsible_accountant_display_name: "Trần Thị Kế Toán A",
+          contract_type: "SEASONAL",
           is_active_assignment: true,
           current_balance_minor: "15000000",
           balance_direction: "PAYABLE",
@@ -369,6 +378,8 @@ function makeMockRepository({
           eligible_for_opening: false,
           can_record_entry: actorAccess.can_record,
           can_reconcile: actorAccess.can_reconcile ?? actorAccess.can_record,
+          can_classify_contract_type: false,
+          classification: null,
         };
         return {
           ok: true,
@@ -506,6 +517,7 @@ function makeMockRepository({
             project_display_name: "Dự án Miền Bắc",
             accountant_ref: ACC_A_ID,
             responsible_accountant_display_name: "Trần Thị Kế Toán A",
+            contract_type: input.contract_type,
             cutoff_date: input.cutoff_date,
             vendor_count: 1,
             skipped_zero_count: 0,
@@ -537,6 +549,7 @@ function makeMockRepository({
               project_display_name_snapshot: "Dự án Miền Bắc",
               accountant_ref: ACC_A_ID,
               responsible_accountant_display_name: "Trần Thị Kế Toán A",
+              contract_type: input.contract_type,
               cutoff_date: input.cutoff_date,
               vendor_count: 1,
               skipped_zero_count: 0,
@@ -549,6 +562,7 @@ function makeMockRepository({
             },
             entries: [
               sampleEntry({
+                contract_type: input.contract_type,
                 entry_type: "OPENING_PAYABLE",
                 document_kind: "OPENING_BALANCE_VOUCHER",
                 opening_batch_id: BATCH_ID,
@@ -566,7 +580,33 @@ function makeMockRepository({
             reconciliation: sampleReconciliation({
               vendor_id: input.vendor_id,
               project_id: input.project_id,
+              contract_type: input.contract_type,
             }),
+            replayed: false,
+          },
+        };
+      },
+      async classifyUnclassifiedSubLedger(input) {
+        calls.push(["classifyUnclassifiedSubLedger", input]);
+        return {
+          ok: true,
+          data: {
+            classification: {
+              classification_id: BATCH_ID,
+              vendor_id: input.vendor_id,
+              project_id: input.project_id,
+              project_display_name_snapshot: "Dự án Miền Bắc",
+              accountant_ref: input.accountant_ref ?? ACC_A_ID,
+              responsible_accountant_display_name: "Trần Thị Kế Toán A",
+              source_contract_type: "UNCLASSIFIED",
+              target_contract_type: input.target_contract_type,
+              classified_entry_count: 2,
+              classified_reconciliation_count: 1,
+              closing_balance_minor: "15000000",
+              reason: input.reason,
+              classified_by_display_name: "Trần Thị Kế Toán A",
+              classified_at: "2026-10-24T02:00:00.000Z",
+            },
             replayed: false,
           },
         };
@@ -589,6 +629,7 @@ function makeMockRepository({
               project_id: input.project_id,
               accountant_ref: input.accountant_ref,
               vendor_id: input.vendor_id,
+              contract_type: input.contract_type ?? "all",
             },
             totals: {
               project_revenue_status: "MISSING_CANONICAL_SOURCE",
@@ -911,6 +952,7 @@ test("dynamic route discovery & DIRECT_ENTRY_API_ENABLED hidden 404 gate across 
       handlePostVendorFinanceEntry(new Request(`${ORIGIN}/api/vendor-finance/vendors/VND_ALPHA/entries`, { method: "POST", body: untouchedBody(), duplex: "half" }), "VND_ALPHA", disabledFlag, bombDeps),
       handleGetVendorReconciliations(new Request(`${ORIGIN}/api/vendor-finance/vendors/VND_ALPHA/reconciliations`), "VND_ALPHA", disabledFlag, bombDeps),
       handlePostVendorReconciliation(new Request(`${ORIGIN}/api/vendor-finance/vendors/VND_ALPHA/reconciliations`, { method: "POST", body: untouchedBody(), duplex: "half" }), "VND_ALPHA", disabledFlag, bombDeps),
+      handlePostClassifyVendorSubLedger(new Request(`${ORIGIN}/api/vendor-finance/vendors/VND_ALPHA/classify-contract-type`, { method: "POST", body: untouchedBody(), duplex: "half" }), "VND_ALPHA", disabledFlag, bombDeps),
       handleGetVendorFinanceSingleEntry(new Request(`${ORIGIN}/api/vendor-finance/entries/${ENTRY_ID}`), ENTRY_ID, disabledFlag, bombDeps),
       handlePostReverseVendorFinanceEntry(new Request(`${ORIGIN}/api/vendor-finance/entries/${ENTRY_ID}/reverse`, { method: "POST", body: untouchedBody(), duplex: "half" }), ENTRY_ID, disabledFlag, bombDeps),
       handlePostPreviewOpeningBatch(new Request(`${ORIGIN}/api/vendor-finance/opening-batches/preview`, { method: "POST", body: untouchedBody(), duplex: "half" }), disabledFlag, bombDeps),
@@ -927,7 +969,7 @@ test("dynamic route discovery & DIRECT_ENTRY_API_ENABLED hidden 404 gate across 
       handleGetDownloadVendorFinanceEvidence(new Request(`${ORIGIN}/api/vendor-finance/evidence/${EV_ID_1}/download`), EV_ID_1, disabledFlag, bombDeps),
     ]);
 
-    assert.equal(responses.length, 21);
+    assert.equal(responses.length, 22);
     for (const res of responses) {
       assert.equal(res.status, 404);
       assert.equal(res.headers.get("cache-control"), "private, no-store");
@@ -1066,6 +1108,7 @@ test("HTTP VFIN-02 4-role authorization matrix: Full Admin, Project Accountant, 
       headers: SAME_ORIGIN_POST_HEADERS,
       body: JSON.stringify({
         project_id: PROJECT_ID,
+        contract_type: "SEASONAL",
         entry_type: "DEBT_RECORDED",
         amount_minor: "15000000",
         effective_date: "2026-10-24",
@@ -1078,6 +1121,24 @@ test("HTTP VFIN-02 4-role authorization matrix: Full Admin, Project Accountant, 
     acctDeps,
   );
   assert.equal(acctPost.status, 201);
+
+  const acctClassify = await handlePostClassifyVendorSubLedger(
+    new Request(`${ORIGIN}/api/vendor-finance/vendors/VND_ALPHA/classify-contract-type`, {
+      method: "POST",
+      headers: SAME_ORIGIN_POST_HEADERS,
+      body: JSON.stringify({
+        project_id: PROJECT_ID,
+        accountant_ref: ACC_A_ID,
+        target_contract_type: "OFFICIAL",
+        reason: "Phân loại sổ cũ sau khi đối chiếu chứng từ",
+        idempotency_key: IDEM_2,
+      }),
+    }),
+    "VND_ALPHA",
+    "true",
+    acctDeps,
+  );
+  assert.equal(acctClassify.status, 201);
 
   const acctAdminDenied = await handleGetProjectAccountantsAdmin(
     new Request(`${ORIGIN}/api/vendor-finance/admin/project-accountants`),
@@ -1148,6 +1209,7 @@ test("HTTP VFIN-02 4-role authorization matrix: Full Admin, Project Accountant, 
       body: JSON.stringify({
         project_id: PROJECT_ID,
         accountant_ref: ACC_A_ID,
+        contract_type: "SEASONAL",
         as_of_date: "2026-10-24",
         confirmed_balance_minor: "14500000",
         reason: "BoD xác nhận đối soát tháng 10",
@@ -1189,7 +1251,18 @@ test("HTTP VFIN-02 4-role authorization matrix: Full Admin, Project Accountant, 
     narrowReconcilerDeps,
   );
   assert.equal(narrowEntryDenied.status, 403);
-  assert.deepEqual(await narrowEntryDenied.json(), { ok: false, code: "VENDOR_FINANCE_RECORD_DENIED" });
+  const narrowClassifyDenied = await handlePostClassifyVendorSubLedger(
+    new Request(`${ORIGIN}/api/vendor-finance/vendors/VND_ALPHA/classify-contract-type`, {
+      method: "POST",
+      headers: SAME_ORIGIN_POST_HEADERS,
+      body: "{}",
+    }),
+    "VND_ALPHA",
+    "true",
+    narrowReconcilerDeps,
+  );
+  assert.equal(narrowClassifyDenied.status, 403);
+  assert.deepEqual(await narrowClassifyDenied.json(), { ok: false, code: "VENDOR_FINANCE_RECORD_DENIED" });
 
   // 4. BoD strictly view-only (`vendor_finance_view @ all` with can_record=false, can_reconcile=false)
   const bodRepo = makeMockRepository({
@@ -1571,6 +1644,7 @@ test("evidence lifecycle: invalid upload does NOT roll back money entry, cleans 
         headers: SAME_ORIGIN_POST_HEADERS,
         body: JSON.stringify({
           project_id: PROJECT_ID,
+          contract_type: "SEASONAL",
           entry_type: "PAYMENT_RECORDED",
           amount_minor: "5000000",
           effective_date: "2026-10-24",
@@ -1897,6 +1971,7 @@ test("createVendorFinanceRepository maps known VFIN-01 & VFIN-02 SQL tokens & fa
     auth_subject: AUTH_ID,
     app_user_id: APP_ID,
     project_id: PROJECT_ID,
+    contract_type: "SEASONAL",
     vendor_id: "VND_INACTIVE",
     entry_type: "DEBT_RECORDED",
     amount_minor: "1000",

@@ -53,6 +53,8 @@ import {
   VFIN_02_PROJECT_LEDGERS_RPC_SIGNATURES,
   HF_VFIN_02_IMPLICIT_VENDOR_PROJECT_MIGRATION_NAME,
   HF_VFIN_02_IMPLICIT_VENDOR_PROJECT_RPC_SIGNATURES,
+  VFIN_03_CONTRACT_TYPE_LEDGERS_MIGRATION_NAME,
+  VFIN_03_CONTRACT_TYPE_LEDGERS_RPC_SIGNATURES,
   CCCD_QR_ASYNC_STAGE1_MIGRATION_NAME,
   CCCD_QR_ASYNC_STAGE1_RPC_SIGNATURES,
   PRE_WAVE2_CCCD_REVIEW_MIGRATION_NAME,
@@ -941,6 +943,39 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
         );
       }
 
+      const vfin03ContractTypeLedgersMigration = await readFile(
+        path.join(MIGRATION_DIR, VFIN_03_CONTRACT_TYPE_LEDGERS_MIGRATION_NAME),
+        "utf8",
+      );
+      const vfin03ContractTypeLedgersNormalized = vfin03ContractTypeLedgersMigration
+        .replace(/\s+/g, " ")
+        .replace(/\(\s+/g, "(")
+        .replace(/\s+\)/g, ")")
+        .toLowerCase();
+      for (const sig of [
+        "public.vendor_finance_list_vendors(uuid, uuid, text, text, text, text, uuid, text, text, integer, integer)",
+        "public.vendor_finance_get_vendor(uuid, uuid, text, text, uuid, text, text)",
+        "public.vendor_finance_list_vendor_entries(uuid, uuid, text, bigint, text, integer, text, uuid, text, text, text)",
+        "public.vendor_finance_list_vendor_reconciliations(uuid, uuid, text, integer, integer, text, uuid, text, text)",
+        "public.vendor_finance_record_entry(uuid, uuid, text, text, text, text, text, date, text, uuid, text)",
+        "public.vendor_finance_preview_opening_batch(uuid, uuid, text, text, date, jsonb)",
+        "public.vendor_finance_apply_opening_batch(uuid, uuid, text, text, date, jsonb, text, uuid, text)",
+        "public.vendor_finance_create_reconciliation(uuid, uuid, text, text, uuid, text, date, text, text, uuid, text)",
+        "public.vendor_finance_classify_unclassified_subledger(uuid, uuid, text, text, uuid, text, text, uuid, text)",
+        "public.vendor_finance_get_monthly_report(uuid, uuid, text, text, uuid, text, text)",
+      ]) {
+        const sigGrant = `grant execute on function ${sig.toLowerCase()} to service_role;`;
+        const sigRevoke = `revoke all on function ${sig.toLowerCase()} from public, anon, authenticated, service_role;`;
+        assert.ok(
+          vfin03ContractTypeLedgersNormalized.includes(sigGrant),
+          `VFIN-03 RPC ${sig} is explicitly granted only to service_role`,
+        );
+        assert.ok(
+          vfin03ContractTypeLedgersNormalized.includes(sigRevoke),
+          `VFIN-03 RPC ${sig} revokes client and inherited EXECUTE before granting service_role`,
+        );
+      }
+
       expectedSignatures.push(R1_2_SERVICE_RPC, ...F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES,
         F1_WORK_REPORTS_ASSIGNMENT_OPTIONS_RPC_SIGNATURE,
         F1_WORK_REPORTS_ASSIGNMENT_TRACKING_RPC_SIGNATURE,
@@ -957,7 +992,7 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
         ...HF_OFFBOARDING_SUPPRESSION_AND_ATTENDANCE_FILTER_RPC_SIGNATURES,
         ...ATTENDANCE_SELF_HISTORY_RPC_SIGNATURES,
         ...ORG_SHELL_01_DEPARTMENTS_RPC_SIGNATURES,
-        ...HF_VFIN_02_IMPLICIT_VENDOR_PROJECT_RPC_SIGNATURES,
+        ...VFIN_03_CONTRACT_TYPE_LEDGERS_RPC_SIGNATURES,
         ...HF_WORK_REPORTS_GROUPS_AND_ANALYTICS_OPTIONS_RPC_SIGNATURES,
         ...CCCD_QR_ASYNC_STAGE1_RPC_SIGNATURES,
         ...PRE_WAVE2_CCCD_REVIEW_RPC_SIGNATURES,
@@ -995,7 +1030,7 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
           ...HF_OFFBOARDING_SUPPRESSION_AND_ATTENDANCE_FILTER_RPC_SIGNATURES,
           ...ATTENDANCE_SELF_HISTORY_RPC_SIGNATURES,
           ...ORG_SHELL_01_DEPARTMENTS_RPC_SIGNATURES,
-          ...HF_VFIN_02_IMPLICIT_VENDOR_PROJECT_RPC_SIGNATURES,
+          ...VFIN_03_CONTRACT_TYPE_LEDGERS_RPC_SIGNATURES,
           ...HF_WORK_REPORTS_GROUPS_AND_ANALYTICS_OPTIONS_RPC_SIGNATURES,
           ...CCCD_QR_ASYNC_STAGE1_RPC_SIGNATURES,
           ...PRE_WAVE2_CCCD_REVIEW_RPC_SIGNATURES,

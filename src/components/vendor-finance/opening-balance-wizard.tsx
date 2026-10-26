@@ -34,6 +34,7 @@ import { PageHeader, PageShell } from "@/components/ui/page-shell";
 import type {
   OpeningVendorFinanceEntryType,
   VendorFinanceActorContextOptionsResponse,
+  VendorFinanceClassifiedContractType,
   VendorFinanceListItem,
   VendorFinanceOpeningApplyResponse,
   VendorFinanceOpeningPreviewResponse,
@@ -47,6 +48,8 @@ import {
   buildVendorFinanceContextUrl,
   buildVendorListUrl,
   classifyVendorFinanceError,
+  CONTRACT_TYPE_BADGE_TONES,
+  CONTRACT_TYPE_LABELS_VI,
   createClientIdempotencyKey,
   ENTRY_TYPE_LABELS_VI,
   formatSignedVndDelta,
@@ -61,6 +64,7 @@ import {
   parseVendorFinanceContextEnvelope,
   parseVendorListEnvelope,
   validateUiSearchInput,
+  VFIN_UI_CLASSIFIED_CONTRACT_TYPES,
   VFIN_UI_MAX_OPENING_BATCH_ITEMS,
   VFIN_UI_MAX_REASON_LENGTH,
   VFIN_UI_MAX_SEARCH_LENGTH,
@@ -84,12 +88,16 @@ export function OpeningBalanceWizard() {
   const searchParams = useSearchParams();
   const initialVendorParam = searchParams.get("vendorId") ?? "";
   const initialProjectParam = searchParams.get("projectId") ?? "";
+  const initialContractTypeParam = searchParams.get("contractType") ?? "";
   const safeInitialSearch = isCanonicalUiVendorId(initialVendorParam) ? initialVendorParam : "";
   const safeInitialProject = isCanonicalUiProjectId(initialProjectParam)
     ? initialProjectParam
     : "";
+  const safeInitialContractType: VendorFinanceClassifiedContractType =
+    initialContractTypeParam === "OFFICIAL" ? "OFFICIAL" : "SEASONAL";
 
   const projectSelectId = useId();
+  const contractTypeSelectId = useId();
   const cutoffInputId = useId();
   const searchInputId = useId();
   const reasonInputId = useId();
@@ -97,6 +105,8 @@ export function OpeningBalanceWizard() {
 
   const [step, setStep] = useState<WizardStep>("input");
   const [selectedProjectId, setSelectedProjectId] = useState(safeInitialProject);
+  const [selectedContractType, setSelectedContractType] =
+    useState<VendorFinanceClassifiedContractType>(safeInitialContractType);
   const [cutoffDate, setCutoffDate] = useState("");
   const [cutoffInitialized, setCutoffInitialized] = useState(false);
 
@@ -238,6 +248,7 @@ export function OpeningBalanceWizard() {
         const url = buildVendorListUrl({
           project_id: selectedProjectId,
           ledger_scope: "PROJECT_ACCOUNTANT",
+          contract_type: selectedContractType,
           search: searchCheck.search,
           active: "all",
           balance_filter: "uninitialized",
@@ -282,7 +293,7 @@ export function OpeningBalanceWizard() {
       cancelled = true;
       controller.abort();
     };
-  }, [selectedProjectId, debouncedSearch, page, reloadNonce]);
+  }, [selectedProjectId, selectedContractType, debouncedSearch, page, reloadNonce]);
 
   const eligibleProjects = (contextData?.projects ?? []).filter(
     (p) => p.can_record_for_project && p.has_active_accountant && p.active,
@@ -355,6 +366,7 @@ export function OpeningBalanceWizard() {
     const rows = buildRowsForSubmission();
     const built = buildOpeningPreviewRequest({
       project_id: selectedProjectId,
+      contract_type: selectedContractType,
       cutoff_date: cutoffDate,
       rows,
     });
@@ -418,6 +430,7 @@ export function OpeningBalanceWizard() {
     const rows = buildRowsForSubmission();
     const built = buildOpeningApplyRequest({
       project_id: selectedProjectId,
+      contract_type: selectedContractType,
       cutoff_date: cutoffDate,
       rows,
       reason,
@@ -474,7 +487,7 @@ export function OpeningBalanceWizard() {
       setStep("applied");
       setApplyLoading(false);
       notify.success({
-        title: `Đã khởi tạo thành công ${parsed.batch.vendor_count} Vendor`,
+        title: `Đã khởi tạo thành công ${parsed.batch.vendor_count} Vendor (${CONTRACT_TYPE_LABELS_VI[parsed.batch.contract_type]})`,
         description: `${parsed.batch.project_display_name_snapshot ?? parsed.batch.project_id} · Ngày chốt: ${formatVietnamDateLabel(parsed.batch.cutoff_date)}`,
       });
     } catch {
@@ -584,7 +597,7 @@ export function OpeningBalanceWizard() {
               </Alert>
             ) : (
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-12 items-end">
-                <div className="lg:col-span-5 space-y-1.5">
+                <div className="lg:col-span-4 space-y-1.5">
                   <label
                     htmlFor={projectSelectId}
                     className="block text-sm font-medium text-foreground"
@@ -615,10 +628,38 @@ export function OpeningBalanceWizard() {
 
                 <div className="lg:col-span-3 space-y-1.5">
                   <label
+                    htmlFor={contractTypeSelectId}
+                    className="block text-sm font-medium text-foreground"
+                  >
+                    Loại hợp đồng (Sổ riêng) <span className="text-rose-600">*</span>
+                  </label>
+                  <select
+                    id={contractTypeSelectId}
+                    data-testid="vfin-opening-contract-type-select"
+                    value={selectedContractType}
+                    onChange={(e) => {
+                      setSelectedContractType(e.target.value as VendorFinanceClassifiedContractType);
+                      setDraftMap({});
+                      setPage(1);
+                      setWizardError(null);
+                      rotateKey();
+                    }}
+                    className="min-h-11 sm:min-h-10 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                  >
+                    {VFIN_UI_CLASSIFIED_CONTRACT_TYPES.map((ct) => (
+                      <option key={ct} value={ct}>
+                        {CONTRACT_TYPE_LABELS_VI[ct]}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="lg:col-span-2 space-y-1.5">
+                  <label
                     htmlFor={cutoffInputId}
                     className="block text-sm font-medium text-foreground"
                   >
-                    Ngày chốt đầu kỳ (Cutoff) <span className="text-rose-600">*</span>
+                    Ngày chốt (Cutoff) <span className="text-rose-600">*</span>
                   </label>
                   <input
                     id={cutoffInputId}
@@ -633,18 +674,18 @@ export function OpeningBalanceWizard() {
                   />
                 </div>
 
-                <div className="sm:col-span-2 lg:col-span-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-surface-muted/50 px-3.5 py-2.5 text-xs">
+                <div className="sm:col-span-2 lg:col-span-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-surface-muted/50 px-3.5 py-2.5 text-xs">
                   <div>
                     <p className="font-medium text-foreground">
                       Kế toán phụ trách sổ:{" "}
                       <strong>{selectedProject?.active_accountant_display_name ?? "—"}</strong>
                     </p>
                     <p className="text-muted">
-                      Đã chọn:{" "}
+                      Đã chọn ({CONTRACT_TYPE_LABELS_VI[selectedContractType]}):{" "}
                       <span className="font-mono">
                         {filledDraftCount} / {VFIN_UI_MAX_OPENING_BATCH_ITEMS}
                       </span>{" "}
-                      Vendor (dòng <code className="font-mono">0</code> tự động bỏ qua)
+                      Vendor
                     </p>
                   </div>
                   <Button
@@ -921,6 +962,8 @@ export function OpeningBalanceWizard() {
           <Alert tone="info" title="Kết quả kiểm tra xem trước từ máy chủ">
             <p>
               Dự án: <strong>{previewData.project_display_name}</strong> ({previewData.project_id})
+              {" · "}Loại hợp đồng:{" "}
+              <strong>{CONTRACT_TYPE_LABELS_VI[previewData.contract_type]}</strong>
               {" · "}Kế toán phụ trách sổ:{" "}
               <strong>{previewData.responsible_accountant_display_name}</strong> · Ngày chốt:{" "}
               <strong className="font-mono">
@@ -1064,11 +1107,17 @@ export function OpeningBalanceWizard() {
           </Alert>
 
           <Card className="p-5 space-y-4">
-            <div className="grid grid-cols-1 gap-3 rounded-xl border border-border bg-surface-muted/50 p-3.5 text-xs sm:grid-cols-2 lg:grid-cols-5">
+            <div className="grid grid-cols-1 gap-3 rounded-xl border border-border bg-surface-muted/50 p-3.5 text-xs sm:grid-cols-2 lg:grid-cols-6">
               <div>
                 <p className="text-muted">Dự án hạch toán</p>
                 <p className="mt-0.5 text-sm font-semibold text-foreground">
                   {previewData.project_display_name}
+                </p>
+              </div>
+              <div>
+                <p className="text-muted">Loại hợp đồng</p>
+                <p className="mt-0.5 text-sm font-semibold text-foreground">
+                  {CONTRACT_TYPE_LABELS_VI[previewData.contract_type]}
                 </p>
               </div>
               <div>
@@ -1173,6 +1222,10 @@ export function OpeningBalanceWizard() {
               <strong className="text-foreground">
                 {appliedData.batch.project_display_name_snapshot ?? appliedData.batch.project_id}
               </strong>{" "}
+              · Loại hợp đồng:{" "}
+              <StatusBadge tone={CONTRACT_TYPE_BADGE_TONES[appliedData.batch.contract_type]}>
+                {CONTRACT_TYPE_LABELS_VI[appliedData.batch.contract_type]}
+              </StatusBadge>{" "}
               · Kế toán phụ trách sổ:{" "}
               <strong className="text-foreground">
                 {appliedData.batch.responsible_accountant_display_name ?? "—"}
@@ -1220,7 +1273,7 @@ export function OpeningBalanceWizard() {
                     </td>
                     <td data-label="Vendor" className={DATA_TABLE_TD_CLASS}>
                       <Link
-                        href={`/finance/vendors/${encodeURIComponent(entry.vendor_id)}?ledgerScope=PROJECT_ACCOUNTANT&projectId=${encodeURIComponent(entry.project_id ?? "")}&accountantRef=${encodeURIComponent(entry.accountant_ref ?? "")}`}
+                        href={`/finance/vendors/${encodeURIComponent(entry.vendor_id)}?ledgerScope=PROJECT_ACCOUNTANT&projectId=${encodeURIComponent(entry.project_id ?? "")}&accountantRef=${encodeURIComponent(entry.accountant_ref ?? "")}&contractType=${encodeURIComponent(entry.contract_type)}`}
                         className="font-medium text-primary hover:underline"
                       >
                         {entry.vendor_display_name_snapshot}

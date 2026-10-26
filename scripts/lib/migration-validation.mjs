@@ -202,6 +202,34 @@ export const ADMIN_LINK_EXISTING_PERSONNEL_ACCOUNT_RPC_SIGNATURES = Object.freez
   "public.direct_entry_account_operation_recruiter_link_candidates(uuid, uuid, uuid)",
   "public.direct_entry_account_operation_link_recruiter(uuid, uuid, uuid, integer, uuid, integer, text, text)",
 ]);
+export const VFIN_03_CONTRACT_TYPE_LEDGERS_MIGRATION_NAME =
+  "20261027090000_vfin_03_vendor_contract_type_ledgers.sql";
+export const VFIN_03_CONTRACT_TYPE_LEDGERS_RPC_SIGNATURES = Object.freeze([
+  "public.vendor_finance_get_actor_access(uuid, uuid)",
+  "public.vendor_finance_list_actor_context_options(uuid, uuid)",
+  "public.vendor_finance_list_vendors(uuid, uuid, text, text, text, text, uuid, text, text, integer, integer)",
+  "public.vendor_finance_get_vendor(uuid, uuid, text, text, uuid, text, text)",
+  "public.vendor_finance_list_vendor_entries(uuid, uuid, text, bigint, text, integer, text, uuid, text, text, text)",
+  "public.vendor_finance_get_entry(uuid, uuid, uuid)",
+  "public.vendor_finance_list_vendor_reconciliations(uuid, uuid, text, integer, integer, text, uuid, text, text)",
+  "public.vendor_finance_record_entry(uuid, uuid, text, text, text, text, text, date, text, uuid, text)",
+  "public.vendor_finance_reverse_entry(uuid, uuid, uuid, date, text, uuid, text)",
+  "public.vendor_finance_preview_opening_batch(uuid, uuid, text, text, date, jsonb)",
+  "public.vendor_finance_apply_opening_batch(uuid, uuid, text, text, date, jsonb, text, uuid, text)",
+  "public.vendor_finance_create_reconciliation(uuid, uuid, text, text, uuid, text, date, text, text, uuid, text)",
+  "public.vendor_finance_classify_unclassified_subledger(uuid, uuid, text, text, uuid, text, text, uuid, text)",
+  "public.vendor_finance_get_monthly_report(uuid, uuid, text, text, uuid, text, text)",
+  "public.vendor_finance_reserve_evidence(uuid, uuid, text, uuid, text, integer, text, integer, uuid, text)",
+  "public.vendor_finance_complete_evidence(uuid, uuid, uuid, text, text)",
+  "public.vendor_finance_get_evidence_download(uuid, uuid, uuid)",
+  "public.vendor_finance_mark_evidence_cleaned(uuid, uuid, uuid)",
+  "public.vendor_finance_list_project_accountants_admin(uuid, uuid, text, boolean, integer, integer)",
+  "public.vendor_finance_assign_project_accountant_admin(uuid, uuid, text, uuid, integer, date, text, uuid, text)",
+  "public.vendor_finance_end_project_accountant_admin(uuid, uuid, uuid, integer, date, text, uuid, text)",
+  "public.vendor_finance_list_global_roles_admin(uuid, uuid, text, boolean, integer, integer)",
+  "public.vendor_finance_assign_global_role_admin(uuid, uuid, uuid, text, integer, date, text, uuid, text)",
+  "public.vendor_finance_end_global_role_admin(uuid, uuid, uuid, integer, date, text, uuid, text)",
+]);
 export const F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES = Object.freeze([
   "public.work_report_list_templates(uuid, uuid)",
   "public.work_report_get_template(uuid, uuid, uuid)",
@@ -429,6 +457,7 @@ export async function verifyS0T1CHistoricalCompatibility(
     hfWorkReportsGroupsAndAnalyticsOptionsApplied = false,
     vfin02ProjectLedgersApplied = false,
     hfVfin02ImplicitVendorProjectApplied = false,
+    vfin03ContractTypeLedgersApplied = false,
     cccdQrAsyncStage1Applied = false,
     preWave2CccdReviewApplied = false,
     cccdReviewManualResolutionApplied = false,
@@ -465,13 +494,15 @@ export async function verifyS0T1CHistoricalCompatibility(
       : []),
     ...(attendanceSelfHistoryApplied ? ATTENDANCE_SELF_HISTORY_RPC_SIGNATURES : []),
     ...(orgShell01DepartmentsApplied ? ORG_SHELL_01_DEPARTMENTS_RPC_SIGNATURES : []),
-    ...(hfVfin02ImplicitVendorProjectApplied
-      ? HF_VFIN_02_IMPLICIT_VENDOR_PROJECT_RPC_SIGNATURES
-      : vfin02ProjectLedgersApplied
-        ? VFIN_02_PROJECT_LEDGERS_RPC_SIGNATURES
-      : vfin01BackendApplied
-        ? VFIN_01_BACKEND_RPC_SIGNATURES
-        : []),
+    ...(vfin03ContractTypeLedgersApplied
+      ? VFIN_03_CONTRACT_TYPE_LEDGERS_RPC_SIGNATURES
+      : hfVfin02ImplicitVendorProjectApplied
+        ? HF_VFIN_02_IMPLICIT_VENDOR_PROJECT_RPC_SIGNATURES
+        : vfin02ProjectLedgersApplied
+          ? VFIN_02_PROJECT_LEDGERS_RPC_SIGNATURES
+        : vfin01BackendApplied
+          ? VFIN_01_BACKEND_RPC_SIGNATURES
+          : []),
     ...(hfWorkReportsGroupsAndAnalyticsOptionsApplied
       ? HF_WORK_REPORTS_GROUPS_AND_ANALYTICS_OPTIONS_RPC_SIGNATURES
       : []),
@@ -714,6 +745,8 @@ export async function verifyAppliedMigrationChecksum(
           appliedMap.has(VFIN_02_PROJECT_LEDGERS_MIGRATION_NAME),
         hfVfin02ImplicitVendorProjectApplied:
           appliedMap.has(HF_VFIN_02_IMPLICIT_VENDOR_PROJECT_MIGRATION_NAME),
+        vfin03ContractTypeLedgersApplied:
+          appliedMap.has(VFIN_03_CONTRACT_TYPE_LEDGERS_MIGRATION_NAME),
         cccdQrAsyncStage1Applied:
           appliedMap.has(CCCD_QR_ASYNC_STAGE1_MIGRATION_NAME),
         preWave2CccdReviewApplied:

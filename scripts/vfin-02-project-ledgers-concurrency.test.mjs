@@ -37,9 +37,13 @@ import {
   computeApplyOpeningBatchFingerprint,
   computeAssignGlobalRoleFingerprint,
   computeAssignProjectAccountantFingerprint,
+  computeClassifySubLedgerFingerprint,
   computeRecordEntryFingerprint,
 } from "../src/lib/vendor-finance/vendor-finance-contract.ts";
-import { HF_VFIN_02_IMPLICIT_VENDOR_PROJECT_MIGRATION_NAME } from "./lib/migration-validation.mjs";
+import {
+  HF_VFIN_02_IMPLICIT_VENDOR_PROJECT_MIGRATION_NAME,
+  VFIN_03_CONTRACT_TYPE_LEDGERS_MIGRATION_NAME,
+} from "./lib/migration-validation.mjs";
 
 const ROOT = process.cwd();
 const MIGRATION_DIR = path.join(ROOT, "supabase", "migrations");
@@ -160,9 +164,11 @@ async function applyMigrations(client) {
 }
 
 const RECORD_SQL =
-  "select public.vendor_finance_record_entry($1::uuid, $2::uuid, $3::text, $4::text, $5::text, $6::text, $7::date, $8::text, $9::uuid, $10::text) as data";
+  "select public.vendor_finance_record_entry($1::uuid, $2::uuid, $3::text, $4::text, $5::text, $6::text, $7::text, $8::date, $9::text, $10::uuid, $11::text) as data";
 const APPLY_OPENING_SQL =
-  "select public.vendor_finance_apply_opening_batch($1::uuid, $2::uuid, $3::text, $4::date, $5::jsonb, $6::text, $7::uuid, $8::text) as data";
+  "select public.vendor_finance_apply_opening_batch($1::uuid, $2::uuid, $3::text, $4::text, $5::date, $6::jsonb, $7::text, $8::uuid, $9::text) as data";
+const CLASSIFY_SQL =
+  "select public.vendor_finance_classify_unclassified_subledger($1::uuid, $2::uuid, $3::text, $4::text, $5::uuid, $6::text, $7::text, $8::uuid, $9::text) as data";
 const ASSIGN_ACCT_SQL =
   "select public.vendor_finance_assign_project_accountant_admin($1::uuid, $2::uuid, $3::text, $4::uuid, $5::integer, $6::date, $7::text, $8::uuid, $9::text) as data";
 const ASSIGN_GLOBAL_ROLE_SQL =
@@ -279,6 +285,7 @@ async function seedFixture(client) {
     ["VND_RACE_OPEN_OVERLAP", "NCC Đua Số Dư Đầu Kỳ Theo Dự Án"],
     ["VND_LOCK_X", "NCC Khóa Thứ Tự X"],
     ["VND_LOCK_Y", "NCC Khóa Thứ Tự Y"],
+    ["VND_RACE_CLASSIFY", "NCC Đua Phân Loại Sổ Cũ Đồng Thời"],
   ];
   for (const [vid, vname] of vendors) {
     await client.query(
@@ -288,9 +295,23 @@ async function seedFixture(client) {
       [ADMIN_1.auth, ADMIN_1.app, vid, vname, nextUuid()],
     );
   }
+
+  // Seed pre-VFIN-03 unclassified entry on `(VND_RACE_CLASSIFY, PRJ_1, ACCT_1)` BEFORE applying VFIN-03 migration
+  await client.query(
+    `select public.vendor_finance_record_entry(
+       $1::uuid, $2::uuid, 'VND_RACE_CLASSIFY', $3::text, 'DEBT_RECORDED', '18000000',
+       '2026-10-03'::date, 'Công nợ VFIN-02 trước khi có loại hợp đồng', $4::uuid, $5::text
+     )`,
+    [ACCT_1.auth, ACCT_1.app, PRJ_1, nextUuid(), "a".repeat(64)],
+  );
+
+  // Apply VFIN-03 migration (`20261027090000_vfin_03_vendor_contract_type_ledgers.sql`)
+  await client.query(
+    await readFile(path.join(MIGRATION_DIR, VFIN_03_CONTRACT_TYPE_LEDGERS_MIGRATION_NAME), "utf8"),
+  );
 }
 
-test("VFIN-02 real PostgreSQL concurrency: per-sub-ledger serialization, zero cross-project netting under parallel burst, OCC project accountant assignment race, and deadlock-free project opening batches", async (t) => {
+test("VFIN-02 / VFIN-03 real PostgreSQL concurrency: per-sub-ledger serialization, zero cross-project & cross-contract-type netting under parallel burst, OCC project accountant assignment race, deadlock-free project opening batches, and single-winner legacy classification race", async (t) => {
   const initdb = binary("initdb");
   const pgCtl = binary("pg_ctl");
   if (!initdb || !pgCtl) {
@@ -356,13 +377,14 @@ test("VFIN-02 real PostgreSQL concurrency: per-sub-ledger serialization, zero cr
     }
 
     // =========================================================================
-    // Stage 1: Deterministic Lock-Hold Race on `(VND_RACE_SHARED, PRJ_1, ACCT_1)`
+    // Stage 1: Deterministic Lock-Hold Race on `(VND_RACE_SHARED, PRJ_1, ACCT_1, OFFICIAL)`
     //          (`ACCT_1` holds lock while `CASH_BEHALF` records on behalf of `PRJ_1`)
     // =========================================================================
     const r1Reason = "Ghi nhận công nợ PRJ_1 đợt 1";
     const r1Fp = computeRecordEntryFingerprint({
       project_id: PRJ_1,
       vendor_id: "VND_RACE_SHARED",
+      contract_type: "OFFICIAL",
       entry_type: "DEBT_RECORDED",
       amount_minor: "25000000",
       effective_date: "2026-10-10",
@@ -372,6 +394,7 @@ test("VFIN-02 real PostgreSQL concurrency: per-sub-ledger serialization, zero cr
     const r2Fp = computeRecordEntryFingerprint({
       project_id: PRJ_1,
       vendor_id: "VND_RACE_SHARED",
+      contract_type: "OFFICIAL",
       entry_type: "PAYMENT_RECORDED",
       amount_minor: "5000000",
       effective_date: "2026-10-10",
@@ -385,6 +408,7 @@ test("VFIN-02 real PostgreSQL concurrency: per-sub-ledger serialization, zero cr
       ACCT_1.app,
       "VND_RACE_SHARED",
       PRJ_1,
+      "OFFICIAL",
       "DEBT_RECORDED",
       "25000000",
       "2026-10-10",
@@ -394,6 +418,7 @@ test("VFIN-02 real PostgreSQL concurrency: per-sub-ledger serialization, zero cr
     ]);
     const entry1 = w1EntryRes.rows[0].data.entry;
     assert.equal(entry1.vendor_sequence, 1);
+    assert.equal(entry1.contract_type, "OFFICIAL");
     assert.equal(entry1.balance_after_minor, "25000000");
 
     await worker2.query("begin");
@@ -403,6 +428,7 @@ test("VFIN-02 real PostgreSQL concurrency: per-sub-ledger serialization, zero cr
       CASH_BEHALF.app,
       "VND_RACE_SHARED",
       PRJ_1,
+      "OFFICIAL",
       "PAYMENT_RECORDED",
       "5000000",
       "2026-10-10",
@@ -418,32 +444,34 @@ test("VFIN-02 real PostgreSQL concurrency: per-sub-ledger serialization, zero cr
     await worker2.query("commit");
     const entry2 = w2EntryRes.rows[0].data.entry;
     assert.equal(entry2.vendor_sequence, 2);
+    assert.equal(entry2.contract_type, "OFFICIAL");
     assert.equal(entry2.balance_before_minor, "25000000");
     assert.equal(entry2.balance_delta_minor, "-5000000");
     assert.equal(entry2.balance_after_minor, "20000000");
     assert.equal(entry2.accountant_ref, ACCT_1.app);
 
     // =========================================================================
-    // Stage 2: 6-Connection Parallel Burst Mixing `PRJ_1` (`ACCT_1` + `CASH_BEHALF`)
-    //          and `PRJ_2` (`ACCT_2` + `CASH_BEHALF`) on the SAME Vendor `VND_RACE_SHARED`
+    // Stage 2: 6-Connection Parallel Burst Mixing `PRJ_1` (`OFFICIAL` + `SEASONAL`)
+    //          and `PRJ_2` (`OFFICIAL`) on the SAME Vendor `VND_RACE_SHARED`
     // =========================================================================
     const parallelSpecs = [
-      { prj: PRJ_1, actor: ACCT_1, type: "DEBT_RECORDED", amount: "4000000" },
-      { prj: PRJ_2, actor: ACCT_2, type: "DEBT_RECORDED", amount: "30000000" },
-      { prj: PRJ_1, actor: CASH_BEHALF, type: "PAYMENT_RECORDED", amount: "2000000" },
-      { prj: PRJ_2, actor: CASH_BEHALF, type: "ADVANCE_RECORDED", amount: "7000000" },
-      { prj: PRJ_1, actor: ACCT_1, type: "PAYROLL_RECORDED", amount: "6000000" },
-      { prj: PRJ_2, actor: ACCT_2, type: "ADJUSTMENT_INCREASE", amount: "3000000" },
+      { prj: PRJ_1, contractType: "OFFICIAL", actor: ACCT_1, type: "DEBT_RECORDED", amount: "4000000" },
+      { prj: PRJ_2, contractType: "OFFICIAL", actor: ACCT_2, type: "DEBT_RECORDED", amount: "30000000" },
+      { prj: PRJ_1, contractType: "OFFICIAL", actor: CASH_BEHALF, type: "PAYMENT_RECORDED", amount: "2000000" },
+      { prj: PRJ_2, contractType: "OFFICIAL", actor: CASH_BEHALF, type: "ADVANCE_RECORDED", amount: "7000000" },
+      { prj: PRJ_1, contractType: "SEASONAL", actor: ACCT_1, type: "PAYROLL_RECORDED", amount: "6000000" },
+      { prj: PRJ_1, contractType: "SEASONAL", actor: CASH_BEHALF, type: "PAYMENT_RECORDED", amount: "1500000" },
     ];
 
     const burstOutcomes = await Promise.all(
       parallelSpecs.map((spec, idx) => {
-        const reason = `Burst đa dự án #${idx + 1} trên ${spec.prj}`;
+        const reason = `Burst đa dự án & loại HĐ #${idx + 1} trên ${spec.prj}/${spec.contractType}`;
         return burstClients[idx].query(RECORD_SQL, [
           spec.actor.auth,
           spec.actor.app,
           "VND_RACE_SHARED",
           spec.prj,
+          spec.contractType,
           spec.type,
           spec.amount,
           "2026-10-11",
@@ -452,6 +480,7 @@ test("VFIN-02 real PostgreSQL concurrency: per-sub-ledger serialization, zero cr
           computeRecordEntryFingerprint({
             project_id: spec.prj,
             vendor_id: "VND_RACE_SHARED",
+            contract_type: spec.contractType,
             entry_type: spec.type,
             amount_minor: spec.amount,
             effective_date: "2026-10-11",
@@ -462,8 +491,8 @@ test("VFIN-02 real PostgreSQL concurrency: per-sub-ledger serialization, zero cr
     );
     assert.equal(burstOutcomes.length, 6);
 
-    // Verify PRJ_1 chain (`1..5`, owned strictly by ACCT_1, closing = 25M - 5M + 4M - 2M + 6M = 28,000,000)
-    const { rows: prj1Chain } = await observer.query(
+    // Verify PRJ_1 OFFICIAL chain (`1..4`, owned strictly by ACCT_1, closing = 25M - 5M + 4M - 2M = 22,000,000)
+    const { rows: prj1OfficialChain } = await observer.query(
       `select vendor_sequence::int as seq,
               responsible_accountant_user_id::text as owner_id,
               balance_before_minor::text as before_minor,
@@ -471,23 +500,48 @@ test("VFIN-02 real PostgreSQL concurrency: per-sub-ledger serialization, zero cr
               balance_after_minor::text as after_minor,
               document_no
          from public.vendor_finance_entries
-        where vendor_id = 'VND_RACE_SHARED' and project_id = $1
+        where vendor_id = 'VND_RACE_SHARED' and project_id = $1 and contract_type = 'OFFICIAL'
         order by vendor_sequence asc`,
       [PRJ_1],
     );
-    assert.equal(prj1Chain.length, 5);
-    let runningPrj1 = 0n;
-    for (let i = 0; i < prj1Chain.length; i += 1) {
-      const row = prj1Chain[i];
-      assert.equal(row.seq, i + 1, "PRJ_1 vendor_sequence must be gapless 1..5");
+    assert.equal(prj1OfficialChain.length, 4);
+    let runningPrj1Official = 0n;
+    for (let i = 0; i < prj1OfficialChain.length; i += 1) {
+      const row = prj1OfficialChain[i];
+      assert.equal(row.seq, i + 1, "PRJ_1 OFFICIAL vendor_sequence must be gapless 1..4");
       assert.equal(row.owner_id, ACCT_1.app, "PRJ_1 entries must all stay owned by ACCT_1");
-      assert.equal(BigInt(row.before_minor), runningPrj1);
-      runningPrj1 += BigInt(row.delta_minor);
-      assert.equal(BigInt(row.after_minor), runningPrj1);
+      assert.equal(BigInt(row.before_minor), runningPrj1Official);
+      runningPrj1Official += BigInt(row.delta_minor);
+      assert.equal(BigInt(row.after_minor), runningPrj1Official);
     }
-    assert.equal(runningPrj1, 28000000n);
+    assert.equal(runningPrj1Official, 22000000n);
 
-    // Verify PRJ_2 chain (`1..3`, owned strictly by ACCT_2, closing = 30M - 7M + 3M = 26,000,000)
+    // Verify PRJ_1 SEASONAL chain (`1..2`, independent sequence starting at 1, closing = +6M or -1.5M -> 4,500,000)
+    const { rows: prj1SeasonalChain } = await observer.query(
+      `select vendor_sequence::int as seq,
+              responsible_accountant_user_id::text as owner_id,
+              balance_before_minor::text as before_minor,
+              balance_delta_minor::text as delta_minor,
+              balance_after_minor::text as after_minor,
+              document_no
+         from public.vendor_finance_entries
+        where vendor_id = 'VND_RACE_SHARED' and project_id = $1 and contract_type = 'SEASONAL'
+        order by vendor_sequence asc`,
+      [PRJ_1],
+    );
+    assert.equal(prj1SeasonalChain.length, 2);
+    let runningPrj1Seasonal = 0n;
+    for (let i = 0; i < prj1SeasonalChain.length; i += 1) {
+      const row = prj1SeasonalChain[i];
+      assert.equal(row.seq, i + 1, "PRJ_1 SEASONAL vendor_sequence must be gapless 1..2 independently of OFFICIAL");
+      assert.equal(row.owner_id, ACCT_1.app);
+      assert.equal(BigInt(row.before_minor), runningPrj1Seasonal);
+      runningPrj1Seasonal += BigInt(row.delta_minor);
+      assert.equal(BigInt(row.after_minor), runningPrj1Seasonal);
+    }
+    assert.equal(runningPrj1Seasonal, 4500000n);
+
+    // Verify PRJ_2 OFFICIAL chain (`1..2`, owned strictly by ACCT_2, closing = 30M - 7M = 23,000,000)
     const { rows: prj2Chain } = await observer.query(
       `select vendor_sequence::int as seq,
               responsible_accountant_user_id::text as owner_id,
@@ -496,24 +550,24 @@ test("VFIN-02 real PostgreSQL concurrency: per-sub-ledger serialization, zero cr
               balance_after_minor::text as after_minor,
               document_no
          from public.vendor_finance_entries
-        where vendor_id = 'VND_RACE_SHARED' and project_id = $1
+        where vendor_id = 'VND_RACE_SHARED' and project_id = $1 and contract_type = 'OFFICIAL'
         order by vendor_sequence asc`,
       [PRJ_2],
     );
-    assert.equal(prj2Chain.length, 3);
+    assert.equal(prj2Chain.length, 2);
     let runningPrj2 = 0n;
     for (let i = 0; i < prj2Chain.length; i += 1) {
       const row = prj2Chain[i];
-      assert.equal(row.seq, i + 1, "PRJ_2 vendor_sequence must be gapless 1..3 independently of PRJ_1");
+      assert.equal(row.seq, i + 1, "PRJ_2 vendor_sequence must be gapless 1..2 independently of PRJ_1");
       assert.equal(row.owner_id, ACCT_2.app, "PRJ_2 entries must all stay owned by ACCT_2");
       assert.equal(BigInt(row.before_minor), runningPrj2);
       runningPrj2 += BigInt(row.delta_minor);
       assert.equal(BigInt(row.after_minor), runningPrj2);
     }
-    assert.equal(runningPrj2, 26000000n);
+    assert.equal(runningPrj2, 23000000n);
 
-    // Document numbers across both project books must be globally unique
-    const allDocNos = [...prj1Chain, ...prj2Chain].map((r) => r.document_no);
+    // Document numbers across all 3 sub-ledgers must be globally unique
+    const allDocNos = [...prj1OfficialChain, ...prj1SeasonalChain, ...prj2Chain].map((r) => r.document_no);
     assert.equal(new Set(allDocNos).size, 8);
 
     // =========================================================================
@@ -577,28 +631,31 @@ test("VFIN-02 real PostgreSQL concurrency: per-sub-ledger serialization, zero cr
     assert.equal(activeAssignRows[0].n, 1);
 
     // =========================================================================
-    // Stage 4: Project-Scoped Opening Balance Batch Races & Deadlock Freedom
+    // Stage 4: Project & Contract-Type Opening Balance Batch Races & Deadlock Freedom
     // =========================================================================
-    // 4a. Overlapping Vendor on `PRJ_1` -> strictly 1 winner, 1 `23505`
-    //     while `PRJ_2` can initialize the SAME Vendor concurrently without conflict!
+    // 4a. Overlapping Vendor on `(PRJ_1, OFFICIAL)` -> strictly 1 winner, 1 `23505`
+    //     while `(PRJ_1, SEASONAL)` and `(PRJ_2, OFFICIAL)` both succeed concurrently!
     const openItemsOverlap = [
       { vendor_id: "VND_RACE_OPEN_OVERLAP", entry_type: "OPENING_PAYABLE", amount_minor: "9000000" },
     ];
-    const openReason1 = "Khởi tạo đầu kỳ PRJ_1 luồng A";
-    const openReason2 = "Khởi tạo đầu kỳ PRJ_1 luồng B";
-    const openReasonPrj2 = "Khởi tạo đầu kỳ PRJ_2 độc lập cho cùng NCC";
+    const openReason1 = "Khởi tạo đầu kỳ PRJ_1 OFFICIAL luồng A";
+    const openReason2 = "Khởi tạo đầu kỳ PRJ_1 OFFICIAL luồng B";
+    const openReasonSeasonal = "Khởi tạo đầu kỳ PRJ_1 SEASONAL độc lập cho cùng NCC";
+    const openReasonPrj2 = "Khởi tạo đầu kỳ PRJ_2 OFFICIAL độc lập cho cùng NCC";
 
     const openRaceOutcomes = await Promise.allSettled([
       burstClients[0].query(APPLY_OPENING_SQL, [
         ACCT_1.auth,
         ACCT_1.app,
         PRJ_1,
+        "OFFICIAL",
         "2026-10-01",
         JSON.stringify(openItemsOverlap),
         openReason1,
         nextUuid(),
         computeApplyOpeningBatchFingerprint({
           project_id: PRJ_1,
+          contract_type: "OFFICIAL",
           cutoff_date: "2026-10-01",
           items: openItemsOverlap,
           reason: openReason1,
@@ -608,12 +665,14 @@ test("VFIN-02 real PostgreSQL concurrency: per-sub-ledger serialization, zero cr
         CASH_BEHALF.auth,
         CASH_BEHALF.app,
         PRJ_1,
+        "OFFICIAL",
         "2026-10-01",
         JSON.stringify(openItemsOverlap),
         openReason2,
         nextUuid(),
         computeApplyOpeningBatchFingerprint({
           project_id: PRJ_1,
+          contract_type: "OFFICIAL",
           cutoff_date: "2026-10-01",
           items: openItemsOverlap,
           reason: openReason2,
@@ -623,15 +682,34 @@ test("VFIN-02 real PostgreSQL concurrency: per-sub-ledger serialization, zero cr
         ACCT_2.auth,
         ACCT_2.app,
         PRJ_2,
+        "OFFICIAL",
         "2026-10-01",
         JSON.stringify(openItemsOverlap),
         openReasonPrj2,
         nextUuid(),
         computeApplyOpeningBatchFingerprint({
           project_id: PRJ_2,
+          contract_type: "OFFICIAL",
           cutoff_date: "2026-10-01",
           items: openItemsOverlap,
           reason: openReasonPrj2,
+        }),
+      ]),
+      burstClients[3].query(APPLY_OPENING_SQL, [
+        ACCT_1.auth,
+        ACCT_1.app,
+        PRJ_1,
+        "SEASONAL",
+        "2026-10-01",
+        JSON.stringify(openItemsOverlap),
+        openReasonSeasonal,
+        nextUuid(),
+        computeApplyOpeningBatchFingerprint({
+          project_id: PRJ_1,
+          contract_type: "SEASONAL",
+          cutoff_date: "2026-10-01",
+          items: openItemsOverlap,
+          reason: openReasonSeasonal,
         }),
       ]),
     ]);
@@ -639,7 +717,12 @@ test("VFIN-02 real PostgreSQL concurrency: per-sub-ledger serialization, zero cr
     assert.equal(
       openRaceOutcomes[2].status,
       "fulfilled",
-      "PRJ_2 opening batch for the same Vendor must succeed independently",
+      "PRJ_2 OFFICIAL opening batch for the same Vendor must succeed independently",
+    );
+    assert.equal(
+      openRaceOutcomes[3].status,
+      "fulfilled",
+      "PRJ_1 SEASONAL opening batch for the same Vendor must succeed independently",
     );
     const prj1OpenOutcomes = openRaceOutcomes.slice(0, 2);
     assert.equal(prj1OpenOutcomes.filter((o) => o.status === "fulfilled").length, 1);
@@ -664,12 +747,14 @@ test("VFIN-02 real PostgreSQL concurrency: per-sub-ledger serialization, zero cr
         ACCT_1.auth,
         ACCT_1.app,
         PRJ_1,
+        "OFFICIAL",
         "2026-10-01",
         JSON.stringify(itemsYX),
         lockReasonA,
         nextUuid(),
         computeApplyOpeningBatchFingerprint({
           project_id: PRJ_1,
+          contract_type: "OFFICIAL",
           cutoff_date: "2026-10-01",
           items: itemsYX,
           reason: lockReasonA,
@@ -679,12 +764,14 @@ test("VFIN-02 real PostgreSQL concurrency: per-sub-ledger serialization, zero cr
         CASH_BEHALF.auth,
         CASH_BEHALF.app,
         PRJ_1,
+        "OFFICIAL",
         "2026-10-01",
         JSON.stringify(itemsXY),
         lockReasonB,
         nextUuid(),
         computeApplyOpeningBatchFingerprint({
           project_id: PRJ_1,
+          contract_type: "OFFICIAL",
           cutoff_date: "2026-10-01",
           items: itemsXY,
           reason: lockReasonB,
@@ -699,6 +786,67 @@ test("VFIN-02 real PostgreSQL concurrency: per-sub-ledger serialization, zero cr
       }
     }
     assert.equal(lockOrderOutcomes.filter((o) => o.status === "fulfilled").length, 1);
+
+    // =========================================================================
+    // Stage 5: Concurrent Legacy Sub-Ledger Classification Race on `(VND_RACE_CLASSIFY, PRJ_1, ACCT_1)`
+    // =========================================================================
+    const classReason1 = "Luồng A phân loại sổ cũ sang Thời vụ (SEASONAL)";
+    const classReason2 = "Luồng B đồng thời phân loại sổ cũ sang Chính thức (OFFICIAL)";
+    const classifyRaceOutcomes = await Promise.allSettled([
+      burstClients[0].query(CLASSIFY_SQL, [
+        ACCT_1.auth,
+        ACCT_1.app,
+        "VND_RACE_CLASSIFY",
+        PRJ_1,
+        ACCT_1.app,
+        "SEASONAL",
+        classReason1,
+        nextUuid(),
+        computeClassifySubLedgerFingerprint({
+          project_id: PRJ_1,
+          accountant_ref: ACCT_1.app,
+          vendor_id: "VND_RACE_CLASSIFY",
+          target_contract_type: "SEASONAL",
+          reason: classReason1,
+        }),
+      ]),
+      burstClients[1].query(CLASSIFY_SQL, [
+        CASH_BEHALF.auth,
+        CASH_BEHALF.app,
+        "VND_RACE_CLASSIFY",
+        PRJ_1,
+        ACCT_1.app,
+        "OFFICIAL",
+        classReason2,
+        nextUuid(),
+        computeClassifySubLedgerFingerprint({
+          project_id: PRJ_1,
+          accountant_ref: ACCT_1.app,
+          vendor_id: "VND_RACE_CLASSIFY",
+          target_contract_type: "OFFICIAL",
+          reason: classReason2,
+        }),
+      ]),
+    ]);
+
+    const classifyWinners = classifyRaceOutcomes.filter((o) => o.status === "fulfilled");
+    const classifyLosers = classifyRaceOutcomes.filter((o) => o.status === "rejected");
+    assert.equal(classifyWinners.length, 1, "strictly 1 concurrent classification may win");
+    assert.equal(classifyLosers.length, 1, "contending concurrent classification must reject");
+    assert.equal(classifyLosers[0].reason.code, "23505");
+    assert.match(
+      classifyLosers[0].reason.message,
+      /VENDOR_FINANCE_CONTRACT_TYPE_ALREADY_CLASSIFIED/,
+    );
+
+    const { rows: classAuditRows } = await observer.query(
+      `select target_contract_type, closing_balance_minor::text as closing
+         from public.vendor_finance_subledger_classifications
+        where vendor_id = 'VND_RACE_CLASSIFY' and project_id = $1`,
+      [PRJ_1],
+    );
+    assert.equal(classAuditRows.length, 1);
+    assert.equal(classAuditRows[0].closing, "18000000");
   } finally {
     await worker1?.query("rollback").catch(() => {});
     await worker2?.query("rollback").catch(() => {});

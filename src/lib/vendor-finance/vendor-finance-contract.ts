@@ -108,6 +108,30 @@ export const VENDOR_FINANCE_LEDGER_SCOPES = [
 export type VendorFinanceLedgerScope = (typeof VENDOR_FINANCE_LEDGER_SCOPES)[number];
 export type VendorFinanceLedgerScopeFilter = "all" | VendorFinanceLedgerScope;
 
+export const VENDOR_FINANCE_CONTRACT_TYPES = [
+  "SEASONAL",
+  "OFFICIAL",
+  "UNCLASSIFIED",
+] as const;
+export type VendorFinanceContractType = (typeof VENDOR_FINANCE_CONTRACT_TYPES)[number];
+
+export const CLASSIFIED_VENDOR_FINANCE_CONTRACT_TYPES = [
+  "SEASONAL",
+  "OFFICIAL",
+] as const;
+export type ClassifiedVendorFinanceContractType =
+  (typeof CLASSIFIED_VENDOR_FINANCE_CONTRACT_TYPES)[number];
+export type VendorFinanceClassifiedContractType = ClassifiedVendorFinanceContractType;
+
+export const VENDOR_FINANCE_CONTRACT_TYPE_FILTERS = [
+  "all",
+  "SEASONAL",
+  "OFFICIAL",
+  "UNCLASSIFIED",
+] as const;
+export type VendorFinanceContractTypeFilter =
+  (typeof VENDOR_FINANCE_CONTRACT_TYPE_FILTERS)[number];
+
 export const VENDOR_FINANCE_VISIBILITY_SCOPES = [
   "ALL",
   "PROJECT_SCOPED",
@@ -176,6 +200,9 @@ export type VendorFinanceErrorCode =
   | "VENDOR_FINANCE_PROJECT_ALREADY_ASSIGNED"
   | "VENDOR_FINANCE_PROJECT_ASSIGNMENT_OVERLAP"
   | "VENDOR_FINANCE_SUBLEDGER_NOT_FOUND"
+  | "VENDOR_FINANCE_CONTRACT_TYPE_INVALID"
+  | "VENDOR_FINANCE_CONTRACT_TYPE_ALREADY_CLASSIFIED"
+  | "VENDOR_FINANCE_CONTRACT_TYPE_TARGET_NOT_EMPTY"
   | "VENDOR_FINANCE_ASSIGNMENT_INVALID"
   | "VENDOR_FINANCE_ASSIGNMENT_NOT_FOUND"
   | "VENDOR_FINANCE_ASSIGNMENT_VERSION_CONFLICT"
@@ -259,6 +286,8 @@ export function vendorFinanceHttpStatusForError(code: VendorFinanceErrorCode): n
     case "VENDOR_FINANCE_GLOBAL_ROLE_VERSION_CONFLICT":
     case "VENDOR_FINANCE_VENDOR_INACTIVE_ENTRY_FORBIDDEN":
     case "VENDOR_FINANCE_VENDOR_ALREADY_INITIALIZED":
+    case "VENDOR_FINANCE_CONTRACT_TYPE_ALREADY_CLASSIFIED":
+    case "VENDOR_FINANCE_CONTRACT_TYPE_TARGET_NOT_EMPTY":
     case "VENDOR_FINANCE_ENTRY_ALREADY_REVERSED":
     case "VENDOR_FINANCE_CANNOT_REVERSE_REVERSAL":
     case "VENDOR_FINANCE_IDEMPOTENCY_CONFLICT":
@@ -269,6 +298,7 @@ export function vendorFinanceHttpStatusForError(code: VendorFinanceErrorCode): n
       return 413;
     case "VENDOR_FINANCE_PAYLOAD_INVALID":
     case "VENDOR_FINANCE_PROJECT_INACTIVE":
+    case "VENDOR_FINANCE_CONTRACT_TYPE_INVALID":
     case "VENDOR_FINANCE_ASSIGNMENT_INVALID":
     case "VENDOR_FINANCE_GLOBAL_ROLE_INVALID":
     case "VENDOR_FINANCE_ACCOUNT_NOT_ELIGIBLE":
@@ -334,6 +364,12 @@ const FORBIDDEN_COMPUTED_FINANCE_FIELDS = new Set([
   "storagekey",
   "openingbatchid",
   "reversesentryid",
+  "classificationid",
+  "sourcecontracttype",
+  "classifiedentrycount",
+  "classifiedreconciliationcount",
+  "classifiedbydisplayname",
+  "classifiedat",
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -559,6 +595,7 @@ export type VendorEntriesCursorScope = {
   project_id?: string | null;
   accountant_ref?: string | null;
   ledger_scope?: VendorFinanceLedgerScope | null;
+  contract_type?: VendorFinanceContractType | null;
   month?: string | null;
 };
 
@@ -568,6 +605,7 @@ export function encodeVendorEntriesCursor(input: {
   project_id?: string | null;
   accountant_ref?: string | null;
   ledger_scope?: VendorFinanceLedgerScope | null;
+  contract_type?: VendorFinanceContractType | null;
   month?: string | null;
 }): string {
   const payload = JSON.stringify({
@@ -577,6 +615,7 @@ export function encodeVendorEntriesCursor(input: {
     project_id: input.project_id ?? null,
     accountant_ref: input.accountant_ref ? input.accountant_ref.toLowerCase() : null,
     ledger_scope: input.ledger_scope ?? null,
+    contract_type: input.contract_type ?? null,
     month: input.month ?? null,
   });
   return Buffer.from(payload, "utf8").toString("base64url");
@@ -605,6 +644,7 @@ export function decodeVendorEntriesCursor(
       ? expectedScope.accountant_ref.toLowerCase()
       : null;
     const expLedgerScope = expectedScope?.ledger_scope ?? null;
+    const expContractType = expectedScope?.contract_type ?? null;
     const expMonth = expectedScope?.month ?? null;
 
     if (
@@ -616,6 +656,7 @@ export function decodeVendorEntriesCursor(
         "project_id",
         "accountant_ref",
         "ledger_scope",
+        "contract_type",
         "month",
       ]) ||
       parsed.v !== 2 ||
@@ -623,6 +664,7 @@ export function decodeVendorEntriesCursor(
       parsed.project_id !== expProjectId ||
       parsed.accountant_ref !== expAccountantRef ||
       parsed.ledger_scope !== expLedgerScope ||
+      parsed.contract_type !== expContractType ||
       parsed.month !== expMonth ||
       typeof parsed.before_sequence !== "number" ||
       !Number.isSafeInteger(parsed.before_sequence) ||
@@ -714,6 +756,36 @@ function parseOptionalLedgerScopeQuery(
   return { ok: false, code: "VENDOR_FINANCE_QUERY_INVALID" };
 }
 
+function parseOptionalContractTypeFilterQuery(
+  url: URL,
+):
+  | { ok: true; contract_type: VendorFinanceContractTypeFilter }
+  | { ok: false; code: "VENDOR_FINANCE_CONTRACT_TYPE_INVALID" } {
+  const raw = url.searchParams.get("contract_type");
+  if (raw === null || raw === "") {
+    return { ok: true, contract_type: "all" };
+  }
+  if ((VENDOR_FINANCE_CONTRACT_TYPE_FILTERS as readonly string[]).includes(raw)) {
+    return { ok: true, contract_type: raw as VendorFinanceContractTypeFilter };
+  }
+  return { ok: false, code: "VENDOR_FINANCE_CONTRACT_TYPE_INVALID" };
+}
+
+function parseOptionalSubLedgerContractTypeQuery(
+  url: URL,
+):
+  | { ok: true; contract_type: VendorFinanceContractType | null }
+  | { ok: false; code: "VENDOR_FINANCE_CONTRACT_TYPE_INVALID" } {
+  const raw = url.searchParams.get("contract_type");
+  if (raw === null || raw === "") {
+    return { ok: true, contract_type: null };
+  }
+  if ((VENDOR_FINANCE_CONTRACT_TYPES as readonly string[]).includes(raw)) {
+    return { ok: true, contract_type: raw as VendorFinanceContractType };
+  }
+  return { ok: false, code: "VENDOR_FINANCE_CONTRACT_TYPE_INVALID" };
+}
+
 export type ListVendorFinanceVendorsQuery = {
   search: string | null;
   active: VendorFinanceActiveFilter;
@@ -721,6 +793,7 @@ export type ListVendorFinanceVendorsQuery = {
   project_id: string | null;
   accountant_ref: string | null;
   ledger_scope: VendorFinanceLedgerScope | null;
+  contract_type: VendorFinanceContractTypeFilter;
   page: number;
   page_size: number;
 };
@@ -732,6 +805,7 @@ const LIST_VENDORS_QUERY_KEYS = [
   "project_id",
   "accountant_ref",
   "ledger_scope",
+  "contract_type",
   "page",
   "page_size",
 ] as const;
@@ -758,7 +832,8 @@ export function parseListVendorFinanceVendorsQuery(
       code:
         | "VENDOR_FINANCE_QUERY_INVALID"
         | "VENDOR_FINANCE_SEARCH_INVALID"
-        | "VENDOR_FINANCE_PROJECT_INVALID";
+        | "VENDOR_FINANCE_PROJECT_INVALID"
+        | "VENDOR_FINANCE_CONTRACT_TYPE_INVALID";
     } {
   if (!parseUniqueAllowedQueryKeys(url, LIST_VENDORS_QUERY_KEYS)) {
     return { ok: false, code: "VENDOR_FINANCE_QUERY_INVALID" };
@@ -792,6 +867,9 @@ export function parseListVendorFinanceVendorsQuery(
   const scopeRes = parseOptionalLedgerScopeQuery(url, true);
   if (!scopeRes.ok) return scopeRes;
 
+  const contractTypeRes = parseOptionalContractTypeFilterQuery(url);
+  if (!contractTypeRes.ok) return contractTypeRes;
+
   const page = parseBoundedIntParam(url.searchParams.get("page"), 1, 1, 1000);
   const pageSize = parseBoundedIntParam(url.searchParams.get("page_size"), 25, 1, 100);
   if (page === null || pageSize === null) {
@@ -807,6 +885,7 @@ export function parseListVendorFinanceVendorsQuery(
       project_id: projectRes.project_id,
       accountant_ref: accountantRes.accountant_ref,
       ledger_scope: scopeRes.ledger_scope,
+      contract_type: contractTypeRes.contract_type,
       page,
       page_size: pageSize,
     },
@@ -826,14 +905,28 @@ export type GetVendorFinanceVendorDetailQuery = {
   project_id: string | null;
   accountant_ref: string | null;
   ledger_scope: VendorFinanceLedgerScope | null;
+  contract_type: VendorFinanceContractType | null;
 };
 
 export function parseGetVendorFinanceVendorDetailQuery(
   url: URL,
 ):
   | { ok: true; value: GetVendorFinanceVendorDetailQuery }
-  | { ok: false; code: "VENDOR_FINANCE_QUERY_INVALID" | "VENDOR_FINANCE_PROJECT_INVALID" } {
-  if (!parseUniqueAllowedQueryKeys(url, ["project_id", "accountant_ref", "ledger_scope"])) {
+  | {
+      ok: false;
+      code:
+        | "VENDOR_FINANCE_QUERY_INVALID"
+        | "VENDOR_FINANCE_PROJECT_INVALID"
+        | "VENDOR_FINANCE_CONTRACT_TYPE_INVALID";
+    } {
+  if (
+    !parseUniqueAllowedQueryKeys(url, [
+      "project_id",
+      "accountant_ref",
+      "ledger_scope",
+      "contract_type",
+    ])
+  ) {
     return { ok: false, code: "VENDOR_FINANCE_QUERY_INVALID" };
   }
   const projectRes = parseOptionalProjectQuery(url);
@@ -842,9 +935,14 @@ export function parseGetVendorFinanceVendorDetailQuery(
   if (!accountantRes.ok) return accountantRes;
   const scopeRes = parseOptionalLedgerScopeQuery(url, false);
   if (!scopeRes.ok) return scopeRes;
+  const contractTypeRes = parseOptionalSubLedgerContractTypeQuery(url);
+  if (!contractTypeRes.ok) return contractTypeRes;
   if (
     scopeRes.ledger_scope === "LEGACY_UNALLOCATED" &&
-    (projectRes.project_id !== null || accountantRes.accountant_ref !== null)
+    (projectRes.project_id !== null ||
+      accountantRes.accountant_ref !== null ||
+      (contractTypeRes.contract_type !== null &&
+        contractTypeRes.contract_type !== "UNCLASSIFIED"))
   ) {
     return { ok: false, code: "VENDOR_FINANCE_QUERY_INVALID" };
   }
@@ -854,6 +952,7 @@ export function parseGetVendorFinanceVendorDetailQuery(
       project_id: projectRes.project_id,
       accountant_ref: accountantRes.accountant_ref,
       ledger_scope: scopeRes.ledger_scope,
+      contract_type: contractTypeRes.contract_type,
     },
   };
 }
@@ -865,6 +964,7 @@ export type ListVendorFinanceEntriesQuery = {
   project_id: string | null;
   accountant_ref: string | null;
   ledger_scope: VendorFinanceLedgerScope | null;
+  contract_type: VendorFinanceContractType | null;
   month: string | null;
 };
 
@@ -880,6 +980,7 @@ export function parseListVendorFinanceEntriesQuery(
         | "VENDOR_FINANCE_CURSOR_INVALID"
         | "VENDOR_FINANCE_ENTRY_TYPE_INVALID"
         | "VENDOR_FINANCE_PROJECT_INVALID"
+        | "VENDOR_FINANCE_CONTRACT_TYPE_INVALID"
         | "VENDOR_FINANCE_DATE_INVALID";
     } {
   if (
@@ -890,6 +991,7 @@ export function parseListVendorFinanceEntriesQuery(
       "project_id",
       "accountant_ref",
       "ledger_scope",
+      "contract_type",
       "month",
     ])
   ) {
@@ -902,9 +1004,14 @@ export function parseListVendorFinanceEntriesQuery(
   if (!accountantRes.ok) return accountantRes;
   const scopeRes = parseOptionalLedgerScopeQuery(url, false);
   if (!scopeRes.ok) return scopeRes;
+  const contractTypeRes = parseOptionalSubLedgerContractTypeQuery(url);
+  if (!contractTypeRes.ok) return contractTypeRes;
   if (
     scopeRes.ledger_scope === "LEGACY_UNALLOCATED" &&
-    (projectRes.project_id !== null || accountantRes.accountant_ref !== null)
+    (projectRes.project_id !== null ||
+      accountantRes.accountant_ref !== null ||
+      (contractTypeRes.contract_type !== null &&
+        contractTypeRes.contract_type !== "UNCLASSIFIED"))
   ) {
     return { ok: false, code: "VENDOR_FINANCE_QUERY_INVALID" };
   }
@@ -924,6 +1031,7 @@ export function parseListVendorFinanceEntriesQuery(
       project_id: projectRes.project_id,
       accountant_ref: accountantRes.accountant_ref,
       ledger_scope: scopeRes.ledger_scope,
+      contract_type: contractTypeRes.contract_type,
       month,
     });
     if (!decoded.ok) return decoded;
@@ -953,6 +1061,7 @@ export function parseListVendorFinanceEntriesQuery(
       project_id: projectRes.project_id,
       accountant_ref: accountantRes.accountant_ref,
       ledger_scope: scopeRes.ledger_scope,
+      contract_type: contractTypeRes.contract_type,
       month,
     },
   };
@@ -964,13 +1073,20 @@ export type ListVendorReconciliationsQuery = {
   project_id: string | null;
   accountant_ref: string | null;
   ledger_scope: VendorFinanceLedgerScope | null;
+  contract_type: VendorFinanceContractType | null;
 };
 
 export function parseListVendorReconciliationsQuery(
   url: URL,
 ):
   | { ok: true; value: ListVendorReconciliationsQuery }
-  | { ok: false; code: "VENDOR_FINANCE_QUERY_INVALID" | "VENDOR_FINANCE_PROJECT_INVALID" } {
+  | {
+      ok: false;
+      code:
+        | "VENDOR_FINANCE_QUERY_INVALID"
+        | "VENDOR_FINANCE_PROJECT_INVALID"
+        | "VENDOR_FINANCE_CONTRACT_TYPE_INVALID";
+    } {
   if (
     !parseUniqueAllowedQueryKeys(url, [
       "page",
@@ -978,6 +1094,7 @@ export function parseListVendorReconciliationsQuery(
       "project_id",
       "accountant_ref",
       "ledger_scope",
+      "contract_type",
     ])
   ) {
     return { ok: false, code: "VENDOR_FINANCE_QUERY_INVALID" };
@@ -988,9 +1105,14 @@ export function parseListVendorReconciliationsQuery(
   if (!accountantRes.ok) return accountantRes;
   const scopeRes = parseOptionalLedgerScopeQuery(url, false);
   if (!scopeRes.ok) return scopeRes;
+  const contractTypeRes = parseOptionalSubLedgerContractTypeQuery(url);
+  if (!contractTypeRes.ok) return contractTypeRes;
   if (
     scopeRes.ledger_scope === "LEGACY_UNALLOCATED" &&
-    (projectRes.project_id !== null || accountantRes.accountant_ref !== null)
+    (projectRes.project_id !== null ||
+      accountantRes.accountant_ref !== null ||
+      (contractTypeRes.contract_type !== null &&
+        contractTypeRes.contract_type !== "UNCLASSIFIED"))
   ) {
     return { ok: false, code: "VENDOR_FINANCE_QUERY_INVALID" };
   }
@@ -1007,6 +1129,7 @@ export function parseListVendorReconciliationsQuery(
       project_id: projectRes.project_id,
       accountant_ref: accountantRes.accountant_ref,
       ledger_scope: scopeRes.ledger_scope,
+      contract_type: contractTypeRes.contract_type,
     },
   };
 }
@@ -1016,6 +1139,7 @@ export type MonthlyVendorFinanceReportQuery = {
   project_id: string | null;
   accountant_ref: string | null;
   vendor_id: string | null;
+  contract_type: VendorFinanceContractTypeFilter;
 };
 
 export function parseMonthlyReportQuery(
@@ -1028,9 +1152,18 @@ export function parseMonthlyReportQuery(
         | "VENDOR_FINANCE_QUERY_INVALID"
         | "VENDOR_FINANCE_DATE_INVALID"
         | "VENDOR_FINANCE_PROJECT_INVALID"
-        | "VENDOR_FINANCE_VENDOR_INVALID";
+        | "VENDOR_FINANCE_VENDOR_INVALID"
+        | "VENDOR_FINANCE_CONTRACT_TYPE_INVALID";
     } {
-  if (!parseUniqueAllowedQueryKeys(url, ["month", "project_id", "accountant_ref", "vendor_id"])) {
+  if (
+    !parseUniqueAllowedQueryKeys(url, [
+      "month",
+      "project_id",
+      "accountant_ref",
+      "vendor_id",
+      "contract_type",
+    ])
+  ) {
     return { ok: false, code: "VENDOR_FINANCE_QUERY_INVALID" };
   }
   const rawMonth = url.searchParams.get("month");
@@ -1054,6 +1187,9 @@ export function parseMonthlyReportQuery(
     vendorId = parsedVendor.vendor_id;
   }
 
+  const contractTypeRes = parseOptionalContractTypeFilterQuery(url);
+  if (!contractTypeRes.ok) return contractTypeRes;
+
   return {
     ok: true,
     value: {
@@ -1061,6 +1197,7 @@ export function parseMonthlyReportQuery(
       project_id: projectRes.project_id,
       accountant_ref: accountantRes.accountant_ref,
       vendor_id: vendorId,
+      contract_type: contractTypeRes.contract_type,
     },
   };
 }
@@ -1143,6 +1280,7 @@ export function parseListGlobalRolesAdminQuery(
 // 1. Record Normal Entry (`POST /api/vendor-finance/vendors/[vendorId]/entries`)
 export type RecordVendorFinanceEntryBody = {
   project_id: string;
+  contract_type: ClassifiedVendorFinanceContractType;
   entry_type: NormalVendorFinanceEntryType;
   amount_minor: string;
   effective_date: string;
@@ -1162,6 +1300,7 @@ export function parseRecordVendorFinanceEntryBody(
     !isRecord(body) ||
     !exactKeys(body, [
       "project_id",
+      "contract_type",
       "entry_type",
       "amount_minor",
       "effective_date",
@@ -1174,6 +1313,15 @@ export function parseRecordVendorFinanceEntryBody(
 
   const projectId = parseProjectIdParam(body.project_id);
   if (!projectId.ok) return projectId;
+
+  if (
+    typeof body.contract_type !== "string" ||
+    !(CLASSIFIED_VENDOR_FINANCE_CONTRACT_TYPES as readonly string[]).includes(
+      body.contract_type,
+    )
+  ) {
+    return { ok: false, code: "VENDOR_FINANCE_CONTRACT_TYPE_INVALID" };
+  }
 
   if (
     typeof body.entry_type !== "string" ||
@@ -1198,6 +1346,7 @@ export function parseRecordVendorFinanceEntryBody(
     ok: true,
     value: {
       project_id: projectId.project_id,
+      contract_type: body.contract_type as ClassifiedVendorFinanceContractType,
       entry_type: body.entry_type as NormalVendorFinanceEntryType,
       amount_minor: amount.canonical,
       effective_date: effectiveDate.date,
@@ -1263,12 +1412,14 @@ export type OpeningBatchItemInput = {
 
 export type PreviewOpeningBatchBody = {
   project_id: string;
+  contract_type: ClassifiedVendorFinanceContractType;
   cutoff_date: string;
   items: readonly OpeningBatchItemInput[];
 };
 
 export type ApplyOpeningBatchBody = {
   project_id: string;
+  contract_type: ClassifiedVendorFinanceContractType;
   cutoff_date: string;
   items: readonly OpeningBatchItemInput[];
   reason: string;
@@ -1337,12 +1488,24 @@ export function parsePreviewOpeningBatchBody(
   | { ok: false; code: VendorFinanceErrorCode } {
   const forbidden = checkForbiddenVendorFinanceClientFields(body);
   if (!forbidden.ok) return forbidden;
-  if (!isRecord(body) || !exactKeys(body, ["project_id", "cutoff_date", "items"])) {
+  if (
+    !isRecord(body) ||
+    !exactKeys(body, ["project_id", "contract_type", "cutoff_date", "items"])
+  ) {
     return { ok: false, code: "VENDOR_FINANCE_PAYLOAD_INVALID" };
   }
 
   const projectId = parseProjectIdParam(body.project_id);
   if (!projectId.ok) return projectId;
+
+  if (
+    typeof body.contract_type !== "string" ||
+    !(CLASSIFIED_VENDOR_FINANCE_CONTRACT_TYPES as readonly string[]).includes(
+      body.contract_type,
+    )
+  ) {
+    return { ok: false, code: "VENDOR_FINANCE_CONTRACT_TYPE_INVALID" };
+  }
 
   const cutoffDate = parseBusinessCalendarDate(body.cutoff_date);
   if (!cutoffDate.ok) return cutoffDate;
@@ -1354,6 +1517,7 @@ export function parsePreviewOpeningBatchBody(
     ok: true,
     value: {
       project_id: projectId.project_id,
+      contract_type: body.contract_type as ClassifiedVendorFinanceContractType,
       cutoff_date: cutoffDate.date,
       items: items.items,
     },
@@ -1370,13 +1534,29 @@ export function parseApplyOpeningBatchBody(
   if (!forbidden.ok) return forbidden;
   if (
     !isRecord(body) ||
-    !exactKeys(body, ["project_id", "cutoff_date", "items", "reason", "idempotency_key"])
+    !exactKeys(body, [
+      "project_id",
+      "contract_type",
+      "cutoff_date",
+      "items",
+      "reason",
+      "idempotency_key",
+    ])
   ) {
     return { ok: false, code: "VENDOR_FINANCE_PAYLOAD_INVALID" };
   }
 
   const projectId = parseProjectIdParam(body.project_id);
   if (!projectId.ok) return projectId;
+
+  if (
+    typeof body.contract_type !== "string" ||
+    !(CLASSIFIED_VENDOR_FINANCE_CONTRACT_TYPES as readonly string[]).includes(
+      body.contract_type,
+    )
+  ) {
+    return { ok: false, code: "VENDOR_FINANCE_CONTRACT_TYPE_INVALID" };
+  }
 
   const cutoffDate = parseBusinessCalendarDate(body.cutoff_date);
   if (!cutoffDate.ok) return cutoffDate;
@@ -1394,6 +1574,7 @@ export function parseApplyOpeningBatchBody(
     ok: true,
     value: {
       project_id: projectId.project_id,
+      contract_type: body.contract_type as ClassifiedVendorFinanceContractType,
       cutoff_date: cutoffDate.date,
       items: items.items,
       reason: reason.reason,
@@ -1406,6 +1587,7 @@ export function parseApplyOpeningBatchBody(
 export type CreateVendorReconciliationBody = {
   project_id: string;
   accountant_ref: string | null;
+  contract_type: VendorFinanceContractType;
   as_of_date: string;
   confirmed_balance_minor: string;
   reason: string;
@@ -1425,12 +1607,14 @@ export function parseCreateVendorReconciliationBody(
     !allowedKeysOnly(body, [
       "project_id",
       "accountant_ref",
+      "contract_type",
       "as_of_date",
       "confirmed_balance_minor",
       "reason",
       "idempotency_key",
     ]) ||
     !("project_id" in body) ||
+    !("contract_type" in body) ||
     !("as_of_date" in body) ||
     !("confirmed_balance_minor" in body) ||
     !("reason" in body) ||
@@ -1450,6 +1634,13 @@ export function parseCreateVendorReconciliationBody(
     accountantRef = body.accountant_ref.toLowerCase();
   }
 
+  if (
+    typeof body.contract_type !== "string" ||
+    !(VENDOR_FINANCE_CONTRACT_TYPES as readonly string[]).includes(body.contract_type)
+  ) {
+    return { ok: false, code: "VENDOR_FINANCE_CONTRACT_TYPE_INVALID" };
+  }
+
   const asOfDate = parseBusinessCalendarDate(body.as_of_date);
   if (!asOfDate.ok) return asOfDate;
 
@@ -1467,8 +1658,81 @@ export function parseCreateVendorReconciliationBody(
     value: {
       project_id: projectId.project_id,
       accountant_ref: accountantRef,
+      contract_type: body.contract_type as VendorFinanceContractType,
       as_of_date: asOfDate.date,
       confirmed_balance_minor: confirmed.canonical,
+      reason: reason.reason,
+      idempotency_key: idem.idempotency_key,
+    },
+  };
+}
+
+// 4b. Classify Unclassified Sub-Ledger (`POST /api/vendor-finance/vendors/[vendorId]/classify-contract-type`)
+export type ClassifyVendorSubLedgerBody = {
+  project_id: string;
+  accountant_ref: string | null;
+  target_contract_type: ClassifiedVendorFinanceContractType;
+  reason: string;
+  idempotency_key: string;
+};
+
+export function parseClassifyVendorSubLedgerBody(
+  body: unknown,
+  idempotencyHeader: string | null,
+):
+  | { ok: true; value: ClassifyVendorSubLedgerBody }
+  | { ok: false; code: VendorFinanceErrorCode } {
+  const forbidden = checkForbiddenVendorFinanceClientFields(body);
+  if (!forbidden.ok) return forbidden;
+  if (
+    !isRecord(body) ||
+    !allowedKeysOnly(body, [
+      "project_id",
+      "accountant_ref",
+      "target_contract_type",
+      "reason",
+      "idempotency_key",
+    ]) ||
+    !("project_id" in body) ||
+    !("target_contract_type" in body) ||
+    !("reason" in body) ||
+    !("idempotency_key" in body)
+  ) {
+    return { ok: false, code: "VENDOR_FINANCE_PAYLOAD_INVALID" };
+  }
+
+  const projectId = parseProjectIdParam(body.project_id);
+  if (!projectId.ok) return projectId;
+
+  let accountantRef: string | null = null;
+  if (body.accountant_ref !== undefined && body.accountant_ref !== null) {
+    if (typeof body.accountant_ref !== "string" || !UUID_REGEX.test(body.accountant_ref)) {
+      return { ok: false, code: "VENDOR_FINANCE_PAYLOAD_INVALID" };
+    }
+    accountantRef = body.accountant_ref.toLowerCase();
+  }
+
+  if (
+    typeof body.target_contract_type !== "string" ||
+    !(CLASSIFIED_VENDOR_FINANCE_CONTRACT_TYPES as readonly string[]).includes(
+      body.target_contract_type,
+    )
+  ) {
+    return { ok: false, code: "VENDOR_FINANCE_CONTRACT_TYPE_INVALID" };
+  }
+
+  const reason = parseReasonText(body.reason);
+  if (!reason.ok) return reason;
+
+  const idem = resolveIdempotencyKey(idempotencyHeader, body.idempotency_key);
+  if (!idem.ok) return idem;
+
+  return {
+    ok: true,
+    value: {
+      project_id: projectId.project_id,
+      accountant_ref: accountantRef,
+      target_contract_type: body.target_contract_type as ClassifiedVendorFinanceContractType,
       reason: reason.reason,
       idempotency_key: idem.idempotency_key,
     },
@@ -1808,6 +2072,7 @@ function sha256Json(value: unknown): string {
 
 export function computeRecordEntryFingerprint(input: {
   project_id?: string;
+  contract_type?: ClassifiedVendorFinanceContractType;
   vendor_id: string;
   entry_type: NormalVendorFinanceEntryType;
   amount_minor: string;
@@ -1817,6 +2082,7 @@ export function computeRecordEntryFingerprint(input: {
   return sha256Json({
     op: "RECORD_ENTRY",
     ...(input.project_id !== undefined ? { project_id: input.project_id } : {}),
+    ...(input.contract_type !== undefined ? { contract_type: input.contract_type } : {}),
     vendor_id: input.vendor_id,
     entry_type: input.entry_type,
     amount_minor: input.amount_minor,
@@ -1840,6 +2106,7 @@ export function computeReverseEntryFingerprint(input: {
 
 export function computeApplyOpeningBatchFingerprint(input: {
   project_id?: string;
+  contract_type?: ClassifiedVendorFinanceContractType;
   cutoff_date: string;
   items: readonly OpeningBatchItemInput[];
   reason: string;
@@ -1855,6 +2122,7 @@ export function computeApplyOpeningBatchFingerprint(input: {
   return sha256Json({
     op: "APPLY_OPENING_BATCH",
     ...(input.project_id !== undefined ? { project_id: input.project_id } : {}),
+    ...(input.contract_type !== undefined ? { contract_type: input.contract_type } : {}),
     cutoff_date: input.cutoff_date,
     items: normalizedItems,
     reason: input.reason,
@@ -1864,6 +2132,7 @@ export function computeApplyOpeningBatchFingerprint(input: {
 export function computeCreateReconciliationFingerprint(input: {
   project_id?: string;
   accountant_ref?: string | null;
+  contract_type?: VendorFinanceContractType;
   vendor_id: string;
   as_of_date: string;
   confirmed_balance_minor: string;
@@ -1877,9 +2146,27 @@ export function computeCreateReconciliationFingerprint(input: {
           accountant_ref: input.accountant_ref ?? null,
         }
       : {}),
+    ...(input.contract_type !== undefined ? { contract_type: input.contract_type } : {}),
     vendor_id: input.vendor_id,
     as_of_date: input.as_of_date,
     confirmed_balance_minor: input.confirmed_balance_minor,
+    reason: input.reason,
+  });
+}
+
+export function computeClassifySubLedgerFingerprint(input: {
+  project_id: string;
+  accountant_ref: string | null;
+  vendor_id: string;
+  target_contract_type: ClassifiedVendorFinanceContractType;
+  reason: string;
+}): string {
+  return sha256Json({
+    op: "CLASSIFY_SUBLEDGER_CONTRACT_TYPE",
+    project_id: input.project_id,
+    accountant_ref: input.accountant_ref ?? null,
+    vendor_id: input.vendor_id,
+    target_contract_type: input.target_contract_type,
     reason: input.reason,
   });
 }
@@ -2049,6 +2336,7 @@ export type VendorFinanceEntryProjection = {
   project_display_name_snapshot: string | null;
   accountant_ref: string | null;
   responsible_accountant_display_name: string | null;
+  contract_type: VendorFinanceContractType;
   vendor_sequence: number;
   cursor_sequence: number;
   document_no: string;
@@ -2082,6 +2370,7 @@ export type VendorFinanceReconciliationProjection = {
   project_display_name_snapshot: string | null;
   accountant_ref: string | null;
   responsible_accountant_display_name: string | null;
+  contract_type: VendorFinanceContractType;
   as_of_date: string;
   system_balance_minor: string;
   confirmed_balance_minor: string;
@@ -2092,6 +2381,23 @@ export type VendorFinanceReconciliationProjection = {
   evidence: VendorFinanceEvidenceSummary | null;
   created_by_display_name: string;
   created_at: string;
+};
+
+export type VendorFinanceSubLedgerClassificationProjection = {
+  classification_id: string;
+  vendor_id: string;
+  project_id: string;
+  project_display_name_snapshot: string;
+  accountant_ref: string;
+  responsible_accountant_display_name: string;
+  source_contract_type: "UNCLASSIFIED";
+  target_contract_type: ClassifiedVendorFinanceContractType;
+  classified_entry_count: number;
+  classified_reconciliation_count: number;
+  closing_balance_minor: string;
+  reason: string;
+  classified_by_display_name: string;
+  classified_at: string;
 };
 
 export type VendorFinanceCompanySummary = {
@@ -2112,6 +2418,7 @@ export type VendorFinanceListSubLedgerItem = {
   project_display_name: string | null;
   accountant_ref: string | null;
   responsible_accountant_display_name: string | null;
+  contract_type: VendorFinanceContractType;
   current_balance_minor: string;
   balance_direction: VendorFinanceBalanceDirection;
   entry_count: number;
@@ -2156,6 +2463,7 @@ export type VendorFinanceVendorListResponse = {
     project_id: string | null;
     accountant_ref: string | null;
     ledger_scope: VendorFinanceLedgerScopeFilter;
+    contract_type: VendorFinanceContractTypeFilter;
   };
   page: number;
   page_size: number;
@@ -2183,6 +2491,7 @@ export type VendorFinanceDetailSubLedger = {
   project_active: boolean | null;
   accountant_ref: string | null;
   responsible_accountant_display_name: string | null;
+  contract_type: VendorFinanceContractType;
   is_active_assignment: boolean;
   current_balance_minor: string;
   balance_direction: VendorFinanceBalanceDirection;
@@ -2192,6 +2501,8 @@ export type VendorFinanceDetailSubLedger = {
   eligible_for_opening: boolean;
   can_record_entry: boolean;
   can_reconcile: boolean;
+  can_classify_contract_type: boolean;
+  classification: VendorFinanceSubLedgerClassificationProjection | null;
 };
 
 export type VendorFinanceVendorDetailResponse = {
@@ -2266,6 +2577,7 @@ export type VendorFinanceOpeningPreviewResponse = {
   project_display_name: string;
   accountant_ref: string;
   responsible_accountant_display_name: string;
+  contract_type: ClassifiedVendorFinanceContractType;
   cutoff_date: string;
   vendor_count: number;
   skipped_zero_count: number;
@@ -2282,6 +2594,7 @@ export type VendorFinanceOpeningBatchHeader = {
   project_display_name_snapshot: string | null;
   accountant_ref: string | null;
   responsible_accountant_display_name: string | null;
+  contract_type: VendorFinanceContractType;
   cutoff_date: string;
   vendor_count: number;
   skipped_zero_count: number;
@@ -2299,12 +2612,18 @@ export type VendorFinanceOpeningApplyResponse = {
   replayed: boolean;
 };
 
+export type VendorFinanceClassifySubLedgerResponse = {
+  classification: VendorFinanceSubLedgerClassificationProjection;
+  replayed: boolean;
+};
+
 export type VendorFinanceMonthlyReportAccountantSummary = {
   project_id: string;
   project_display_name: string;
   project_active: boolean;
   accountant_ref: string;
   responsible_accountant_display_name: string;
+  contract_type: VendorFinanceContractType;
   is_currently_assigned: boolean;
   project_revenue_status: VendorFinanceProjectRevenueStatus;
   project_revenue_minor: null;
@@ -2324,6 +2643,7 @@ export type VendorFinanceMonthlyReportRow = {
   project_active: boolean;
   accountant_ref: string;
   responsible_accountant_display_name: string;
+  contract_type: VendorFinanceContractType;
   is_currently_assigned: boolean;
   vendor_id: string;
   vendor_display_name: string;
@@ -2373,6 +2693,7 @@ export type VendorFinanceMonthlyReportResponse = {
     project_id: string | null;
     accountant_ref: string | null;
     vendor_id: string | null;
+    contract_type: VendorFinanceContractTypeFilter;
   };
   totals: {
     project_revenue_status: VendorFinanceProjectRevenueStatus;
@@ -2575,6 +2896,27 @@ function nullableDateStr(value: unknown): string | null | undefined {
 
 function ledgerScopeVal(value: unknown): VendorFinanceLedgerScope | null {
   return value === "PROJECT_ACCOUNTANT" || value === "LEGACY_UNALLOCATED" ? value : null;
+}
+
+function contractTypeVal(value: unknown): VendorFinanceContractType | null {
+  return value === "SEASONAL" || value === "OFFICIAL" || value === "UNCLASSIFIED"
+    ? value
+    : null;
+}
+
+function classifiedContractTypeVal(
+  value: unknown,
+): ClassifiedVendorFinanceContractType | null {
+  return value === "SEASONAL" || value === "OFFICIAL" ? value : null;
+}
+
+function contractTypeFilterVal(value: unknown): VendorFinanceContractTypeFilter | null {
+  return value === "all" ||
+    value === "SEASONAL" ||
+    value === "OFFICIAL" ||
+    value === "UNCLASSIFIED"
+    ? value
+    : null;
 }
 
 function visibilityScopeVal(value: unknown): VendorFinanceVisibilityScope | null {
@@ -2925,6 +3267,7 @@ export function projectVendorFinanceEntry(value: unknown): VendorFinanceEntryPro
       "project_display_name_snapshot",
       "accountant_ref",
       "responsible_accountant_display_name",
+      "contract_type",
       "vendor_sequence",
       "cursor_sequence",
       "document_no",
@@ -2966,6 +3309,7 @@ export function projectVendorFinanceEntry(value: unknown): VendorFinanceEntryPro
   const projectDisplayNameSnapshot = nullableStr(value.project_display_name_snapshot);
   const accountantRef = nullableUuidStr(value.accountant_ref);
   const responsibleAccountantName = nullableStr(value.responsible_accountant_display_name);
+  const contractType = contractTypeVal(value.contract_type);
   const vendorSequence = posInt(value.vendor_sequence);
   const cursorSequence = posInt(value.cursor_sequence);
   const documentNo =
@@ -3014,6 +3358,7 @@ export function projectVendorFinanceEntry(value: unknown): VendorFinanceEntryPro
     projectDisplayNameSnapshot === undefined ||
     accountantRef === undefined ||
     responsibleAccountantName === undefined ||
+    contractType === null ||
     vendorSequence === null ||
     cursorSequence === null ||
     documentNo === null ||
@@ -3055,7 +3400,8 @@ export function projectVendorFinanceEntry(value: unknown): VendorFinanceEntryPro
     (projectId !== null ||
       projectDisplayNameSnapshot !== null ||
       accountantRef !== null ||
-      responsibleAccountantName !== null)
+      responsibleAccountantName !== null ||
+      contractType !== "UNCLASSIFIED")
   ) {
     return null;
   }
@@ -3074,6 +3420,7 @@ export function projectVendorFinanceEntry(value: unknown): VendorFinanceEntryPro
     project_display_name_snapshot: projectDisplayNameSnapshot,
     accountant_ref: accountantRef,
     responsible_accountant_display_name: responsibleAccountantName,
+    contract_type: contractType,
     vendor_sequence: vendorSequence,
     cursor_sequence: cursorSequence,
     document_no: documentNo,
@@ -3113,6 +3460,7 @@ export function projectVendorReconciliation(
       "project_display_name_snapshot",
       "accountant_ref",
       "responsible_accountant_display_name",
+      "contract_type",
       "as_of_date",
       "system_balance_minor",
       "confirmed_balance_minor",
@@ -3139,6 +3487,7 @@ export function projectVendorReconciliation(
   const projectDisplayNameSnapshot = nullableStr(value.project_display_name_snapshot);
   const accountantRef = nullableUuidStr(value.accountant_ref);
   const responsibleAccountantName = nullableStr(value.responsible_accountant_display_name);
+  const contractType = contractTypeVal(value.contract_type);
   const asOfDate = dateStr(value.as_of_date);
   const systemBalanceMinor = signedMoneyStr(value.system_balance_minor);
   const confirmedBalanceMinor = signedMoneyStr(value.confirmed_balance_minor);
@@ -3158,6 +3507,7 @@ export function projectVendorReconciliation(
     projectDisplayNameSnapshot === undefined ||
     accountantRef === undefined ||
     responsibleAccountantName === undefined ||
+    contractType === null ||
     asOfDate === null ||
     systemBalanceMinor === null ||
     confirmedBalanceMinor === null ||
@@ -3186,7 +3536,8 @@ export function projectVendorReconciliation(
     (projectId !== null ||
       projectDisplayNameSnapshot !== null ||
       accountantRef !== null ||
-      responsibleAccountantName !== null)
+      responsibleAccountantName !== null ||
+      contractType !== "UNCLASSIFIED")
   ) {
     return null;
   }
@@ -3203,6 +3554,7 @@ export function projectVendorReconciliation(
     project_display_name_snapshot: projectDisplayNameSnapshot,
     accountant_ref: accountantRef,
     responsible_accountant_display_name: responsibleAccountantName,
+    contract_type: contractType,
     as_of_date: asOfDate,
     system_balance_minor: systemBalanceMinor,
     confirmed_balance_minor: confirmedBalanceMinor,
@@ -3213,6 +3565,82 @@ export function projectVendorReconciliation(
     evidence,
     created_by_display_name: createdByDisplayName,
     created_at: createdAt,
+  };
+}
+
+export function projectSubLedgerClassification(
+  value: unknown,
+): VendorFinanceSubLedgerClassificationProjection | null {
+  if (
+    !isRecord(value) ||
+    !exactKeys(value, [
+      "classification_id",
+      "vendor_id",
+      "project_id",
+      "project_display_name_snapshot",
+      "accountant_ref",
+      "responsible_accountant_display_name",
+      "source_contract_type",
+      "target_contract_type",
+      "classified_entry_count",
+      "classified_reconciliation_count",
+      "closing_balance_minor",
+      "reason",
+      "classified_by_display_name",
+      "classified_at",
+    ])
+  ) {
+    return null;
+  }
+  const classificationId = uuidStr(value.classification_id);
+  const vendorId = isCanonicalVendorId(value.vendor_id) ? value.vendor_id : null;
+  const projectId = isCanonicalProjectId(value.project_id) ? value.project_id : null;
+  const projectDisplayNameSnapshot = nonEmptyStr(value.project_display_name_snapshot);
+  const accountantRef = uuidStr(value.accountant_ref);
+  const responsibleAccountantName = nonEmptyStr(value.responsible_accountant_display_name);
+  const sourceContractType = value.source_contract_type === "UNCLASSIFIED" ? "UNCLASSIFIED" : null;
+  const targetContractType = classifiedContractTypeVal(value.target_contract_type);
+  const classifiedEntryCount = posInt(value.classified_entry_count);
+  const classifiedReconciliationCount = nonNegInt(value.classified_reconciliation_count);
+  const closingBalanceMinor = signedMoneyStr(value.closing_balance_minor);
+  const reason = nonEmptyStr(value.reason);
+  const classifiedByDisplayName = nonEmptyStr(value.classified_by_display_name);
+  const classifiedAt = nonEmptyStr(value.classified_at);
+
+  if (
+    classificationId === null ||
+    vendorId === null ||
+    projectId === null ||
+    projectDisplayNameSnapshot === null ||
+    accountantRef === null ||
+    responsibleAccountantName === null ||
+    sourceContractType === null ||
+    targetContractType === null ||
+    classifiedEntryCount === null ||
+    classifiedReconciliationCount === null ||
+    closingBalanceMinor === null ||
+    reason === null ||
+    classifiedByDisplayName === null ||
+    classifiedAt === null
+  ) {
+    return null;
+  }
+
+  return {
+    classification_id: classificationId,
+    vendor_id: vendorId,
+    project_id: projectId,
+    project_display_name_snapshot: projectDisplayNameSnapshot,
+    accountant_ref: accountantRef,
+    responsible_accountant_display_name: responsibleAccountantName,
+    source_contract_type: sourceContractType,
+    target_contract_type: targetContractType,
+    classified_entry_count: classifiedEntryCount,
+    classified_reconciliation_count: classifiedReconciliationCount,
+    closing_balance_minor: closingBalanceMinor,
+    reason,
+    classified_by_display_name: classifiedByDisplayName,
+    classified_at: classifiedAt,
   };
 }
 
@@ -3267,6 +3695,7 @@ export function projectVendorFinanceVendorList(
       "project_id",
       "accountant_ref",
       "ledger_scope",
+      "contract_type",
     ]) ||
     !Array.isArray(value.vendors)
   ) {
@@ -3301,6 +3730,7 @@ export function projectVendorFinanceVendorList(
         : undefined;
   const filterAccountantRef = nullableUuidStr(value.filters.accountant_ref);
   const filterLedgerScope = value.filters.ledger_scope;
+  const filterContractType = contractTypeFilterVal(value.filters.contract_type);
   const page = posInt(value.page);
   const pageSize = posInt(value.page_size);
   const total = nonNegInt(value.total);
@@ -3335,6 +3765,7 @@ export function projectVendorFinanceVendorList(
     (filterLedgerScope !== "all" &&
       filterLedgerScope !== "PROJECT_ACCOUNTANT" &&
       filterLedgerScope !== "LEGACY_UNALLOCATED") ||
+    filterContractType === null ||
     page === null ||
     pageSize === null ||
     total === null ||
@@ -3412,6 +3843,7 @@ export function projectVendorFinanceVendorList(
           "project_display_name",
           "accountant_ref",
           "responsible_accountant_display_name",
+          "contract_type",
           "current_balance_minor",
           "balance_direction",
           "entry_count",
@@ -3432,6 +3864,7 @@ export function projectVendorFinanceVendorList(
       const slProjectName = nullableStr(rawSl.project_display_name);
       const slAccountantRef = nullableUuidStr(rawSl.accountant_ref);
       const slAccountantName = nullableStr(rawSl.responsible_accountant_display_name);
+      const slContractType = contractTypeVal(rawSl.contract_type);
       const slBalance = signedMoneyStr(rawSl.current_balance_minor);
       const slDirection = balanceDirectionVal(rawSl.balance_direction);
       const slEntries = nonNegInt(rawSl.entry_count);
@@ -3444,6 +3877,7 @@ export function projectVendorFinanceVendorList(
         slProjectName === undefined ||
         slAccountantRef === undefined ||
         slAccountantName === undefined ||
+        slContractType === null ||
         slBalance === null ||
         slDirection === null ||
         slEntries === null ||
@@ -3459,6 +3893,7 @@ export function projectVendorFinanceVendorList(
         project_display_name: slProjectName,
         accountant_ref: slAccountantRef,
         responsible_accountant_display_name: slAccountantName,
+        contract_type: slContractType,
         current_balance_minor: slBalance,
         balance_direction: slDirection,
         entry_count: slEntries,
@@ -3515,6 +3950,7 @@ export function projectVendorFinanceVendorList(
       project_id: filterProjectId,
       accountant_ref: filterAccountantRef,
       ledger_scope: filterLedgerScope,
+      contract_type: filterContractType,
     },
     page,
     page_size: pageSize,
@@ -3534,6 +3970,7 @@ function projectDetailSubLedger(value: unknown): VendorFinanceDetailSubLedger | 
       "project_active",
       "accountant_ref",
       "responsible_accountant_display_name",
+      "contract_type",
       "is_active_assignment",
       "current_balance_minor",
       "balance_direction",
@@ -3543,6 +3980,8 @@ function projectDetailSubLedger(value: unknown): VendorFinanceDetailSubLedger | 
       "eligible_for_opening",
       "can_record_entry",
       "can_reconcile",
+      "can_classify_contract_type",
+      "classification",
     ])
   ) {
     return null;
@@ -3559,6 +3998,7 @@ function projectDetailSubLedger(value: unknown): VendorFinanceDetailSubLedger | 
     value.project_active === null ? null : (boolVal(value.project_active) ?? undefined);
   const accountantRef = nullableUuidStr(value.accountant_ref);
   const accountantName = nullableStr(value.responsible_accountant_display_name);
+  const contractType = contractTypeVal(value.contract_type);
   const isActiveAssignment = boolVal(value.is_active_assignment);
   const currentBalance = signedMoneyStr(value.current_balance_minor);
   const direction = balanceDirectionVal(value.balance_direction);
@@ -3568,6 +4008,11 @@ function projectDetailSubLedger(value: unknown): VendorFinanceDetailSubLedger | 
   const eligible = boolVal(value.eligible_for_opening);
   const canRecordEntry = boolVal(value.can_record_entry);
   const canReconcile = boolVal(value.can_reconcile);
+  const canClassify = boolVal(value.can_classify_contract_type);
+  const classification =
+    value.classification === null
+      ? null
+      : projectSubLedgerClassification(value.classification);
   if (
     ledgerScope === null ||
     projectId === undefined ||
@@ -3575,6 +4020,7 @@ function projectDetailSubLedger(value: unknown): VendorFinanceDetailSubLedger | 
     projectActive === undefined ||
     accountantRef === undefined ||
     accountantName === undefined ||
+    contractType === null ||
     isActiveAssignment === null ||
     currentBalance === null ||
     direction === null ||
@@ -3583,7 +4029,9 @@ function projectDetailSubLedger(value: unknown): VendorFinanceDetailSubLedger | 
     hasOpening === null ||
     eligible === null ||
     canRecordEntry === null ||
-    canReconcile === null
+    canReconcile === null ||
+    canClassify === null ||
+    (value.classification !== null && classification === null)
   ) {
     return null;
   }
@@ -3594,6 +4042,7 @@ function projectDetailSubLedger(value: unknown): VendorFinanceDetailSubLedger | 
     project_active: projectActive,
     accountant_ref: accountantRef,
     responsible_accountant_display_name: accountantName,
+    contract_type: contractType,
     is_active_assignment: isActiveAssignment,
     current_balance_minor: currentBalance,
     balance_direction: direction,
@@ -3603,6 +4052,8 @@ function projectDetailSubLedger(value: unknown): VendorFinanceDetailSubLedger | 
     eligible_for_opening: eligible,
     can_record_entry: canRecordEntry,
     can_reconcile: canReconcile,
+    can_classify_contract_type: canClassify,
+    classification,
   };
 }
 
@@ -3855,6 +4306,7 @@ export function projectVendorFinanceEntriesPage(
             project_id: cursorScope?.project_id ?? null,
             accountant_ref: cursorScope?.accountant_ref ?? null,
             ledger_scope: cursorScope?.ledger_scope ?? null,
+            contract_type: cursorScope?.contract_type ?? null,
             month: cursorScope?.month ?? null,
           })
         : null,
@@ -3986,6 +4438,7 @@ export function projectOpeningPreview(
       "project_display_name",
       "accountant_ref",
       "responsible_accountant_display_name",
+      "contract_type",
       "cutoff_date",
       "vendor_count",
       "skipped_zero_count",
@@ -4003,6 +4456,7 @@ export function projectOpeningPreview(
   const projectDisplayName = nonEmptyStr(value.project_display_name);
   const accountantRef = uuidStr(value.accountant_ref);
   const accountantName = nonEmptyStr(value.responsible_accountant_display_name);
+  const contractType = classifiedContractTypeVal(value.contract_type);
   const cutoffDate = dateStr(value.cutoff_date);
   const vendorCount = posInt(value.vendor_count);
   const skippedZero = nonNegInt(value.skipped_zero_count);
@@ -4015,6 +4469,7 @@ export function projectOpeningPreview(
     projectDisplayName === null ||
     accountantRef === null ||
     accountantName === null ||
+    contractType === null ||
     cutoffDate === null ||
     vendorCount === null ||
     skippedZero === null ||
@@ -4074,6 +4529,7 @@ export function projectOpeningPreview(
     project_display_name: projectDisplayName,
     accountant_ref: accountantRef,
     responsible_accountant_display_name: accountantName,
+    contract_type: contractType,
     cutoff_date: cutoffDate,
     vendor_count: vendorCount,
     skipped_zero_count: skippedZero,
@@ -4098,6 +4554,7 @@ export function projectOpeningApplyMutation(
       "project_display_name_snapshot",
       "accountant_ref",
       "responsible_accountant_display_name",
+      "contract_type",
       "cutoff_date",
       "vendor_count",
       "skipped_zero_count",
@@ -4125,6 +4582,7 @@ export function projectOpeningApplyMutation(
   const projectDisplayName = nullableStr(b.project_display_name_snapshot);
   const accountantRef = nullableUuidStr(b.accountant_ref);
   const accountantName = nullableStr(b.responsible_accountant_display_name);
+  const contractType = contractTypeVal(b.contract_type);
   const cutoffDate = dateStr(b.cutoff_date);
   const vendorCount = posInt(b.vendor_count);
   const skippedZero = nonNegInt(b.skipped_zero_count);
@@ -4143,6 +4601,7 @@ export function projectOpeningApplyMutation(
     projectDisplayName === undefined ||
     accountantRef === undefined ||
     accountantName === undefined ||
+    contractType === null ||
     cutoffDate === null ||
     vendorCount === null ||
     skippedZero === null ||
@@ -4173,6 +4632,7 @@ export function projectOpeningApplyMutation(
       project_display_name_snapshot: projectDisplayName,
       accountant_ref: accountantRef,
       responsible_accountant_display_name: accountantName,
+      contract_type: contractType,
       cutoff_date: cutoffDate,
       vendor_count: vendorCount,
       skipped_zero_count: skippedZero,
@@ -4198,6 +4658,16 @@ export function projectCreateReconciliationMutation(
   return { reconciliation, replayed };
 }
 
+export function projectClassifySubLedgerMutation(
+  value: unknown,
+): VendorFinanceClassifySubLedgerResponse | null {
+  if (!isRecord(value) || !exactKeys(value, ["classification", "replayed"])) return null;
+  const classification = projectSubLedgerClassification(value.classification);
+  const replayed = boolVal(value.replayed);
+  if (!classification || replayed === null) return null;
+  return { classification, replayed };
+}
+
 export function projectMonthlyReport(value: unknown): VendorFinanceMonthlyReportResponse | null {
   if (
     !isRecord(value) ||
@@ -4219,7 +4689,13 @@ export function projectMonthlyReport(value: unknown): VendorFinanceMonthlyReport
       "can_manage_project_assignments",
     ]) ||
     !isRecord(value.filters) ||
-    !exactKeys(value.filters, ["month", "project_id", "accountant_ref", "vendor_id"]) ||
+    !exactKeys(value.filters, [
+      "month",
+      "project_id",
+      "accountant_ref",
+      "vendor_id",
+      "contract_type",
+    ]) ||
     !isRecord(value.totals) ||
     !exactKeys(value.totals, [
       "project_revenue_status",
@@ -4261,6 +4737,7 @@ export function projectMonthlyReport(value: unknown): VendorFinanceMonthlyReport
       : isCanonicalVendorId(value.filters.vendor_id)
         ? value.filters.vendor_id
         : undefined;
+  const filterContractType = contractTypeFilterVal(value.filters.contract_type);
 
   const t = value.totals;
   const bookCount = nonNegInt(t.project_accountant_book_count);
@@ -4283,6 +4760,7 @@ export function projectMonthlyReport(value: unknown): VendorFinanceMonthlyReport
     filterProjectId === undefined ||
     filterAccountantRef === undefined ||
     filterVendorId === undefined ||
+    filterContractType === null ||
     t.project_revenue_status !== "MISSING_CANONICAL_SOURCE" ||
     t.project_revenue_minor !== null ||
     bookCount === null ||
@@ -4307,6 +4785,7 @@ export function projectMonthlyReport(value: unknown): VendorFinanceMonthlyReport
         "project_active",
         "accountant_ref",
         "responsible_accountant_display_name",
+        "contract_type",
         "is_currently_assigned",
         "project_revenue_status",
         "project_revenue_minor",
@@ -4327,6 +4806,7 @@ export function projectMonthlyReport(value: unknown): VendorFinanceMonthlyReport
     const projectActive = boolVal(rawSum.project_active);
     const accountantRef = uuidStr(rawSum.accountant_ref);
     const accountantName = nonEmptyStr(rawSum.responsible_accountant_display_name);
+    const contractType = contractTypeVal(rawSum.contract_type);
     const isCurrentlyAssigned = boolVal(rawSum.is_currently_assigned);
     const vendorCount = nonNegInt(rawSum.vendor_count);
     const sObligations = nonNegativeMoneyStr(rawSum.obligations_in_month_minor);
@@ -4342,6 +4822,7 @@ export function projectMonthlyReport(value: unknown): VendorFinanceMonthlyReport
       projectActive === null ||
       accountantRef === null ||
       accountantName === null ||
+      contractType === null ||
       isCurrentlyAssigned === null ||
       rawSum.project_revenue_status !== "MISSING_CANONICAL_SOURCE" ||
       rawSum.project_revenue_minor !== null ||
@@ -4362,6 +4843,7 @@ export function projectMonthlyReport(value: unknown): VendorFinanceMonthlyReport
       project_active: projectActive,
       accountant_ref: accountantRef,
       responsible_accountant_display_name: accountantName,
+      contract_type: contractType,
       is_currently_assigned: isCurrentlyAssigned,
       project_revenue_status: "MISSING_CANONICAL_SOURCE",
       project_revenue_minor: null,
@@ -4386,6 +4868,7 @@ export function projectMonthlyReport(value: unknown): VendorFinanceMonthlyReport
         "project_active",
         "accountant_ref",
         "responsible_accountant_display_name",
+        "contract_type",
         "is_currently_assigned",
         "vendor_id",
         "vendor_display_name",
@@ -4416,6 +4899,7 @@ export function projectMonthlyReport(value: unknown): VendorFinanceMonthlyReport
     const projectActive = boolVal(rawRow.project_active);
     const accountantRef = uuidStr(rawRow.accountant_ref);
     const accountantName = nonEmptyStr(rawRow.responsible_accountant_display_name);
+    const contractType = contractTypeVal(rawRow.contract_type);
     const isCurrentlyAssigned = boolVal(rawRow.is_currently_assigned);
     const vendorId = isCanonicalVendorId(rawRow.vendor_id) ? rawRow.vendor_id : null;
     const vendorName = nonEmptyStr(rawRow.vendor_display_name);
@@ -4442,6 +4926,7 @@ export function projectMonthlyReport(value: unknown): VendorFinanceMonthlyReport
       projectActive === null ||
       accountantRef === null ||
       accountantName === null ||
+      contractType === null ||
       isCurrentlyAssigned === null ||
       vendorId === null ||
       vendorName === null ||
@@ -4473,6 +4958,7 @@ export function projectMonthlyReport(value: unknown): VendorFinanceMonthlyReport
       project_active: projectActive,
       accountant_ref: accountantRef,
       responsible_accountant_display_name: accountantName,
+      contract_type: contractType,
       is_currently_assigned: isCurrentlyAssigned,
       vendor_id: vendorId,
       vendor_display_name: vendorName,
@@ -4564,6 +5050,7 @@ export function projectMonthlyReport(value: unknown): VendorFinanceMonthlyReport
       project_id: filterProjectId,
       accountant_ref: filterAccountantRef,
       vendor_id: filterVendorId,
+      contract_type: filterContractType,
     },
     totals: {
       project_revenue_status: "MISSING_CANONICAL_SOURCE",
