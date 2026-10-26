@@ -197,7 +197,7 @@ export const NAV_ENTRIES: ReadonlyArray<NavEntry> = [
     status: "current",
     capability: "change_requests",
     group: "my-work",
-    visibility: { desktop: true, mobile: true },
+    visibility: { desktop: false, mobile: false },
   },
   {
     id: "work-reports",
@@ -221,6 +221,17 @@ export const NAV_ENTRIES: ReadonlyArray<NavEntry> = [
     status: "current",
     capability: "leave",
     group: "my-work",
+    visibility: { desktop: true, mobile: true },
+  },
+  {
+    id: "finance",
+    label: "Tài chính",
+    path: "/finance",
+    description:
+      "Theo dõi công nợ, tạm ứng, sổ cái, đối soát và chứng từ tài chính Vendor theo quyền được máy chủ xác nhận.",
+    icon: Landmark,
+    status: "current",
+    capability: "finance",
     visibility: { desktop: true, mobile: true },
   },
   {
@@ -260,7 +271,7 @@ export const NAV_ENTRIES: ReadonlyArray<NavEntry> = [
     status: "current",
     capability: "work_report_reviews",
     group: "management",
-    visibility: { desktop: true, mobile: true },
+    visibility: { desktop: false, mobile: false },
   },
   {
     id: "work-report-analytics",
@@ -272,7 +283,7 @@ export const NAV_ENTRIES: ReadonlyArray<NavEntry> = [
     status: "current",
     capability: "work_report_analytics",
     group: "management",
-    visibility: { desktop: true, mobile: true },
+    visibility: { desktop: false, mobile: false },
   },
   {
     id: "attendance-report",
@@ -295,17 +306,6 @@ export const NAV_ENTRIES: ReadonlyArray<NavEntry> = [
     status: "current",
     capability: "admin_area",
     group: "management",
-    visibility: { desktop: true, mobile: true },
-  },
-  {
-    id: "finance",
-    label: "Tài chính",
-    path: "/finance",
-    description:
-      "Theo dõi công nợ, tạm ứng, sổ cái, đối soát và chứng từ tài chính Vendor theo quyền được máy chủ xác nhận.",
-    icon: Landmark,
-    status: "current",
-    capability: "finance",
     visibility: { desktop: true, mobile: true },
   },
 ];

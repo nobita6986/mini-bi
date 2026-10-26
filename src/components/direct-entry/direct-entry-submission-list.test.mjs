@@ -255,9 +255,10 @@ test("live component reuses server projections and lifecycle helpers instead of 
   assert.doesNotMatch(liveComponent, /optimistic/i);
 });
 
-test("project-scoped submissions allow proposals but keep document management out of scope", () => {
+test("terminal submissions hide change requests and keep document management out of project scope", () => {
   assert.match(listComponent, /submission\.project_scoped\s*\?/);
-  assert.match(listComponent, /Yêu cầu thay đổi/);
+  assert.doesNotMatch(listComponent, /Yêu cầu thay đổi/);
+  assert.doesNotMatch(listComponent, /onRequestChange/);
   assert.match(listComponent, /!submission\.project_scoped\s*&&\s*\(\s*<button[\s\S]*?onManageDocuments\(submission\)/);
 });
 

@@ -131,13 +131,13 @@ test("dialogs use Radix without manual modal plumbing and no raw logging", () =>
   assert.doesNotMatch(proposer + list, /aria-modal="true"|createFocusTrap|focus-trap/);
 });
 
-test("S03A lifecycle, edit lock and submission CTA stay wired", () => {
+test("S03A lifecycle and submission CTA stay wired while change-request action is hidden", () => {
   assert.match(live, /isRowEditable\(/);
   assert.match(live, /dropSubmissionRows\(/);
   assert.match(live, /mergeReloadedDrafts\(/);
   assert.match(live, /confirmBlockReason\(/);
-  assert.match(live, /onRequestChange=/);
-  assert.match(submissionList, /onRequestChange\(submission\)/);
+  assert.doesNotMatch(live, /onRequestChange=/);
+  assert.doesNotMatch(submissionList, /onRequestChange\(submission\)/);
   assert.match(submissionList, /actionsForSubmission\(submission\)/);
   assert.match(submissionList, /terminal && \(/);
   assert.doesNotMatch(submissionList, /sắp có/);

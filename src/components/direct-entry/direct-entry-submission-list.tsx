@@ -64,7 +64,6 @@ export type SubmissionListProps = {
   onPreflight: (submission: SubmissionReadItem) => Promise<DuplicateCccdPreflight | null>;
   onTransition: (input: SubmissionTransitionRequest) => Promise<TransitionOutcome>;
   onEditDraft: (submission: SubmissionReadItem) => void;
-  onRequestChange: (submission: SubmissionReadItem) => void;
   onManageDocuments: (submission: SubmissionReadItem) => void;
   /**
    * PRE-W2-HF: xoa mem mot dot DRAFT cua chinh actor. Component chi mo confirm; viec goi API,
@@ -98,7 +97,6 @@ export function DirectEntrySubmissionList({
   onPreflight,
   onTransition,
   onEditDraft,
-  onRequestChange,
   onManageDocuments,
   onDeleteDraft,
 }: SubmissionListProps) {
@@ -323,24 +321,15 @@ export function DirectEntrySubmissionList({
                   <span className={styles.submissionHint}>Đợt này hiện không có thao tác nào.</span>
                 )}
                 {terminal && (
-                  <>
+                  !submission.project_scoped && (
                     <button
                       type="button"
-                      className={styles.primaryButton}
-                      onClick={() => onRequestChange(submission)}
+                      className={styles.secondaryButton}
+                      onClick={() => onManageDocuments(submission)}
                     >
-                      Yêu cầu thay đổi
+                      Quản lý tài liệu
                     </button>
-                    {!submission.project_scoped && (
-                      <button
-                        type="button"
-                        className={styles.secondaryButton}
-                        onClick={() => onManageDocuments(submission)}
-                      >
-                        Quản lý tài liệu
-                      </button>
-                    )}
-                  </>
+                  )
                 )}
               </div>
             </li>

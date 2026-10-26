@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
 import { AlertDialog, Dialog } from "radix-ui";
 
 import { RecruiterTypeahead, type PickerOption } from "@/components/direct-entry/typeahead-picker-smoke";
@@ -9,14 +8,11 @@ import { DirectEntryPaymentEditor } from "@/components/direct-entry/direct-entry
 import { DirectEntryDocumentEditor } from "@/components/direct-entry/direct-entry-document-editor";
 import { DirectEntryMultiEntryForm } from "@/components/direct-entry/direct-entry-multi-entry-form";
 import { DirectEntryInitialWorkerUploads } from "@/components/direct-entry/direct-entry-initial-worker-uploads";
-import { DirectEntryChangeRequestProposer } from "@/components/direct-entry/direct-entry-change-request-proposer";
 import { DirectEntrySubmittedDocumentManager } from "@/components/direct-entry/direct-entry-submitted-document-manager";
 import { DirectEntrySubmissionList, type SubmissionTransitionRequest,
   type TransitionOutcome } from "@/components/direct-entry/direct-entry-submission-list";
 import { DirectEntryDuplicateCccdDialog } from "@/components/direct-entry/direct-entry-duplicate-cccd-dialog";
 import { DirectEntryWorkerDocuments } from "@/components/direct-entry/direct-entry-worker-documents";
-import { useNotify } from "@/components/ui/notify-provider";
-import { StatusBanner } from "@/components/ui/status-banner";
 import { isRealCalendarDate } from "@/lib/analytics/identity/identity-shared.mjs";
 import {
   validateEmployeeCode,
@@ -66,7 +62,6 @@ import {
 } from "@/lib/direct-entry/cccd-status";
 import type { CccdDocumentSummary } from "@/lib/direct-entry/cccd-document-pair";
 import type { CccdDocumentType } from "@/lib/direct-entry/cccd-document-pair";
-import { changeRequestErrorMessage } from "@/lib/direct-entry/change-request-proposer";
 import {
   projectSubmissionListPage,
   type SubmissionQueueFilter,
@@ -322,7 +317,6 @@ function Field({
 }
 
 export function DirectEntryLive() {
-  const notify = useNotify();
   const [today] = useState(hcmDate);
   const [rows, setRows] = useState<LiveDraftRow[]>([]);
   const rowsRef = useRef(rows);
@@ -372,8 +366,6 @@ export function DirectEntryLive() {
     setStagedCanUndo(false);
   }, []);
   const lifecycleStatusRef = useRef<HTMLParagraphElement | null>(null);
-  const [changeRequestNotice, setChangeRequestNotice] = useState("");
-  const [proposerSubmission, setProposerSubmission] = useState<SubmissionReadItem | null>(null);
   const [manageDocumentsSubmission, setManageDocumentsSubmission] =
     useState<SubmissionReadItem | null>(null);
   const confirmDeleteRow = rows.find(({ rowId }) => rowId === confirmDeleteRowId) ?? null;
@@ -409,8 +401,6 @@ export function DirectEntryLive() {
    * spreadsheetRows (ghep persisted + staged) de tra ra dung kieu.
    */
   const documentsRow = rows.find(({ rowId }) => rowId === documentsRowId) ?? null;
-  const catalogFor = useCallback((date: string) => catalogs[date], [catalogs]);
-
   useEffect(() => {
     rowsRef.current = rows;
   }, [rows]);
@@ -737,14 +727,6 @@ export function DirectEntryLive() {
       setLastSavedFormDraft(null);
     }
   }, [openFormDuplicateConfirmation, pendingFormDuplicate, runTransition]);
-
-  const reloadAfterChangeRequestMutation = useCallback(async (message: string) => {
-    if (message.startsWith("Đã tạo yêu cầu thay đổi")) {
-      notify.success({ title: message, dedupeKey: "de-cr-created" });
-    }
-    setChangeRequestNotice(message);
-    await loadSubmissions("replace");
-  }, [loadSubmissions, notify]);
 
   const onPaymentEntryVersionChange = useCallback((rowId: string, entryVersion: number) => {
     invalidateStagedUndo();
@@ -1929,8 +1911,6 @@ export function DirectEntryLive() {
           current === submission.submission_id ? null : current);
         setManageDocumentsSubmission((current) =>
           current?.submission_id === submission.submission_id ? null : current);
-        setProposerSubmission((current) =>
-          current?.submission_id === submission.submission_id ? null : current);
         invalidateStagedUndo();
         setRows((current) =>
           current.filter((row) => row.submissionId !== submission.submission_id));
@@ -2587,7 +2567,6 @@ export function DirectEntryLive() {
             onPreflight={preflightDuplicateCccd}
             onTransition={(input) => runTransition(input)}
             onEditDraft={(submission) => void reloadSubmissionDraft(submission)}
-            onRequestChange={(submission) => setProposerSubmission(submission)}
             onManageDocuments={(submission) => setManageDocumentsSubmission(submission)}
             onDeleteDraft={(submission) => onDeleteDraftSubmission(submission)}
           />
@@ -2612,21 +2591,6 @@ export function DirectEntryLive() {
             >
               {submissionDeleteNotice.message}
             </p>
-          )}
-          {changeRequestNotice !== "" && (
-            <StatusBanner
-              tone={changeRequestNotice.startsWith("Đã tạo yêu cầu thay đổi") ? "success" : "error"}
-              dataTestId="change-request-notice"
-            >
-              <span>{changeRequestNotice} </span>
-              <Link
-                href="/direct-entry/change-requests"
-                className="font-medium underline underline-offset-2"
-                data-testid="change-request-module-link"
-              >
-                Mở Yêu cầu thay đổi
-              </Link>
-            </StatusBanner>
           )}
           <div className={styles.inputModeSwitch} role="group" aria-label="Cách nhập liệu">
             <button type="button" className={inputMode === "form" ? styles.primaryButton : styles.secondaryButton}
@@ -2912,25 +2876,6 @@ export function DirectEntryLive() {
             onOpenChange={(next) => { if (!next) setManageDocumentsSubmission(null); }}
             canUpload={capabilities.includes("document_upload")}
             canView={capabilities.includes("document_view")}
-          />
-          <DirectEntryChangeRequestProposer
-            open={proposerSubmission !== null}
-            onOpenChange={(next) => { if (!next) setProposerSubmission(null); }}
-            submission={proposerSubmission}
-            catalogFor={catalogFor}
-            ensureCatalog={ensureCatalog}
-            onCreated={(created) => {
-              void reloadAfterChangeRequestMutation(
-                "Đã tạo yêu cầu thay đổi " + shortRef(created.request_id) + " cho " +
-                  created.items + " dòng.",
-              );
-            }}
-            onConflict={() => {
-              void reloadAfterChangeRequestMutation(changeRequestErrorMessage(409));
-            }}
-            onUnauthorized={() => {
-              void reloadAfterChangeRequestMutation(changeRequestErrorMessage(401));
-            }}
           />
           <section className={styles.mobileSection} data-input-mode={inputMode}
             aria-label="Biểu mẫu nhập NLĐ và danh sách bản nháp">

@@ -41,7 +41,7 @@ test("CURRENT_NAV_ENTRIES chứa các entry hiện hành trong một registry", 
 });
 
 test("Global IA nav groups separate 'Công việc của tôi' and 'Quản trị', and omit empty groups", () => {
-  const menu = groupNavEntries(CURRENT_NAV_ENTRIES.map(({ id, label, path, group }) => ({
+  const menu = groupNavEntries(entriesForViewport("desktop", true).map(({ id, label, path, group }) => ({
     id, label, path, group,
   })));
   assert.deepEqual(menu.filter((item) => item.type === "group").map((item) => ({
@@ -52,7 +52,7 @@ test("Global IA nav groups separate 'Công việc của tôi' and 'Quản trị'
     {
       id: "my-work",
       label: "Công việc của tôi",
-      children: ["direct-entry", "worker-operations", "change-requests", "work-reports", "leave"],
+      children: ["direct-entry", "worker-operations", "work-reports", "leave"],
     },
     {
       id: "management",
@@ -60,13 +60,15 @@ test("Global IA nav groups separate 'Công việc của tôi' and 'Quản trị'
       children: [
         "project-operations",
         "work-report-assignments",
-        "work-report-reviews",
-        "work-report-analytics",
         "attendance-report",
         "admin",
       ],
     },
   ]);
+  assert.deepEqual(
+    menu.map((item) => item.type === "entry" ? item.entry.id : `group:${item.id}`),
+    ["dashboard", "group:my-work", "finance", "group:management"],
+  );
   const dashboardOnly = CURRENT_NAV_ENTRIES.filter((entry) => entry.id === "dashboard")
     .map(({ id, label, path, group }) => ({ id, label, path, group }));
   assert.deepEqual(
@@ -110,13 +112,23 @@ test("Work Reports hiện trong menu hiện hành sau khi F1 được tích hợ
   assert.equal(entry?.group, "my-work");
 });
 
-test("Work Report reviews nav points to the F2 review inbox under group 'management'", () => {
+test("Change Requests giữ route nhưng ẩn khỏi menu desktop và mobile", () => {
+  const entry = CURRENT_NAV_ENTRIES.find((item) => item.id === "change-requests");
+  assert.ok(entry);
+  assert.equal(entry?.path, "/direct-entry/change-requests");
+  assert.deepEqual(entry?.visibility, { desktop: false, mobile: false });
+  assert.equal(entriesForViewport("desktop", true).some((item) => item.id === "change-requests"), false);
+  assert.equal(entriesForViewport("mobile", true).some((item) => item.id === "change-requests"), false);
+});
+
+test("Work Report review route remains registered but its global menu entry is temporarily hidden", () => {
   const entry = CURRENT_NAV_ENTRIES.find((item) => item.id === "work-report-reviews");
   assert.ok(entry);
   assert.equal(entry?.label, "Cần duyệt báo cáo");
   assert.equal(entry?.path, "/work-reports/reviews");
   assert.equal(entry?.group, "management");
   assert.equal(entry?.capability, "work_report_reviews");
+  assert.deepEqual(entry?.visibility, { desktop: false, mobile: false });
 });
 
 test("Work Report assignments, analytics, and Attendance Report entries point to their canonical routes in 'management'", () => {
@@ -126,6 +138,7 @@ test("Work Report assignments, analytics, and Attendance Report entries point to
   assert.equal(assignments?.path, "/work-reports/assignments");
   assert.equal(assignments?.group, "management");
   assert.equal(assignments?.capability, "work_report_assignments");
+  assert.deepEqual(assignments?.visibility, { desktop: true, mobile: true });
 
   const analytics = CURRENT_NAV_ENTRIES.find((item) => item.id === "work-report-analytics");
   assert.ok(analytics);
@@ -133,6 +146,7 @@ test("Work Report assignments, analytics, and Attendance Report entries point to
   assert.equal(analytics?.path, "/work-reports/analytics");
   assert.equal(analytics?.group, "management");
   assert.equal(analytics?.capability, "work_report_analytics");
+  assert.deepEqual(analytics?.visibility, { desktop: false, mobile: false });
 
   const attendance = CURRENT_NAV_ENTRIES.find((item) => item.id === "attendance-report");
   assert.ok(attendance);
@@ -172,12 +186,10 @@ test("Desktop viewport theo feature flag, luôn giữ Dashboard và không có P
       "dashboard",
       "work-reports",
       "leave",
+      "finance",
       "work-report-assignments",
-      "work-report-reviews",
-      "work-report-analytics",
       "attendance-report",
       "admin",
-      "finance",
     ],
   );
 });
@@ -193,12 +205,10 @@ test("Mobile viewport theo feature flag, luôn giữ Dashboard và không có Pi
       "dashboard",
       "work-reports",
       "leave",
+      "finance",
       "work-report-assignments",
-      "work-report-reviews",
-      "work-report-analytics",
       "attendance-report",
       "admin",
-      "finance",
     ],
   );
 });
@@ -209,12 +219,10 @@ test("feature flag Direct Entry chỉ mở với giá trị chính xác true", (
     "dashboard",
     "work-reports",
     "leave",
+    "finance",
     "work-report-assignments",
-    "work-report-reviews",
-    "work-report-analytics",
     "attendance-report",
     "admin",
-    "finance",
   ];
   for (const flag of [undefined, "", "false", "TRUE", "1", " true "]) {
     assert.equal(isDirectEntryUiEnabled(flag), false, String(flag));
