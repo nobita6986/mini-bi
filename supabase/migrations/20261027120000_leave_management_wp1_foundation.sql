@@ -130,7 +130,7 @@ create table if not exists public.leave_department_approvers (
   valid_from date not null,
   valid_to date null
     constraint leave_department_approvers_valid_range_chk
-    check (valid_to is null or valid_to > valid_from),
+    check (valid_to is null or valid_to >= valid_from),
   is_current boolean not null default true,
   reason text not null,
   row_version integer not null default 1
@@ -768,9 +768,9 @@ begin
            select 1
              from public.leave_department_approvers da
             where da.approver_app_user_id = p_app_user_id
-              and da.is_current = true
               and da.valid_from <= v_today
               and (da.valid_to is null or v_today < da.valid_to)
+              and (da.valid_to is null or da.valid_to > da.valid_from)
          )
     into v_is_dept_approver;
 
@@ -871,9 +871,9 @@ begin
            select 1
              from public.leave_department_approvers da
             where da.approver_app_user_id = p_app_user_id
-              and da.is_current = true
               and da.valid_from <= p_as_of
               and (da.valid_to is null or p_as_of < da.valid_to)
+              and (da.valid_to is null or da.valid_to > da.valid_from)
          )
     into v_is_requester_dept_approver;
 
@@ -896,10 +896,11 @@ begin
       from public.leave_department_approvers da
       join public.direct_entry_app_users u on u.app_user_id = da.approver_app_user_id
      where da.unit_kind = v_unit_kind
-       and da.is_current = true
        and da.valid_from <= p_as_of
        and (da.valid_to is null or p_as_of < da.valid_to)
+       and (da.valid_to is null or da.valid_to > da.valid_from)
        and u.enabled = true
+     order by da.valid_from desc, da.row_version desc
      limit 1;
 
     if v_dept_approver_id is not null and v_dept_approver_id <> p_app_user_id then
@@ -1079,9 +1080,9 @@ begin
                from public.leave_department_approvers da
               where da.unit_kind = p_request.unit_kind_snapshot
                 and da.approver_app_user_id = p_actor_app_user_id
-                and da.is_current = true
                 and da.valid_from <= p_as_of
                 and (da.valid_to is null or p_as_of < da.valid_to)
+                and (da.valid_to is null or da.valid_to > da.valid_from)
            )
       into v_is_current_dept_approver;
     if v_is_current_dept_approver then
@@ -1371,9 +1372,9 @@ begin
     end if;
   end loop;
 
-  -- Step 4: Seniority grant (configured next_seniority_effective_date/units or default 5-year milestone)
+  -- Step 4: Seniority grant (configured next_seniority_effective_date/units applied strictly once in its effective year, or default 5-year milestone in its anniversary year)
   if v_profile.next_seniority_effective_date is not null and v_profile.next_seniority_units > 0 then
-    if pg_catalog.date_part('year', v_profile.next_seniority_effective_date)::integer <= v_year
+    if pg_catalog.date_part('year', v_profile.next_seniority_effective_date)::integer = v_year
        and p_as_of >= v_profile.next_seniority_effective_date then
       v_sen_units := v_profile.next_seniority_units;
       v_sen_date := greatest(
@@ -1384,14 +1385,17 @@ begin
     end if;
   else
     v_full_years := pg_catalog.date_part('year', pg_catalog.age(p_as_of, v_profile.work_start_date))::integer;
-    if v_full_years >= 5 then
-      v_sen_units := (v_full_years / 5) * coalesce(v_policy.default_seniority_step_units, 2);
-      v_anniv_date := (v_profile.work_start_date + pg_catalog.make_interval(years => (v_full_years / 5) * 5))::date;
-      v_sen_date := greatest(
-        pg_catalog.make_date(v_year, 1, 1),
-        v_anniv_date,
-        v_official_date
-      );
+    if v_full_years >= 5 and (v_full_years % 5) = 0 then
+      v_anniv_date := (v_profile.work_start_date + pg_catalog.make_interval(years => v_full_years))::date;
+      if pg_catalog.date_part('year', v_anniv_date)::integer = v_year
+         and p_as_of >= v_anniv_date then
+        v_sen_units := (v_full_years / 5) * coalesce(v_policy.default_seniority_step_units, 2);
+        v_sen_date := greatest(
+          pg_catalog.make_date(v_year, 1, 1),
+          v_anniv_date,
+          v_official_date
+        );
+      end if;
     end if;
   end if;
 
@@ -3691,11 +3695,15 @@ begin
 
     update public.leave_department_approvers
        set is_current = false,
-           valid_to = greatest(v_current.valid_from + 1, v_valid_from),
+           valid_to = case
+             when valid_from < v_valid_from then v_valid_from
+             else valid_from
+           end,
            row_version = row_version + 1,
            updated_at = pg_catalog.timezone('utc', pg_catalog.now()),
            updated_by_app_user_id = p_actor_app_user_id
-     where approver_assignment_id = v_current.approver_assignment_id;
+     where unit_kind = v_unit
+       and (is_current = true or valid_to is null or valid_to > v_valid_from);
   else
     if coalesce(p_expected_row_version, 0) <> 0 then
       raise exception 'LEAVE_ROW_VERSION_CONFLICT'
@@ -4587,6 +4595,7 @@ declare
   v_year integer;
   v_month integer;
   v_sync_as_of date;
+  v_page_user_ids uuid[] := array[]::uuid[];
   v_emp record;
   v_rows jsonb := '[]'::jsonb;
   v_total integer := 0;
@@ -4614,25 +4623,20 @@ begin
   v_month := pg_catalog.date_part('month', v_month_start)::integer;
   v_sync_as_of := least(v_today, v_month_end);
 
-  for v_emp in
-    select u.app_user_id
-      from public.direct_entry_app_users u
-      left join public.leave_employee_profiles p on p.app_user_id = u.app_user_id
-     where coalesce(p.is_shared_non_employee, false) = false
-     order by u.app_user_id asc
-  loop
-    perform public.leave_management__internal_sync_employee_accruals(v_emp.app_user_id, v_sync_as_of);
-  end loop;
-
   select count(*)::integer
     into v_total
     from public.direct_entry_app_users u
     left join public.leave_employee_profiles p on p.app_user_id = u.app_user_id
-    left join public.direct_entry_app_user_recruiter_links l
-      on l.app_user_id = u.app_user_id
-     and l.verified = true
-     and l.is_current = true
-    left join public.recruiters r on r.recruiter_id = l.recruiter_id
+    left join lateral (
+      select r.display_name, r.personnel_code
+        from public.direct_entry_app_user_recruiter_links l
+        join public.recruiters r on r.recruiter_id = l.recruiter_id
+       where l.app_user_id = u.app_user_id
+         and l.verified = true
+         and l.is_current = true
+       order by l.valid_from desc, l.link_id desc
+       limit 1
+    ) linked on true
    where coalesce(p.is_shared_non_employee, false) = false
      and (
        v_unit_filter is null
@@ -4641,9 +4645,67 @@ begin
      )
      and (
        v_search is null
-       or pg_catalog.lower(coalesce(r.display_name, u.display_name, '')) like '%' || v_search || '%'
-       or pg_catalog.lower(coalesce(r.personnel_code, '')) like '%' || v_search || '%'
+       or pg_catalog.lower(coalesce(linked.display_name, u.display_name, '')) like '%' || v_search || '%'
+       or pg_catalog.lower(coalesce(linked.personnel_code, '')) like '%' || v_search || '%'
      );
+
+  select coalesce(pg_catalog.array_agg(paged.app_user_id order by paged.sort_name asc, paged.app_user_id asc), array[]::uuid[])
+    into v_page_user_ids
+    from (
+      select u.app_user_id,
+             coalesce(linked.display_name, u.display_name) as sort_name
+        from public.direct_entry_app_users u
+        left join public.leave_employee_profiles p on p.app_user_id = u.app_user_id
+        left join lateral (
+          select r.display_name, r.personnel_code
+            from public.direct_entry_app_user_recruiter_links l
+            join public.recruiters r on r.recruiter_id = l.recruiter_id
+           where l.app_user_id = u.app_user_id
+             and l.verified = true
+             and l.is_current = true
+           order by l.valid_from desc, l.link_id desc
+           limit 1
+        ) linked on true
+       where coalesce(p.is_shared_non_employee, false) = false
+         and (
+           v_unit_filter is null
+           or v_unit_filter = 'ALL'
+           or coalesce(p.unit_kind, 'UNCLASSIFIED') = v_unit_filter
+         )
+         and (
+           v_search is null
+           or pg_catalog.lower(coalesce(linked.display_name, u.display_name, '')) like '%' || v_search || '%'
+           or pg_catalog.lower(coalesce(linked.personnel_code, '')) like '%' || v_search || '%'
+         )
+       order by coalesce(linked.display_name, u.display_name) asc, u.app_user_id asc
+       limit v_limit
+      offset v_offset
+    ) paged;
+
+  -- Only sync accruals/expirations/reservations for employees in the current filtered page
+  -- who have a configured official profile or existing leave lots/reservations.
+  for v_emp in
+    select u.app_user_id
+      from public.direct_entry_app_users u
+      left join public.leave_employee_profiles p on p.app_user_id = u.app_user_id
+     where u.app_user_id = any(v_page_user_ids)
+       and (
+         (
+           p.app_user_id is not null
+           and p.is_shared_non_employee = false
+           and p.employment_status = 'OFFICIAL'
+           and p.work_start_date is not null
+         )
+         or exists (
+           select 1
+             from public.leave_lots l
+            where l.app_user_id = u.app_user_id
+         )
+       )
+     order by u.app_user_id asc
+  loop
+    perform public.leave_management__internal_sync_employee_accruals(v_emp.app_user_id, v_sync_as_of);
+  end loop;
 
   select coalesce(
            pg_catalog.jsonb_agg(
@@ -4669,7 +4731,7 @@ begin
     into v_rows
     from (
       select u.app_user_id,
-             coalesce(r.display_name, u.display_name) as sort_name,
+             coalesce(linked.display_name, u.display_name) as sort_name,
              public.leave_management__internal_account_summary(u.app_user_id) as account,
              public.leave_management__internal_resolve_routing(u.app_user_id, v_sync_as_of) as routing,
              coalesce(p.employment_status, 'UNCONFIGURED') as employment_status,
@@ -4684,11 +4746,16 @@ begin
              public.leave_management__internal_compute_balance_summary(u.app_user_id, v_year, v_sync_as_of) as balance
         from public.direct_entry_app_users u
         left join public.leave_employee_profiles p on p.app_user_id = u.app_user_id
-        left join public.direct_entry_app_user_recruiter_links l
-          on l.app_user_id = u.app_user_id
-         and l.verified = true
-         and l.is_current = true
-        left join public.recruiters r on r.recruiter_id = l.recruiter_id
+        left join lateral (
+          select r.display_name, r.personnel_code
+            from public.direct_entry_app_user_recruiter_links l
+            join public.recruiters r on r.recruiter_id = l.recruiter_id
+           where l.app_user_id = u.app_user_id
+             and l.verified = true
+             and l.is_current = true
+           order by l.valid_from desc, l.link_id desc
+           limit 1
+        ) linked on true
         left join lateral (
           select coalesce(
                    sum(d.half_day_units)
@@ -4717,20 +4784,7 @@ begin
            where d.app_user_id = u.app_user_id
              and d.leave_date between v_month_start and v_month_end
         ) m on true
-       where coalesce(p.is_shared_non_employee, false) = false
-         and (
-           v_unit_filter is null
-           or v_unit_filter = 'ALL'
-           or coalesce(p.unit_kind, 'UNCLASSIFIED') = v_unit_filter
-         )
-         and (
-           v_search is null
-           or pg_catalog.lower(coalesce(r.display_name, u.display_name, '')) like '%' || v_search || '%'
-           or pg_catalog.lower(coalesce(r.personnel_code, '')) like '%' || v_search || '%'
-         )
-       order by coalesce(r.display_name, u.display_name) asc, u.app_user_id asc
-       limit v_limit
-      offset v_offset
+       where u.app_user_id = any(v_page_user_ids)
     ) sub;
 
   return pg_catalog.jsonb_build_object(

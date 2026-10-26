@@ -4,6 +4,8 @@ import type { DirectEntrySessionResult } from "../auth/direct-entry-session-core
 import { isSameOriginAuthRequest } from "../auth/same-origin-auth-request.ts";
 import { failJson, isUuid, noStoreJson } from "../http/direct-entry-api-guard.ts";
 import {
+  LEAVE_REPORT_EXPORT_PAGE_SIZE,
+  MAX_LEAVE_REPORT_EXPORT_ROWS,
   isValidUuid,
   leaveHttpStatusForError,
   parseApplyOpeningBatchBody,
@@ -508,18 +510,59 @@ export async function handleExportMonthlyLeaveReport(
   const actor = await resolveLeaveSessionActor(dependencies);
   if (!actor.ok) return actor.response;
 
-  const outcome = await dependencies.repository.getMonthlyReport({
+  const firstOutcome = await dependencies.repository.getMonthlyReport({
     auth_subject: actor.auth_subject,
     app_user_id: actor.app_user_id,
     year_month: parsed.year_month,
     unit_kind_filter: parsed.unit_kind_filter,
     search: parsed.search,
-    limit: 500,
+    limit: LEAVE_REPORT_EXPORT_PAGE_SIZE,
     offset: 0,
   });
-  if (!outcome.ok) return leaveError(outcome.code);
+  if (!firstOutcome.ok) return leaveError(firstOutcome.code);
 
-  const xlsxBytes = await buildLeaveMonthlyReportXlsx(outcome.data);
+  const firstPage = firstOutcome.data;
+  const firstRows = Array.isArray(firstPage.rows) ? firstPage.rows : [];
+  const total = Number.isFinite(Number(firstPage.total))
+    ? Math.max(0, Math.trunc(Number(firstPage.total)))
+    : firstRows.length;
+
+  if (total > MAX_LEAVE_REPORT_EXPORT_ROWS) {
+    return leaveError("LEAVE_REPORT_EXPORT_LIMIT_EXCEEDED");
+  }
+
+  const allRows = [...firstRows];
+  while (allRows.length < total) {
+    const nextOutcome = await dependencies.repository.getMonthlyReport({
+      auth_subject: actor.auth_subject,
+      app_user_id: actor.app_user_id,
+      year_month: parsed.year_month,
+      unit_kind_filter: parsed.unit_kind_filter,
+      search: parsed.search,
+      limit: LEAVE_REPORT_EXPORT_PAGE_SIZE,
+      offset: allRows.length,
+    });
+    if (!nextOutcome.ok) return leaveError(nextOutcome.code);
+
+    const nextRows = Array.isArray(nextOutcome.data.rows)
+      ? nextOutcome.data.rows
+      : [];
+    if (nextRows.length === 0) {
+      return leaveError("LEAVE_REPORT_EXPORT_INCOMPLETE");
+    }
+    allRows.push(...nextRows);
+    if (allRows.length > MAX_LEAVE_REPORT_EXPORT_ROWS) {
+      return leaveError("LEAVE_REPORT_EXPORT_LIMIT_EXCEEDED");
+    }
+  }
+
+  const xlsxBytes = await buildLeaveMonthlyReportXlsx({
+    ...firstPage,
+    total: allRows.length,
+    limit: allRows.length,
+    offset: 0,
+    rows: allRows,
+  });
   const filename = leaveMonthlyReportFilename(parsed.year_month);
 
   return new Response(Buffer.from(xlsxBytes), {

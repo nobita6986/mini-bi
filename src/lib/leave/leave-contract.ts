@@ -104,7 +104,12 @@ export type LeaveErrorCode =
   | "LEAVE_OPENING_BATCH_VALIDATION_FAILED"
   | "LEAVE_REPORT_FORBIDDEN"
   | "LEAVE_REPORT_YEAR_MONTH_INVALID"
+  | "LEAVE_REPORT_EXPORT_LIMIT_EXCEEDED"
+  | "LEAVE_REPORT_EXPORT_INCOMPLETE"
   | "LEAVE_UNAVAILABLE";
+
+export const LEAVE_REPORT_EXPORT_PAGE_SIZE = 500;
+export const MAX_LEAVE_REPORT_EXPORT_ROWS = 5000;
 
 export function leaveHttpStatusForError(code: LeaveErrorCode): number {
   switch (code) {
@@ -135,10 +140,12 @@ export function leaveHttpStatusForError(code: LeaveErrorCode): number {
     case "LEAVE_ROW_VERSION_CONFLICT":
     case "LEAVE_IDEMPOTENCY_FINGERPRINT_MISMATCH":
     case "LEAVE_INVALID_STATE_TRANSITION":
+    case "LEAVE_REPORT_EXPORT_INCOMPLETE":
       return 409;
     case "LEAVE_INSUFFICIENT_BALANCE":
     case "LEAVE_CARRY_OVER_EXPIRY_NOT_CONFIGURED":
     case "LEAVE_OPENING_BATCH_VALIDATION_FAILED":
+    case "LEAVE_REPORT_EXPORT_LIMIT_EXCEEDED":
       return 422;
     case "LEAVE_UNAVAILABLE":
       return 503;

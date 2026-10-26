@@ -1138,4 +1138,136 @@ test("Leave Management WP1 full PGlite integration & business rule verification"
     24,
     "At M=12 (December), full 12 days (24 half-day units) of monthly accrual are unlocked",
   );
+
+  // 13. Future-dated Department Approver handover preserves current approver until valid_from (zero routing gap)
+  const currentMktApproverRows = await db.query(
+    "select row_version from public.leave_department_approvers where unit_kind = 'MARKETING' and is_current = true",
+  );
+  const currentMktRowVersion = currentMktApproverRows.rows[0].row_version;
+
+  // On 2026-12-10, schedule hrViewer as the new MARKETING approver effective 2026-12-20
+  await rpc("leave_management_set_department_approver_admin", [
+    ACTORS.fullAdmin.auth,
+    ACTORS.fullAdmin.app,
+    "MARKETING",
+    ACTORS.hrViewer.app,
+    "2026-12-20",
+    currentMktRowVersion,
+    "Lên lịch bàn giao người duyệt Marketing từ ngày 20/12/2026",
+    nextIdem("sched-mkt-head"),
+    "fp-sched-mkt-head",
+  ]);
+
+  // On 2026-12-15 (before 2026-12-20 handover), marketingHead MUST remain active approver (not fallback!)
+  await setBusinessDate(db, "2026-12-15");
+  const mktDuringHandoverWait = await rpc("leave_management_get_my_summary", [
+    ACTORS.marketingStaff.auth,
+    ACTORS.marketingStaff.app,
+    2026,
+  ]);
+  assert.equal(
+    mktDuringHandoverWait.routing.route_kind,
+    "DEPARTMENT_HEAD",
+    "Scheduling a future department approver must not create a routing gap before valid_from",
+  );
+  assert.equal(
+    mktDuringHandoverWait.routing.primary_approver_app_user_id,
+    ACTORS.marketingHead.app,
+    "Previous Marketing approver remains active until 2026-12-19",
+  );
+
+  const oldHeadSummaryBeforeHandover = await rpc("leave_management_get_my_summary", [
+    ACTORS.marketingHead.auth,
+    ACTORS.marketingHead.app,
+    2026,
+  ]);
+  assert.equal(oldHeadSummaryBeforeHandover.authority.is_department_approver, true);
+
+  // On 2026-12-20 (handover effective date), hrViewer takes over and marketingHead ends cleanly
+  await setBusinessDate(db, "2026-12-20");
+  const mktOnHandoverDate = await rpc("leave_management_get_my_summary", [
+    ACTORS.marketingStaff.auth,
+    ACTORS.marketingStaff.app,
+    2026,
+  ]);
+  assert.equal(mktOnHandoverDate.routing.route_kind, "DEPARTMENT_HEAD");
+  assert.equal(
+    mktOnHandoverDate.routing.primary_approver_app_user_id,
+    ACTORS.hrViewer.app,
+    "New Marketing approver takes over on 2026-12-20",
+  );
+
+  const oldHeadSummaryOnHandover = await rpc("leave_management_get_my_summary", [
+    ACTORS.marketingHead.auth,
+    ACTORS.marketingHead.app,
+    2026,
+  ]);
+  assert.equal(oldHeadSummaryOnHandover.authority.is_department_approver, false);
+
+  // 14. One-time seniority configuration must NOT repeat in subsequent years (2027, 2028)
+  // recruiterOfficial had next_seniority_effective_date = '2026-03-25', next_seniority_units = 2
+  await setBusinessDate(db, "2027-03-15");
+  const recOfficial2027 = await rpc("leave_management_get_my_summary", [
+    ACTORS.recruiterOfficial.auth,
+    ACTORS.recruiterOfficial.app,
+    2027,
+  ]);
+  assert.equal(
+    recOfficial2027.balance.seniority_granted_units,
+    0,
+    "One-time next_seniority_effective_date (2026-03-25) must not be re-granted in 2027",
+  );
+  assert.equal(recOfficial2027.balance.monthly_accrued_units, 6);
+
+  await setBusinessDate(db, "2028-03-15");
+  const recOfficial2028 = await rpc("leave_management_get_my_summary", [
+    ACTORS.recruiterOfficial.auth,
+    ACTORS.recruiterOfficial.app,
+    2028,
+  ]);
+  assert.equal(
+    recOfficial2028.balance.seniority_granted_units,
+    0,
+    "One-time next_seniority_effective_date (2026-03-25) must not be re-granted in 2028",
+  );
+
+  const { rows: recOfficialSenLots } = await db.query(
+    `select count(*)::int as lot_count, coalesce(sum(granted_units), 0)::int as total_units
+       from public.leave_lots
+      where app_user_id = $1 and lot_kind = 'SENIORITY_GRANT'`,
+    [ACTORS.recruiterOfficial.app],
+  );
+  assert.deepEqual(
+    recOfficialSenLots[0],
+    { lot_count: 1, total_units: 2 },
+    "Configured next seniority grant must only ever create 1 lot across 2026..2028",
+  );
+
+  // 15. Scoped monthly report sync: filtering by MARKETING in 2028-03 only syncs MARKETING rows, not untouched RECRUITMENT accounts
+  const { rows: preReportRecLots2028 } = await db.query(
+    `select count(*)::int as cnt from public.leave_lots where app_user_id = $1 and leave_year = 2028`,
+    [ACTORS.recruiterMidMonth.app],
+  );
+  assert.equal(preReportRecLots2028[0].cnt, 0);
+
+  const mktReport2028 = await rpc("leave_management_monthly_report", [
+    ACTORS.fullAdmin.auth,
+    ACTORS.fullAdmin.app,
+    "2028-03",
+    "MARKETING",
+    null,
+    50,
+    0,
+  ]);
+  assert.equal(mktReport2028.rows.length, 2);
+
+  const { rows: postReportRecLots2028 } = await db.query(
+    `select count(*)::int as cnt from public.leave_lots where app_user_id = $1 and leave_year = 2028`,
+    [ACTORS.recruiterMidMonth.app],
+  );
+  assert.equal(
+    postReportRecLots2028[0].cnt,
+    0,
+    "Monthly report filtered to MARKETING must not lock or materialize lots for RECRUITMENT accounts outside the page",
+  );
 });

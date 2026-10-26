@@ -496,3 +496,122 @@ test("leave-api monthly report and .xlsx export return valid workbook with forma
   );
   assert.equal(applyRes.status, 201);
 });
+
+test("leave-api monthly report .xlsx export paginates beyond 500 employees and fails closed on incomplete or oversized exports", async () => {
+  const makeEmployeeRow = (index) => ({
+    app_user_id: `29000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+    account: {
+      app_user_id: `29000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+      display_name: `Nhân sự ${index + 1}`,
+      login_id: `nv${index + 1}`,
+      personnel_code: `NV${String(index + 1).padStart(4, "0")}`,
+    },
+    routing: {
+      route_kind: "TEAM_LEADER",
+      routed_team_code: "TEAM_A",
+      routed_team_name: "Team Alpha",
+      primary_approver: { display_name: "Trưởng nhóm A" },
+    },
+    employment_status: "OFFICIAL",
+    unit_kind: "RECRUITMENT",
+    work_start_date: "2025-01-01",
+    official_effective_date: "2025-03-01",
+    month_paid_leave_units: 2,
+    month_unpaid_probation_units: 0,
+    month_unpaid_other_units: 0,
+    month_pending_units: 0,
+    month_approved_request_count: 1,
+    balance: {
+      total_granted_units: 6,
+      carry_over_granted_units: 0,
+      carry_over_available_units: 0,
+      monthly_accrued_units: 6,
+      seniority_granted_units: 0,
+      opening_or_adjustment_units: 0,
+      available_units: 4,
+      reserved_units: 0,
+      consumed_units: 2,
+      expired_units: 0,
+      pending_paid_units: 0,
+      pending_unpaid_units: 0,
+      approved_unpaid_units: 0,
+    },
+  });
+
+  const all620Rows = Array.from({ length: 620 }, (_, idx) => makeEmployeeRow(idx));
+  const seenOffsets = [];
+
+  const paginatedDeps = {
+    resolveSession: mockActiveSession(),
+    repository: createNoopRepo({
+      async getMonthlyReport(input) {
+        seenOffsets.push({ limit: input.limit, offset: input.offset });
+        const slice = all620Rows.slice(input.offset, input.offset + input.limit);
+        return {
+          ok: true,
+          data: {
+            year_month: input.year_month ?? "2026-03",
+            leave_year: 2026,
+            month: 3,
+            as_of_date: "2026-03-31",
+            unit_kind_filter: "ALL",
+            total: all620Rows.length,
+            limit: input.limit,
+            offset: input.offset,
+            rows: slice,
+          },
+        };
+      },
+    }),
+  };
+
+  const export620Res = await handleExportMonthlyLeaveReport(
+    new Request("https://bi.example.com/api/leave/reports/monthly/export?month=2026-03"),
+    "true",
+    paginatedDeps,
+  );
+  assert.equal(export620Res.status, 200);
+  assert.deepEqual(seenOffsets, [
+    { limit: 500, offset: 0 },
+    { limit: 500, offset: 500 },
+  ]);
+
+  const imported = await import("exceljs");
+  const workbook = new imported.default.Workbook();
+  await workbook.xlsx.load(Buffer.from(await export620Res.arrayBuffer()));
+  const sheet = workbook.getWorksheet("Nghỉ phép 2026-03");
+  assert.ok(sheet);
+  assert.equal(sheet.rowCount, 621, "Header row + 620 employee rows must all be exported");
+  assert.equal(sheet.getRow(621).getCell(1).value, "NV0620");
+
+  // Exceeding MAX_LEAVE_REPORT_EXPORT_ROWS (5000) fails closed with 422
+  const oversizedDeps = {
+    resolveSession: mockActiveSession(),
+    repository: createNoopRepo({
+      async getMonthlyReport() {
+        return {
+          ok: true,
+          data: {
+            year_month: "2026-03",
+            leave_year: 2026,
+            month: 3,
+            as_of_date: "2026-03-31",
+            unit_kind_filter: "ALL",
+            total: 5001,
+            limit: 500,
+            offset: 0,
+            rows: [makeEmployeeRow(0)],
+          },
+        };
+      },
+    }),
+  };
+  const oversizedRes = await handleExportMonthlyLeaveReport(
+    new Request("https://bi.example.com/api/leave/reports/monthly/export?month=2026-03"),
+    "true",
+    oversizedDeps,
+  );
+  assert.equal(oversizedRes.status, 422);
+  const oversizedBody = await oversizedRes.json();
+  assert.equal(oversizedBody.code, "LEAVE_REPORT_EXPORT_LIMIT_EXCEEDED");
+});
