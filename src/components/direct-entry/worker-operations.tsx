@@ -12,7 +12,6 @@
  */
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import Link from "next/link";
 import { Dialog } from "radix-ui";
 
 import { WorkerDetailDialog } from "@/components/direct-entry/worker-detail-dialog";
@@ -555,21 +554,11 @@ export function WorkerOperations({
         }
         actions={
           <div className="flex flex-wrap items-center gap-2">
-            <Link
-              href="/direct-entry/change-requests"
-              className={buttonClass}
-              data-testid="worker-change-request-module-link"
-            >
-              Yêu cầu thay đổi
-            </Link>
             {canExportThisTab && exportScope !== null ? (
               <div className="flex flex-col items-start gap-1 sm:items-end">
                 <button type="button" className={primaryClass} onClick={() => setExportOpen(true)}>
                   Xuất Excel
                 </button>
-                <p className="max-w-xs text-[11px] leading-snug text-muted sm:text-right">
-                  Xuất theo tab và bộ lọc trạng thái, dự án, người tuyển; không áp dụng từ khóa tìm kiếm.
-                </p>
               </div>
             ) : null}
           </div>

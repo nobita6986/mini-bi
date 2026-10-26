@@ -7,7 +7,7 @@ const ROOT = process.cwd();
 const read = (rel) => readFileSync(path.join(ROOT, rel), "utf8");
 
 describe("R2.2 — 28/28 Table & List Surface Adoption + 4 Owner Screenshot Fixes", () => {
-  test("Screenshot 1 & 2 & 3 Fix: worker-operations.tsx uses PageHeader, FilterToolbar, useNotify, DataTableContainer, r22-card-table, StatusBadge, and never renders raw {item.state}", () => {
+  test("Screenshot 1 & 2 & 3 Fix: worker-operations.tsx uses shared UI, keeps the header focused, and never renders raw {item.state}", () => {
     const src = read("src/components/direct-entry/worker-operations.tsx");
     assert.match(src, /PageHeader/, "must use PageHeader");
     assert.match(src, /FilterToolbar/, "must use FilterToolbar");
@@ -18,7 +18,9 @@ describe("R2.2 — 28/28 Table & List Surface Adoption + 4 Owner Screenshot Fixe
     assert.match(src, /submissionStateBadgeProps/, "must map submission state to Vietnamese StatusBadge");
     assert.ok(!src.includes("<td className=\"px-3 py-3 text-foreground\">{item.state}</td>"), "must not render raw English {item.state} in SubmissionTable");
     assert.match(src, /data-testid="worker-filter-summary"/, "must preserve worker-filter-summary testid");
-    assert.match(src, /data-testid="worker-change-request-module-link"/, "must preserve worker-change-request-module-link testid");
+    const header = src.match(/<PageHeader\b[\s\S]*?\/>/)?.[0] ?? "";
+    assert.ok(header, "worker list must render PageHeader");
+    assert.doesNotMatch(header, /change-requests|Yêu cầu thay đổi/, "worker list header must not show a redundant change-request link");
   });
 
   test("Screenshot 4 Fix: outer /direct-entry header & compact panel upgraded while Grid/Form Core remains 100% locked", () => {

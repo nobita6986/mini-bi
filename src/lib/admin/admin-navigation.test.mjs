@@ -60,21 +60,21 @@ test("Admin internal navigation exposes mapping and departments only to Full Adm
   assert.deepEqual(ADMIN_SECTIONS.map(({ id, href }) => ({ id, href })), [
     { id: "personnel", href: "/admin/catalog/personnel" },
     { id: "teams", href: "/admin/catalog/teams" },
-    { id: "vendors", href: "/admin/catalog/vendors" },
     { id: "labor-types", href: "/admin/catalog/labor-types" },
+    { id: "project-team-scopes", href: "/admin/catalog/project-team-scopes" },
+    { id: "vendors", href: "/admin/catalog/vendors" },
     { id: "departments", href: "/admin/departments" },
     { id: "accounts", href: "/admin/access/accounts" },
-    { id: "project-team-scopes", href: "/admin/catalog/project-team-scopes" },
     { id: "attendance", href: "/admin/attendance" },
   ]);
   assert.deepEqual(ADMIN_SECTIONS.map(({ id, label }) => ({ id, label })), [
-    { id: "personnel", label: "Nhân sự tuyển dụng" },
+    { id: "personnel", label: "Nhân sự" },
     { id: "teams", label: "Nhóm" },
-    { id: "vendors", label: "Nhà cung cấp" },
     { id: "labor-types", label: "Loại hình lao động" },
+    { id: "project-team-scopes", label: "Mapping Dự án ↔ Nhóm" },
+    { id: "vendors", label: "Vendor (NCC)" },
     { id: "departments", label: "Phòng ban" },
     { id: "accounts", label: "Tài khoản truy cập" },
-    { id: "project-team-scopes", label: "Mapping Dự án ↔ Nhóm" },
     { id: "attendance", label: "Báo cáo chấm công" },
   ]);
   const serializableSections = ADMIN_SECTIONS.map(({ id, label, href }) => ({ id, label, href }));

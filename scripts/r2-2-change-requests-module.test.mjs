@@ -311,7 +311,7 @@ test("WP-2.2.2: /direct-entry removes queue/reviewer, keeps contextual proposer,
   assert.equal(liveSource.includes("DirectEntryChangeRequestReviewer"), false);
   assert.equal(liveSource.includes("DirectEntryChangeRequestProposer"), true);
   assert.match(liveSource, /href="\/direct-entry\/change-requests"/);
-  assert.match(workerOpsSource, /href="\/direct-entry\/change-requests"/);
+  assert.doesNotMatch(workerOpsSource, /href="\/direct-entry\/change-requests"/);
 
   assert.equal(liveSource.includes("window.confirm"), false, "no native window.confirm in direct-entry-live.tsx");
   assert.match(liveSource, /data-testid="confirm-delete-draft-row-dialog"/);
