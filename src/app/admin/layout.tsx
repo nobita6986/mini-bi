@@ -8,7 +8,11 @@ import { AdminSubnav } from "@/components/admin/admin-subnav";
 import { AppShell } from "@/components/app-shell/app-shell";
 import { decideAdminAreaAccess } from "@/lib/auth/direct-entry-page-access";
 import { visibleAdminSections } from "@/lib/admin/admin-navigation";
-import { resolveActorForRequest } from "@/lib/navigation/resolve-nav-actor";
+import { isDirectEntryUiEnabled } from "@/lib/direct-entry/ui-model";
+import {
+  resolveActorForRequest,
+  resolveNavActorForAppShell,
+} from "@/lib/navigation/resolve-nav-actor";
 import type { NavActorProjection } from "@/lib/navigation/registry-capability";
 
 export const dynamic = "force-dynamic";
@@ -17,8 +21,12 @@ export default async function AdminLayout({ children }: { children: ReactNode })
   await connection();
   const actor = await resolveActorForRequest().catch(() => null);
   const decision = decideAdminAreaAccess({ actor });
+  const directEntryEnabled = isDirectEntryUiEnabled(process.env.DIRECT_ENTRY_UI_ENABLED);
   const navActor: NavActorProjection | null = actor?.ok
-    ? {
+    ? (await resolveNavActorForAppShell({
+        directEntryEnabled,
+        adminNavigationEnabled: true,
+      }).catch(() => null)) ?? {
         capabilities: actor.actor.capabilities,
         scopes: actor.actor.scopes.map((scope) => ({ kind: scope.kind })),
       }

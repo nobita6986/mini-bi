@@ -41,7 +41,7 @@ const {
   vendorFinanceAdminNavPredicate,
   resolveNavCapabilityPredicate,
 } = cap;
-const { CURRENT_NAV_ENTRIES, filterEntriesForActor } = reg;
+const { CURRENT_NAV_ENTRIES, filterEntriesForActor, groupNavEntries } = reg;
 
 /** @typedef {{ kind: "own" | "team" | "all" }} NavScope */
 /** @typedef {{ capabilities: readonly string[], scopes: readonly NavScope[] }} NavActorProjection */
@@ -456,9 +456,23 @@ test("filterEntriesForActor: owner (đủ 3 admin) + viewport=mobile → các kh
     actor: ownerActor,
     decide: decideFor(ownerActor, "mobile"),
   });
-  // Full Admin thấy Admin, Tài chính, Nghỉ phép, Work Reports, Duyệt báo cáo cùng các khu vực đã có quyền.
+  // Full Admin thấy Admin, Báo cáo chấm công, Tài chính, Nghỉ phép, Work Reports (Báo cáo của tôi, Quản lý/Giao, Cần duyệt, Theo dõi) cùng các khu vực đã có quyền.
   assert.deepEqual(result.map((e) => e.id).sort(),
-    ["admin", "change-requests", "dashboard", "direct-entry", "finance", "leave", "project-operations", "work-report-reviews", "work-reports", "worker-operations"]);
+    [
+      "admin",
+      "attendance-report",
+      "change-requests",
+      "dashboard",
+      "direct-entry",
+      "finance",
+      "leave",
+      "project-operations",
+      "work-report-analytics",
+      "work-report-assignments",
+      "work-report-reviews",
+      "work-reports",
+      "worker-operations",
+    ]);
 });
 
 test("filterEntriesForActor: Direct Entry off bởi env → chỉ Dashboard dù actor có quyền", () => {
@@ -483,10 +497,221 @@ test("Admin catalog navigation remains available when Direct Entry UI is disable
   assert.deepEqual(result.map((entry) => entry.id), ["dashboard", "admin"]);
 });
 
-test("CURRENT_NAV_ENTRIES giữ nguyên (không tạo registry thứ hai)", () => {
+test("CURRENT_NAV_ENTRIES giữ nguyên một registry duy nhất (không tạo registry thứ hai)", () => {
   // Admin, Finance, Leave, Change Requests and Work Reports share the same registry; no separate menu registry is introduced.
   const ids = CURRENT_NAV_ENTRIES.map((e) => e.id).sort();
-  assert.deepEqual(ids, ["admin", "change-requests", "dashboard", "direct-entry", "finance", "leave", "project-operations", "work-report-reviews", "work-reports", "worker-operations"]);
+  assert.deepEqual(
+    ids,
+    [
+      "admin",
+      "attendance-report",
+      "change-requests",
+      "dashboard",
+      "direct-entry",
+      "finance",
+      "leave",
+      "project-operations",
+      "work-report-analytics",
+      "work-report-assignments",
+      "work-report-reviews",
+      "work-reports",
+      "worker-operations",
+    ],
+  );
+});
+
+test("Global IA representative actor matrix: Recruiter/Nhân viên, Team Leader, Trưởng phòng, Admin/BoD và Kế toán", () => {
+  const all = [{ kind: "all", reference: "all" }];
+  const team = [{ kind: "team", reference: "team-1" }];
+  const own = [{ kind: "own", reference: "user-1" }];
+
+  /** @param {NavActorProjection} actor */
+  function projectMenuForBothViewports(actor) {
+    const desktopEntries = filterEntriesForActor({
+      viewport: "desktop",
+      directEntryEnabled: true,
+      actor,
+      decide: decideFor(actor, "desktop"),
+    });
+    const mobileEntries = filterEntriesForActor({
+      viewport: "mobile",
+      directEntryEnabled: true,
+      actor,
+      decide: decideFor(actor, "mobile"),
+    });
+    assert.deepEqual(
+      desktopEntries.map((entry) => entry.id),
+      mobileEntries.map((entry) => entry.id),
+      "desktop and mobile must show identical filtered entries",
+    );
+    const grouped = groupNavEntries(
+      desktopEntries.map(({ id, label, path, group }) => ({ id, label, path, group })),
+    );
+    return {
+      ids: desktopEntries.map((entry) => entry.id),
+      groups: grouped
+        .filter((node) => node.type === "group")
+        .map((node) => ({ id: node.id, label: node.label, children: node.entries.map((e) => e.id) })),
+      topLevelIds: grouped.map((node) => (node.type === "entry" ? node.entry.id : `group:${node.id}`)),
+    };
+  }
+
+  // 1. Nhân viên / Recruiter: thấy Tổng quan + Công việc của tôi; nhóm Quản trị tự ẩn hoàn toàn.
+  const recruiter = {
+    capabilities: ["entry_own", "change_request_create"],
+    scopes: own,
+    hasWorkReportObligations: true,
+    hasLeaveManagementAccess: true,
+  };
+  const recruiterMenu = projectMenuForBothViewports(recruiter);
+  assert.deepEqual(recruiterMenu.topLevelIds, ["dashboard", "group:my-work"]);
+  assert.deepEqual(recruiterMenu.groups, [
+    {
+      id: "my-work",
+      label: "Công việc của tôi",
+      children: ["direct-entry", "worker-operations", "change-requests", "work-reports", "leave"],
+    },
+  ]);
+  assert.equal(recruiterMenu.ids.includes("admin"), false);
+  assert.equal(recruiterMenu.ids.includes("project-operations"), false);
+
+  // 2. Team Leader: thấy các mục Quản trị được cấp (Dự án, Quản lý/Giao, Cần duyệt, Theo dõi) nhưng KHÔNG thấy /admin hay Báo cáo chấm công.
+  const teamLeader = {
+    capabilities: [
+      "entry_team",
+      "team_manager_assign",
+      "change_review",
+      "report_assign",
+      "report_review",
+      "report_analytics_view",
+      "report_view",
+    ],
+    scopes: team,
+    hasLeaveManagementAccess: true,
+  };
+  const teamLeaderMenu = projectMenuForBothViewports(teamLeader);
+  assert.deepEqual(teamLeaderMenu.topLevelIds, ["dashboard", "group:my-work", "group:management"]);
+  assert.deepEqual(teamLeaderMenu.groups, [
+    {
+      id: "my-work",
+      label: "Công việc của tôi",
+      children: ["direct-entry", "worker-operations", "change-requests", "work-reports", "leave"],
+    },
+    {
+      id: "management",
+      label: "Quản trị",
+      children: [
+        "project-operations",
+        "work-report-assignments",
+        "work-report-reviews",
+        "work-report-analytics",
+      ],
+    },
+  ]);
+  assert.equal(teamLeaderMenu.ids.includes("admin"), false, "Team Leader must not see /admin");
+  assert.equal(teamLeaderMenu.ids.includes("attendance-report"), false, "Team Leader must not see /admin/attendance");
+  assert.equal(teamLeaderMenu.ids.includes("finance"), false, "Team Leader must not see /finance");
+
+  // 3. Trưởng phòng (vd. Marketing/IT): thấy Công việc của tôi + các mục Quản trị báo cáo theo capability được cấp, KHÔNG thấy /admin.
+  const departmentHead = {
+    capabilities: ["report_assign", "report_review", "report_analytics_view", "report_view"],
+    scopes: team,
+    hasLeaveManagementAccess: true,
+  };
+  const departmentHeadMenu = projectMenuForBothViewports(departmentHead);
+  assert.deepEqual(departmentHeadMenu.topLevelIds, ["dashboard", "group:my-work", "group:management"]);
+  assert.deepEqual(departmentHeadMenu.groups, [
+    {
+      id: "my-work",
+      label: "Công việc của tôi",
+      children: ["work-reports", "leave"],
+    },
+    {
+      id: "management",
+      label: "Quản trị",
+      children: [
+        "work-report-assignments",
+        "work-report-reviews",
+        "work-report-analytics",
+      ],
+    },
+  ]);
+  assert.equal(departmentHeadMenu.ids.includes("admin"), false, "Trưởng phòng must not see /admin without admin_area");
+  assert.equal(departmentHeadMenu.ids.includes("project-operations"), false);
+
+  // 4a. BoD (executive reader + reviewer + finance view): thấy Báo cáo chấm công, Theo dõi báo cáo, Tài chính, nhưng không mở /admin hệ thống nếu thiếu quyền catalog/full-admin.
+  const bodActor = {
+    capabilities: ["entry_privileged_edit", "report_analytics_view", "report_view", "change_review", "vendor_finance_view"],
+    scopes: all,
+    hasLeaveManagementAccess: true,
+  };
+  const bodMenu = projectMenuForBothViewports(bodActor);
+  assert.deepEqual(bodMenu.topLevelIds, ["dashboard", "group:my-work", "group:management", "finance"]);
+  assert.deepEqual(bodMenu.groups, [
+    {
+      id: "my-work",
+      label: "Công việc của tôi",
+      children: ["worker-operations", "change-requests", "work-reports", "leave"],
+    },
+    {
+      id: "management",
+      label: "Quản trị",
+      children: ["work-report-analytics", "attendance-report"],
+    },
+  ]);
+  assert.equal(bodMenu.ids.includes("attendance-report"), true, "BoD sees Báo cáo chấm công");
+  assert.equal(bodMenu.ids.includes("admin"), false, "BoD without catalog/full-admin does not see duplicate /admin link");
+
+  // 4b. Full Admin: thấy đầy đủ Công việc của tôi, toàn bộ nhóm Quản trị (gồm Quản trị hệ thống /admin) và Tài chính.
+  const fullAdmin = {
+    capabilities: ["entry_admin", "recruiter_master_manage", "team_master_manage"],
+    scopes: all,
+  };
+  const fullAdminMenu = projectMenuForBothViewports(fullAdmin);
+  assert.deepEqual(fullAdminMenu.topLevelIds, ["dashboard", "group:my-work", "group:management", "finance"]);
+  assert.deepEqual(fullAdminMenu.groups, [
+    {
+      id: "my-work",
+      label: "Công việc của tôi",
+      children: ["direct-entry", "worker-operations", "change-requests", "work-reports", "leave"],
+    },
+    {
+      id: "management",
+      label: "Quản trị",
+      children: [
+        "project-operations",
+        "work-report-assignments",
+        "work-report-reviews",
+        "work-report-analytics",
+        "attendance-report",
+        "admin",
+      ],
+    },
+  ]);
+
+  // 5. Kế toán (Accounting): thấy Tổng quan, Công việc của tôi (Nghỉ phép của tôi), Quản trị (Quản trị hệ thống cho danh mục được cấp) và Tài chính.
+  const accountingActor = {
+    capabilities: ["catalog_master_manage"],
+    scopes: all,
+    hasVendorFinanceAccess: true,
+    hasVendorFinanceRecordAccess: true,
+    hasLeaveManagementAccess: true,
+  };
+  const accountingMenu = projectMenuForBothViewports(accountingActor);
+  assert.deepEqual(accountingMenu.topLevelIds, ["dashboard", "group:my-work", "group:management", "finance"]);
+  assert.deepEqual(accountingMenu.groups, [
+    {
+      id: "my-work",
+      label: "Công việc của tôi",
+      children: ["leave"],
+    },
+    {
+      id: "management",
+      label: "Quản trị",
+      children: ["admin"],
+    },
+  ]);
+  assert.equal(accountingMenu.ids.includes("attendance-report"), false, "Accounting does not see Báo cáo chấm công");
 });
 
 // ===== P3-W06A R1 Gap 2: asymmetric desktop/mobile visibility ============

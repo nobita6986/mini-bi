@@ -275,7 +275,8 @@ export const leaveManagementNavPredicate: NavCapabilityPredicate = (actor) =>
 export const NAV_CAPABILITY_PREDICATES: Readonly<Record<string, NavCapabilityPredicate>> = {
   any: () => true,
   owner: adminAuthorityNavPredicate,
-  admin_area: adminPanelNavPredicate,
+  admin_area: adminAreaNavPredicate,
+  attendance_report: attendanceReportNavPredicate,
   finance: vendorFinanceNavPredicate,
   leave: leaveManagementNavPredicate,
   hrp: directEntryNavPredicate,
@@ -286,7 +287,9 @@ export const NAV_CAPABILITY_PREDICATES: Readonly<Record<string, NavCapabilityPre
   worker_operations: workerOperationsNavPredicate,
   change_requests: changeRequestsNavPredicate,
   work_reports: workReportsNavPredicate,
+  work_report_assignments: workReportAssignmentPredicate,
   work_report_reviews: workReportReviewPredicate,
+  work_report_analytics: workReportAnalyticsPredicate,
   workforce_offboarding: workforceOffboardingNavPredicate,
 };
 

@@ -21,7 +21,7 @@ test("Admin subnav renders canonical active state and exactly one current tab fr
 });
 
 test("Admin top-level entry remains /admin in both navigation renderers", () => {
-  assert.match(registry, /id: "admin",\s*label: "Quản trị",\s*path: "\/admin"/);
+  assert.match(registry, /id: "admin",\s*label: "Quản trị hệ thống",\s*path: "\/admin"/);
   assert.match(desktopNav, /href=\{entry\.path\}/);
   assert.match(mobileNav, /href=\{entry\.path\}/);
   assert.match(desktopNav, /const isActive = active\?\.id === entry\.id/);

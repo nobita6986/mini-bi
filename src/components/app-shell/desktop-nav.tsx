@@ -30,15 +30,18 @@ const NAV_ICONS: Record<string, typeof LayoutDashboard> = {
   "worker-operations": Users,
   "change-requests": FileDiff,
   "work-reports": NotebookPen,
+  "work-report-assignments": ClipboardList,
   "work-report-reviews": ClipboardList,
+  "work-report-analytics": NotebookPen,
+  "attendance-report": CalendarDays,
   finance: Landmark,
   leave: CalendarDays,
   admin: ShieldCheck,
 } as const;
 
 const GROUP_ICONS: Record<NavGroupId, typeof LayoutDashboard> = {
-  "new-reports": ClipboardList,
-  "daily-reports": NotebookPen,
+  "my-work": ClipboardList,
+  "management": ShieldCheck,
 };
 
 export function DesktopNav({
