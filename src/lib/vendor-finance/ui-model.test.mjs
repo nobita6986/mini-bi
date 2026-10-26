@@ -24,6 +24,7 @@ import {
   parseApplyOpeningBatchBody,
   parseAssignGlobalRoleBody,
   parseAssignProjectAccountantBody,
+  parseClassifyVendorSubLedgerBody,
   parseCreateVendorReconciliationBody,
   parseEndGlobalRoleBody,
   parseEndProjectAccountantBody,
@@ -64,6 +65,8 @@ import {
   buildAdminProjectAccountantsUrl,
   buildAssignGlobalRoleRequest,
   buildAssignProjectAccountantRequest,
+  buildClassifySubLedgerRequest,
+  buildClassifySubLedgerUrl,
   buildCreateReconciliationRequest,
   buildDownloadEvidenceUrl,
   buildEndGlobalRoleRequest,
@@ -104,6 +107,7 @@ import {
   parseAdminProjectAccountantsEnvelope,
   parseAssignGlobalRoleEnvelope,
   parseAssignProjectAccountantEnvelope,
+  parseClassifySubLedgerEnvelope,
   parseCreateReconciliationEnvelope,
   parseEndGlobalRoleEnvelope,
   parseEndProjectAccountantEnvelope,
@@ -177,6 +181,7 @@ function makeEntryProjection(overrides = {}) {
     project_display_name_snapshot: "Dự án Tuyển dụng Miền Bắc",
     accountant_ref: ACCOUNTANT_A_REF,
     responsible_accountant_display_name: "Nguyễn Thị Kế Toán A",
+    contract_type: "SEASONAL",
     vendor_sequence: 3,
     cursor_sequence: 3,
     document_no: "VFIN-2026-000003",
@@ -213,6 +218,7 @@ function makeReconciliationProjection(overrides = {}) {
     project_display_name_snapshot: "Dự án Tuyển dụng Miền Bắc",
     accountant_ref: ACCOUNTANT_A_REF,
     responsible_accountant_display_name: "Nguyễn Thị Kế Toán A",
+    contract_type: "SEASONAL",
     as_of_date: "2026-10-25",
     system_balance_minor: "10000000",
     confirmed_balance_minor: "10500000",
@@ -634,6 +640,7 @@ test("URL and request builders round-trip cleanly through canonical VFIN-02 back
     project_id: PROJECT_ID,
     accountant_ref: ACCOUNTANT_A_REF.toUpperCase(),
     ledger_scope: "PROJECT_ACCOUNTANT",
+    contract_type: "SEASONAL",
     page: 2,
     page_size: 25,
   });
@@ -649,6 +656,7 @@ test("URL and request builders round-trip cleanly through canonical VFIN-02 back
       project_id: PROJECT_ID,
       accountant_ref: ACCOUNTANT_A_REF,
       ledger_scope: "PROJECT_ACCOUNTANT",
+      contract_type: "SEASONAL",
       page: 2,
       page_size: 25,
     },
@@ -659,6 +667,7 @@ test("URL and request builders round-trip cleanly through canonical VFIN-02 back
     project_id: PROJECT_ID,
     accountant_ref: ACCOUNTANT_A_REF,
     ledger_scope: "PROJECT_ACCOUNTANT",
+    contract_type: "OFFICIAL",
   });
   assert.deepEqual(parseGetVendorFinanceVendorDetailQuery(new URL(`http://localhost${detailUrl}`)), {
     ok: true,
@@ -666,16 +675,18 @@ test("URL and request builders round-trip cleanly through canonical VFIN-02 back
       project_id: PROJECT_ID,
       accountant_ref: ACCOUNTANT_A_REF,
       ledger_scope: "PROJECT_ACCOUNTANT",
+      contract_type: "OFFICIAL",
     },
   });
 
-  // 3. Vendor entries URL (v2 scope-bound keyset cursor + month drill-down) -> parseListVendorFinanceEntriesQuery
+  // 3. Vendor entries URL (v3 scope-bound keyset cursor + month drill-down) -> parseListVendorFinanceEntriesQuery
   const cursor = encodeVendorEntriesCursor({
     vendor_id: "VND-001",
     before_sequence: 10,
     project_id: PROJECT_ID,
     accountant_ref: ACCOUNTANT_A_REF,
     ledger_scope: "PROJECT_ACCOUNTANT",
+    contract_type: "SEASONAL",
     month: "2026-10",
   });
   const entriesUrl = buildVendorEntriesUrl("VND-001", {
@@ -684,6 +695,7 @@ test("URL and request builders round-trip cleanly through canonical VFIN-02 back
     project_id: PROJECT_ID,
     accountant_ref: ACCOUNTANT_A_REF,
     ledger_scope: "PROJECT_ACCOUNTANT",
+    contract_type: "SEASONAL",
     month: "2026-10",
     page_size: 25,
   });
@@ -700,6 +712,7 @@ test("URL and request builders round-trip cleanly through canonical VFIN-02 back
       project_id: PROJECT_ID,
       accountant_ref: ACCOUNTANT_A_REF,
       ledger_scope: "PROJECT_ACCOUNTANT",
+      contract_type: "SEASONAL",
       month: "2026-10",
     },
   });
@@ -711,6 +724,7 @@ test("URL and request builders round-trip cleanly through canonical VFIN-02 back
     project_id: PROJECT_ID,
     accountant_ref: ACCOUNTANT_A_REF,
     ledger_scope: "PROJECT_ACCOUNTANT",
+    contract_type: "OFFICIAL",
   });
   assert.deepEqual(parseListVendorReconciliationsQuery(new URL(`http://localhost${recUrl}`)), {
     ok: true,
@@ -720,6 +734,7 @@ test("URL and request builders round-trip cleanly through canonical VFIN-02 back
       project_id: PROJECT_ID,
       accountant_ref: ACCOUNTANT_A_REF,
       ledger_scope: "PROJECT_ACCOUNTANT",
+      contract_type: "OFFICIAL",
     },
   });
 
@@ -728,6 +743,7 @@ test("URL and request builders round-trip cleanly through canonical VFIN-02 back
     project_id: PROJECT_ID,
     accountant_ref: ACCOUNTANT_A_REF,
     vendor_id: "VND-001",
+    contract_type: "SEASONAL",
   });
   assert.deepEqual(parseMonthlyReportQuery(new URL(`http://localhost${reportUrl}`)), {
     ok: true,
@@ -736,11 +752,16 @@ test("URL and request builders round-trip cleanly through canonical VFIN-02 back
       project_id: PROJECT_ID,
       accountant_ref: ACCOUNTANT_A_REF,
       vendor_id: "VND-001",
+      contract_type: "SEASONAL",
     },
   });
 
   assert.equal(buildVendorFinanceContextUrl(), "/api/vendor-finance/context");
   assert.equal(buildVendorDetailUrl("VND-001"), "/api/vendor-finance/vendors/VND-001");
+  assert.equal(
+    buildClassifySubLedgerUrl("VND-001"),
+    "/api/vendor-finance/vendors/VND-001/classify-contract-type",
+  );
   assert.equal(buildSingleEntryUrl(ENTRY_ID), `/api/vendor-finance/entries/${ENTRY_ID}`);
   assert.equal(buildReverseEntryUrl(ENTRY_ID), `/api/vendor-finance/entries/${ENTRY_ID}/reverse`);
   assert.equal(buildOpeningPreviewUrl(), "/api/vendor-finance/opening-batches/preview");
@@ -759,10 +780,11 @@ test("URL and request builders round-trip cleanly through canonical VFIN-02 back
     `/api/vendor-finance/admin/global-roles/${ROLE_GRANT_ID}/end`,
   );
 
-  // 5. Record entry request -> parseRecordVendorFinanceEntryBody (all 6 normal entry types + mandatory project_id)
+  // 5. Record entry request -> parseRecordVendorFinanceEntryBody (all 6 normal entry types + mandatory project_id + contract_type)
   for (const type of VFIN_UI_NORMAL_ENTRY_TYPES) {
     const built = buildRecordEntryRequest({
       project_id: PROJECT_ID,
+      contract_type: "SEASONAL",
       entry_type: type,
       amount_input: "12.500.000",
       effective_date: "2026-10-25",
@@ -780,6 +802,7 @@ test("URL and request builders round-trip cleanly through canonical VFIN-02 back
       ok: true,
       value: {
         project_id: PROJECT_ID,
+        contract_type: "SEASONAL",
         entry_type: type,
         amount_minor: "12500000",
         effective_date: "2026-10-25",
@@ -793,6 +816,7 @@ test("URL and request builders round-trip cleanly through canonical VFIN-02 back
   assert.equal(
     buildRecordEntryRequest({
       project_id: "",
+      contract_type: "SEASONAL",
       entry_type: "PAYMENT_RECORDED",
       amount_input: "1000000",
       effective_date: "2026-10-25",
@@ -804,6 +828,7 @@ test("URL and request builders round-trip cleanly through canonical VFIN-02 back
   assert.equal(
     buildRecordEntryRequest({
       project_id: PROJECT_ID,
+      contract_type: "OFFICIAL",
       entry_type: "DEBT_RECORDED",
       amount_input: "1000000",
       effective_date: "2026-10-25",
@@ -836,7 +861,7 @@ test("URL and request builders round-trip cleanly through canonical VFIN-02 back
     },
   );
 
-  // 7. Opening preview & apply requests (require project_id) -> parsePreviewOpeningBatchBody & parseApplyOpeningBatchBody
+  // 7. Opening preview & apply requests (require project_id & contract_type) -> parsePreviewOpeningBatchBody & parseApplyOpeningBatchBody
   const openingRows = [
     { vendor_id: "VND-001", entry_type: "OPENING_PAYABLE", amount_input: "25.000.000" },
     { vendor_id: "VND-002", entry_type: "OPENING_ADVANCE", amount_input: "0" },
@@ -844,6 +869,7 @@ test("URL and request builders round-trip cleanly through canonical VFIN-02 back
   ];
   const previewBuilt = buildOpeningPreviewRequest({
     project_id: PROJECT_ID,
+    contract_type: "SEASONAL",
     cutoff_date: "2026-10-01",
     rows: openingRows,
   });
@@ -854,6 +880,7 @@ test("URL and request builders round-trip cleanly through canonical VFIN-02 back
 
   const applyBuilt = buildOpeningApplyRequest({
     project_id: PROJECT_ID,
+    contract_type: "OFFICIAL",
     cutoff_date: "2026-10-01",
     rows: openingRows,
     reason: "Chốt tồn đầu kỳ theo biên bản bàn giao",
@@ -872,6 +899,7 @@ test("URL and request builders round-trip cleanly through canonical VFIN-02 back
   assert.equal(
     buildOpeningPreviewRequest({
       project_id: PROJECT_ID,
+      contract_type: "SEASONAL",
       cutoff_date: "2026-10-01",
       rows: [{ vendor_id: "VND-001", entry_type: "OPENING_PAYABLE", amount_input: "0" }],
     }).ok,
@@ -879,6 +907,7 @@ test("URL and request builders round-trip cleanly through canonical VFIN-02 back
   );
   const dupCheck = buildOpeningPreviewRequest({
     project_id: PROJECT_ID,
+    contract_type: "SEASONAL",
     cutoff_date: "2026-10-01",
     rows: [
       { vendor_id: "VND-001", entry_type: "OPENING_PAYABLE", amount_input: "1000" },
@@ -890,6 +919,7 @@ test("URL and request builders round-trip cleanly through canonical VFIN-02 back
   assert.equal(
     buildOpeningPreviewRequest({
       project_id: PROJECT_ID,
+      contract_type: "SEASONAL",
       cutoff_date: "2026-10-01",
       rows: [{ vendor_id: "__system_vendor__", entry_type: "OPENING_PAYABLE", amount_input: "1000" }],
     }).ok,
@@ -898,6 +928,7 @@ test("URL and request builders round-trip cleanly through canonical VFIN-02 back
   assert.equal(
     buildOpeningPreviewRequest({
       project_id: PROJECT_ID,
+      contract_type: "SEASONAL",
       cutoff_date: "2026-10-01",
       rows: Array.from({ length: 201 }, (_, idx) => ({
         vendor_id: `VND-${idx + 1}`,
@@ -908,10 +939,11 @@ test("URL and request builders round-trip cleanly through canonical VFIN-02 back
     false,
   );
 
-  // 8. Create reconciliation request -> parseCreateVendorReconciliationBody
+  // 8. Create reconciliation & classify sub-ledger requests -> backend parsers
   const recBuilt = buildCreateReconciliationRequest({
     project_id: PROJECT_ID,
     accountant_ref: ACCOUNTANT_A_REF.toUpperCase(),
+    contract_type: "OFFICIAL",
     as_of_date: "2026-10-25",
     confirmed_balance_input: "-3.500.000",
     reason: "Vendor xác nhận đang giữ dư ứng 3.5tr",
@@ -928,9 +960,35 @@ test("URL and request builders round-trip cleanly through canonical VFIN-02 back
       value: {
         project_id: PROJECT_ID,
         accountant_ref: ACCOUNTANT_A_REF,
+        contract_type: "OFFICIAL",
         as_of_date: "2026-10-25",
         confirmed_balance_minor: "-3500000",
         reason: "Vendor xác nhận đang giữ dư ứng 3.5tr",
+        idempotency_key: IDEMPOTENCY_KEY,
+      },
+    },
+  );
+
+  const classifyBuilt = buildClassifySubLedgerRequest({
+    project_id: PROJECT_ID,
+    accountant_ref: ACCOUNTANT_A_REF.toUpperCase(),
+    target_contract_type: "SEASONAL",
+    reason: "  Xác nhận chứng từ hợp đồng thời vụ tháng 09/2026  ",
+    idempotency_key: IDEMPOTENCY_KEY,
+  });
+  assert.equal(classifyBuilt.ok, true);
+  assert.deepEqual(
+    parseClassifyVendorSubLedgerBody(
+      classifyBuilt.request.body,
+      classifyBuilt.request.headers["Idempotency-Key"],
+    ),
+    {
+      ok: true,
+      value: {
+        project_id: PROJECT_ID,
+        accountant_ref: ACCOUNTANT_A_REF,
+        target_contract_type: "SEASONAL",
+        reason: "Xác nhận chứng từ hợp đồng thời vụ tháng 09/2026",
         idempotency_key: IDEMPOTENCY_KEY,
       },
     },
@@ -1091,6 +1149,7 @@ test("HTTP response envelope parsers validate all 18 VFIN-02 endpoint contracts 
         project_id: null,
         accountant_ref: null,
         ledger_scope: "all",
+        contract_type: "all",
       },
       page: 1,
       page_size: 25,
@@ -1119,6 +1178,7 @@ test("HTTP response envelope parsers validate all 18 VFIN-02 endpoint contracts 
               project_display_name: "Dự án Tuyển dụng Miền Bắc",
               accountant_ref: ACCOUNTANT_A_REF,
               responsible_accountant_display_name: "Nguyễn Thị Kế Toán A",
+              contract_type: "SEASONAL",
               current_balance_minor: "10000000",
               balance_direction: "PAYABLE",
               entry_count: 2,
@@ -1142,6 +1202,7 @@ test("HTTP response envelope parsers validate all 18 VFIN-02 endpoint contracts 
     project_active: true,
     accountant_ref: ACCOUNTANT_A_REF,
     responsible_accountant_display_name: "Nguyễn Thị Kế Toán A",
+    contract_type: "SEASONAL",
     is_active_assignment: true,
     current_balance_minor: "10000000",
     balance_direction: "PAYABLE",
@@ -1151,6 +1212,8 @@ test("HTTP response envelope parsers validate all 18 VFIN-02 endpoint contracts 
     eligible_for_opening: false,
     can_record_entry: true,
     can_reconcile: true,
+    can_classify_contract_type: false,
+    classification: null,
   };
   const validDetail = {
     ok: true,
@@ -1302,7 +1365,7 @@ test("HTTP response envelope parsers validate all 18 VFIN-02 endpoint contracts 
     null,
   );
 
-  // 5. Opening preview & apply envelopes (project-bound)
+  // 5. Opening preview & apply envelopes (project-bound + contract_type-bound)
   assert.ok(
     parseOpeningPreviewEnvelope({
       ok: true,
@@ -1312,6 +1375,7 @@ test("HTTP response envelope parsers validate all 18 VFIN-02 endpoint contracts 
         project_display_name: "Dự án Tuyển dụng Miền Bắc",
         accountant_ref: ACCOUNTANT_A_REF,
         responsible_accountant_display_name: "Nguyễn Thị Kế Toán A",
+        contract_type: "SEASONAL",
         cutoff_date: "2026-10-01",
         vendor_count: 1,
         skipped_zero_count: 1,
@@ -1342,6 +1406,7 @@ test("HTTP response envelope parsers validate all 18 VFIN-02 endpoint contracts 
           project_display_name_snapshot: "Dự án Tuyển dụng Miền Bắc",
           accountant_ref: ACCOUNTANT_A_REF,
           responsible_accountant_display_name: "Nguyễn Thị Kế Toán A",
+          contract_type: "SEASONAL",
           cutoff_date: "2026-10-01",
           vendor_count: 1,
           skipped_zero_count: 0,
@@ -1363,6 +1428,32 @@ test("HTTP response envelope parsers validate all 18 VFIN-02 endpoint contracts 
             opening_batch_id: BATCH_ID,
           }),
         ],
+        replayed: false,
+      },
+    }),
+  );
+
+  // 5b. Classify sub-ledger envelope
+  assert.ok(
+    parseClassifySubLedgerEnvelope({
+      ok: true,
+      data: {
+        classification: {
+          classification_id: BATCH_ID,
+          vendor_id: "VND-001",
+          project_id: PROJECT_ID,
+          project_display_name_snapshot: "Dự án Tuyển dụng Miền Bắc",
+          accountant_ref: ACCOUNTANT_A_REF,
+          responsible_accountant_display_name: "Nguyễn Thị Kế Toán A",
+          source_contract_type: "UNCLASSIFIED",
+          target_contract_type: "OFFICIAL",
+          classified_entry_count: 3,
+          classified_reconciliation_count: 1,
+          closing_balance_minor: "10000000",
+          reason: "Đối chiếu hợp đồng gốc",
+          classified_by_display_name: "Nguyễn Thị Kế Toán A",
+          classified_at: "2026-10-25T10:30:00.000Z",
+        },
         replayed: false,
       },
     }),
@@ -1417,6 +1508,7 @@ test("HTTP response envelope parsers validate all 18 VFIN-02 endpoint contracts 
         project_id: null,
         accountant_ref: null,
         vendor_id: null,
+        contract_type: "all",
       },
       totals: {
         project_revenue_status: "MISSING_CANONICAL_SOURCE",
@@ -1437,6 +1529,7 @@ test("HTTP response envelope parsers validate all 18 VFIN-02 endpoint contracts 
           project_active: true,
           accountant_ref: ACCOUNTANT_A_REF,
           responsible_accountant_display_name: "Nguyễn Thị Kế Toán A",
+          contract_type: "SEASONAL",
           is_currently_assigned: true,
           project_revenue_status: "MISSING_CANONICAL_SOURCE",
           project_revenue_minor: null,
@@ -1457,6 +1550,7 @@ test("HTTP response envelope parsers validate all 18 VFIN-02 endpoint contracts 
           project_active: true,
           accountant_ref: ACCOUNTANT_A_REF,
           responsible_accountant_display_name: "Nguyễn Thị Kế Toán A",
+          contract_type: "SEASONAL",
           is_currently_assigned: true,
           vendor_id: "VND-001",
           vendor_display_name: "Sao Việt",

@@ -17,6 +17,7 @@ import {
   computeApplyOpeningBatchFingerprint,
   computeAssignGlobalRoleFingerprint,
   computeAssignProjectAccountantFingerprint,
+  computeClassifySubLedgerFingerprint,
   computeCreateReconciliationFingerprint,
   computeEndGlobalRoleFingerprint,
   computeEndProjectAccountantFingerprint,
@@ -26,6 +27,7 @@ import {
   parseApplyOpeningBatchBody,
   parseAssignGlobalRoleBody,
   parseAssignProjectAccountantBody,
+  parseClassifyVendorSubLedgerBody,
   parseCreateVendorReconciliationBody,
   parseEndGlobalRoleBody,
   parseEndProjectAccountantBody,
@@ -360,6 +362,7 @@ export async function handleGetVendorFinanceVendors(
     project_id: query.value.project_id,
     accountant_ref: query.value.accountant_ref,
     ledger_scope: query.value.ledger_scope,
+    contract_type: query.value.contract_type,
     page: query.value.page,
     page_size: query.value.page_size,
   });
@@ -403,6 +406,7 @@ export async function handleGetVendorFinanceVendorDetail(
     project_id: query.value.project_id,
     accountant_ref: query.value.accountant_ref,
     ledger_scope: query.value.ledger_scope,
+    contract_type: query.value.contract_type,
   });
   if (!result.ok) return vfinError(result.code);
 
@@ -447,6 +451,7 @@ export async function handleGetVendorFinanceEntries(
     project_id: query.value.project_id,
     accountant_ref: query.value.accountant_ref,
     ledger_scope: query.value.ledger_scope,
+    contract_type: query.value.contract_type,
     month: query.value.month,
   });
   if (!result.ok) return vfinError(result.code);
@@ -499,6 +504,7 @@ export async function handlePostVendorFinanceEntry(
 
   const fingerprint = computeRecordEntryFingerprint({
     project_id: parsedBody.value.project_id,
+    contract_type: parsedBody.value.contract_type,
     vendor_id: parsedVendorId.vendor_id,
     entry_type: parsedBody.value.entry_type,
     amount_minor: parsedBody.value.amount_minor,
@@ -510,6 +516,7 @@ export async function handlePostVendorFinanceEntry(
     auth_subject: actor.auth_subject,
     app_user_id: actor.app_user_id,
     project_id: parsedBody.value.project_id,
+    contract_type: parsedBody.value.contract_type,
     vendor_id: parsedVendorId.vendor_id,
     entry_type: parsedBody.value.entry_type,
     amount_minor: parsedBody.value.amount_minor,
@@ -663,6 +670,7 @@ export async function handlePostPreviewOpeningBatch(
     auth_subject: actor.auth_subject,
     app_user_id: actor.app_user_id,
     project_id: parsedBody.value.project_id,
+    contract_type: parsedBody.value.contract_type,
     cutoff_date: parsedBody.value.cutoff_date,
     items: parsedBody.value.items,
   });
@@ -712,6 +720,7 @@ export async function handlePostApplyOpeningBatch(
 
   const fingerprint = computeApplyOpeningBatchFingerprint({
     project_id: parsedBody.value.project_id,
+    contract_type: parsedBody.value.contract_type,
     cutoff_date: parsedBody.value.cutoff_date,
     items: parsedBody.value.items,
     reason: parsedBody.value.reason,
@@ -721,6 +730,7 @@ export async function handlePostApplyOpeningBatch(
     auth_subject: actor.auth_subject,
     app_user_id: actor.app_user_id,
     project_id: parsedBody.value.project_id,
+    contract_type: parsedBody.value.contract_type,
     cutoff_date: parsedBody.value.cutoff_date,
     items: parsedBody.value.items,
     reason: parsedBody.value.reason,
@@ -769,6 +779,7 @@ export async function handleGetVendorReconciliations(
     project_id: query.value.project_id,
     accountant_ref: query.value.accountant_ref,
     ledger_scope: query.value.ledger_scope,
+    contract_type: query.value.contract_type,
   });
   if (!result.ok) return vfinError(result.code);
 
@@ -821,6 +832,7 @@ export async function handlePostVendorReconciliation(
   const fingerprint = computeCreateReconciliationFingerprint({
     project_id: parsedBody.value.project_id,
     accountant_ref: parsedBody.value.accountant_ref,
+    contract_type: parsedBody.value.contract_type,
     vendor_id: parsedVendorId.vendor_id,
     as_of_date: parsedBody.value.as_of_date,
     confirmed_balance_minor: parsedBody.value.confirmed_balance_minor,
@@ -832,9 +844,77 @@ export async function handlePostVendorReconciliation(
     app_user_id: actor.app_user_id,
     project_id: parsedBody.value.project_id,
     accountant_ref: parsedBody.value.accountant_ref,
+    contract_type: parsedBody.value.contract_type,
     vendor_id: parsedVendorId.vendor_id,
     as_of_date: parsedBody.value.as_of_date,
     confirmed_balance_minor: parsedBody.value.confirmed_balance_minor,
+    reason: parsedBody.value.reason,
+    idempotency_key: parsedBody.value.idempotency_key,
+    request_fingerprint: fingerprint,
+  });
+  if (!saved.ok) return vfinError(saved.code);
+
+  return vfinOk(saved.data, saved.data.replayed ? 200 : 201);
+}
+
+// -----------------------------------------------------------------------------
+// 10b. POST /api/vendor-finance/vendors/[vendorId]/classify-contract-type
+// -----------------------------------------------------------------------------
+export async function handlePostClassifyVendorSubLedger(
+  request: Request,
+  vendorId: string,
+  enabledFlag: string | undefined,
+  dependencies: VendorFinanceApiDependencies,
+): Promise<Response> {
+  const gate = directEntryFeatureGate(enabledFlag);
+  if (gate) return gate;
+
+  if (!isSameOriginAuthRequest(request)) {
+    return vfinError("CSRF_ORIGIN_DENIED");
+  }
+
+  if (hasDisallowedAuthorityHeaders(request)) {
+    return vfinError("CLIENT_AUTHORITY_FIELD_FORBIDDEN");
+  }
+
+  const url = parseRequestUrl(request);
+  if (!url || !parseNoQueryParams(url).ok) {
+    return vfinError("VENDOR_FINANCE_QUERY_INVALID");
+  }
+
+  const actor = await resolveVendorFinanceAuthority(dependencies, "record");
+  if (!actor.ok) return actor.response;
+
+  const parsedVendorId = parseVendorIdParam(vendorId);
+  if (!parsedVendorId.ok) return vfinError(parsedVendorId.code);
+
+  const boundedBody = await readBoundedJsonBody(
+    request,
+    MAX_VENDOR_FINANCE_MUTATION_JSON_BYTES,
+  );
+  if (!boundedBody.ok) return vfinError(boundedBody.code);
+
+  const parsedBody = parseClassifyVendorSubLedgerBody(
+    boundedBody.value,
+    request.headers.get("idempotency-key"),
+  );
+  if (!parsedBody.ok) return vfinError(parsedBody.code);
+
+  const fingerprint = computeClassifySubLedgerFingerprint({
+    vendor_id: parsedVendorId.vendor_id,
+    project_id: parsedBody.value.project_id,
+    accountant_ref: parsedBody.value.accountant_ref,
+    target_contract_type: parsedBody.value.target_contract_type,
+    reason: parsedBody.value.reason,
+  });
+
+  const saved = await dependencies.repository.classifyUnclassifiedSubLedger({
+    auth_subject: actor.auth_subject,
+    app_user_id: actor.app_user_id,
+    vendor_id: parsedVendorId.vendor_id,
+    project_id: parsedBody.value.project_id,
+    accountant_ref: parsedBody.value.accountant_ref,
+    target_contract_type: parsedBody.value.target_contract_type,
     reason: parsedBody.value.reason,
     idempotency_key: parsedBody.value.idempotency_key,
     request_fingerprint: fingerprint,
@@ -875,6 +955,7 @@ export async function handleGetVendorFinanceMonthlyReport(
     project_id: query.value.project_id,
     accountant_ref: query.value.accountant_ref,
     vendor_id: query.value.vendor_id,
+    contract_type: query.value.contract_type,
   });
   if (!result.ok) return vfinError(result.code);
 

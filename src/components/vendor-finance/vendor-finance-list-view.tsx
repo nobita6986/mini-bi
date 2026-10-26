@@ -32,6 +32,7 @@ import type {
   VendorFinanceActiveFilter,
   VendorFinanceActorContextOptionsResponse,
   VendorFinanceBalanceFilter,
+  VendorFinanceContractTypeFilter,
   VendorFinanceLedgerScopeFilter,
   VendorFinanceListSubLedgerItem,
   VendorFinanceVendorListResponse,
@@ -42,6 +43,9 @@ import {
   buildVendorFinanceContextUrl,
   buildVendorListUrl,
   classifyVendorFinanceError,
+  CONTRACT_TYPE_BADGE_TONES,
+  CONTRACT_TYPE_FILTER_LABELS_VI,
+  CONTRACT_TYPE_LABELS_VI,
   formatSignedVndDelta,
   formatVendorBalancePresentation,
   formatVietnamDateLabel,
@@ -52,8 +56,10 @@ import {
   validateUiSearchInput,
   VFIN_UI_ACTIVE_FILTERS,
   VFIN_UI_BALANCE_FILTERS,
+  VFIN_UI_CONTRACT_TYPE_FILTERS,
   VFIN_UI_LEDGER_SCOPE_FILTERS,
   VFIN_UI_MAX_SEARCH_LENGTH,
+  VFIN_UI_REFERENCE_TOTAL_LABEL_VI,
 } from "@/lib/vendor-finance/ui-model";
 
 const PAGE_SIZE = 25;
@@ -67,6 +73,7 @@ function buildSubLedgerHref(vendorId: string, sub: VendorFinanceListSubLedgerIte
   if (sub.accountant_ref) {
     sp.set("accountantRef", sub.accountant_ref);
   }
+  sp.set("contractType", sub.contract_type);
   return `/finance/vendors/${encodeURIComponent(vendorId)}?${sp.toString()}`;
 }
 
@@ -82,6 +89,7 @@ export function VendorFinanceListView({
   const searchInputId = useId();
   const projectSelectId = useId();
   const accountantSelectId = useId();
+  const contractTypeSelectId = useId();
   const scopeSelectId = useId();
   const activeSelectId = useId();
   const balanceSelectId = useId();
@@ -90,6 +98,8 @@ export function VendorFinanceListView({
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [projectFilter, setProjectFilter] = useState("");
   const [accountantFilter, setAccountantFilter] = useState("");
+  const [contractTypeFilter, setContractTypeFilter] =
+    useState<VendorFinanceContractTypeFilter>("all");
   const [ledgerScopeFilter, setLedgerScopeFilter] =
     useState<VendorFinanceLedgerScopeFilter>("all");
   const [activeFilter, setActiveFilter] = useState<VendorFinanceActiveFilter>("all");
@@ -167,6 +177,7 @@ export function VendorFinanceListView({
           project_id: projectFilter || null,
           accountant_ref: accountantFilter || null,
           ledger_scope: ledgerScopeFilter,
+          contract_type: contractTypeFilter,
           active: activeFilter,
           balance_filter: balanceFilter,
           page,
@@ -214,6 +225,7 @@ export function VendorFinanceListView({
     debouncedSearch,
     projectFilter,
     accountantFilter,
+    contractTypeFilter,
     ledgerScopeFilter,
     activeFilter,
     balanceFilter,
@@ -235,6 +247,7 @@ export function VendorFinanceListView({
     searchInput.trim().length > 0 ||
     projectFilter !== "" ||
     accountantFilter !== "" ||
+    contractTypeFilter !== "all" ||
     ledgerScopeFilter !== "all" ||
     activeFilter !== "all" ||
     balanceFilter !== "all";
@@ -244,6 +257,7 @@ export function VendorFinanceListView({
     setDebouncedSearch("");
     setProjectFilter("");
     setAccountantFilter("");
+    setContractTypeFilter("all");
     setLedgerScopeFilter("all");
     setActiveFilter("all");
     setBalanceFilter("all");
@@ -380,7 +394,7 @@ export function VendorFinanceListView({
         </Card>
 
         <Card className="p-4">
-          <p className="text-xs font-medium text-muted">Chênh lệch tham chiếu phạm vi lọc</p>
+          <p className="text-xs font-medium text-muted">Tổng tham khảo phạm vi lọc</p>
           <p
             data-testid="vfin-kpi-net"
             className="mt-1.5 font-mono text-xl font-semibold tabular-nums text-foreground"
@@ -388,7 +402,7 @@ export function VendorFinanceListView({
             {summary ? formatSignedVndDelta(summary.net_balance_minor) : "—"}
           </p>
           <p className="mt-1 text-xs text-muted">
-            Chỉ tham chiếu tổng hợp — không thay thế số dư riêng từng kế toán/dự án
+            Tổng tham khảo — không thay thế số dư riêng từng sổ kế toán / dự án / loại hợp đồng
           </p>
         </Card>
       </section>
@@ -485,6 +499,28 @@ export function VendorFinanceListView({
             </select>
           </div>
 
+          <div className="md:col-span-3 space-y-1">
+            <label htmlFor={contractTypeSelectId} className="block text-xs font-medium text-muted">
+              Loại hợp đồng (Sổ riêng)
+            </label>
+            <select
+              id={contractTypeSelectId}
+              data-testid="vfin-contract-type-filter"
+              value={contractTypeFilter}
+              onChange={(e) => {
+                setContractTypeFilter(e.target.value as VendorFinanceContractTypeFilter);
+                setPage(1);
+              }}
+              className="min-h-11 sm:min-h-10 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+            >
+              {VFIN_UI_CONTRACT_TYPE_FILTERS.map((opt) => (
+                <option key={opt} value={opt}>
+                  {CONTRACT_TYPE_FILTER_LABELS_VI[opt]}
+                </option>
+              ))}
+            </select>
+          </div>
+
           <div className="md:col-span-2 space-y-1">
             <label htmlFor={balanceSelectId} className="block text-xs font-medium text-muted">
               Nhóm số dư sổ
@@ -506,7 +542,7 @@ export function VendorFinanceListView({
             </select>
           </div>
 
-          <div className="md:col-span-3 space-y-1">
+          <div className="md:col-span-2 space-y-1">
             <label htmlFor={activeSelectId} className="block text-xs font-medium text-muted">
               Trạng thái Vendor
             </label>
@@ -610,7 +646,7 @@ export function VendorFinanceListView({
                   Vendor
                 </th>
                 <th scope="col" className={DATA_TABLE_TH_CLASS}>
-                  Sổ theo Dự án × Kế toán phụ trách (Không bù trừ)
+                  Sổ theo Dự án × Kế toán phụ trách × Loại HĐ (Không bù trừ)
                 </th>
                 <th scope="col" className={`${DATA_TABLE_TH_CLASS} text-right`}>
                   Số dư theo sổ
@@ -662,7 +698,7 @@ export function VendorFinanceListView({
                       </div>
                     </td>
 
-                    <td data-label="Sổ dự án × Kế toán" className={DATA_TABLE_TD_CLASS}>
+                    <td data-label="Sổ dự án × Kế toán × Loại HĐ" className={DATA_TABLE_TD_CLASS}>
                       {vendor.sub_ledgers.length === 0 ? (
                         <span className="text-xs text-muted">Chưa liên kết sổ dự án</span>
                       ) : (
@@ -674,28 +710,31 @@ export function VendorFinanceListView({
                               entry_count: sub.entry_count,
                               has_opening_entry: sub.has_opening_entry,
                             });
-                            const subKey = `${sub.ledger_scope}:${sub.project_id ?? "legacy"}:${sub.accountant_ref ?? idx}`;
+                            const subKey = `${sub.ledger_scope}:${sub.project_id ?? "legacy"}:${sub.accountant_ref ?? idx}:${sub.contract_type}`;
                             return (
                               <Link
                                 key={subKey}
                                 href={buildSubLedgerHref(vendor.vendor_id, sub)}
                                 className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-surface-muted/40 px-2.5 py-1.5 text-xs hover:border-primary/40 hover:bg-surface-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
                               >
-                                <span className="space-x-1">
+                                <span className="flex flex-wrap items-center gap-1.5">
+                                  <StatusBadge tone={CONTRACT_TYPE_BADGE_TONES[sub.contract_type]}>
+                                    {CONTRACT_TYPE_LABELS_VI[sub.contract_type]}
+                                  </StatusBadge>
                                   {sub.ledger_scope === "LEGACY_UNALLOCATED" ? (
                                     <strong className="text-foreground">
                                       Sổ lịch sử VFIN-01 (chưa gắn dự án)
                                     </strong>
                                   ) : (
-                                    <>
+                                    <span>
                                       <strong className="text-foreground">
                                         {sub.project_display_name ?? sub.project_id}
                                       </strong>
-                                      <span className="text-muted">· KT:</span>
+                                      <span className="text-muted"> · KT: </span>
                                       <span className="font-medium text-foreground">
                                         {sub.responsible_accountant_display_name ?? "—"}
                                       </span>
-                                    </>
+                                    </span>
                                   )}
                                 </span>
                                 <span className="font-mono font-semibold tabular-nums text-foreground">
@@ -714,6 +753,9 @@ export function VendorFinanceListView({
                     >
                       {vendor.balance_direction === "MULTI_LEDGER" ? (
                         <div className="space-y-0.5 text-xs">
+                          <p className="font-sans text-[11px] font-medium text-amber-700 dark:text-amber-300">
+                            {VFIN_UI_REFERENCE_TOTAL_LABEL_VI}
+                          </p>
                           <p className="font-semibold text-foreground">
                             Phải trả: {formatVndMinor(vendor.payable_total_minor)}
                           </p>

@@ -156,6 +156,34 @@ test("VFIN-02: Monthly project debt report & Full Admin governance views enforce
   assert.doesNotMatch(governanceView, /type="checkbox"/);
 });
 
+test("VFIN-03: Contract-type sub-ledgers (Thời vụ / Chính thức / Chưa phân loại), reference total disclosure, and explicit legacy classification dialog", () => {
+  assert.match(listView, /vfin-contract-type-filter/);
+  assert.match(listView, /tổng tham khảo/i);
+  assert.match(listView, /CONTRACT_TYPE_LABELS_VI\[sub\.contract_type\]/);
+
+  assert.match(detailView, /vfin-reference-total-disclosure/);
+  assert.match(detailView, /vfin-open-classify-subledger-btn/);
+  assert.match(detailView, /vfin-subledger-classification-audit/);
+  assert.match(detailView, /ClassifyVendorSubLedgerDialog/);
+  assert.match(detailView, /CONTRACT_TYPE_LABELS_VI\[sub\.contract_type\]/);
+
+  assert.match(entryDialogs, /export function ClassifyVendorSubLedgerDialog/);
+  assert.match(entryDialogs, /vfin-classify-subledger-dialog/);
+  assert.match(entryDialogs, /buildClassifySubLedgerRequest\(/);
+  assert.match(entryDialogs, /parseClassifySubLedgerEnvelope\(/);
+  assert.match(entryDialogs, /vfin-record-contract-type-select/);
+  assert.match(entryDialogs, /vfin-reconciliation-subledger-select/);
+  assert.match(entryDialogs, /không cho phép đổi loại hợp đồng khi hoàn tác/);
+
+  assert.match(openingWizard, /vfin-opening-contract-type-select/);
+  assert.match(documentView, /CONTRACT_TYPE_LABELS_VI\[entry\.contract_type\]/);
+
+  assert.match(monthlyReportView, /vfin-monthly-contract-type-filter/);
+  assert.match(monthlyReportView, /tổng tham khảo/i);
+  assert.match(monthlyReportView, /CONTRACT_TYPE_LABELS_VI\[sum\.contract_type\]/);
+  assert.match(monthlyReportView, /CONTRACT_TYPE_LABELS_VI\[row\.contract_type\]/);
+});
+
 test("Entry, Reversal, Reconciliation, Evidence, and Opening Balance Wizard honor two-phase evidence commit, non-auto-adjustment, and atomic batch rules", () => {
   // Record entry & Reconciliation dialogs lock into post-commit evidence recovery if image upload fails
   assert.match(entryDialogs, /vfin-record-entry-evidence-recovery/);

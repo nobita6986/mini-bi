@@ -36,6 +36,7 @@ import { PageHeader, PageShell } from "@/components/ui/page-shell";
 import type {
   NormalVendorFinanceEntryType,
   VendorFinanceActorContextOptionsResponse,
+  VendorFinanceContractType,
   VendorFinanceDetailSubLedger,
   VendorFinanceEntryProjection,
   VendorFinanceEntryType,
@@ -52,6 +53,8 @@ import {
   buildVendorFinanceContextUrl,
   buildVendorReconciliationsUrl,
   classifyVendorFinanceError,
+  CONTRACT_TYPE_BADGE_TONES,
+  CONTRACT_TYPE_LABELS_VI,
   ENTRY_TYPE_LABELS_VI,
   formatSignedVndDelta,
   formatTimestampVi,
@@ -64,10 +67,13 @@ import {
   parseVendorEntriesPageEnvelope,
   parseVendorFinanceContextEnvelope,
   parseVendorReconciliationsPageEnvelope,
+  VFIN_UI_CONTRACT_TYPES,
   VFIN_UI_ENTRY_TYPES,
+  VFIN_UI_REFERENCE_TOTAL_LABEL_VI,
 } from "@/lib/vendor-finance/ui-model";
 
 import {
+  ClassifyVendorSubLedgerDialog,
   CreateVendorReconciliationDialog,
   RecordVendorEntryDialog,
   ReverseVendorEntryDialog,
@@ -86,31 +92,43 @@ type SelectedScopeFilter = {
   ledgerScope: VendorFinanceLedgerScope | null;
   projectId: string | null;
   accountantRef: string | null;
+  contractType: VendorFinanceContractType | null;
 };
 
 function parseInitialScopeFilter(searchParams: URLSearchParams): SelectedScopeFilter {
   const rawScope = searchParams.get("ledgerScope");
   const rawProject = searchParams.get("projectId");
   const rawAccountant = searchParams.get("accountantRef");
+  const rawContractType = searchParams.get("contractType");
 
   if (rawScope === "LEGACY_UNALLOCATED") {
-    return { ledgerScope: "LEGACY_UNALLOCATED", projectId: null, accountantRef: null };
+    return {
+      ledgerScope: "LEGACY_UNALLOCATED",
+      projectId: null,
+      accountantRef: null,
+      contractType: "UNCLASSIFIED",
+    };
   }
   const projectId = rawProject && isCanonicalUiProjectId(rawProject) ? rawProject : null;
   const accountantRef =
     rawAccountant && isUuidString(rawAccountant) ? rawAccountant.toLowerCase() : null;
-  if (rawScope === "PROJECT_ACCOUNTANT" || projectId || accountantRef) {
+  const contractType =
+    rawContractType && (VFIN_UI_CONTRACT_TYPES as readonly string[]).includes(rawContractType)
+      ? (rawContractType as VendorFinanceContractType)
+      : null;
+  if (rawScope === "PROJECT_ACCOUNTANT" || projectId || accountantRef || contractType) {
     return {
       ledgerScope: "PROJECT_ACCOUNTANT",
       projectId,
       accountantRef,
+      contractType,
     };
   }
-  return { ledgerScope: null, projectId: null, accountantRef: null };
+  return { ledgerScope: null, projectId: null, accountantRef: null, contractType: null };
 }
 
 function subLedgerKey(sub: VendorFinanceDetailSubLedger): string {
-  return `${sub.ledger_scope}:${sub.project_id ?? "legacy"}:${sub.accountant_ref ?? "none"}`;
+  return `${sub.ledger_scope}:${sub.project_id ?? "legacy"}:${sub.accountant_ref ?? "none"}:${sub.contract_type}`;
 }
 
 export function VendorFinanceDetailView({
@@ -169,6 +187,8 @@ export function VendorFinanceDetailView({
     useState<NormalVendorFinanceEntryType | undefined>(undefined);
   const [reversingEntry, setReversingEntry] = useState<VendorFinanceEntryProjection | null>(null);
   const [reconcileDialogOpen, setReconcileDialogOpen] = useState(false);
+  const [classifyingSubLedger, setClassifyingSubLedger] =
+    useState<VendorFinanceDetailSubLedger | null>(null);
 
   const [viewingEvidence, setViewingEvidence] = useState<{
     evidence: VendorFinanceEvidenceSummary;
@@ -232,6 +252,7 @@ export function VendorFinanceDetailView({
             ledger_scope: scopeFilter.ledgerScope,
             project_id: scopeFilter.projectId,
             accountant_ref: scopeFilter.accountantRef,
+            contract_type: scopeFilter.contractType,
           }),
           {
             method: "GET",
@@ -291,6 +312,7 @@ export function VendorFinanceDetailView({
           ledger_scope: scopeFilter.ledgerScope,
           project_id: scopeFilter.projectId,
           accountant_ref: scopeFilter.accountantRef,
+          contract_type: scopeFilter.contractType,
         });
         const res = await fetch(url, {
           method: "GET",
@@ -352,6 +374,7 @@ export function VendorFinanceDetailView({
           ledger_scope: scopeFilter.ledgerScope,
           project_id: scopeFilter.projectId,
           accountant_ref: scopeFilter.accountantRef,
+          contract_type: scopeFilter.contractType,
         });
         const res = await fetch(url, {
           method: "GET",
@@ -406,6 +429,7 @@ export function VendorFinanceDetailView({
         ledger_scope: scopeFilter.ledgerScope,
         project_id: scopeFilter.projectId,
         accountant_ref: scopeFilter.accountantRef,
+        contract_type: scopeFilter.contractType,
       });
       const res = await fetch(url, { method: "GET", cache: "no-store" });
       const json: unknown = await res.json().catch(() => null);
@@ -467,13 +491,14 @@ export function VendorFinanceDetailView({
   const handleSelectSubLedger = (sub: VendorFinanceDetailSubLedger | null) => {
     setRecPage(1);
     if (!sub) {
-      setScopeFilter({ ledgerScope: null, projectId: null, accountantRef: null });
+      setScopeFilter({ ledgerScope: null, projectId: null, accountantRef: null, contractType: null });
       return;
     }
     setScopeFilter({
       ledgerScope: sub.ledger_scope,
       projectId: sub.project_id,
       accountantRef: sub.accountant_ref,
+      contractType: sub.contract_type,
     });
   };
 
@@ -513,10 +538,17 @@ export function VendorFinanceDetailView({
     (s) => s.ledger_scope === "PROJECT_ACCOUNTANT" && s.can_reconcile && s.project_id !== null,
   );
 
-  const openingTargetProjectId =
+  const openingTargetSubLedger =
     selectedSubLedger?.eligible_for_opening && selectedSubLedger.project_id
-      ? selectedSubLedger.project_id
-      : subLedgers.find((s) => s.eligible_for_opening && s.project_id)?.project_id ?? null;
+      ? selectedSubLedger
+      : subLedgers.find((s) => s.eligible_for_opening && s.project_id) ?? null;
+  const openingTargetProjectId = openingTargetSubLedger?.project_id ?? null;
+  const openingTargetContractType =
+    openingTargetSubLedger &&
+    (openingTargetSubLedger.contract_type === "SEASONAL" ||
+      openingTargetSubLedger.contract_type === "OFFICIAL")
+      ? openingTargetSubLedger.contract_type
+      : null;
 
   const balancePresentation = vendor
     ? formatVendorBalancePresentation({
@@ -588,7 +620,7 @@ export function VendorFinanceDetailView({
               <Link
                 href={
                   openingTargetProjectId
-                    ? `/finance/opening-balance?projectId=${encodeURIComponent(openingTargetProjectId)}&vendorId=${encodeURIComponent(vendor.vendor_id)}`
+                    ? `/finance/opening-balance?projectId=${encodeURIComponent(openingTargetProjectId)}&vendorId=${encodeURIComponent(vendor.vendor_id)}${openingTargetContractType ? `&contractType=${encodeURIComponent(openingTargetContractType)}` : ""}`
                     : `/finance/opening-balance?vendorId=${encodeURIComponent(vendor.vendor_id)}`
                 }
                 className={buttonClasses({ variant: "soft", size: "md" })}
@@ -651,7 +683,7 @@ export function VendorFinanceDetailView({
       ) : null}
 
       {/* =====================================================================
-          SUB-LEDGER SWITCHER (Dự án × Kế toán phụ trách — Không bù trừ chéo)
+          SUB-LEDGER SWITCHER (Dự án × Kế toán phụ trách × Loại hợp đồng — Không bù trừ chéo)
          ===================================================================== */}
       {subLedgers.length > 0 ? (
         <Card className="p-4">
@@ -660,12 +692,11 @@ export function VendorFinanceDetailView({
             <div className="flex items-center gap-2">
               <Layers className="h-4 w-4 text-primary" aria-hidden />
               <h2 className="text-sm font-semibold text-foreground">
-                Sổ chi tiết theo Dự án × Kế toán phụ trách ({subLedgers.length} sổ độc lập)
+                Sổ chi tiết theo Dự án × Kế toán phụ trách × Loại hợp đồng ({subLedgers.length} sổ độc lập)
               </h2>
             </div>
             <p className="text-xs text-muted">
-              Chọn từng sổ để xem đúng số dư, lịch sử chứng từ và đối soát riêng của kế toán phụ
-              trách.
+              Chọn từng sổ để xem đúng số dư, lịch sử chứng từ và đối soát riêng; không gộp hoặc bù trừ chéo giữa Thời vụ và Chính thức.
             </p>
           </div>
 
@@ -687,7 +718,7 @@ export function VendorFinanceDetailView({
                   <StatusBadge tone="info">{subLedgers.length} sổ riêng</StatusBadge>
                 </div>
                 <p className="mt-1 text-xs text-muted">
-                  Xem dòng thời gian chung — không gộp số dư giữa các kế toán/dự án
+                  Xem dòng thời gian chung — không gộp số dư giữa các kế toán, dự án hoặc loại hợp đồng
                 </p>
               </button>
             ) : null}
@@ -703,44 +734,76 @@ export function VendorFinanceDetailView({
                 has_opening_entry: sub.has_opening_entry,
               });
               return (
-                <button
+                <div
                   key={subLedgerKey(sub)}
-                  type="button"
-                  onClick={() => handleSelectSubLedger(sub)}
-                  className={`rounded-xl border p-3 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 ${
+                  className={`rounded-xl border p-3 transition ${
                     isSelected
                       ? "border-primary bg-primary/10"
                       : "border-border bg-surface hover:border-primary/40"
                   }`}
                 >
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <p className="text-xs font-semibold text-foreground">
-                        {sub.ledger_scope === "LEGACY_UNALLOCATED"
-                          ? "Sổ lịch sử VFIN-01 (Chỉ đọc)"
-                          : `${sub.project_display_name ?? sub.project_id}`}
-                      </p>
-                      <p className="text-[11px] text-muted">
-                        {sub.ledger_scope === "LEGACY_UNALLOCATED"
-                          ? "Bút toán trước khi phân tách dự án"
-                          : `Kế toán sổ: ${sub.responsible_accountant_display_name ?? "—"}${
-                              sub.is_active_assignment ? "" : " (Sổ bàn giao cũ)"
-                            }`}
-                      </p>
+                  <button
+                    type="button"
+                    onClick={() => handleSelectSubLedger(sub)}
+                    className="w-full text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 rounded"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="space-y-1">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <StatusBadge tone={CONTRACT_TYPE_BADGE_TONES[sub.contract_type]}>
+                            {CONTRACT_TYPE_LABELS_VI[sub.contract_type]}
+                          </StatusBadge>
+                          <span className="text-xs font-semibold text-foreground">
+                            {sub.ledger_scope === "LEGACY_UNALLOCATED"
+                              ? "Sổ lịch sử VFIN-01 (Chỉ đọc)"
+                              : `${sub.project_display_name ?? sub.project_id}`}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-muted">
+                          {sub.ledger_scope === "LEGACY_UNALLOCATED"
+                            ? "Bút toán trước khi phân tách dự án"
+                            : `Kế toán sổ: ${sub.responsible_accountant_display_name ?? "—"}${
+                                sub.is_active_assignment ? "" : " (Sổ bàn giao cũ)"
+                              }`}
+                        </p>
+                        {sub.classification ? (
+                          <p
+                            data-testid="vfin-subledger-classification-audit"
+                            className="text-[11px] text-emerald-700 dark:text-emerald-300"
+                          >
+                            Đã phân loại từ Chưa phân loại bởi{" "}
+                            <strong>{sub.classification.classified_by_display_name}</strong> (
+                            {formatTimestampVi(sub.classification.classified_at)})
+                          </p>
+                        ) : null}
+                      </div>
+                      <StatusBadge tone={subPresentation.tone}>
+                        {subPresentation.statusLabel}
+                      </StatusBadge>
                     </div>
-                    <StatusBadge tone={subPresentation.tone}>
-                      {subPresentation.statusLabel}
-                    </StatusBadge>
-                  </div>
-                  <div className="mt-2 flex items-baseline justify-between gap-2 border-t border-border/60 pt-1.5">
-                    <span className="font-mono text-sm font-bold tabular-nums text-foreground">
-                      {subPresentation.signedText}
-                    </span>
-                    <span className="font-mono text-[11px] text-muted">
-                      {sub.entry_count} bút toán
-                    </span>
-                  </div>
-                </button>
+                    <div className="mt-2 flex items-baseline justify-between gap-2 border-t border-border/60 pt-1.5">
+                      <span className="font-mono text-sm font-bold tabular-nums text-foreground">
+                        {subPresentation.signedText}
+                      </span>
+                      <span className="font-mono text-[11px] text-muted">
+                        {sub.entry_count} bút toán
+                      </span>
+                    </div>
+                  </button>
+                  {sub.can_classify_contract_type ? (
+                    <div className="mt-2 border-t border-border/60 pt-2 flex justify-end">
+                      <Button
+                        variant="soft"
+                        size="sm"
+                        data-testid="vfin-open-classify-subledger-btn"
+                        onClick={() => setClassifyingSubLedger(sub)}
+                      >
+                        <Layers className="h-3.5 w-3.5" aria-hidden />
+                        Phân loại loại HĐ (Thời vụ / Chính thức)
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
               );
             })}
           </div>
@@ -754,13 +817,23 @@ export function VendorFinanceDetailView({
         className="space-y-3"
         data-testid="vfin-vendor-detail-kpis"
       >
+        {selectedSubLedger === null && subLedgers.length > 1 ? (
+          <Alert tone="info" title={VFIN_UI_REFERENCE_TOTAL_LABEL_VI}>
+            <p data-testid="vfin-reference-total-disclosure">
+              Đang hiển thị dòng thời gian chung của {subLedgers.length} sổ riêng. Các chỉ số lũy kế
+              bên dưới là <strong>tổng tham khảo</strong> giữa các sổ thành phần và tuyệt đối không
+              dùng để bù trừ chéo số dư giữa hợp đồng Thời vụ, Chính thức hay giữa các dự án / kế
+              toán khác nhau.
+            </p>
+          </Alert>
+        ) : null}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
           <Card className="p-4 border-primary/25 bg-surface">
             <p className="text-xs font-medium text-muted">
               {selectedSubLedger
                 ? selectedSubLedger.ledger_scope === "LEGACY_UNALLOCATED"
                   ? "Số dư sổ lịch sử VFIN-01"
-                  : `Số dư sổ ${selectedSubLedger.project_display_name ?? selectedSubLedger.project_id}`
+                  : `Số dư sổ ${selectedSubLedger.project_display_name ?? selectedSubLedger.project_id} · ${CONTRACT_TYPE_LABELS_VI[selectedSubLedger.contract_type]}`
                 : "Trạng thái số dư các sổ"}
             </p>
             <p
@@ -1053,12 +1126,17 @@ export function VendorFinanceDetailView({
                     <tr key={entry.entry_id} className={DATA_TABLE_ROW_CLASS}>
                       <td data-card-header="true" className={DATA_TABLE_TD_CLASS}>
                         <div className="space-y-0.5">
-                          <Link
-                            href={`/finance/documents/${encodeURIComponent(entry.entry_id)}`}
-                            className="font-mono text-xs sm:text-sm font-semibold text-primary hover:underline"
-                          >
-                            {entry.document_no}
-                          </Link>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <Link
+                              href={`/finance/documents/${encodeURIComponent(entry.entry_id)}`}
+                              className="font-mono text-xs sm:text-sm font-semibold text-primary hover:underline"
+                            >
+                              {entry.document_no}
+                            </Link>
+                            <StatusBadge tone={CONTRACT_TYPE_BADGE_TONES[entry.contract_type]}>
+                              {CONTRACT_TYPE_LABELS_VI[entry.contract_type]}
+                            </StatusBadge>
+                          </div>
                           <p className="text-xs font-medium text-foreground">
                             {entry.ledger_scope === "LEGACY_UNALLOCATED"
                               ? "Sổ lịch sử VFIN-01"
@@ -1233,7 +1311,8 @@ export function VendorFinanceDetailView({
                 </span>
                 {vendor.latest_reconciliation.project_display_name_snapshot ? (
                   <span className="ml-2 text-xs font-normal text-muted">
-                    ({vendor.latest_reconciliation.project_display_name_snapshot} · KT:{" "}
+                    ({vendor.latest_reconciliation.project_display_name_snapshot} ·{" "}
+                    {CONTRACT_TYPE_LABELS_VI[vendor.latest_reconciliation.contract_type]} · KT:{" "}
                     {vendor.latest_reconciliation.responsible_accountant_display_name ?? "—"})
                   </span>
                 ) : null}
@@ -1345,9 +1424,14 @@ export function VendorFinanceDetailView({
                     <tr key={rec.reconciliation_id} className={DATA_TABLE_ROW_CLASS}>
                       <td data-card-header="true" className={DATA_TABLE_TD_CLASS}>
                         <div className="space-y-0.5">
-                          <p className="font-mono font-semibold text-foreground">
-                            {formatVietnamDateLabel(rec.as_of_date)}
-                          </p>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="font-mono font-semibold text-foreground">
+                              {formatVietnamDateLabel(rec.as_of_date)}
+                            </span>
+                            <StatusBadge tone={CONTRACT_TYPE_BADGE_TONES[rec.contract_type]}>
+                              {CONTRACT_TYPE_LABELS_VI[rec.contract_type]}
+                            </StatusBadge>
+                          </div>
                           <p className="text-xs font-medium text-foreground">
                             {rec.ledger_scope === "LEGACY_UNALLOCATED"
                               ? "Sổ lịch sử VFIN-01"
@@ -1455,6 +1539,15 @@ export function VendorFinanceDetailView({
           vendorActive={vendor.active}
           recordableProjects={recordableProjectsForVendor}
           initialProjectId={selectedSubLedger?.project_id ?? scopeFilter.projectId}
+          initialContractType={
+            selectedSubLedger &&
+            (selectedSubLedger.contract_type === "SEASONAL" ||
+              selectedSubLedger.contract_type === "OFFICIAL")
+              ? selectedSubLedger.contract_type
+              : scopeFilter.contractType === "SEASONAL" || scopeFilter.contractType === "OFFICIAL"
+                ? scopeFilter.contractType
+                : null
+          }
           defaultDate={detail?.authorization_date ?? ""}
           allowedEntryTypes={allowedEntryTypes}
           initialEntryType={recordInitialType}
@@ -1483,11 +1576,36 @@ export function VendorFinanceDetailView({
           reconcilableSubLedgers={reconcilableSubLedgers}
           initialSubLedgerKey={
             selectedSubLedger && selectedSubLedger.project_id
-              ? `${selectedSubLedger.project_id}:${selectedSubLedger.accountant_ref ?? ""}`
+              ? `${selectedSubLedger.project_id}:${selectedSubLedger.accountant_ref ?? ""}:${selectedSubLedger.contract_type}`
               : null
           }
           defaultAsOfDate={detail?.authorization_date ?? ""}
           onDataChanged={triggerReloadAll}
+        />
+      ) : null}
+
+      {vendor && classifyingSubLedger ? (
+        <ClassifyVendorSubLedgerDialog
+          open={Boolean(classifyingSubLedger)}
+          onOpenChange={(nextOpen) => {
+            if (!nextOpen) setClassifyingSubLedger(null);
+          }}
+          vendorId={vendor.vendor_id}
+          vendorDisplayName={vendor.display_name}
+          subLedger={classifyingSubLedger}
+          onClassified={(targetContractType) => {
+            const prevSub = classifyingSubLedger;
+            setClassifyingSubLedger(null);
+            if (prevSub && prevSub.project_id) {
+              setScopeFilter({
+                ledgerScope: "PROJECT_ACCOUNTANT",
+                projectId: prevSub.project_id,
+                accountantRef: prevSub.accountant_ref,
+                contractType: targetContractType,
+              });
+            }
+            triggerReloadAll();
+          }}
         />
       ) : null}
 

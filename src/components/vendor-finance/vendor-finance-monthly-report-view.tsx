@@ -32,6 +32,7 @@ import { FilterToolbar } from "@/components/ui/filter-toolbar";
 import { PageHeader, PageShell } from "@/components/ui/page-shell";
 import type {
   VendorFinanceActorContextOptionsResponse,
+  VendorFinanceContractTypeFilter,
   VendorFinanceEntryProjection,
   VendorFinanceMonthlyReportResponse,
   VendorFinanceMonthlyReportRow,
@@ -41,6 +42,9 @@ import {
   buildVendorEntriesUrl,
   buildVendorFinanceContextUrl,
   classifyVendorFinanceError,
+  CONTRACT_TYPE_BADGE_TONES,
+  CONTRACT_TYPE_FILTER_LABELS_VI,
+  CONTRACT_TYPE_LABELS_VI,
   ENTRY_TYPE_LABELS_VI,
   formatSignedVndDelta,
   formatVendorBalancePresentation,
@@ -55,6 +59,8 @@ import {
   PROJECT_REVENUE_MISSING_SOURCE_LABEL_VI,
   PROJECT_REVENUE_MISSING_SOURCE_NOTE_VI,
   validateUiCalendarMonth,
+  VFIN_UI_CONTRACT_TYPE_FILTERS,
+  VFIN_UI_REFERENCE_TOTAL_LABEL_VI,
 } from "@/lib/vendor-finance/ui-model";
 
 type DrilldownState = {
@@ -74,7 +80,7 @@ function currentFallbackYearMonth(): string {
 }
 
 function rowDrillKey(row: VendorFinanceMonthlyReportRow): string {
-  return `${row.project_id}:${row.accountant_ref}:${row.vendor_id}`;
+  return `${row.project_id}:${row.accountant_ref}:${row.vendor_id}:${row.contract_type}`;
 }
 
 export function VendorFinanceMonthlyReportView({
@@ -91,11 +97,13 @@ export function VendorFinanceMonthlyReportView({
   const projectSelectId = useId();
   const accountantSelectId = useId();
   const vendorSelectId = useId();
+  const contractTypeSelectId = useId();
 
   const initialMonthParam = searchParams.get("month") ?? "";
   const initialProjectParam = searchParams.get("projectId") ?? "";
   const initialAccountantParam = searchParams.get("accountantRef") ?? "";
   const initialVendorParam = searchParams.get("vendorId") ?? "";
+  const initialContractTypeParam = searchParams.get("contractType") ?? "";
 
   const [month, setMonth] = useState<string>(() => {
     const check = validateUiCalendarMonth(initialMonthParam);
@@ -109,6 +117,12 @@ export function VendorFinanceMonthlyReportView({
   );
   const [vendorFilter, setVendorFilter] = useState<string>(() =>
     isCanonicalUiVendorId(initialVendorParam) ? initialVendorParam : "",
+  );
+  const [contractTypeFilter, setContractTypeFilter] = useState<VendorFinanceContractTypeFilter>(
+    () =>
+      (VFIN_UI_CONTRACT_TYPE_FILTERS as readonly string[]).includes(initialContractTypeParam)
+        ? (initialContractTypeParam as VendorFinanceContractTypeFilter)
+        : "all",
   );
   const [reloadNonce, setReloadNonce] = useState(0);
 
@@ -184,6 +198,7 @@ export function VendorFinanceMonthlyReportView({
           project_id: projectFilter || null,
           accountant_ref: accountantFilter || null,
           vendor_id: vendorFilter || null,
+          contract_type: contractTypeFilter,
         });
         const res = await fetch(url, {
           method: "GET",
@@ -223,7 +238,7 @@ export function VendorFinanceMonthlyReportView({
       cancelled = true;
       controller.abort();
     };
-  }, [month, projectFilter, accountantFilter, vendorFilter, reloadNonce]);
+  }, [month, projectFilter, accountantFilter, vendorFilter, contractTypeFilter, reloadNonce]);
 
   const toggleRowDrilldown = async (row: VendorFinanceMonthlyReportRow) => {
     if (!reportData) return;
@@ -254,6 +269,7 @@ export function VendorFinanceMonthlyReportView({
         ledger_scope: "PROJECT_ACCOUNTANT",
         project_id: row.project_id,
         accountant_ref: row.accountant_ref,
+        contract_type: row.contract_type,
         month: reportData.filters.month,
         page_size: 20,
       });
@@ -334,6 +350,7 @@ export function VendorFinanceMonthlyReportView({
         ledger_scope: "PROJECT_ACCOUNTANT",
         project_id: row.project_id,
         accountant_ref: row.accountant_ref,
+        contract_type: row.contract_type,
         month: reportData.filters.month,
         page_size: 20,
       });
@@ -408,7 +425,10 @@ export function VendorFinanceMonthlyReportView({
   const totals = reportData?.totals ?? null;
 
   const hasSecondaryFilters =
-    projectFilter !== "" || accountantFilter !== "" || vendorFilter !== "";
+    projectFilter !== "" ||
+    accountantFilter !== "" ||
+    vendorFilter !== "" ||
+    contractTypeFilter !== "all";
 
   return (
     <PageShell dataTestId="vfin-monthly-report-page">
@@ -473,7 +493,7 @@ export function VendorFinanceMonthlyReportView({
 
       {/* Non-Netted Monthly KPI Summary */}
       <section
-        aria-label="Chỉ số tổng hợp công nợ tháng theo phạm vi lọc"
+        aria-label="Chỉ số tổng tham khảo công nợ tháng theo phạm vi lọc (không thay thế số dư riêng từng sổ)"
         className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4"
         data-testid="vfin-monthly-kpis"
       >
@@ -564,16 +584,17 @@ export function VendorFinanceMonthlyReportView({
                 setProjectFilter("");
                 setAccountantFilter("");
                 setVendorFilter("");
+                setContractTypeFilter("all");
               }}
             >
               <X className="h-3.5 w-3.5" aria-hidden />
-              Xóa lọc Dự án / Kế toán / Vendor
+              Xóa lọc Dự án / Kế toán / Vendor / Loại HĐ
             </Button>
           ) : null
         }
       >
         <div className="grid grid-cols-1 gap-3 md:grid-cols-12">
-          <div className="md:col-span-3 space-y-1">
+          <div className="md:col-span-2 space-y-1">
             <label htmlFor={monthInputId} className="block text-xs font-medium text-muted">
               Tháng báo cáo (YYYY-MM)
             </label>
@@ -605,7 +626,7 @@ export function VendorFinanceMonthlyReportView({
             </select>
           </div>
 
-          <div className="md:col-span-3 space-y-1">
+          <div className="md:col-span-2 space-y-1">
             <label htmlFor={accountantSelectId} className="block text-xs font-medium text-muted">
               Lọc theo Kế toán phụ trách sổ
             </label>
@@ -624,7 +645,7 @@ export function VendorFinanceMonthlyReportView({
             </select>
           </div>
 
-          <div className="md:col-span-3 space-y-1">
+          <div className="md:col-span-2 space-y-1">
             <label htmlFor={vendorSelectId} className="block text-xs font-medium text-muted">
               Lọc theo Vendor
             </label>
@@ -638,6 +659,27 @@ export function VendorFinanceMonthlyReportView({
               {vendorOptions.map(([vId, vName]) => (
                 <option key={vId} value={vId}>
                   {vName} ({vId})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="md:col-span-3 space-y-1">
+            <label htmlFor={contractTypeSelectId} className="block text-xs font-medium text-muted">
+              Lọc theo Loại hợp đồng (Sổ riêng)
+            </label>
+            <select
+              id={contractTypeSelectId}
+              data-testid="vfin-monthly-contract-type-filter"
+              value={contractTypeFilter}
+              onChange={(e) =>
+                setContractTypeFilter(e.target.value as VendorFinanceContractTypeFilter)
+              }
+              className="min-h-11 sm:min-h-10 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+            >
+              {VFIN_UI_CONTRACT_TYPE_FILTERS.map((opt) => (
+                <option key={opt} value={opt}>
+                  {CONTRACT_TYPE_FILTER_LABELS_VI[opt]}
                 </option>
               ))}
             </select>
@@ -668,9 +710,12 @@ export function VendorFinanceMonthlyReportView({
               SECTION 1: SUMMARY BY (ACCOUNTANT x PROJECT) BOOK
              ================================================================= */}
           <section className="space-y-2.5" aria-label="Tổng hợp theo sổ Kế toán phụ trách × Dự án">
-            <h2 className="text-base font-semibold text-foreground">
-              1. Tổng hợp theo sổ Kế toán phụ trách × Dự án
-            </h2>
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <h2 className="text-base font-semibold text-foreground">
+                1. Tổng hợp tham khảo theo Kế toán phụ trách × Dự án
+              </h2>
+              <p className="text-xs text-muted">{VFIN_UI_REFERENCE_TOTAL_LABEL_VI}</p>
+            </div>
 
             {reportData.project_accountant_summaries.length === 0 ? (
               <Card className="p-6 text-center text-sm text-muted">
@@ -707,14 +752,19 @@ export function VendorFinanceMonthlyReportView({
                   <tbody>
                     {reportData.project_accountant_summaries.map((sum) => (
                       <tr
-                        key={`${sum.project_id}:${sum.accountant_ref}`}
+                        key={`${sum.project_id}:${sum.accountant_ref}:${sum.contract_type}`}
                         className={DATA_TABLE_ROW_CLASS}
                       >
                         <td data-card-header="true" className={DATA_TABLE_TD_CLASS}>
-                          <div className="space-y-0.5">
-                            <p className="font-semibold text-foreground">
-                              {sum.project_display_name}
-                            </p>
+                          <div className="space-y-1">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <p className="font-semibold text-foreground">
+                                {sum.project_display_name}
+                              </p>
+                              <StatusBadge tone={CONTRACT_TYPE_BADGE_TONES[sum.contract_type]}>
+                                {CONTRACT_TYPE_LABELS_VI[sum.contract_type]}
+                              </StatusBadge>
+                            </div>
                             <p className="font-mono text-xs text-muted">
                               {sum.project_id} · {sum.vendor_count} Vendor
                             </p>
@@ -768,14 +818,14 @@ export function VendorFinanceMonthlyReportView({
           </section>
 
           {/* =================================================================
-              SECTION 2: DETAIL BY (PROJECT x ACCOUNTANT x VENDOR) WITH DRILL-DOWN
+              SECTION 2: DETAIL BY (PROJECT x ACCOUNTANT x VENDOR x CONTRACT TYPE) WITH DRILL-DOWN
              ================================================================= */}
           <section
             className="space-y-2.5"
-            aria-label="Chi tiết theo từng Vendor trong từng dự án và kế toán phụ trách"
+            aria-label="Chi tiết theo từng sổ Vendor × Loại hợp đồng trong từng dự án và kế toán phụ trách"
           >
             <h2 className="text-base font-semibold text-foreground">
-              2. Chi tiết công nợ theo Dự án × Kế toán phụ trách × Vendor
+              2. Chi tiết công nợ theo Dự án × Kế toán phụ trách × Vendor × Loại hợp đồng
             </h2>
 
             {reportData.rows.length === 0 ? (
@@ -791,7 +841,7 @@ export function VendorFinanceMonthlyReportView({
                         Dự án & Kế toán sổ
                       </th>
                       <th scope="col" className={DATA_TABLE_TH_CLASS}>
-                        Vendor
+                        Vendor & Loại hợp đồng (Sổ riêng)
                       </th>
                       <th scope="col" className={`${DATA_TABLE_TH_CLASS} text-right`}>
                         Đầu tháng
@@ -821,7 +871,7 @@ export function VendorFinanceMonthlyReportView({
                         entry_count: row.total_entry_count,
                         has_opening_entry: row.opening_payable_in_month_minor !== "0" || row.opening_advance_in_month_minor !== "0",
                       });
-                      const subLedgerDetailHref = `/finance/vendors/${encodeURIComponent(row.vendor_id)}?ledgerScope=PROJECT_ACCOUNTANT&projectId=${encodeURIComponent(row.project_id)}&accountantRef=${encodeURIComponent(row.accountant_ref)}`;
+                      const subLedgerDetailHref = `/finance/vendors/${encodeURIComponent(row.vendor_id)}?ledgerScope=PROJECT_ACCOUNTANT&projectId=${encodeURIComponent(row.project_id)}&accountantRef=${encodeURIComponent(row.accountant_ref)}&contractType=${encodeURIComponent(row.contract_type)}`;
 
                       return (
                         <Fragment key={dKey}>
@@ -837,14 +887,19 @@ export function VendorFinanceMonthlyReportView({
                               </div>
                             </td>
 
-                            <td data-label="Vendor" className={DATA_TABLE_TD_CLASS}>
-                              <div className="space-y-0.5">
-                                <Link
-                                  href={subLedgerDetailHref}
-                                  className="font-semibold text-primary hover:underline"
-                                >
-                                  {row.vendor_display_name}
-                                </Link>
+                            <td data-label="Vendor & Loại HĐ" className={DATA_TABLE_TD_CLASS}>
+                              <div className="space-y-1">
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  <Link
+                                    href={subLedgerDetailHref}
+                                    className="font-semibold text-primary hover:underline"
+                                  >
+                                    {row.vendor_display_name}
+                                  </Link>
+                                  <StatusBadge tone={CONTRACT_TYPE_BADGE_TONES[row.contract_type]}>
+                                    {CONTRACT_TYPE_LABELS_VI[row.contract_type]}
+                                  </StatusBadge>
+                                </div>
                                 <p className="font-mono text-xs text-muted">{row.vendor_id}</p>
                               </div>
                             </td>
@@ -936,7 +991,7 @@ export function VendorFinanceMonthlyReportView({
                                       Lịch sử bút toán tháng {reportData.filters.month} —{" "}
                                       {row.project_display_name} · KT:{" "}
                                       {row.responsible_accountant_display_name} ·{" "}
-                                      {row.vendor_display_name}
+                                      {row.vendor_display_name} ({CONTRACT_TYPE_LABELS_VI[row.contract_type]})
                                     </p>
                                     <Link
                                       href={subLedgerDetailHref}

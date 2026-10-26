@@ -14,6 +14,8 @@ import type { VendorFinanceSingleEntryResponse } from "@/lib/vendor-finance/vend
 import {
   buildSingleEntryUrl,
   classifyVendorFinanceError,
+  CONTRACT_TYPE_BADGE_TONES,
+  CONTRACT_TYPE_LABELS_VI,
   ENTRY_TYPE_LABELS_VI,
   formatFileSizeVi,
   formatSignedVndDelta,
@@ -93,6 +95,7 @@ export function VendorFinanceDocumentView({ entryId }: { entryId: string }) {
     sp.set("ledgerScope", entry.ledger_scope);
     if (entry.project_id) sp.set("projectId", entry.project_id);
     if (entry.accountant_ref) sp.set("accountantRef", entry.accountant_ref);
+    sp.set("contractType", entry.contract_type);
     return `/finance/vendors/${encodeURIComponent(entry.vendor_id)}?${sp.toString()}`;
   })();
 
@@ -210,6 +213,9 @@ export function VendorFinanceDocumentView({ entryId }: { entryId: string }) {
             </h1>
             <div className="flex flex-wrap items-center justify-center gap-2">
               <StatusBadge tone="primary">{ENTRY_TYPE_LABELS_VI[entry.entry_type]}</StatusBadge>
+              <StatusBadge tone={CONTRACT_TYPE_BADGE_TONES[entry.contract_type]}>
+                {CONTRACT_TYPE_LABELS_VI[entry.contract_type]}
+              </StatusBadge>
               {entry.reversed_by_document_no ? (
                 <StatusBadge tone="warning">
                   Đã được hoàn tác bởi chứng từ {entry.reversed_by_document_no}
@@ -262,6 +268,15 @@ export function VendorFinanceDocumentView({ entryId }: { entryId: string }) {
                   className="mt-0.5 font-semibold text-foreground"
                 >
                   {entry.responsible_accountant_display_name ?? "Chưa gắn kế toán dự án (VFIN-01)"}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs font-medium text-muted">Loại hợp đồng thuộc sổ (Không bù trừ chéo)</dt>
+                <dd
+                  data-testid="vfin-voucher-contract-type"
+                  className="mt-0.5 font-semibold text-foreground"
+                >
+                  {CONTRACT_TYPE_LABELS_VI[entry.contract_type]}
                 </dd>
               </div>
               <div>
