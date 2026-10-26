@@ -17,11 +17,13 @@ import {
   parseCreateAccount,
   parseCreatePersonnelFromAccount,
   parseEditDisplayName,
+  parseLinkRecruiterToAccount,
   parseReconcile,
   parseResetPassword,
   type CreateAccountRequest,
   type CreatePersonnelFromAccountRequest,
   type EditDisplayNameRequest,
+  type LinkRecruiterToAccountRequest,
   type ResetPasswordRequest,
 } from "./account-operation-contract.ts";
 
@@ -393,4 +395,80 @@ export async function reclassifyAccountOperations(
   } catch {
     return fail("ACCOUNT_OPERATION_UNAVAILABLE", 500);
   }
+}
+
+/* ---------------- recruiter link status & link existing personnel to account ---------------- */
+export async function getRecruiterLinkStatus(
+  request: Request, flag: string | undefined, deps: AccountOperationDependencies,
+): Promise<Response> {
+  if (flag !== "true") return fail("NOT_FOUND", 404);
+  const url = new URL(request.url);
+  const rawIds = url.searchParams.get("recruiter_ids") ?? "";
+  const recruiterIds: string[] = [];
+  if (rawIds.trim() !== "") {
+    const parts = rawIds.split(",");
+    if (parts.length > 100) return fail("ACCOUNT_OPERATION_INVALID", 400);
+    for (const part of parts) {
+      const trimmed = part.trim();
+      if (!UUID.test(trimmed)) return fail("ACCOUNT_OPERATION_INVALID", 400);
+      recruiterIds.push(trimmed);
+    }
+  }
+  const actor = await resolveActor(deps);
+  if (!actor.ok) return actor.response;
+  const result = await deps.repository.readRecruiterLinkStatus({
+    ...actor.value,
+    recruiter_ids: recruiterIds,
+  });
+  if (!result.ok) return errorResponse(result.kind);
+  return respond({ ok: true, status: result.data }, 200);
+}
+
+export async function getRecruiterLinkCandidates(
+  request: Request, recruiterId: string, flag: string | undefined, deps: AccountOperationDependencies,
+): Promise<Response> {
+  void request;
+  if (flag !== "true") return fail("NOT_FOUND", 404);
+  if (!UUID.test(recruiterId)) return fail("ACCOUNT_OPERATION_INVALID", 400);
+  const actor = await resolveActor(deps);
+  if (!actor.ok) return actor.response;
+  const result = await deps.repository.readRecruiterLinkCandidates({
+    ...actor.value,
+    recruiter_id: recruiterId,
+  });
+  if (!result.ok) return errorResponse(result.kind);
+  return respond({ ok: true, candidates: result.data }, 200);
+}
+
+export async function linkRecruiterToAccount(
+  request: Request, recruiterId: string, flag: string | undefined, deps: AccountOperationDependencies,
+): Promise<Response> {
+  const preflight = mutationPreflight(request, flag);
+  if (preflight) return preflight;
+  if (!UUID.test(recruiterId)) return fail("ACCOUNT_OPERATION_INVALID", 400);
+  const body = await readBody(request);
+  if (!body.ok) return body.response;
+  const authority = forbidAuthority(body.value);
+  if (authority) return authority;
+  const parsed = parseLinkRecruiterToAccount(body.value);
+  if (!parsed.ok) return fail(parsed.code, 400);
+  return runLinkRecruiterToAccount(recruiterId, parsed.value, deps);
+}
+
+async function runLinkRecruiterToAccount(
+  recruiterId: string, input: LinkRecruiterToAccountRequest, deps: AccountOperationDependencies,
+): Promise<Response> {
+  const actor = await resolveActor(deps);
+  if (!actor.ok) return actor.response;
+  const result = await deps.repository.linkRecruiterToAccount({
+    ...actor.value,
+    recruiter_id: recruiterId,
+    expected_recruiter_version: input.expected_recruiter_version,
+    account_ref: input.account_ref,
+    expected_account_version: input.expected_account_version,
+    reason: input.reason,
+    idempotency_key: input.idempotency_key,
+  });
+  if (!result.ok) return errorResponse(result.kind);
+  return respond({ ok: true, link: result.data }, 200);
 }

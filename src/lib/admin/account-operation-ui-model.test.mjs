@@ -5,11 +5,15 @@ import {
   buildCreateAccountRequest,
   buildEditDisplayNameRequest,
   buildEligibleAccountsQuery,
+  buildLinkRecruiterAccountRequest,
   buildPersonnelFromAccountRequest,
   buildReconcileRequest,
+  buildRecruiterLinkStatusQuery,
   buildResetPasswordRequest,
   classifyAccountOperationResponse,
   projectEligibleAccounts,
+  projectRecruiterLinkCandidates,
+  projectRecruiterLinkStatus,
 } from "./account-operation-ui-model.ts";
 
 const KEY = "91000000-0000-4000-8000-000000000001";
@@ -108,4 +112,64 @@ test("reset errors distinguish confirmed Auth success from unknown outcome witho
     assert.match(unknown.message, /Admin cần kiểm tra/);
     assert.doesNotMatch(unknown.message, /ACCOUNT_OPERATION_/);
   }
+});
+
+test("UI model builds and projects link-existing-personnel-account payloads strictly", () => {
+  const built = buildLinkRecruiterAccountRequest({
+    accountRef: ACCOUNT,
+    expectedAccountVersion: 2,
+    expectedRecruiterVersion: 3,
+    reason: "Liên kết mkt.vp",
+    idempotencyKey: KEY,
+  });
+  assert.equal(built.ok, true);
+  if (built.ok) {
+    assert.deepEqual(built.body, {
+      account_ref: ACCOUNT,
+      expected_account_version: 2,
+      expected_recruiter_version: 3,
+      reason: "Liên kết mkt.vp",
+      idempotency_key: KEY,
+    });
+  }
+  const builtNoReason = buildLinkRecruiterAccountRequest({
+    accountRef: ACCOUNT,
+    expectedAccountVersion: 1,
+    expectedRecruiterVersion: 1,
+    idempotencyKey: KEY,
+  });
+  assert.equal(builtNoReason.ok, true);
+  if (builtNoReason.ok) assert.equal(builtNoReason.body.reason, null);
+
+  assert.equal(buildLinkRecruiterAccountRequest({
+    accountRef: ACCOUNT,
+    expectedAccountVersion: 0,
+    expectedRecruiterVersion: 1,
+    idempotencyKey: KEY,
+  }).ok, false);
+
+  const statusQuery = buildRecruiterLinkStatusQuery([ACCOUNT]);
+  assert.ok(statusQuery);
+  assert.equal(statusQuery.get("recruiter_ids"), ACCOUNT);
+  assert.equal(buildRecruiterLinkStatusQuery(["invalid-uuid"]), null);
+
+  assert.deepEqual(
+    projectRecruiterLinkStatus({ ok: true, status: { linked_recruiter_ids: [ACCOUNT] } }),
+    { linked_recruiter_ids: [ACCOUNT] },
+  );
+  const candidates = projectRecruiterLinkCandidates({
+    ok: true,
+    candidates: {
+      recruiter_id: KEY,
+      display_name: "Marketing Vĩnh Phúc",
+      personnel_code: "mkt.vp",
+      personnel_position: "TEAM_LEADER",
+      active: true,
+      version: 3,
+      already_linked: false,
+      candidates: [{ app_user_id: ACCOUNT, display_name: "Marketing Vĩnh Phúc", login_id: "mkt.vp", version: 2 }],
+    },
+  });
+  assert.ok(candidates);
+  assert.equal(candidates.candidates[0].login_id, "mkt.vp");
 });

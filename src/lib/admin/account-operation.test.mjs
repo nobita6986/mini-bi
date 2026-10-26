@@ -13,14 +13,21 @@ import {
   parseCreateAccount,
   parseCreatePersonnelFromAccount,
   parseEditDisplayName,
+  parseLinkRecruiterToAccount,
   parseResetPassword,
   projectClaimEnvelope,
+  projectLinkRecruiterEnvelope,
+  projectRecruiterLinkCandidatesEnvelope,
+  projectRecruiterLinkStatusEnvelope,
 } from "./account-operation-contract.ts";
 import {
   createAccount,
   editDisplayName,
   resetPassword,
   createPersonnelFromAccount,
+  getRecruiterLinkCandidates,
+  getRecruiterLinkStatus,
+  linkRecruiterToAccount,
   reclassifyAccountOperations,
 } from "./account-operation-api.ts";
 
@@ -86,6 +93,9 @@ function repository(overrides = {}) {
     async updateDisplayName() { return { ok: true, data: { app_user_id: APP_USER, version: 2, revision_id: REV, recruiter_id: null, recruiter_version: null, recruiter_revision_id: null } }; },
     async createPersonnelFromAccount() { return { ok: true, data: { recruiter_id: CREATED_AUTH, display_name: "Nguyen Van A", personnel_code: "NV001", personnel_position: "STAFF", version: 1, link_id: REV, membership_id: INTENT, app_user_version: 2, app_user_revision_id: REV, personnel_revision_id: REV } }; },
     async listEligibleAccounts() { return { ok: true, data: { page: 1, page_size: 25, total: 0, has_more: false, accounts: [] } }; },
+    async readRecruiterLinkStatus() { return { ok: true, data: { linked_recruiter_ids: [CREATED_AUTH] } }; },
+    async readRecruiterLinkCandidates() { return { ok: true, data: { recruiter_id: CREATED_AUTH, display_name: "Marketing Vĩnh Phúc", personnel_code: "mkt.vp", personnel_position: "TEAM_LEADER", active: true, version: 1, already_linked: false, candidates: [{ app_user_id: APP_USER, display_name: "Marketing Vĩnh Phúc", login_id: "mkt.vp", version: 1 }] } }; },
+    async linkRecruiterToAccount() { return { ok: true, data: { link_id: INTENT, app_user_id: APP_USER, app_user_version: 2, app_user_revision_id: REV, recruiter_id: CREATED_AUTH, recruiter_version: 1, personnel_code: "mkt.vp", valid_from: "2026-10-26" } }; },
     async reclassify() { return { ok: true, data: { reclassified: 0, purged: 0, deleted: 0 } }; },
     ...overrides,
   };
@@ -375,4 +385,124 @@ test("D3: reclassify is denied for a non-Full-Admin (session actor unavailable)"
   const d = deps({ resolveSession: async () => ({ actor: { ok: false, reason: "ACTOR_DISABLED" } }) });
   const response = await reclassifyAccountOperations(fakeRequest({}), "true", d);
   assert.equal(response.status, 403);
+});
+
+/* ---------- link existing personnel to existing account ---------- */
+test("linkRecruiterToAccount: strict contract & API boundary for status, candidates and link", async () => {
+  assert.equal(parseLinkRecruiterToAccount({
+    account_ref: APP_USER,
+    expected_account_version: 1,
+    expected_recruiter_version: 2,
+    reason: "liên kết mkt.vp",
+    idempotency_key: AUTH_SUBJECT,
+  }).ok, true);
+  assert.equal(parseLinkRecruiterToAccount({
+    account_ref: APP_USER,
+    expected_account_version: 0,
+    expected_recruiter_version: 2,
+    reason: null,
+    idempotency_key: AUTH_SUBJECT,
+  }).ok, false);
+  assert.equal(parseLinkRecruiterToAccount({
+    account_ref: APP_USER,
+    expected_account_version: 1,
+    expected_recruiter_version: 2,
+    idempotency_key: AUTH_SUBJECT,
+    extra: true,
+  }).ok, false);
+
+  assert.deepEqual(projectRecruiterLinkStatusEnvelope({ linked_recruiter_ids: [CREATED_AUTH] }), {
+    linked_recruiter_ids: [CREATED_AUTH],
+  });
+  assert.equal(projectRecruiterLinkStatusEnvelope({ linked_recruiter_ids: ["not-a-uuid"] }), null);
+
+  assert.ok(projectRecruiterLinkCandidatesEnvelope({
+    recruiter_id: CREATED_AUTH,
+    display_name: "Marketing Vĩnh Phúc",
+    personnel_code: "mkt.vp",
+    personnel_position: null,
+    active: true,
+    version: 1,
+    already_linked: false,
+    candidates: [{ app_user_id: APP_USER, display_name: "Marketing Vĩnh Phúc", login_id: "mkt.vp", version: 1 }],
+  }));
+  assert.equal(projectRecruiterLinkCandidatesEnvelope({
+    recruiter_id: CREATED_AUTH,
+    display_name: "Marketing Vĩnh Phúc",
+    personnel_code: "mkt.vp",
+    personnel_position: "STAFF",
+    active: true,
+    version: 1,
+    already_linked: false,
+    candidates: [{ app_user_id: APP_USER, display_name: "X", login_id: "mkt.vp", version: 1, email: "mkt.vp@hrpartner.vn" }],
+  }), null);
+
+  assert.ok(projectLinkRecruiterEnvelope({
+    link_id: INTENT,
+    app_user_id: APP_USER,
+    app_user_version: 2,
+    app_user_revision_id: REV,
+    recruiter_id: CREATED_AUTH,
+    recruiter_version: 1,
+    personnel_code: "mkt.vp",
+    valid_from: "2026-10-26",
+  }));
+
+  const statusReq = new Request(`https://example.test/api/admin/catalog/personnel/link-status?recruiter_ids=${CREATED_AUTH}`);
+  const statusRes = await getRecruiterLinkStatus(statusReq, "true", deps());
+  assert.equal(statusRes.status, 200);
+  assert.deepEqual(await statusRes.json(), {
+    ok: true,
+    status: { linked_recruiter_ids: [CREATED_AUTH] },
+  });
+
+  const candsReq = new Request(`https://example.test/api/admin/catalog/personnel/${CREATED_AUTH}/link-account`);
+  const candsRes = await getRecruiterLinkCandidates(candsReq, CREATED_AUTH, "true", deps());
+  assert.equal(candsRes.status, 200);
+  const candsBody = await candsRes.json();
+  assert.equal(candsBody.ok, true);
+  assert.equal(candsBody.candidates.personnel_code, "mkt.vp");
+
+  let forwardedLink;
+  const linkRes = await linkRecruiterToAccount(fakeRequest({
+    account_ref: APP_USER,
+    expected_account_version: 1,
+    expected_recruiter_version: 1,
+    reason: "Liên kết mkt.vp",
+    idempotency_key: AUTH_SUBJECT,
+  }), CREATED_AUTH, "true", deps({
+    repository: repository({
+      async linkRecruiterToAccount(input) {
+        forwardedLink = input;
+        return {
+          ok: true,
+          data: {
+            link_id: INTENT,
+            app_user_id: APP_USER,
+            app_user_version: 2,
+            app_user_revision_id: REV,
+            recruiter_id: CREATED_AUTH,
+            recruiter_version: 1,
+            personnel_code: "mkt.vp",
+            valid_from: "2026-10-26",
+          },
+        };
+      },
+    }),
+  }));
+  assert.equal(linkRes.status, 200);
+  assert.equal(forwardedLink.recruiter_id, CREATED_AUTH);
+  assert.equal(forwardedLink.account_ref, APP_USER);
+
+  for (const [kind, status] of [["denied", 403], ["conflict", 409], ["invalid", 400], ["not-found", 404]]) {
+    const errRes = await linkRecruiterToAccount(fakeRequest({
+      account_ref: APP_USER,
+      expected_account_version: 1,
+      expected_recruiter_version: 1,
+      idempotency_key: AUTH_SUBJECT,
+    }), CREATED_AUTH, "true", deps({
+      repository: repository({ async linkRecruiterToAccount() { return { ok: false, kind }; } }),
+    }));
+    assert.equal(errRes.status, status);
+  }
 });

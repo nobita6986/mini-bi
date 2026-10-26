@@ -154,6 +154,9 @@ const finalize = (db, args) => rpc(db, "public.direct_entry_account_operation_fi
 const updateName = (db, args) => rpc(db, "public.direct_entry_account_operation_update_display_name", args);
 const createPersonnel = (db, args) => rpc(db, "public.direct_entry_account_operation_create_personnel", args);
 const listEligible = (db, args) => rpc(db, "public.direct_entry_account_operation_list_eligible_accounts", args);
+const recruiterLinkStatus = (db, args) => rpc(db, "public.direct_entry_account_operation_recruiter_link_status", args);
+const recruiterLinkCandidates = (db, args) => rpc(db, "public.direct_entry_account_operation_recruiter_link_candidates", args);
+const linkRecruiter = (db, args) => rpc(db, "public.direct_entry_account_operation_link_recruiter", args);
 const reclassify = (db, args) => rpc(db, "public.direct_entry_account_operation_reclassify", args);
 
 async function count(db, sql, params = []) {
@@ -825,6 +828,297 @@ test("PRE-W2-HF-D3-A: the migration locks the RPC boundary and revision action v
       " where conname = 'direct_entry_app_user_revisions_action_check'")).rows[0].d;
     assert.ok(actions.includes("account_created"));
     assert.ok(actions.includes("display_name_update"));
+  } finally {
+    await db.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 16. Link existing HRP personnel (e.g. mkt.vp - Marketing Vĩnh Phúc) to an
+//     existing enabled account: preserves recruiter/team/history, grants only
+//     minimal HRP own-entry baseline, enforces 1:1, OCC, idempotency & Full Admin.
+// ---------------------------------------------------------------------------
+test("Admin link existing personnel to existing account: links mkt.vp without creating new recruiter or mutating profile/team/history", async () => {
+  const db = await buildDb();
+  try {
+    await seed(db);
+    const today = (await db.query("select public.direct_entry_authorization_date()::text as today")).rows[0].today;
+    const mktRecruiterId = uuid(701);
+    const mktAuth = uuid(702);
+    const mktApp = uuid(703);
+    const teamId = uuid(704);
+
+    // Existing active HRP personnel profile with team membership and historical data.
+    await db.query(
+      "insert into public.recruiters (recruiter_id, display_name, personnel_code, personnel_position, active, version)" +
+      " values ($1, 'Marketing Vĩnh Phúc', 'mkt.vp', 'TEAM_LEADER', true, 3)",
+      [mktRecruiterId],
+    );
+    await db.query(
+      "insert into public.recruiter_provider_memberships (recruiter_id, provider_type, valid_from, is_current)" +
+      " values ($1, 'hrp', '2025-01-01', true)",
+      [mktRecruiterId],
+    );
+    await db.query(
+      "insert into public.teams (team_id, code, display_name) values ($1, 'MKT-VP', 'Team Marketing VP')",
+      [teamId],
+    );
+    await db.query(
+      "insert into public.recruiter_team_memberships (recruiter_id, team_id, valid_from, is_current)" +
+      " values ($1, $2, '2025-02-01', true)",
+      [mktRecruiterId, teamId],
+    );
+
+    // Before account exists: link-status shows unlinked, link-candidates returns empty candidates.
+    const statusBefore = await recruiterLinkStatus(db, [ADMIN_AUTH, ADMIN_APP, [mktRecruiterId]]);
+    assert.deepEqual(statusBefore, { linked_recruiter_ids: [] });
+
+    const candsBeforeAccount = await recruiterLinkCandidates(db, [ADMIN_AUTH, ADMIN_APP, mktRecruiterId]);
+    assert.deepEqual(candsBeforeAccount, {
+      recruiter_id: mktRecruiterId,
+      display_name: "Marketing Vĩnh Phúc",
+      personnel_code: "mkt.vp",
+      personnel_position: "TEAM_LEADER",
+      active: true,
+      version: 3,
+      already_linked: false,
+      candidates: [],
+    });
+
+    // Create existing account mkt.vp (no capabilities/scopes yet) + unrelated account that must NOT appear in candidates.
+    await db.query("insert into auth.users (id, email) values ($1, 'mkt.vp@hrpartner.vn')", [mktAuth]);
+    await db.query(
+      "insert into public.direct_entry_app_users (app_user_id, auth_subject, enabled, display_name, version)" +
+      " values ($1, $2, true, 'Marketing Vĩnh Phúc TK', 2)",
+      [mktApp, mktAuth],
+    );
+
+    const candsReady = await recruiterLinkCandidates(db, [ADMIN_AUTH, ADMIN_APP, mktRecruiterId]);
+    assert.equal(candsReady.already_linked, false);
+    assert.equal(candsReady.candidates.length, 1, "only the account matching personnel_code = mkt.vp is returned");
+    assert.deepEqual(candsReady.candidates[0], {
+      app_user_id: mktApp,
+      display_name: "Marketing Vĩnh Phúc TK",
+      login_id: "mkt.vp",
+      version: 2,
+    });
+    assert.equal(JSON.stringify(candsReady).includes(mktAuth), false, "auth_subject must never leak");
+    assert.equal(JSON.stringify(candsReady).includes("@hrpartner.vn"), false, "email must never leak");
+
+    const recruitersCountBefore = await count(db, "select count(*) from public.recruiters");
+    const providerMembershipsBefore = await count(db, "select count(*) from public.recruiter_provider_memberships where recruiter_id = $1", [mktRecruiterId]);
+    const teamMembershipsBefore = await count(db, "select count(*) from public.recruiter_team_memberships where recruiter_id = $1", [mktRecruiterId]);
+
+    const key = idemKey();
+    const linked = await linkRecruiter(db, [
+      ADMIN_AUTH, ADMIN_APP, mktRecruiterId, 3, mktApp, 2, "Liên kết tài khoản mkt.vp", key,
+    ]);
+    assert.equal(linked.app_user_id, mktApp);
+    assert.equal(linked.app_user_version, 3);
+    assert.equal(linked.recruiter_id, mktRecruiterId);
+    assert.equal(linked.recruiter_version, 3, "recruiter version is preserved");
+    assert.equal(linked.personnel_code, "mkt.vp");
+    assert.equal(linked.valid_from, today);
+    assert.ok(linked.link_id);
+    assert.ok(linked.app_user_revision_id);
+
+    // Idempotent replay with same key and inputs returns identical envelope.
+    const replay = await linkRecruiter(db, [
+      ADMIN_AUTH, ADMIN_APP, mktRecruiterId, 3, mktApp, 2, "Liên kết tài khoản mkt.vp", key,
+    ]);
+    assert.deepEqual(replay, linked);
+
+    // Replay with same key but different input fails with 22023.
+    await assert.rejects(
+      () => linkRecruiter(db, [
+        ADMIN_AUTH, ADMIN_APP, mktRecruiterId, 3, mktApp, 2, "Lý do khác", key,
+      ]),
+      (error) => error.code === "22023",
+    );
+
+    // Recruiter row, provider memberships, and team memberships are untouched; no duplicate recruiter created.
+    assert.equal(await count(db, "select count(*) from public.recruiters"), recruitersCountBefore);
+    assert.equal(await count(db, "select count(*) from public.recruiter_provider_memberships where recruiter_id = $1", [mktRecruiterId]), providerMembershipsBefore);
+    assert.equal(await count(db, "select count(*) from public.recruiter_team_memberships where recruiter_id = $1", [mktRecruiterId]), teamMembershipsBefore);
+
+    const recruiterRow = (await db.query(
+      "select display_name, personnel_code, personnel_position, active, version from public.recruiters where recruiter_id = $1",
+      [mktRecruiterId],
+    )).rows[0];
+    assert.deepEqual(recruiterRow, {
+      display_name: "Marketing Vĩnh Phúc",
+      personnel_code: "mkt.vp",
+      personnel_position: "TEAM_LEADER",
+      active: true,
+      version: 3,
+    });
+
+    // Link row is verified and current.
+    const linkRows = (await db.query(
+      "select app_user_id, recruiter_id, verified, is_current, valid_from::text as valid_from, valid_to" +
+      " from public.direct_entry_app_user_recruiter_links where link_id = $1",
+      [linked.link_id],
+    )).rows;
+    assert.deepEqual(linkRows, [{
+      app_user_id: mktApp,
+      recruiter_id: mktRecruiterId,
+      verified: true,
+      is_current: true,
+      valid_from: today,
+      valid_to: null,
+    }]);
+
+    // Minimal HRP own-entry capabilities + own scope granted; NO team/all scope and NO team_manager_assign/entry_admin/change_review.
+    for (const capability of [
+      "entry_create", "entry_own", "submission_create", "change_request_create",
+      "employment_status.request", "document_upload", "document_view",
+    ]) {
+      assert.equal(await count(db,
+        "select count(*) from public.direct_entry_capability_grants where app_user_id = $1 and capability = $2 and is_current",
+        [mktApp, capability]), 1, `${capability} granted`);
+    }
+    assert.equal(await count(db,
+      "select count(*) from public.direct_entry_capability_grants" +
+      " where app_user_id = $1 and capability in ('team_manager_assign','entry_admin','change_review','recruiter_master_manage','team_master_manage','catalog_master_manage')",
+      [mktApp]), 0, "no elevated capability granted even when personnel_position is TEAM_LEADER");
+    assert.equal(await count(db,
+      "select count(*) from public.direct_entry_scope_grants where app_user_id = $1 and scope_kind = 'own' and is_current",
+      [mktApp]), 1, "own scope is granted");
+    assert.equal(await count(db,
+      "select count(*) from public.direct_entry_scope_grants where app_user_id = $1 and scope_kind in ('team','all')",
+      [mktApp]), 0, "no team or all scope granted");
+
+    // Audit & revision recorded.
+    assert.equal(await count(db,
+      "select count(*) from public.direct_entry_app_user_revisions where app_user_id = $1 and action = 'link_create'",
+      [mktApp]), 1);
+    assert.equal(await count(db,
+      "select count(*) from public.direct_entry_app_user_revisions rev" +
+      " join public.direct_entry_restricted_reasons r on r.reason_id = rev.reason_id" +
+      " where rev.revision_id = $1",
+      [linked.app_user_revision_id]), 1);
+
+    // Link status and candidates reflect linked state.
+    const statusAfter = await recruiterLinkStatus(db, [ADMIN_AUTH, ADMIN_APP, [mktRecruiterId]]);
+    assert.deepEqual(statusAfter, { linked_recruiter_ids: [mktRecruiterId] });
+    const candsAfter = await recruiterLinkCandidates(db, [ADMIN_AUTH, ADMIN_APP, mktRecruiterId]);
+    assert.equal(candsAfter.already_linked, true);
+    assert.deepEqual(candsAfter.candidates, []);
+  } finally {
+    await db.close();
+  }
+});
+
+test("Admin link existing personnel to existing account: enforces Full Admin, code equality, active state, HRP-only, 1:1 and OCC", async () => {
+  const db = await buildDb();
+  try {
+    await seed(db);
+    const recId = uuid(710);
+    const vendorRecId = uuid(711);
+    const vendorId = uuid(712);
+    const matchAuth = uuid(713), matchApp = uuid(714);
+    const otherAuth = uuid(715), otherApp = uuid(716);
+
+    await db.query(
+      "insert into public.recruiters (recruiter_id, display_name, personnel_code, personnel_position, active)" +
+      " values ($1, 'Nhân sự HRP', 'hrp.nv01', null, true)",
+      [recId],
+    );
+    await db.query(
+      "insert into public.recruiter_provider_memberships (recruiter_id, provider_type, valid_from, is_current)" +
+      " values ($1, 'hrp', '2025-01-01', true)",
+      [recId],
+    );
+
+    await db.query("insert into public.vendors (vendor_id, display_name, active) values ($1, 'Vendor A', true)", [vendorId]);
+    await db.query(
+      "insert into public.recruiters (recruiter_id, display_name, personnel_code, active)" +
+      " values ($1, 'Vendor Recruiter', 'vnd.01', true)",
+      [vendorRecId],
+    );
+    await db.query(
+      "insert into public.recruiter_provider_memberships (recruiter_id, provider_type, vendor_id, valid_from, is_current)" +
+      " values ($1, 'vendor', $2, '2025-01-01', true)",
+      [vendorRecId, vendorId],
+    );
+
+    await db.query("insert into auth.users (id, email) values ($1, 'hrp.nv01@hrpartner.vn')", [matchAuth]);
+    await db.query(
+      "insert into public.direct_entry_app_users (app_user_id, auth_subject, enabled, display_name)" +
+      " values ($1, $2, true, 'HRP NV01')",
+      [matchApp, matchAuth],
+    );
+    await db.query("insert into auth.users (id, email) values ($1, 'other.login@hrpartner.vn')", [otherAuth]);
+    await db.query(
+      "insert into public.direct_entry_app_users (app_user_id, auth_subject, enabled, display_name)" +
+      " values ($1, $2, true, 'Other Account')",
+      [otherApp, otherAuth],
+    );
+
+    // 1. Non-Full-Admin actors denied on all 3 RPCs.
+    for (const [authSub, appId] of [
+      [LONE_AUTH, LONE_APP],
+      [ACC_AUTH, ACC_APP],
+      [DISABLED_AUTH, DISABLED_APP],
+      [UNMAPPED_AUTH, UNMAPPED_APP],
+    ]) {
+      await expectDenied(db, () => recruiterLinkStatus(db, [authSub, appId, [recId]]));
+      await expectDenied(db, () => recruiterLinkCandidates(db, [authSub, appId, recId]));
+      await expectDenied(db, () => linkRecruiter(db, [authSub, appId, recId, 1, matchApp, 1, null, idemKey()]));
+    }
+
+    // 2. Vendor recruiter rejected with P0002.
+    await assert.rejects(
+      () => recruiterLinkCandidates(db, [ADMIN_AUTH, ADMIN_APP, vendorRecId]),
+      (error) => error.code === "P0002",
+    );
+    await assert.rejects(
+      () => linkRecruiter(db, [ADMIN_AUTH, ADMIN_APP, vendorRecId, 1, matchApp, 1, null, idemKey()]),
+      (error) => error.code === "P0002",
+    );
+
+    // 3. Mismatched login_id vs personnel_code rejected with 22023.
+    await assert.rejects(
+      () => linkRecruiter(db, [ADMIN_AUTH, ADMIN_APP, recId, 1, otherApp, 1, null, idemKey()]),
+      (error) => error.code === "22023",
+    );
+
+    // 4. Stale recruiter version or stale account version rejected with 40001.
+    await assert.rejects(
+      () => linkRecruiter(db, [ADMIN_AUTH, ADMIN_APP, recId, 99, matchApp, 1, null, idemKey()]),
+      (error) => error.code === "40001",
+    );
+    await assert.rejects(
+      () => linkRecruiter(db, [ADMIN_AUTH, ADMIN_APP, recId, 1, matchApp, 99, null, idemKey()]),
+      (error) => error.code === "40001",
+    );
+
+    // 5. Disabled account rejected with 23514.
+    await db.query("update public.direct_entry_app_users set enabled = false where app_user_id = $1", [matchApp]);
+    await assert.rejects(
+      () => linkRecruiter(db, [ADMIN_AUTH, ADMIN_APP, recId, 1, matchApp, 1, null, idemKey()]),
+      (error) => error.code === "23514",
+    );
+    await db.query("update public.direct_entry_app_users set enabled = true where app_user_id = $1", [matchApp]);
+
+    // 6. Inactive personnel rejected with 23514.
+    await db.query("update public.recruiters set active = false where recruiter_id = $1", [recId]);
+    await assert.rejects(
+      () => linkRecruiter(db, [ADMIN_AUTH, ADMIN_APP, recId, 1, matchApp, 1, null, idemKey()]),
+      (error) => error.code === "23514",
+    );
+    await db.query("update public.recruiters set active = true where recruiter_id = $1", [recId]);
+
+    // 7. Link succeeds with null reason and null personnel_position (legacy HRP row).
+    const linked = await linkRecruiter(db, [ADMIN_AUTH, ADMIN_APP, recId, 1, matchApp, 1, null, idemKey()]);
+    assert.equal(linked.app_user_id, matchApp);
+    assert.equal(linked.recruiter_id, recId);
+
+    // 8. Linking an already-linked personnel or already-linked account fails with 23P01.
+    await assert.rejects(
+      () => linkRecruiter(db, [ADMIN_AUTH, ADMIN_APP, recId, 1, matchApp, 2, null, idemKey()]),
+      (error) => error.code === "23P01",
+    );
   } finally {
     await db.close();
   }

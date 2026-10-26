@@ -24,9 +24,13 @@ import {
 } from "@/lib/admin/personnel-catalog-model";
 import {
   buildEligibleAccountsQuery,
+  buildLinkRecruiterAccountRequest,
   buildPersonnelFromAccountRequest,
+  buildRecruiterLinkStatusQuery,
   classifyAccountOperationResponse,
   projectEligibleAccounts,
+  projectRecruiterLinkCandidates,
+  projectRecruiterLinkStatus,
 } from "@/lib/admin/account-operation-ui-model";
 import { projectAccountItem } from "@/lib/admin/account-access-model";
 import type {
@@ -34,7 +38,11 @@ import type {
   AdminPersonnelList,
   PersonnelPosition,
 } from "@/lib/direct-entry/personnel-catalog-contract";
-import type { EligibleAccount } from "@/lib/admin/account-operation-contract";
+import type {
+  EligibleAccount,
+  RecruiterLinkCandidate,
+  RecruiterLinkCandidatesEnvelope,
+} from "@/lib/admin/account-operation-contract";
 
 type ListState =
   | { kind: "loading" }
@@ -46,7 +54,8 @@ type ListState =
 type DialogState =
   | { kind: "create" }
   | { kind: "edit"; personnel: AdminPersonnel }
-  | { kind: "active"; personnel: AdminPersonnel; active: boolean };
+  | { kind: "active"; personnel: AdminPersonnel; active: boolean }
+  | { kind: "link"; personnel: AdminPersonnel };
 
 type PersonnelForm = {
   personnelCode: string;
@@ -60,7 +69,7 @@ type MutationIntent = {
   url: string;
   method: "POST" | "PATCH";
   body: Record<string, unknown>;
-  operation: "create" | "update" | "set-active";
+  operation: "create" | "update" | "set-active" | "link";
   recruiterId: string | null;
   lockId: string;
   retryState: "ready" | "retry";
@@ -77,9 +86,15 @@ const EMPTY_FORM: PersonnelForm = {
 };
 
 function responseOutcome(status: number, payload: unknown, intent: MutationIntent): PersonnelMutationOutcome {
-  if (intent.operation === "create") {
+  if (intent.operation === "create" || intent.operation === "link") {
     const outcome = classifyAccountOperationResponse(status, payload);
     if (outcome.kind === "applied") return { kind: "applied" } as unknown as PersonnelMutationOutcome;
+    if (intent.operation === "link" && outcome.kind === "conflict") {
+      return {
+        kind: "conflict",
+        message: "Hồ sơ nhân sự hoặc tài khoản đã có liên kết hiệu lực hoặc dữ liệu đã thay đổi. Vui lòng tải lại.",
+      } as unknown as PersonnelMutationOutcome;
+    }
     return {
       kind: outcome.kind === "needs-reconcile" ? "unavailable" : outcome.kind,
       message: outcome.message,
@@ -136,6 +151,62 @@ export function PersonnelCatalogManager() {
   const [selectedAccount, setSelectedAccount] = useState<EligibleAccount | null>(null);
   const [accountVersion, setAccountVersion] = useState<number | null>(null);
   const selectedAccountRef = useRef<string | null>(null);
+  const [linkedRecruiterIds, setLinkedRecruiterIds] = useState<ReadonlySet<string>>(new Set());
+  const [canLinkAccounts, setCanLinkAccounts] = useState(true);
+  const [linkCandidatesState, setLinkCandidatesState] = useState<
+    "idle" | "loading" | "ready" | "empty" | "already-linked" | "error"
+  >("idle");
+  const [linkCandidateEnvelope, setLinkCandidateEnvelope] = useState<RecruiterLinkCandidatesEnvelope | null>(null);
+  const [selectedLinkCandidate, setSelectedLinkCandidate] = useState<RecruiterLinkCandidate | null>(null);
+  const linkCandidatesRecruiterRef = useRef<string | null>(null);
+
+  const loadLinkCandidates = useCallback(async (recruiterId: string) => {
+    linkCandidatesRecruiterRef.current = recruiterId;
+    setLinkCandidatesState("loading");
+    setLinkCandidateEnvelope(null);
+    setSelectedLinkCandidate(null);
+    try {
+      const response = await fetch(
+        `/api/admin/catalog/personnel/${encodeURIComponent(recruiterId)}/link-account`,
+        { method: "GET", cache: "no-store", headers: { Accept: "application/json" } },
+      );
+      if (linkCandidatesRecruiterRef.current !== recruiterId) return;
+      if (response.status === 401 || response.status === 403) {
+        setCanLinkAccounts(false);
+        setLinkCandidatesState("error");
+        return;
+      }
+      if (response.status !== 200) {
+        setLinkCandidatesState("error");
+        return;
+      }
+      const projected = projectRecruiterLinkCandidates(await response.json());
+      if (linkCandidatesRecruiterRef.current !== recruiterId) return;
+      if (!projected || projected.recruiter_id !== recruiterId) {
+        setLinkCandidatesState("error");
+        return;
+      }
+      setLinkCandidateEnvelope(projected);
+      if (projected.already_linked) {
+        setLinkedRecruiterIds((current) => {
+          const next = new Set(current);
+          next.add(recruiterId);
+          return next;
+        });
+        setLinkCandidatesState("already-linked");
+        return;
+      }
+      if (projected.candidates.length === 0) {
+        setLinkCandidatesState("empty");
+        return;
+      }
+      setSelectedLinkCandidate(projected.candidates[0]);
+      setLinkCandidatesState("ready");
+    } catch {
+      if (linkCandidatesRecruiterRef.current !== recruiterId) return;
+      setLinkCandidatesState("error");
+    }
+  }, []);
 
   const loadEligibleAccounts = useCallback(async (targetPage: number) => {
     const query = buildEligibleAccountsQuery(targetPage);
@@ -242,6 +313,37 @@ export function PersonnelCatalogManager() {
     return () => controller.abort();
   }, [includeInactive, page, reloadToken, search]);
 
+  useEffect(() => {
+    if (listState.kind !== "loaded") return;
+    const recruiterIds = listState.list.personnel.map((row) => row.recruiter_id);
+    const statusQuery = buildRecruiterLinkStatusQuery(recruiterIds);
+    if (!statusQuery) return;
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const response = await fetch(`/api/admin/catalog/personnel/link-status?${statusQuery.toString()}`, {
+          method: "GET",
+          cache: "no-store",
+          signal: controller.signal,
+          headers: { Accept: "application/json" },
+        });
+        if (response.status === 401 || response.status === 403) {
+          setCanLinkAccounts(false);
+          setLinkedRecruiterIds(new Set());
+          return;
+        }
+        if (response.status !== 200) return;
+        const projected = projectRecruiterLinkStatus(await response.json());
+        if (!projected) return;
+        setCanLinkAccounts(true);
+        setLinkedRecruiterIds(new Set(projected.linked_recruiter_ids));
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+      }
+    })();
+    return () => controller.abort();
+  }, [listState]);
+
   const reloadList = () => {
     setListState({ kind: "loading" });
     setReloadToken((value) => value + 1);
@@ -282,6 +384,13 @@ export function PersonnelCatalogManager() {
     setForm({ ...EMPTY_FORM, reason: "" });
     setFormError(null);
     setDialog({ kind: "active", personnel, active });
+  };
+
+  const startLinkAccount = (personnel: AdminPersonnel) => {
+    setForm({ ...EMPTY_FORM, reason: "" });
+    setFormError(null);
+    setDialog({ kind: "link", personnel });
+    void loadLinkCandidates(personnel.recruiter_id);
   };
 
   const reloadConflictedEntity = useCallback(async (intent: MutationIntent) => {
@@ -504,6 +613,36 @@ export function PersonnelCatalogManager() {
         lockId: dialog.personnel.recruiter_id,
         retryState: "ready",
       };
+    } else if (dialog.kind === "link") {
+      if (conflictLocks.has(dialog.personnel.recruiter_id)) {
+        setFormError("Hồ sơ đang bị khóa cho đến khi tải lại dữ liệu có thẩm quyền.");
+        return;
+      }
+      if (!selectedLinkCandidate || !linkCandidateEnvelope ||
+          linkCandidateEnvelope.recruiter_id !== dialog.personnel.recruiter_id) {
+        setFormError("Chọn tài khoản truy cập đang hoạt động, chưa liên kết và khớp mã nhân sự để liên kết.");
+        return;
+      }
+      request = buildLinkRecruiterAccountRequest({
+        accountRef: selectedLinkCandidate.app_user_id,
+        expectedAccountVersion: selectedLinkCandidate.version,
+        expectedRecruiterVersion: linkCandidateEnvelope.version,
+        reason: form.reason,
+        idempotencyKey,
+      });
+      if (!request.ok) {
+        setFormError(request.message);
+        return;
+      }
+      intent = {
+        url: `/api/admin/catalog/personnel/${encodeURIComponent(dialog.personnel.recruiter_id)}/link-account`,
+        method: "POST",
+        body: request.body,
+        operation: "link",
+        recruiterId: dialog.personnel.recruiter_id,
+        lockId: dialog.personnel.recruiter_id,
+        retryState: "ready",
+      };
     } else {
       if (conflictLocks.has(dialog.personnel.recruiter_id)) {
         setFormError("Hồ sơ đang bị khóa cho đến khi tải lại dữ liệu có thẩm quyền.");
@@ -601,7 +740,8 @@ export function PersonnelCatalogManager() {
                   <Dialog.Title className="text-xl font-semibold text-foreground">
                     {dialog?.kind === "create" ? "Tạo nhân sự từ tài khoản" :
                       dialog?.kind === "edit" ? "Chỉnh sửa nhân sự" :
-                        dialog?.active ? "Kích hoạt hồ sơ" : "Ngừng hoạt động hồ sơ"}
+                        dialog?.kind === "link" ? "Liên kết tài khoản truy cập" :
+                          dialog?.active ? "Kích hoạt hồ sơ" : "Ngừng hoạt động hồ sơ"}
                   </Dialog.Title>
                   <Dialog.Description id="personnel-dialog-description" className="mt-1 text-sm text-muted">
                     Lý do thao tác không bắt buộc. Dữ liệu được kiểm tra lại trước khi lưu.
@@ -665,6 +805,105 @@ export function PersonnelCatalogManager() {
                         className="min-h-11 whitespace-nowrap shrink-0 rounded-md bg-primary px-4 text-sm font-medium text-on-primary disabled:opacity-50"
                       >
                         {busy ? "Đang lưu…" : dialog.active ? "Xác nhận kích hoạt" : "Xác nhận ngừng"}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              ) : dialog?.kind === "link" ? (
+                <div className="mt-5 space-y-4">
+                  <div className="rounded-lg border border-border bg-surface-muted/50 p-3.5 text-sm space-y-1.5">
+                    <p className="font-semibold text-foreground">Hồ sơ nhân sự được liên kết</p>
+                    <p>
+                      Họ và tên: <strong>{dialog.personnel.display_name}</strong>
+                    </p>
+                    <p>
+                      Mã nhân sự: <span className="font-mono font-semibold">{dialog.personnel.personnel_code ?? "Chưa có mã nhân sự"}</span>
+                    </p>
+                    <p>
+                      Vị trí: {positionLabel(dialog.personnel.personnel_position)} · Nhóm:{" "}
+                      {dialog.personnel.team_names.join(", ") || "Chưa xếp nhóm"}
+                    </p>
+                  </div>
+
+                  {linkCandidatesState === "loading" ? (
+                    <p role="status" className="text-sm text-muted">
+                      Đang kiểm tra tài khoản truy cập khớp mã nhân sự…
+                    </p>
+                  ) : null}
+                  {linkCandidatesState === "already-linked" ? (
+                    <Alert tone="warning" title="Hồ sơ nhân sự đã có tài khoản liên kết">
+                      Hồ sơ này đã được liên kết với một tài khoản truy cập đang hiệu lực. Không thể tạo liên kết trùng.
+                    </Alert>
+                  ) : null}
+                  {linkCandidatesState === "empty" ? (
+                    <Alert tone="warning" title="Chưa có tài khoản khớp mã nhân sự">
+                      Chưa có tài khoản truy cập đang hoạt động và chưa liên kết có mã đăng nhập khớp với mã nhân sự{" "}
+                      <strong className="font-mono">{dialog.personnel.personnel_code ?? "—"}</strong>. Hãy tạo tài khoản trong mục{" "}
+                      <strong>Tài khoản truy cập</strong> trước rồi quay lại thực hiện liên kết.
+                    </Alert>
+                  ) : null}
+                  {linkCandidatesState === "error" ? (
+                    <Alert tone="error" title="Không tải được tài khoản phù hợp">
+                      Không thể kiểm tra danh sách tài khoản khớp mã nhân sự. Hãy thử lại.
+                    </Alert>
+                  ) : null}
+                  {linkCandidatesState === "ready" && linkCandidateEnvelope ? (
+                    <div className="space-y-3">
+                      <label className="block text-sm font-medium text-foreground" htmlFor="personnel-link-account">
+                        Tài khoản truy cập khớp mã nhân sự
+                        <select
+                          id="personnel-link-account"
+                          value={selectedLinkCandidate?.app_user_id ?? ""}
+                          required
+                          onChange={(event) => {
+                            const found = linkCandidateEnvelope.candidates.find(
+                              (candidate) => candidate.app_user_id === event.currentTarget.value,
+                            );
+                            setSelectedLinkCandidate(found ?? null);
+                          }}
+                          className="mt-1 block min-h-11 w-full rounded-md border border-border bg-background px-3 text-sm"
+                        >
+                          {linkCandidateEnvelope.candidates.map((candidate) => (
+                            <option key={candidate.app_user_id} value={candidate.app_user_id}>
+                              {candidate.display_name} · {candidate.login_id}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      {selectedLinkCandidate ? (
+                        <div className="rounded-lg border border-border bg-surface p-3.5 text-xs text-muted space-y-1">
+                          <p className="font-medium text-foreground">
+                            Xác nhận liên kết 1-1: Tài khoản <span className="font-mono">{selectedLinkCandidate.login_id}</span> ({selectedLinkCandidate.display_name}) ↔ Hồ sơ nhân sự <span className="font-mono">{dialog.personnel.personnel_code}</span> ({dialog.personnel.display_name})
+                          </p>
+                          <p>
+                            Thao tác này chỉ liên kết hai bản ghi hiện có, giữ nguyên mã nhân sự, tên hiển thị, vị trí, nhóm công tác và lịch sử hồ sơ. Tài khoản chỉ được cấp quyền nhập liệu HRP cơ bản của cá nhân (scope own), không tự động cấp quyền quản trị hoặc trưởng nhóm.
+                          </p>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+
+                  <form onSubmit={submitMutation} className="space-y-4">
+                    <ReasonField value={form.reason} onChange={(value) => changeForm("reason", value)} />
+                    {formError ? <p role="alert" className="text-sm text-red-700 dark:text-red-300">{formError}</p> : null}
+                    <div className="flex flex-wrap justify-end gap-2">
+                      <Dialog.Close asChild>
+                        <button type="button" disabled={busy} className="min-h-11 rounded-md border border-border px-4 text-sm">
+                          Hủy
+                        </button>
+                      </Dialog.Close>
+                      <button
+                        type="submit"
+                        disabled={
+                          busy ||
+                          isConflictLocked ||
+                          pendingIntent !== null ||
+                          linkCandidatesState !== "ready" ||
+                          selectedLinkCandidate === null
+                        }
+                        className="min-h-11 whitespace-nowrap shrink-0 rounded-md bg-primary px-4 text-sm font-medium text-on-primary disabled:opacity-50"
+                      >
+                        {busy ? "Đang lưu…" : "Xác nhận liên kết"}
                       </button>
                     </div>
                   </form>
@@ -931,11 +1170,31 @@ export function PersonnelCatalogManager() {
                         <td data-label="Nhóm công tác" className="px-3.5 py-2.5">{personnel.team_names.join(", ") || "Chưa xếp nhóm"}</td>
                         <td data-label="Vị trí" className="px-3.5 py-2.5">{positionLabel(personnel.personnel_position)}</td>
                         <td data-label="Trạng thái" className="px-3.5 py-2.5">
-                          <ActiveBadge active={personnel.active} />
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <ActiveBadge active={personnel.active} />
+                            {linkedRecruiterIds.has(personnel.recruiter_id) ? (
+                              <StatusBadge tone="info">Đã liên kết TK</StatusBadge>
+                            ) : null}
+                          </div>
                         </td>
                         <td data-label="Hiệu lực HRP" className="px-3.5 py-2.5 font-mono tabular-nums whitespace-nowrap">{formatHrpDate(personnel.hrp_valid_from)}</td>
                         <td data-card-actions="true" className="px-3.5 py-2.5 text-right">
                           <div className="inline-flex flex-wrap md:flex-nowrap items-center justify-end gap-1.5 whitespace-nowrap">
+                            {canLinkAccounts &&
+                            personnel.active &&
+                            Boolean(personnel.personnel_code) &&
+                            !linkedRecruiterIds.has(personnel.recruiter_id) ? (
+                              <Dialog.Trigger asChild>
+                                <button
+                                  type="button"
+                                  onClick={() => startLinkAccount(personnel)}
+                                  disabled={conflictLocks.has(personnel.recruiter_id)}
+                                  className="min-h-11 md:min-h-8 whitespace-nowrap shrink-0 rounded-md border border-primary/40 bg-primary/10 px-3 text-xs font-medium text-primary disabled:opacity-50"
+                                >
+                                  Liên kết tài khoản
+                                </button>
+                              </Dialog.Trigger>
+                            ) : null}
                             <Dialog.Trigger asChild>
                               <button
                                 type="button"

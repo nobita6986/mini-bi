@@ -79,3 +79,14 @@ test("mutation errors stay visible in the dialog and an OCC conflict can be dism
   assert.doesNotMatch(source, /title="Trạng thái thao tác"/);
   assert.doesNotMatch(source, /[\u0E00-\u0E7F]/);
 });
+
+test("Full Admin can link an existing HRP personnel profile to an existing access account", () => {
+  assert.match(source, /Liên kết tài khoản/);
+  assert.match(source, /\/api\/admin\/catalog\/personnel\/link-status\?\$\{statusQuery\.toString\(\)\}/);
+  assert.match(source, /\/api\/admin\/catalog\/personnel\/\$\{encodeURIComponent\(recruiterId\)\}\/link-account/);
+  assert.match(source, /\/api\/admin\/catalog\/personnel\/\$\{encodeURIComponent\(dialog\.personnel\.recruiter_id\)\}\/link-account/);
+  assert.match(source, /buildLinkRecruiterAccountRequest/);
+  assert.match(source, /projectRecruiterLinkCandidates/);
+  assert.match(source, /projectRecruiterLinkStatus/);
+  assert.match(source, /Xác nhận liên kết/);
+});
