@@ -94,7 +94,7 @@ test("worker directory displays server-filtered totals, not only the loaded page
     "filter/tab changes clear the previous query's summary while the next response loads");
 });
 
-test("R1.2-B: search is bounded, server-filtered, resets paging and remains visible in summary", () => {
+test("R1.2-B: search is bounded, server-filtered, resets paging and omits the export hint", () => {
   assert.match(source, /<input id=\{searchId\} type="search"/);
   assert.match(source, /maxLength=\{100\}/);
   assert.match(source, /changeFilter\("search", event\.target\.value\)/);
@@ -102,7 +102,7 @@ test("R1.2-B: search is bounded, server-filtered, resets paging and remains visi
   assert.match(source, /Từ khóa/);
   assert.match(source, /Không tìm thấy người lao động phù hợp với từ khóa/);
   assert.match(source, /workerQueryGeneration\.current === workerPageGeneration/);
-  assert.match(source, /không áp dụng từ khóa tìm kiếm/);
+  assert.doesNotMatch(source, /không áp dụng từ khóa tìm kiếm/i);
 });
 
 test("R1.2-HF: Dự án and Người tuyển filters are searchable comboboxes over stable ids", () => {
