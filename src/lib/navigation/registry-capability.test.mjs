@@ -456,9 +456,9 @@ test("filterEntriesForActor: owner (đủ 3 admin) + viewport=mobile → các kh
     actor: ownerActor,
     decide: decideFor(ownerActor, "mobile"),
   });
-  // Full Admin thấy Admin, Tài chính, Work Reports, Duyệt báo cáo cùng các khu vực đã có quyền.
+  // Full Admin thấy Admin, Tài chính, Nghỉ phép, Work Reports, Duyệt báo cáo cùng các khu vực đã có quyền.
   assert.deepEqual(result.map((e) => e.id).sort(),
-    ["admin", "change-requests", "dashboard", "direct-entry", "finance", "project-operations", "work-report-reviews", "work-reports", "worker-operations"]);
+    ["admin", "change-requests", "dashboard", "direct-entry", "finance", "leave", "project-operations", "work-report-reviews", "work-reports", "worker-operations"]);
 });
 
 test("filterEntriesForActor: Direct Entry off bởi env → chỉ Dashboard dù actor có quyền", () => {
@@ -484,9 +484,9 @@ test("Admin catalog navigation remains available when Direct Entry UI is disable
 });
 
 test("CURRENT_NAV_ENTRIES giữ nguyên (không tạo registry thứ hai)", () => {
-  // Admin, Finance, Change Requests and Work Reports share the same registry; no separate menu registry is introduced.
+  // Admin, Finance, Leave, Change Requests and Work Reports share the same registry; no separate menu registry is introduced.
   const ids = CURRENT_NAV_ENTRIES.map((e) => e.id).sort();
-  assert.deepEqual(ids, ["admin", "change-requests", "dashboard", "direct-entry", "finance", "project-operations", "work-report-reviews", "work-reports", "worker-operations"]);
+  assert.deepEqual(ids, ["admin", "change-requests", "dashboard", "direct-entry", "finance", "leave", "project-operations", "work-report-reviews", "work-reports", "worker-operations"]);
 });
 
 // ===== P3-W06A R1 Gap 2: asymmetric desktop/mobile visibility ============

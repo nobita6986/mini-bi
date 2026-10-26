@@ -32,6 +32,7 @@ export type NavActorProjection = {
   hasVendorFinanceAccess?: boolean;
   hasVendorFinanceRecordAccess?: boolean;
   hasVendorFinanceReconcileAccess?: boolean;
+  hasLeaveManagementAccess?: boolean;
 };
 
 /** Predicate phụ thuộc entry — registry.ts có metadata `capability`. */
@@ -262,12 +263,21 @@ export const vendorFinanceReconcileNavPredicate: NavCapabilityPredicate = (actor
 /** VFIN-02: Full Admin governance predicate for project accountant assignments, Vendor-Project links & global roles. */
 export const vendorFinanceAdminNavPredicate: NavCapabilityPredicate = adminAuthorityNavPredicate;
 
+/**
+ * WP2 Leave Management navigation predicate:
+ * Opens for Canonical Full Admin or server-verified personal employee / leave operator / approver / HR report viewer
+ * (`hasLeaveManagementAccess === true`, excluding shared non-employee accounts).
+ */
+export const leaveManagementNavPredicate: NavCapabilityPredicate = (actor) =>
+  adminAuthorityNavPredicate(actor) || actor.hasLeaveManagementAccess === true;
+
 /** Bảng ánh xạ `entry.capability` metadata → predicate tương ứng. */
 export const NAV_CAPABILITY_PREDICATES: Readonly<Record<string, NavCapabilityPredicate>> = {
   any: () => true,
   owner: adminAuthorityNavPredicate,
   admin_area: adminPanelNavPredicate,
   finance: vendorFinanceNavPredicate,
+  leave: leaveManagementNavPredicate,
   hrp: directEntryNavPredicate,
   entry_own: directEntryNavPredicate,
   entry_team: directEntryNavPredicate,

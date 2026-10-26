@@ -37,11 +37,13 @@ import { getDirectEntryActor } from "@/lib/auth/direct-entry-session";
 import { resolveSessionWithBoundedRetry } from "@/lib/auth/direct-entry-session-retry";
 import { createDirectEntryActorRepository } from "@/lib/direct-entry/actor-context-repository";
 import { createChangeRequestReadRepository } from "@/lib/direct-entry/change-request-read-repository";
+import { createLeaveRepository } from "@/lib/leave/leave-repository";
 import { createVendorFinanceRepository } from "@/lib/vendor-finance/vendor-finance-repository";
 import { createSubmissionRepository } from "@/lib/work-reports/submission-repository";
 import type { ActorResolution } from "@/lib/auth/direct-entry-v2";
 import {
   changeRequestsNavPredicate,
+  leaveManagementNavPredicate,
   type NavActorProjection,
   vendorFinanceRecordNavPredicate,
   workReportsNavPredicate,
@@ -138,6 +140,28 @@ export const resolveVendorFinanceAccessForRequest = cache(
   },
 );
 
+export const resolveLeaveManagementAccessForRequest = cache(
+  async (): Promise<boolean> => {
+    const actor = await resolveActorForRequest();
+    if (!actor.ok) {
+      return false;
+    }
+    try {
+      const summary = await createLeaveRepository().getMySummary({
+        auth_subject: actor.actor.auth_subject,
+        app_user_id: actor.actor.app_user_id,
+        leave_year: null,
+      });
+      if (summary.ok) {
+        return true;
+      }
+    } catch {
+      // Fail closed without disrupting AppShell rendering.
+    }
+    return false;
+  },
+);
+
 export const resolveNavActorForAppShell = cache(
   async (input: {
     directEntryEnabled: boolean;
@@ -180,6 +204,15 @@ export const resolveNavActorForAppShell = cache(
         if (vfinAccess.can_reconcile) {
           projection.hasVendorFinanceReconcileAccess = true;
         }
+      }
+    }
+    if (
+      process.env.DIRECT_ENTRY_API_ENABLED === "true" &&
+      !leaveManagementNavPredicate(projection)
+    ) {
+      const hasLeaveAccess = await resolveLeaveManagementAccessForRequest();
+      if (hasLeaveAccess) {
+        projection.hasLeaveManagementAccess = true;
       }
     }
     if (input.directEntryEnabled && !changeRequestsNavPredicate(projection)) {
