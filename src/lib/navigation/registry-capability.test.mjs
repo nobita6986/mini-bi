@@ -293,12 +293,12 @@ test("F2 review nav includes canonical Full Admin, direct and server-projected d
   assert.equal(workReportDelegationPredicate(delegated), false, "effective delegated review does not grant delegation management");
 });
 
-test("review inbox nav link is visible only for directly or effectively projected reviewers", () => {
+test("review inbox navigation stays hidden even for directly or effectively projected reviewers", () => {
   const reviewer = makeActor(["report_review"], [{ kind: "team", reference: "team-1" }]);
   const directResult = filterEntriesForActor({
     viewport: "desktop", directEntryEnabled: true, actor: reviewer, decide: decideFor(reviewer, "desktop"),
   });
-  assert.ok(directResult.some((entry) => entry.path === "/work-reports/reviews"));
+  assert.ok(!directResult.some((entry) => entry.path === "/work-reports/reviews"));
 
   const delegated = {
     capabilities: [], scopes: [{ kind: "own" }],
@@ -307,7 +307,7 @@ test("review inbox nav link is visible only for directly or effectively projecte
   const delegatedResult = filterEntriesForActor({
     viewport: "mobile", directEntryEnabled: true, actor: delegated, decide: decideFor(delegated, "mobile"),
   });
-  assert.ok(delegatedResult.some((entry) => entry.path === "/work-reports/reviews"));
+  assert.ok(!delegatedResult.some((entry) => entry.path === "/work-reports/reviews"));
 
   const staff = { capabilities: [], scopes: [], hasWorkReportObligations: true };
   const staffResult = filterEntriesForActor({
@@ -376,7 +376,7 @@ function decideFor(actor, viewport) {
     });
 }
 
-test("filterEntriesForActor: valid actor + hrp role → Dashboard + Direct Entry + Người lao động + Yêu cầu thay đổi", () => {
+test("filterEntriesForActor: valid actor + hrp role → Dashboard + Direct Entry + Người lao động", () => {
   const hrpActor = makeActor(["entry_own"]);
   const result = filterEntriesForActor({
     viewport: "desktop",
@@ -385,7 +385,7 @@ test("filterEntriesForActor: valid actor + hrp role → Dashboard + Direct Entry
     decide: decideFor(hrpActor, "desktop"),
   });
   const ids = result.map((e) => e.id);
-  assert.deepEqual(ids, ["dashboard", "direct-entry", "worker-operations", "change-requests"]);
+  assert.deepEqual(ids, ["dashboard", "direct-entry", "worker-operations"]);
 });
 
 test("filterEntriesForActor: reader (no capability) → chỉ Dashboard", () => {
@@ -419,9 +419,8 @@ test("filterEntriesForActor: Work Reports chỉ hiện với actor có quyền t
   assert.ok(!denied.some((entry) => entry.id === "work-reports"));
 });
 
-test("filterEntriesForActor: reviewer (change_review + all) → Dashboard + Người lao động + Yêu cầu thay đổi", () => {
-  // P2.5-W06-R1 & R2.2: reviewer bundle + effective all scope duoc vao Worker Operations
-  // va Yêu cầu thay đổi (nhung KHONG duoc vao Direct Entry editor).
+test("filterEntriesForActor: reviewer (change_review + all) → Dashboard + Người lao động; change request navigation hidden", () => {
+  // Reviewer bundle + effective all scope can enter Worker Operations; the global change-request entry is hidden.
   const reviewerActor = makeActor(["change_review", "document_view"]);
   const result = filterEntriesForActor({
     viewport: "mobile",
@@ -429,7 +428,7 @@ test("filterEntriesForActor: reviewer (change_review + all) → Dashboard + Ngư
     actor: reviewerActor,
     decide: decideFor(reviewerActor, "mobile"),
   });
-  assert.deepEqual(result.map((e) => e.id), ["dashboard", "worker-operations", "change-requests"]);
+  assert.deepEqual(result.map((e) => e.id), ["dashboard", "worker-operations"]);
   // Reviewer KHONG thay entry Direct Entry / Du an.
   assert.equal(result.some((e) => e.id === "direct-entry"), false);
   assert.equal(result.some((e) => e.id === "project-operations"), false);
@@ -456,20 +455,17 @@ test("filterEntriesForActor: owner (đủ 3 admin) + viewport=mobile → các kh
     actor: ownerActor,
     decide: decideFor(ownerActor, "mobile"),
   });
-  // Full Admin thấy Admin, Báo cáo chấm công, Tài chính, Nghỉ phép, Work Reports (Báo cáo của tôi, Quản lý/Giao, Cần duyệt, Theo dõi) cùng các khu vực đã có quyền.
+  // Full Admin sees Admin, Attendance, Finance, Leave and Work Reports entry points; hidden nav actions stay out of the menu.
   assert.deepEqual(result.map((e) => e.id).sort(),
     [
       "admin",
       "attendance-report",
-      "change-requests",
       "dashboard",
       "direct-entry",
       "finance",
       "leave",
       "project-operations",
-      "work-report-analytics",
       "work-report-assignments",
-      "work-report-reviews",
       "work-reports",
       "worker-operations",
     ]);
@@ -498,7 +494,7 @@ test("Admin catalog navigation remains available when Direct Entry UI is disable
 });
 
 test("CURRENT_NAV_ENTRIES giữ nguyên một registry duy nhất (không tạo registry thứ hai)", () => {
-  // Admin, Finance, Leave, Change Requests and Work Reports share the same registry; no separate menu registry is introduced.
+  // Admin, Finance, Leave, Change Requests and Work Reports share one registry; hidden entries retain route metadata.
   const ids = CURRENT_NAV_ENTRIES.map((e) => e.id).sort();
   assert.deepEqual(
     ids,
@@ -569,13 +565,13 @@ test("Global IA representative actor matrix: Recruiter/Nhân viên, Team Leader,
     {
       id: "my-work",
       label: "Công việc của tôi",
-      children: ["direct-entry", "worker-operations", "change-requests", "work-reports", "leave"],
+      children: ["direct-entry", "worker-operations", "work-reports", "leave"],
     },
   ]);
   assert.equal(recruiterMenu.ids.includes("admin"), false);
   assert.equal(recruiterMenu.ids.includes("project-operations"), false);
 
-  // 2. Team Leader: thấy các mục Quản trị được cấp (Dự án, Quản lý/Giao, Cần duyệt, Theo dõi) nhưng KHÔNG thấy /admin hay Báo cáo chấm công.
+  // 2. Team Leader sees Project and one Work Reports management entry, but not /admin or attendance report.
   const teamLeader = {
     capabilities: [
       "entry_team",
@@ -595,7 +591,7 @@ test("Global IA representative actor matrix: Recruiter/Nhân viên, Team Leader,
     {
       id: "my-work",
       label: "Công việc của tôi",
-      children: ["direct-entry", "worker-operations", "change-requests", "work-reports", "leave"],
+      children: ["direct-entry", "worker-operations", "work-reports", "leave"],
     },
     {
       id: "management",
@@ -603,8 +599,6 @@ test("Global IA representative actor matrix: Recruiter/Nhân viên, Team Leader,
       children: [
         "project-operations",
         "work-report-assignments",
-        "work-report-reviews",
-        "work-report-analytics",
       ],
     },
   ]);
@@ -612,7 +606,7 @@ test("Global IA representative actor matrix: Recruiter/Nhân viên, Team Leader,
   assert.equal(teamLeaderMenu.ids.includes("attendance-report"), false, "Team Leader must not see /admin/attendance");
   assert.equal(teamLeaderMenu.ids.includes("finance"), false, "Team Leader must not see /finance");
 
-  // 3. Trưởng phòng (vd. Marketing/IT): thấy Công việc của tôi + các mục Quản trị báo cáo theo capability được cấp, KHÔNG thấy /admin.
+  // 3. Trưởng phòng sees the single Work Reports management entry and no /admin.
   const departmentHead = {
     capabilities: ["report_assign", "report_review", "report_analytics_view", "report_view"],
     scopes: team,
@@ -629,34 +623,30 @@ test("Global IA representative actor matrix: Recruiter/Nhân viên, Team Leader,
     {
       id: "management",
       label: "Quản trị",
-      children: [
-        "work-report-assignments",
-        "work-report-reviews",
-        "work-report-analytics",
-      ],
+      children: ["work-report-assignments"],
     },
   ]);
   assert.equal(departmentHeadMenu.ids.includes("admin"), false, "Trưởng phòng must not see /admin without admin_area");
   assert.equal(departmentHeadMenu.ids.includes("project-operations"), false);
 
-  // 4a. BoD (executive reader + reviewer + finance view): thấy Báo cáo chấm công, Theo dõi báo cáo, Tài chính, nhưng không mở /admin hệ thống nếu thiếu quyền catalog/full-admin.
+  // 4a. BoD (executive reader + reviewer + finance view): sees attendance and finance, not hidden report menu actions.
   const bodActor = {
     capabilities: ["entry_privileged_edit", "report_analytics_view", "report_view", "change_review", "vendor_finance_view"],
     scopes: all,
     hasLeaveManagementAccess: true,
   };
   const bodMenu = projectMenuForBothViewports(bodActor);
-  assert.deepEqual(bodMenu.topLevelIds, ["dashboard", "group:my-work", "group:management", "finance"]);
+  assert.deepEqual(bodMenu.topLevelIds, ["dashboard", "group:my-work", "finance", "group:management"]);
   assert.deepEqual(bodMenu.groups, [
     {
       id: "my-work",
       label: "Công việc của tôi",
-      children: ["worker-operations", "change-requests", "work-reports", "leave"],
+      children: ["worker-operations", "work-reports", "leave"],
     },
     {
       id: "management",
       label: "Quản trị",
-      children: ["work-report-analytics", "attendance-report"],
+      children: ["attendance-report"],
     },
   ]);
   assert.equal(bodMenu.ids.includes("attendance-report"), true, "BoD sees Báo cáo chấm công");
@@ -668,12 +658,12 @@ test("Global IA representative actor matrix: Recruiter/Nhân viên, Team Leader,
     scopes: all,
   };
   const fullAdminMenu = projectMenuForBothViewports(fullAdmin);
-  assert.deepEqual(fullAdminMenu.topLevelIds, ["dashboard", "group:my-work", "group:management", "finance"]);
+  assert.deepEqual(fullAdminMenu.topLevelIds, ["dashboard", "group:my-work", "finance", "group:management"]);
   assert.deepEqual(fullAdminMenu.groups, [
     {
       id: "my-work",
       label: "Công việc của tôi",
-      children: ["direct-entry", "worker-operations", "change-requests", "work-reports", "leave"],
+      children: ["direct-entry", "worker-operations", "work-reports", "leave"],
     },
     {
       id: "management",
@@ -681,8 +671,6 @@ test("Global IA representative actor matrix: Recruiter/Nhân viên, Team Leader,
       children: [
         "project-operations",
         "work-report-assignments",
-        "work-report-reviews",
-        "work-report-analytics",
         "attendance-report",
         "admin",
       ],
@@ -698,7 +686,7 @@ test("Global IA representative actor matrix: Recruiter/Nhân viên, Team Leader,
     hasLeaveManagementAccess: true,
   };
   const accountingMenu = projectMenuForBothViewports(accountingActor);
-  assert.deepEqual(accountingMenu.topLevelIds, ["dashboard", "group:my-work", "group:management", "finance"]);
+  assert.deepEqual(accountingMenu.topLevelIds, ["dashboard", "group:my-work", "finance", "group:management"]);
   assert.deepEqual(accountingMenu.groups, [
     {
       id: "my-work",

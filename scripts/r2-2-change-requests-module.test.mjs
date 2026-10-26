@@ -41,12 +41,13 @@ function makeActor(capabilities, scopes = []) {
   };
 }
 
-test("WP-2.2.1: navigation registry declares independent /direct-entry/change-requests menu item", () => {
+test("WP-2.2.1: change request route and permission stay available while global navigation is hidden", () => {
   const item = CURRENT_NAV_ENTRIES.find((entry) => entry.id === "change-requests");
   assert.ok(item, "change-requests nav item exists");
   assert.equal(item.label, "Yêu cầu thay đổi");
   assert.equal(item.path, "/direct-entry/change-requests");
   assert.equal(item.capability, "change_requests");
+  assert.deepEqual(item.visibility, { desktop: false, mobile: false });
 
   const staff = makeActor(["entry_own", "change_request_create"], [{ kind: "own", reference: "user-1" }]);
   const leader = makeActor(["team_manager_assign", "change_review"], [{ kind: "team", reference: "team-a" }]);
@@ -70,7 +71,7 @@ test("WP-2.2.1: navigation registry declares independent /direct-entry/change-re
         entryVisibleInViewport: entry.visibility.desktop,
       }),
   }).map((nav) => nav.id);
-  assert.ok(visibleIds.includes("change-requests"));
+  assert.ok(!visibleIds.includes("change-requests"));
 });
 
 test("WP-2.2.1: server page gate admits current proposers/reviewers and active historical proposers fail-closed", () => {
@@ -216,7 +217,7 @@ test("R2.2 Post-merge P0: explicit historical queue probe preserves access for a
   assert.equal(
     changeRequestsNavPredicate(navActorWithHistory),
     true,
-    "navigation predicate keeps change-requests menu visible when active actor has historical requests",
+    "the route predicate still recognizes historical access while the global menu entry is hidden",
   );
 });
 
@@ -301,7 +302,7 @@ test("WP-2.2.1 P0: DirectEntryChangeRequestReviewer enforces read-only snapshot 
   assert.match(reviewerSource, /const canReject = request\?\.state === "PENDING" && request\.can_decide === true/);
 });
 
-test("WP-2.2.2: /direct-entry removes queue/reviewer, keeps contextual proposer, replaces window.confirm, and polishes CSS tokens", () => {
+test("WP-2.2.2: /direct-entry hides change-request actions, replaces window.confirm, and polishes CSS tokens", () => {
   const liveSource = readRepoFile("src/components/direct-entry/direct-entry-live.tsx");
   const workerOpsSource = readRepoFile("src/components/direct-entry/worker-operations.tsx");
   const shellCss = readRepoFile("src/components/direct-entry/direct-entry-shell.module.css");
@@ -309,8 +310,8 @@ test("WP-2.2.2: /direct-entry removes queue/reviewer, keeps contextual proposer,
 
   assert.equal(liveSource.includes("DirectEntryChangeRequestList"), false);
   assert.equal(liveSource.includes("DirectEntryChangeRequestReviewer"), false);
-  assert.equal(liveSource.includes("DirectEntryChangeRequestProposer"), true);
-  assert.match(liveSource, /href="\/direct-entry\/change-requests"/);
+  assert.equal(liveSource.includes("DirectEntryChangeRequestProposer"), false);
+  assert.doesNotMatch(liveSource, /href="\/direct-entry\/change-requests"/);
   assert.doesNotMatch(workerOpsSource, /href="\/direct-entry\/change-requests"/);
 
   assert.equal(liveSource.includes("window.confirm"), false, "no native window.confirm in direct-entry-live.tsx");
@@ -332,11 +333,14 @@ test("WP-2.2.3: shared UI primitives are genuinely reused across >= 2 consumer m
   const vendorManager = readRepoFile("src/components/admin/vendor-catalog-manager.tsx");
   const projectTeamManager = readRepoFile("src/components/admin/project-team-scope-manager.tsx");
   const formBuilderSource = readRepoFile("src/components/work-reports/form-builder/form-builder.tsx");
+  const reviewInboxSource = readRepoFile("src/components/work-reports/renderer/review-inbox.tsx");
+  const obligationsSource = readRepoFile("src/components/work-reports/renderer/my-obligations.tsx");
 
   assert.match(workspaceSource, /from "@\/components\/ui\/notify-provider"/);
   assert.equal(workspaceSource.includes("change-request-workspace-notice"), false);
   assert.match(formBuilderSource, /from "@\/components\/ui\/status-banner"/);
-  assert.match(liveSource, /from "@\/components\/ui\/status-banner"/);
+  assert.match(reviewInboxSource, /from "@\/components\/ui\/status-banner"/);
+  assert.match(obligationsSource, /from "@\/components\/ui\/status-banner"/);
 
   assert.match(workspaceSource, /from "@\/components\/ui\/cursor-load-more"/);
   assert.match(workerOpsSource, /from "@\/components\/ui\/cursor-load-more"/);

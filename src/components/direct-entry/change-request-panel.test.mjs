@@ -80,12 +80,11 @@ test("review queue separates pending/history and fits compact cards in a scrolla
   assert.doesNotMatch(compactStyles, /overflow-x:\s*(?:auto|scroll)|min-width:\s*\d+(?:px|rem)/);
 });
 
-test("uploader queue separates active submissions from history without removing terminal actions", () => {
+test("uploader queue separates active submissions from history and hides terminal change-request action", () => {
   assert.match(submissions, /ariaLabel="Trạng thái đợt nhập liệu"/);
   assert.match(submissions, /value: "ACTIVE", label: "Đang gửi"/);
   assert.match(submissions, /value: "HISTORY", label: "Lịch sử gửi"/);
-  assert.match(submissions, /onRequestChange\(submission\)/);
-  assert.match(submissions, /Yêu cầu thay đổi/);
+  assert.doesNotMatch(submissions, /onRequestChange|Yêu cầu thay đổi/);
   assert.match(submissions, /onManageDocuments\(submission\)/);
   assert.match(submissions, /Quản lý tài liệu/);
   assert.match(live, /useState<SubmissionQueueFilter>\("ACTIVE"\)/);

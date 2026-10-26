@@ -293,12 +293,17 @@ test("hidden XLSX CTAs retain import/template handlers and mobile staged editor 
 });
 
 test("khong thao cac duong CCCD/payment/submission/change-request/mobile", () => {
+  const changeRequestProposer = readFileSync(
+    new URL("./direct-entry-change-request-proposer.tsx", import.meta.url), "utf8",
+  );
   for (const marker of ["DirectEntryWorkerDocuments", "DirectEntryPaymentEditor",
     "DirectEntryDocumentEditor", "DirectEntrySubmissionList",
-    "DirectEntryChangeRequestProposer", "DirectEntrySubmittedDocumentManager",
+    "DirectEntrySubmittedDocumentManager",
     "styles.mobileSection"]) {
     assert.ok(live.includes(marker), "missing " + marker);
   }
+  assert.equal(live.includes("DirectEntryChangeRequestProposer"), false);
+  assert.match(changeRequestProposer, /export function DirectEntryChangeRequestProposer/);
   assert.equal(live.includes("DirectEntryChangeRequestList"), false);
   assert.equal(live.includes("DirectEntryChangeRequestReviewer"), false);
   assert.equal(live.includes("DirectEntryWorkerProfilePasteDialog"), false);
