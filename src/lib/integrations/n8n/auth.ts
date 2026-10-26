@@ -265,16 +265,8 @@ function isVerifiedAllScopeActor(
   return true;
 }
 
-let cachedServiceActor: {
-  cacheKey: string;
-  actor: N8nInternalActorRef;
-  expiresAtMs: number;
-} | null = null;
-
-const ACTOR_CACHE_TTL_MS = 5 * 60 * 1000;
-
 export function clearN8nServiceActorCache(): void {
-  cachedServiceActor = null;
+  // No-op: service actor authority is verified on every request without caching.
 }
 
 export type N8nActorResolverDependencies = {
@@ -296,9 +288,9 @@ export type N8nActorResolverDependencies = {
  *    account-scanning auto-discovery).
  * 2. Optional `N8N_BOD_READONLY_APP_USER_ID` must be a valid UUID and match the
  *    DB-resolved `app_user_id` if provided.
- * 3. Always verifies via `direct_entry_resolve_actor_context` that the actor is
- *    enabled and holds active `all` scope (`all_scope_grants.length > 0`)
- *    before allowing any query execution.
+ * 3. Always verifies on every request via `direct_entry_resolve_actor_context`
+ *    (no TTL cache) that the actor is enabled and holds active `all` scope
+ *    (`all_scope_grants.length > 0`) before allowing any query execution.
  */
 export async function resolveN8nBodServiceActor(
   deps: N8nActorResolverDependencies = {},
@@ -307,7 +299,6 @@ export async function resolveN8nBodServiceActor(
   | { ok: false; code: "SERVICE_PRINCIPAL_ACTOR_UNAVAILABLE"; message: string }
 > {
   const env = deps.env ?? readDefaultEnv();
-  const nowMs = deps.nowMs ? deps.nowMs() : Date.now();
 
   const explicitAuthSubject = env.authSubject?.trim();
   const explicitAppUserId = env.appUserId?.trim();
@@ -328,15 +319,6 @@ export async function resolveN8nBodServiceActor(
       message:
         "Cấu hình N8N_BOD_READONLY_APP_USER_ID không phải UUID hợp lệ.",
     };
-  }
-
-  const cacheKey = `${explicitAuthSubject.toLowerCase()}|${(explicitAppUserId ?? "").toLowerCase()}`;
-  if (
-    cachedServiceActor &&
-    cachedServiceActor.cacheKey === cacheKey &&
-    cachedServiceActor.expiresAtMs > nowMs
-  ) {
-    return { ok: true, actor: cachedServiceActor.actor };
   }
 
   const callActorContextRpc =
@@ -363,11 +345,6 @@ export async function resolveN8nBodServiceActor(
       const actor: N8nInternalActorRef = {
         auth_subject: data.auth_subject,
         app_user_id: data.app_user_id,
-      };
-      cachedServiceActor = {
-        cacheKey,
-        actor,
-        expiresAtMs: nowMs + ACTOR_CACHE_TTL_MS,
       };
       return { ok: true, actor };
     }

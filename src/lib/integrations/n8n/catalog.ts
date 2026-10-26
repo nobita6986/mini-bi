@@ -3225,6 +3225,14 @@ const DATASETS: readonly N8nDatasetSpec[] = Object.freeze([
         cardinality: "many_to_one",
         description: "Liên kết tới nhóm tuyển dụng.",
       },
+      {
+        target_dataset: "work_reports_submission_detail",
+        local_field: "obligation_id",
+        target_field: "obligation_id",
+        cardinality: "one_to_one",
+        description:
+          "Tra cứu chi tiết nội dung câu trả lời (latest_payload_json, revisions, latest_review_event) của một bài nộp cụ thể.",
+      },
     ],
     pagination: {
       strategy: "keyset_cursor",
@@ -3232,7 +3240,169 @@ const DATASETS: readonly N8nDatasetSpec[] = Object.freeze([
       max_page_size: 100,
     },
     business_rules: [
-      "Không trả payload_json / draft_payload_json thô trong danh sách để bảo đảm giới hạn băng thông và bảo mật nội dung tự do.",
+      "Không trả payload_json / draft_payload_json thô trong danh sách hàng loạt để bảo đảm giới hạn băng thông và bảo mật nội dung tự do.",
+      "Để đọc nội dung câu trả lời nhân viên đã nhập cho một bài nộp cụ thể, hãy gọi dataset work_reports_submission_detail với filter obligation_id (hoặc submission_id) và chọn trường latest_payload_json / revisions.",
+    ],
+  },
+  {
+    dataset: "work_reports_submission_detail",
+    domain: "work_reports",
+    title: "Chi tiết Nội dung Bài nộp Báo cáo Công việc (Single Work Report Submission Detail)",
+    description:
+      "Chi tiết một nghĩa vụ và bài nộp báo cáo công việc cụ thể theo obligation_id (hoặc submission_id), bao gồm cấu trúc biểu mẫu (template_schema_json), nội dung câu trả lời đã nộp mới nhất (latest_payload_json), lịch sử các lần nộp (revisions) và kết quả duyệt mới nhất (latest_review_event). Không bao giờ trả bản nháp chưa nộp (draft_payload_json).",
+    grain: "1 dòng duy nhất cho mỗi obligation_id / submission_id được tra cứu.",
+    canonical_source: {
+      name: "public.work_report_get_submission",
+      kind: "rpc",
+      underlying_objects: [
+        "public.work_report_get_submission",
+        "public.work_report_obligations",
+        "public.work_report_submissions",
+        "public.work_report_submission_revisions",
+        "public.work_report_review_events",
+      ],
+    },
+    supported_modes: ["detail", "both"],
+    default_mode: "detail",
+    time_semantics: {
+      timezone: N8N_BOD_BUSINESS_TIMEZONE,
+      business_date_field: "period_start_date",
+      supports_date_range: false,
+      supports_as_of_date: false,
+      cutoff_date: null,
+      description:
+        "Tra cứu trực tiếp trạng thái và nội dung các lần đã nộp của một bài nộp cụ thể.",
+    },
+    fields: [
+      field("obligation_id", "string", "UUID nghĩa vụ báo cáo", {
+        filterable: true,
+      }),
+      field("submission_id", "string", "UUID bài nộp báo cáo (null nếu chưa nộp)", {
+        filterable: true,
+      }),
+      field("template_id", "string", "UUID mẫu báo cáo"),
+      field("template_code", "string", "Mã mẫu báo cáo"),
+      field("template_display_name", "string", "Tên hiển thị mẫu báo cáo"),
+      field(
+        "template_schema_json",
+        "json",
+        "Schema cấu trúc các mục/trường câu hỏi của phiên bản mẫu báo cáo",
+      ),
+      field("assignee_app_user_id", "string", "UUID nhân sự được giao báo cáo"),
+      field("snapshot_team_id", "string", "UUID nhóm tại thời điểm sinh nghĩa vụ"),
+      field("snapshot_team_code", "string", "Mã nhóm tại thời điểm sinh nghĩa vụ"),
+      field(
+        "snapshot_team_display_name",
+        "string",
+        "Tên nhóm tại thời điểm sinh nghĩa vụ",
+      ),
+      field("period_key", "string", "Mã kỳ báo cáo"),
+      field("period_start_date", "date", "Ngày bắt đầu kỳ báo cáo (YYYY-MM-DD)"),
+      field("period_end_date", "date", "Ngày kết thúc kỳ báo cáo (YYYY-MM-DD)"),
+      field("due_at", "datetime", "Thời điểm hạn nộp (ISO-8601)"),
+      field(
+        "obligation_status",
+        "string",
+        "Trạng thái nghĩa vụ: ACTIVE | EXEMPTED | CANCELLED",
+      ),
+      field("reopened_until", "datetime", "Thời điểm gia hạn mở lại (nếu có)"),
+      field("is_overdue", "boolean", "Nghĩa vụ đang quá hạn chưa hoàn thành hay không"),
+      field(
+        "submission_state",
+        "string",
+        "Trạng thái bài nộp: NOT_STARTED | DRAFT | COMPLETED | PENDING_REVIEW | APPROVED | REJECTED",
+      ),
+      field("first_submitted_at", "datetime", "Thời điểm nộp lần đầu"),
+      field("latest_submitted_at", "datetime", "Thời điểm nộp gần nhất"),
+      field("is_late", "boolean", "Bài nộp bị trễ hạn hay không"),
+      field(
+        "has_post_deadline_amendment",
+        "boolean",
+        "Có chỉnh sửa lại sau thời điểm hạn nộp hay không",
+      ),
+      field("current_revision_id", "string", "UUID phiên bản bài nộp hiện hành"),
+      field("current_revision_no", "integer", "Số thứ tự lần nộp mới nhất"),
+      field("revision_count", "integer", "Tổng số lần đã nộp (revisions)"),
+      field(
+        "latest_payload_json",
+        "json",
+        "Nội dung câu trả lời đã nộp ở revision mới nhất (nhạy cảm free_text: chỉ trả khi liệt kê tường minh trong fields)",
+        {
+          sensitive: true,
+          sensitivity_class: "free_text",
+        },
+      ),
+      field(
+        "revisions",
+        "json",
+        "Danh sách lịch sử các lần nộp kèm payload_json từng lần (nhạy cảm free_text: chỉ trả khi liệt kê tường minh trong fields)",
+        {
+          sensitive: true,
+          sensitivity_class: "free_text",
+        },
+      ),
+      field(
+        "latest_review_event",
+        "json",
+        "Kết quả phê duyệt/từ chối gần nhất kèm lý do (nhạy cảm free_text: chỉ trả khi liệt kê tường minh trong fields)",
+        {
+          sensitive: true,
+          sensitivity_class: "free_text",
+        },
+      ),
+    ],
+    measures: [
+      {
+        name: "revision_count",
+        type: "integer",
+        label: "Số lần đã nộp của bài báo cáo",
+        formula: "COUNT(revisions)",
+        description: "Tổng số revision đã nộp của nghĩa vụ báo cáo này.",
+        business_limits: "Bằng 0 nếu nghĩa vụ chưa được nộp lần nào.",
+      },
+    ],
+    dimensions: [],
+    filters: [
+      {
+        field: "obligation_id",
+        type: "string",
+        allowed_operators: ["eq"],
+        description:
+          "UUID nghĩa vụ báo cáo cần xem chi tiết (bắt buộc truyền obligation_id hoặc submission_id).",
+      },
+      {
+        field: "submission_id",
+        type: "string",
+        allowed_operators: ["eq"],
+        description:
+          "UUID bài nộp báo cáo cần xem chi tiết (có thể truyền thay cho obligation_id).",
+      },
+    ],
+    allowed_relations: [
+      {
+        target_dataset: "work_reports_templates",
+        local_field: "template_id",
+        target_field: "template_id",
+        cardinality: "many_to_one",
+        description: "Liên kết tới mẫu báo cáo.",
+      },
+      {
+        target_dataset: "work_reports_submissions",
+        local_field: "obligation_id",
+        target_field: "obligation_id",
+        cardinality: "one_to_one",
+        description: "Liên kết tới dòng bài nộp trong danh sách bài nộp.",
+      },
+    ],
+    pagination: {
+      strategy: "none",
+      default_page_size: 1,
+      max_page_size: 1,
+    },
+    business_rules: [
+      "Bắt buộc truyền filter obligation_id (eq) hoặc submission_id (eq) để truy vấn đúng 1 bài nộp cụ thể; không hỗ trợ tải hàng loạt.",
+      "Không bao giờ trả draft_payload_json chưa nộp; chỉ trả các nội dung đã thực sự submit trong latest_payload_json và revisions.",
+      "Các trường latest_payload_json, revisions và latest_review_event thuộc phân loại nhạy cảm free_text nên cần liệt kê tường minh trong QuerySpec.fields khi cần đọc nội dung câu trả lời.",
     ],
   },
   {
@@ -3465,7 +3635,7 @@ export function getN8nBodCatalog(
         "METADATA_ONLY_NO_BULK_MEDIA: Ảnh CCCD, ảnh chân dung, ảnh chấm công và tệp chứng từ tài chính không bao giờ được trả hàng loạt trong /query; chỉ trả các cờ/đếm metadata.",
       multi_query_guidance: [
         "Để trả lời câu hỏi theo tên dự án, nhóm, người tuyển hoặc Vendor khi chưa biết ID, hãy gọi catalog_projects / catalog_teams / catalog_recruiters / catalog_vendors trước để lấy ID chuẩn, sau đó gọi dataset nghiệp vụ.",
-        "Để trả lời câu hỏi về Báo cáo công việc (work_reports), hãy gọi work_reports_templates hoặc work_reports_assignments trước để biết template_id, sau đó gọi work_reports_analytics hoặc work_reports_submissions.",
+        "Để trả lời câu hỏi về Báo cáo công việc (work_reports), hãy gọi work_reports_templates hoặc work_reports_assignments trước để biết template_id, sau đó gọi work_reports_analytics hoặc work_reports_submissions. Khi cần đọc nội dung câu trả lời chi tiết của một bài nộp cụ thể, hãy gọi work_reports_submission_detail theo obligation_id (hoặc submission_id) và chọn trường latest_payload_json / revisions.",
         "Để trả lời câu hỏi liên domain (ví dụ: so sánh tuyển dụng, lực lượng lao động đang ON và chi phí Vendor của cùng một dự án), hãy thực hiện nhiều truy vấn /query độc lập với cùng project_id rồi tổng hợp theo khóa dự án.",
         "Khi phân tích tài chính Vendor cho BoD, luôn giữ nguyên ngữ cảnh Dự án + Kế toán phụ trách (project_id + responsible_accountant_user_id); tuyệt đối không tự cộng bù trừ số dư dương của kế toán này với số dư âm của kế toán khác.",
       ],

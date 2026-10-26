@@ -40,6 +40,7 @@ import {
   WORK_REPORT_READABLE_STATES,
   type WorkReportReadableState,
 } from "../../work-reports/report-reader-repository.ts";
+import { createSubmissionRepository } from "../../work-reports/submission-repository.ts";
 import { createWorkReportTemplateRepository } from "../../work-reports/template-repository.ts";
 import { createOffboardingReportRepository } from "../../workforce/offboarding-report-repository.ts";
 import { runWithSupabaseAbortSignal } from "../../supabase/server.ts";
@@ -153,7 +154,7 @@ export type N8nDatasetAdapter = (
   | { ok: true; data: N8nAdapterExecutionResult }
   | {
       ok: false;
-      status: 400 | 404 | 422 | 503;
+      status: 400 | 403 | 404 | 422 | 503;
       code: string;
       message: string;
       details?: Record<string, unknown>;
@@ -209,6 +210,7 @@ export type N8nDispatcherDependencies = {
   workReportTemplateRepo?: ReturnType<typeof createWorkReportTemplateRepository>;
   workReportAssignmentRepo?: ReturnType<typeof createAssignmentRepository>;
   workReportReaderRepo?: ReturnType<typeof createReportReaderRepository>;
+  workReportSubmissionRepo?: ReturnType<typeof createSubmissionRepository>;
   workReportAnalyticsRepo?: ReturnType<typeof createAnalyticsRepository>;
 };
 
@@ -516,6 +518,8 @@ function createDefaultAdapters(
     deps.workReportAssignmentRepo ?? createAssignmentRepository();
   const workReportReaderRepo =
     deps.workReportReaderRepo ?? createReportReaderRepository();
+  const workReportSubmissionRepo =
+    deps.workReportSubmissionRepo ?? createSubmissionRepository();
   const workReportAnalyticsRepo =
     deps.workReportAnalyticsRepo ?? createAnalyticsRepository();
 
@@ -2602,17 +2606,40 @@ function createDefaultAdapters(
       }
 
       let detailByAssignmentId = new Map<string, readonly unknown[]>();
-      if (assignmentId && workReportAssignmentRepo.getAssignmentDetail) {
+      if (assignmentId) {
+        if (!workReportAssignmentRepo.getAssignmentDetail) {
+          return {
+            ok: false,
+            status: 503,
+            code: "WORK_REPORT_ASSIGNMENT_DETAIL_UNAVAILABLE",
+            message:
+              "Không thể truy vấn chi tiết tiến độ giao báo cáo công việc theo assignment_id.",
+          };
+        }
         const detailRes = await workReportAssignmentRepo.getAssignmentDetail({
           auth_subject: actor.auth_subject,
           app_user_id: actor.app_user_id,
           assignment_id: assignmentId,
         });
-        if (detailRes.ok) {
-          detailByAssignmentId = new Map([
-            [detailRes.data.assignment_id, detailRes.data.assignee_progress],
-          ]);
+        if (!detailRes.ok) {
+          return {
+            ok: false,
+            status:
+              detailRes.kind === "not-found"
+                ? 404
+                : detailRes.kind === "denied"
+                  ? 403
+                  : detailRes.kind === "invalid"
+                    ? 400
+                    : 503,
+            code: `WORK_REPORT_ASSIGNMENT_DETAIL_${detailRes.kind.toUpperCase()}`,
+            message:
+              "Không thể truy vấn chi tiết tiến độ giao báo cáo công việc theo assignment_id.",
+          };
         }
+        detailByAssignmentId = new Map([
+          [detailRes.data.assignment_id, detailRes.data.assignee_progress],
+        ]);
       }
 
       const search = findSearchFilterString(spec.filters, "search")?.toLowerCase();
@@ -2795,6 +2822,170 @@ function createDefaultAdapters(
           has_more: outcome.data.has_more,
           next_cursor: nextCursor,
           total_matching: null,
+        },
+      };
+    },
+
+    async work_reports_submission_detail(spec, { actor, businessDate }) {
+      const targetId =
+        findEqFilterString(spec.filters, "obligation_id") ??
+        findEqFilterString(spec.filters, "submission_id");
+      if (!targetId) {
+        return {
+          ok: false,
+          status: 400,
+          code: "MISSING_REQUIRED_FILTER",
+          message:
+            "Bắt buộc truyền filter obligation_id (eq) hoặc submission_id (eq) để xem chi tiết một bài nộp cụ thể.",
+        };
+      }
+
+      const outcome = await workReportSubmissionRepo.get({
+        auth_subject: actor.auth_subject,
+        app_user_id: actor.app_user_id,
+        obligation_id: targetId,
+      });
+
+      if (!outcome.ok) {
+        return {
+          ok: false,
+          status:
+            outcome.kind === "not-found"
+              ? 404
+              : outcome.kind === "denied"
+                ? 403
+                : outcome.kind === "invalid"
+                  ? 400
+                  : 503,
+          code: `WORK_REPORT_SUBMISSION_DETAIL_${outcome.kind.toUpperCase()}`,
+          message: "Không thể truy vấn chi tiết nội dung bài nộp báo cáo công việc.",
+        };
+      }
+
+      const detail = outcome.data;
+      const obligation = isRecord(detail.obligation) ? detail.obligation : {};
+      const submission = isRecord(detail.submission) ? detail.submission : null;
+      const sortedRevisions = [...(detail.revisions ?? [])].sort(
+        (a, b) => b.revision_no - a.revision_no,
+      );
+      const latestRevision = sortedRevisions[0] ?? null;
+
+      const row: Record<string, unknown> = {
+        obligation_id:
+          typeof obligation.obligation_id === "string"
+            ? obligation.obligation_id
+            : targetId,
+        submission_id:
+          submission && typeof submission.submission_id === "string"
+            ? submission.submission_id
+            : null,
+        template_id:
+          typeof obligation.template_id === "string"
+            ? obligation.template_id
+            : null,
+        template_code: detail.template.template_code,
+        template_display_name: detail.template.display_name,
+        template_schema_json: detail.template.schema_json,
+        assignee_app_user_id:
+          typeof obligation.assignee_app_user_id === "string"
+            ? obligation.assignee_app_user_id
+            : null,
+        snapshot_team_id:
+          typeof obligation.snapshot_team_id === "string"
+            ? obligation.snapshot_team_id
+            : null,
+        snapshot_team_code:
+          typeof obligation.snapshot_team_code === "string"
+            ? obligation.snapshot_team_code
+            : null,
+        snapshot_team_display_name:
+          typeof obligation.snapshot_team_display_name === "string"
+            ? obligation.snapshot_team_display_name
+            : null,
+        period_key:
+          typeof obligation.period_key === "string"
+            ? obligation.period_key
+            : null,
+        period_start_date:
+          typeof obligation.period_start_date === "string"
+            ? obligation.period_start_date
+            : null,
+        period_end_date:
+          typeof obligation.period_end_date === "string"
+            ? obligation.period_end_date
+            : null,
+        due_at:
+          typeof obligation.due_at === "string" ? obligation.due_at : null,
+        obligation_status:
+          typeof obligation.obligation_status === "string"
+            ? obligation.obligation_status
+            : null,
+        reopened_until:
+          typeof obligation.reopened_until === "string"
+            ? obligation.reopened_until
+            : null,
+        is_overdue: Boolean(obligation.is_overdue),
+        submission_state:
+          submission && typeof submission.state === "string"
+            ? submission.state
+            : "NOT_STARTED",
+        first_submitted_at:
+          submission && typeof submission.first_submitted_at === "string"
+            ? submission.first_submitted_at
+            : null,
+        latest_submitted_at:
+          submission && typeof submission.latest_submitted_at === "string"
+            ? submission.latest_submitted_at
+            : null,
+        is_late: submission ? Boolean(submission.is_late) : false,
+        has_post_deadline_amendment: submission
+          ? Boolean(submission.has_post_deadline_amendment)
+          : false,
+        current_revision_id:
+          submission && typeof submission.current_revision_id === "string"
+            ? submission.current_revision_id
+            : null,
+        current_revision_no: latestRevision ? latestRevision.revision_no : null,
+        revision_count: sortedRevisions.length,
+        latest_payload_json: latestRevision
+          ? latestRevision.payload_json
+          : null,
+        revisions: sortedRevisions.map((rev) => ({
+          revision_id: rev.revision_id,
+          revision_no: rev.revision_no,
+          payload_json: rev.payload_json,
+          created_at: rev.created_at,
+        })),
+        latest_review_event: detail.latest_review_event ?? null,
+      };
+
+      return {
+        ok: true,
+        data: {
+          as_of_date:
+            (typeof obligation.period_end_date === "string"
+              ? obligation.period_end_date
+              : null) ?? businessDate,
+          date_range: {
+            from:
+              typeof obligation.period_start_date === "string"
+                ? obligation.period_start_date
+                : null,
+            to:
+              typeof obligation.period_end_date === "string"
+                ? obligation.period_end_date
+                : null,
+          },
+          summary: {
+            revision_count: sortedRevisions.length,
+          },
+          rows: [row],
+          has_more: false,
+          next_cursor: null,
+          total_matching: 1,
+          notes: [
+            "Để đọc nội dung câu trả lời đã nộp (latest_payload_json, revisions, latest_review_event), hãy liệt kê tường minh các trường này trong QuerySpec.fields. Bản nháp chưa nộp (draft_payload_json) không bao giờ được công bố.",
+          ],
         },
       };
     },

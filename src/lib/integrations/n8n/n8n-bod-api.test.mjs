@@ -163,29 +163,43 @@ test("resolveN8nBodServiceActor requires explicit N8N_BOD_READONLY_AUTH_SUBJECT 
   assert.equal(mismatchedAppUser.ok, false);
   assert.equal(mismatchedAppUser.code, "SERVICE_PRINCIPAL_ACTOR_UNAVAILABLE");
 
-  // 4. Explicit authSubject verified with enabled=true and active all_scope_grants succeeds
-  clearN8nServiceActorCache();
+  // 4. Explicit authSubject verified with enabled=true and active all_scope_grants succeeds,
+  // and re-verifies on EVERY subsequent request (no 5-minute cache window when all scope is revoked)
   let rpcCallCount = 0;
+  let allScopeRevoked = false;
+  const resolveRpc = async (authSubject) => {
+    rpcCallCount += 1;
+    return {
+      data: {
+        auth_subject: authSubject,
+        app_user_id: TEST_ENV.appUserId,
+        enabled: true,
+        capabilities: ["entry_admin", "report_view"],
+        all_scope_grants: allScopeRevoked
+          ? []
+          : [{ valid_from: "2026-01-01", valid_to: null }],
+      },
+      error: null,
+    };
+  };
+
   const verified = await resolveN8nBodServiceActor({
     env: TEST_ENV,
-    resolveActorContextRpc: async (authSubject) => {
-      rpcCallCount += 1;
-      return {
-        data: {
-          auth_subject: authSubject,
-          app_user_id: TEST_ENV.appUserId,
-          enabled: true,
-          capabilities: ["entry_admin", "report_view"],
-          all_scope_grants: [{ valid_from: "2026-01-01", valid_to: null }],
-        },
-        error: null,
-      };
-    },
+    resolveActorContextRpc: resolveRpc,
   });
   assert.equal(verified.ok, true);
   assert.equal(rpcCallCount, 1);
   assert.deepEqual(verified.actor, TEST_ACTOR);
-  clearN8nServiceActorCache();
+
+  // Immediately revoke all scope WITHOUT calling clearN8nServiceActorCache()
+  allScopeRevoked = true;
+  const afterRevoke = await resolveN8nBodServiceActor({
+    env: TEST_ENV,
+    resolveActorContextRpc: resolveRpc,
+  });
+  assert.equal(rpcCallCount, 2, "Must re-verify actor on every call without TTL caching");
+  assert.equal(afterRevoke.ok, false);
+  assert.equal(afterRevoke.code, "SERVICE_PRINCIPAL_ACTOR_UNAVAILABLE");
 });
 
 test("GET /api/integrations/n8n/v1/catalog returns complete versioned catalog including active work_reports domain", async () => {
@@ -231,6 +245,7 @@ test("GET /api/integrations/n8n/v1/catalog returns complete versioned catalog in
     "work_reports_templates",
     "work_reports_assignments",
     "work_reports_submissions",
+    "work_reports_submission_detail",
     "work_reports_analytics",
   ];
   assert.deepEqual(datasetNames, expectedDatasets);
@@ -1615,7 +1630,167 @@ test("Work Reports domain datasets (templates, assignments, submissions, analyti
   assert.equal(subBody.rows.length, 1);
   assert.equal(subBody.rows[0].assignee_display_name, "Nguyễn Văn Tuyển");
 
-  // 4. work_reports_analytics
+  // 4. work_reports_assignments fails closed when getAssignmentDetail returns an error
+  const failingAssignDeps = {
+    ...dispatcherDeps,
+    workReportAssignmentRepo: {
+      ...dispatcherDeps.workReportAssignmentRepo,
+      getAssignmentDetail: async () => ({
+        ok: false,
+        kind: "unavailable",
+      }),
+    },
+  };
+  const assignFailRes = await handleN8nBodQueryPost(
+    makeQueryRequest({
+      dataset: "work_reports_assignments",
+      filters: [{ field: "assignment_id", op: "eq", value: ASSIGNMENT_ID }],
+    }),
+    { env: TEST_ENV, dispatcherDeps: failingAssignDeps },
+  );
+  assert.equal(assignFailRes.status, 503);
+  const assignFailBody = await assignFailRes.json();
+  assert.equal(assignFailBody.ok, false);
+  assert.equal(
+    assignFailBody.error.code,
+    "WORK_REPORT_ASSIGNMENT_DETAIL_UNAVAILABLE",
+  );
+
+  // 5. work_reports_submission_detail reads single-submission answers (redacting free_text by default, returning when requested, never leaking draft_payload_json)
+  const OBLIGATION_ID = "66666666-7777-4888-8999-000000000001";
+  const SUBMISSION_ID = "77777777-8888-4999-8000-000000000002";
+  const detailDeps = {
+    ...dispatcherDeps,
+    workReportSubmissionRepo: {
+      get: async ({ obligation_id }) => ({
+        ok: true,
+        data: {
+          obligation: {
+            obligation_id,
+            template_id: TEMPLATE_ID,
+            assignee_app_user_id: ASSIGNEE_ID,
+            snapshot_team_id: TEAM_ID,
+            snapshot_team_code: "TEAM_NORTH",
+            snapshot_team_display_name: "Nhóm Tuyển dụng Miền Bắc",
+            period_key: "2026-10-25",
+            period_start_date: "2026-10-25",
+            period_end_date: "2026-10-25",
+            due_at: "2026-10-25T10:30:00Z",
+            obligation_status: "ACTIVE",
+            reopened_until: null,
+            is_overdue: false,
+            version: 1,
+          },
+          template: {
+            template_code: "DAILY_RECRUITMENT",
+            display_name: "Báo cáo Tuyển dụng Hàng ngày",
+            schema_json: {
+              sections: [
+                {
+                  key: "outreach",
+                  title: "Tiếp cận ứng viên",
+                  fields: [
+                    { key: "calls_made", label: "Số cuộc gọi", type: "number" },
+                    { key: "blockers", label: "Khó khăn trong ngày", type: "textarea" },
+                  ],
+                },
+              ],
+            },
+          },
+          submission: {
+            submission_id: SUBMISSION_ID,
+            state: "APPROVED",
+            draft_payload_json: { calls_made: 999, blockers: "Bản nháp chưa nộp không được lộ" },
+            first_submitted_at: "2026-10-25T08:30:00Z",
+            latest_submitted_at: "2026-10-25T09:00:00Z",
+            is_late: false,
+            has_post_deadline_amendment: false,
+            current_revision_id: "88888888-9999-4000-8111-000000000003",
+            version: 2,
+          },
+          latest_review_event: {
+            decision: "APPROVED",
+            reason: "Số liệu khớp CRM",
+            reviewed_at: "2026-10-25T09:30:00Z",
+          },
+          revisions: [
+            {
+              revision_id: "88888888-9999-4000-8111-000000000002",
+              revision_no: 1,
+              payload_json: { calls_made: 20, blockers: "Không" },
+              created_at: "2026-10-25T08:30:00Z",
+            },
+            {
+              revision_id: "88888888-9999-4000-8111-000000000003",
+              revision_no: 2,
+              payload_json: { calls_made: 25, blockers: "Thiếu data khu vực Bắc Ninh" },
+              created_at: "2026-10-25T09:00:00Z",
+            },
+          ],
+        },
+      }),
+    },
+  };
+
+  // 5a. Missing obligation_id / submission_id filter is rejected with 400 MISSING_REQUIRED_FILTER
+  const detailMissingFilterRes = await handleN8nBodQueryPost(
+    makeQueryRequest({
+      dataset: "work_reports_submission_detail",
+    }),
+    { env: TEST_ENV, dispatcherDeps: detailDeps },
+  );
+  assert.equal(detailMissingFilterRes.status, 400);
+  const detailMissingFilterBody = await detailMissingFilterRes.json();
+  assert.equal(detailMissingFilterBody.error.code, "MISSING_REQUIRED_FILTER");
+
+  // 5b. Default fields return metadata + template_schema_json while redacting free_text payload fields
+  const detailDefaultRes = await handleN8nBodQueryPost(
+    makeQueryRequest({
+      dataset: "work_reports_submission_detail",
+      filters: [{ field: "obligation_id", op: "eq", value: OBLIGATION_ID }],
+    }),
+    { env: TEST_ENV, dispatcherDeps: detailDeps },
+  );
+  assert.equal(detailDefaultRes.status, 200);
+  const detailDefaultBody = await detailDefaultRes.json();
+  assert.equal(detailDefaultBody.rows.length, 1);
+  assert.equal(detailDefaultBody.rows[0].obligation_id, OBLIGATION_ID);
+  assert.equal(detailDefaultBody.rows[0].submission_state, "APPROVED");
+  assert.equal(detailDefaultBody.rows[0].revision_count, 2);
+  assert.ok(detailDefaultBody.rows[0].template_schema_json);
+  assert.equal("latest_payload_json" in detailDefaultBody.rows[0], false);
+  assert.equal("revisions" in detailDefaultBody.rows[0], false);
+  assert.equal("latest_review_event" in detailDefaultBody.rows[0], false);
+  assert.equal("draft_payload_json" in detailDefaultBody.rows[0], false);
+
+  // 5c. Explicit fields return latest_payload_json, revisions, and latest_review_event
+  const detailFullRes = await handleN8nBodQueryPost(
+    makeQueryRequest({
+      dataset: "work_reports_submission_detail",
+      filters: [{ field: "obligation_id", op: "eq", value: OBLIGATION_ID }],
+      fields: [
+        "obligation_id",
+        "submission_id",
+        "latest_payload_json",
+        "revisions",
+        "latest_review_event",
+      ],
+    }),
+    { env: TEST_ENV, dispatcherDeps: detailDeps },
+  );
+  assert.equal(detailFullRes.status, 200);
+  const detailFullBody = await detailFullRes.json();
+  assert.equal(detailFullBody.rows.length, 1);
+  assert.deepEqual(detailFullBody.rows[0].latest_payload_json, {
+    calls_made: 25,
+    blockers: "Thiếu data khu vực Bắc Ninh",
+  });
+  assert.equal(detailFullBody.rows[0].revisions.length, 2);
+  assert.equal(detailFullBody.rows[0].revisions[0].revision_no, 2);
+  assert.equal(detailFullBody.rows[0].latest_review_event.decision, "APPROVED");
+  assert.equal("draft_payload_json" in detailFullBody.rows[0], false);
+
+  // 6. work_reports_analytics
   const anaRes = await handleN8nBodQueryPost(
     makeQueryRequest({
       dataset: "work_reports_analytics",
