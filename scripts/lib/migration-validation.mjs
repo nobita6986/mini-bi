@@ -230,6 +230,23 @@ export const VFIN_03_CONTRACT_TYPE_LEDGERS_RPC_SIGNATURES = Object.freeze([
   "public.vendor_finance_assign_global_role_admin(uuid, uuid, uuid, text, integer, date, text, uuid, text)",
   "public.vendor_finance_end_global_role_admin(uuid, uuid, uuid, integer, date, text, uuid, text)",
 ]);
+export const LEAVE_MANAGEMENT_WP1_MIGRATION_NAME =
+  "20261027120000_leave_management_wp1_foundation.sql";
+export const LEAVE_MANAGEMENT_WP1_RPC_SIGNATURES = Object.freeze([
+  "public.leave_management_get_my_summary(uuid, uuid, integer)",
+  "public.leave_management_create_request(uuid, uuid, jsonb, text, text, text)",
+  "public.leave_management_withdraw_request(uuid, uuid, uuid, integer, text, text, text)",
+  "public.leave_management_list_approval_inbox(uuid, uuid, text, integer, integer)",
+  "public.leave_management_decide_request(uuid, uuid, uuid, text, integer, text, text, text)",
+  "public.leave_management_get_admin_overview(uuid, uuid, text, integer, integer)",
+  "public.leave_management_update_policy_admin(uuid, uuid, integer, integer, integer, text, text, text)",
+  "public.leave_management_upsert_employee_profile_admin(uuid, uuid, uuid, boolean, text, text, date, date, date, integer, integer, text, text, text)",
+  "public.leave_management_set_department_approver_admin(uuid, uuid, text, uuid, date, integer, text, text, text)",
+  "public.leave_management_manage_module_grant_admin(uuid, uuid, text, uuid, text, integer, text, text, text)",
+  "public.leave_management_preview_opening_batch(uuid, uuid, integer, jsonb)",
+  "public.leave_management_apply_opening_batch(uuid, uuid, integer, jsonb, text, text, text)",
+  "public.leave_management_monthly_report(uuid, uuid, text, text, text, integer, integer)",
+]);
 export const F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES = Object.freeze([
   "public.work_report_list_templates(uuid, uuid)",
   "public.work_report_get_template(uuid, uuid, uuid)",
@@ -248,7 +265,7 @@ export const F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES = Object.freeze([
   "public.work_report_submit(uuid, uuid, uuid, jsonb, integer, text)",
 ]);
 export const S0_T1_C_TARGET_ROUTINE_PATTERN =
-  "^(direct_entry_|work_report_|attendance_|org_department_|vendor_finance_|ai_report_|ai_provider_config_|recruitment_|(expand|replace|reject|upsert)_daily_recruitment|record_recruitment_source_failure_|set_updated_at$)";
+  "^(direct_entry_|work_report_|attendance_|org_department_|vendor_finance_|leave_management_|ai_report_|ai_provider_config_|recruitment_|(expand|replace|reject|upsert)_daily_recruitment|record_recruitment_source_failure_|set_updated_at$)";
 
 export function migrationChecksum(text) {
   // Git may materialize SQL files as CRLF on Windows even though the same
@@ -462,7 +479,8 @@ export async function verifyS0T1CHistoricalCompatibility(
     preWave2CccdReviewApplied = false,
     cccdReviewManualResolutionApplied = false,
     workReportsAndroidSyncAndUxApplied = false,
-    adminLinkExistingPersonnelAccountApplied = false } = {},
+    adminLinkExistingPersonnelAccountApplied = false,
+    leaveManagementWp1Applied = false } = {},
 ) {
   const baseAllowlist = extractS0T1CAllowlistSignatures(migrationSql);
   if (baseAllowlist.length === 0) {
@@ -520,6 +538,9 @@ export async function verifyS0T1CHistoricalCompatibility(
       : []),
     ...(adminLinkExistingPersonnelAccountApplied
       ? ADMIN_LINK_EXISTING_PERSONNEL_ACCOUNT_RPC_SIGNATURES
+      : []),
+    ...(leaveManagementWp1Applied
+      ? LEAVE_MANAGEMENT_WP1_RPC_SIGNATURES
       : []),
   ];
 
@@ -579,7 +600,7 @@ export async function verifyS0T1CHistoricalCompatibility(
           join pg_catalog.pg_namespace n on n.oid = p.pronamespace
          where n.nspname = 'public'
            and p.prokind in ('f', 'p')
-           and p.proname ~ '^(direct_entry_|attendance_|org_department_|vendor_finance_)'
+           and p.proname ~ '^(direct_entry_|attendance_|org_department_|vendor_finance_|leave_management_)'
            and p.prosecdef
            and not coalesce(
              'search_path=pg_catalog, public' = any(p.proconfig)
@@ -757,6 +778,8 @@ export async function verifyAppliedMigrationChecksum(
           appliedMap.has(WORK_REPORTS_ANDROID_SYNC_AND_UX_MIGRATION_NAME),
         adminLinkExistingPersonnelAccountApplied:
           appliedMap.has(ADMIN_LINK_EXISTING_PERSONNEL_ACCOUNT_MIGRATION_NAME),
+        leaveManagementWp1Applied:
+          appliedMap.has(LEAVE_MANAGEMENT_WP1_MIGRATION_NAME),
       },
     );
     if (postconditions.ok) {

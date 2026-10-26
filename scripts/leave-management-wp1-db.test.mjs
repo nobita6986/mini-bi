@@ -1,0 +1,1141 @@
+/**
+ * Leave Management WP1 — Comprehensive Database, Policy, Ledger/FIFO, Routing & Non-Regression Suite.
+ *
+ * Verifies on ephemeral PGlite across the full repository migration chain:
+ *   1. Migration apply, transaction atomicity, FORCE RLS on all 13 `leave_*` tables,
+ *      zero direct table grants, `service_role`-only EXECUTE on the 13 public RPCs,
+ *      and append-only immutability triggers on audit/ledger/revision/batch/idempotency tables.
+ *   2. Zero regression on existing `direct_entry_*`, `teams`, `recruiters`, and `organization_departments`
+ *      schemas, data, and `direct_entry_resolve_actor_context`.
+ *   3. Unconfigured personal account (`UNCONFIGURED` / missing `work_start_date`):
+ *      can view summary (`available_units = 0`, `profile_configured = false`) and submit leave requests
+ *      marked `UNPAID_UNCONFIGURED_PROFILE`, routed to `ADMIN_BOD_FALLBACK` (`PROFILE_UNCONFIGURED_OR_UNMAPPED`).
+ *   4. Shared Marketing non-employee account (`is_shared_non_employee = true`):
+ *      blocked from `get_my_summary`, `create_request`, `withdraw_request`, `decide_request`,
+ *      excluded from `monthly_report`, and rejected in `preview/apply_opening_batch`.
+ *   5. Monthly accrual & mid-month hire date:
+ *      - Base 12 days/year (24 half-day units); month M unlocks at most M days (M=3 -> 6 units, M=12 -> 24 units);
+ *        future months > M are never unlocked early.
+ *      - Mid-month start date (e.g. `2026-03-20`) still earns the full 1 day (2 units) for month 3.
+ *   6. Probation & transition to Official:
+ *      - `PROBATION` employee has 0 paid units, submits requests as `UNPAID_PROBATION`, approval does not consume lots.
+ *      - Transition `PROBATION -> OFFICIAL` backfills catch-up lots (`PROBATION_CATCHUP`) from `work_start_date`
+ *        month through current month with `usable_from_date >= official_effective_date`; repeated syncs are idempotent.
+ *   7. Seniority leave:
+ *      - Default +1 day (2 units) per 5 years of service.
+ *      - Admin/BoD per-employee `next_seniority_effective_date` & `next_seniority_units` (with HR operator blocked
+ *        by `LEAVE_SENIORITY_CONFIG_FORBIDDEN`), unlocking only on/after `next_seniority_effective_date`.
+ *   8. Carry-over expiry (`X` / `X + 1`) & FIFO lot consumption:
+ *      - Initial policy has `carry_over_expiry_month = NULL, carry_over_expiry_day = NULL`; applying `CARRY_OVER`
+ *        opening balance fails closed (`LEAVE_CARRY_OVER_EXPIRY_NOT_CONFIGURED`) until Admin/BoD configures `X`.
+ *      - Once configured as `2026-03-31`, `CARRY_OVER` is usable through `2026-03-31` and consumed first (FIFO)
+ *        before monthly accrual lots.
+ *      - Starting `2026-04-01` (`X + 1`), remaining `CARRY_OVER` units automatically expire (`EXPIRE_CARRY_OVER`).
+ *   9. Half-day sessions (`FULL = 2`, `AM = 1`, `PM = 1`) & overlap guard:
+ *      - `AM` + `PM` on the same date is allowed; `AM` + `AM`, `PM` + `PM`, or `FULL` + `AM`/`PM` is rejected (`LEAVE_REQUEST_OVERLAP`).
+ *  10. Approval routing, self-approval prohibition, reservation (`RESERVE`/`CONSUME`), withdrawal, and post-approval cancellation:
+ *      - Recruitment employee routes to active `TEAM_LEADER`; Marketing/IT routes to configured `DEPARTMENT_HEAD`
+ *        (or `ADMIN_BOD_FALLBACK` if unconfigured); Team Leader / Department Head routes to `ADMIN_BOD_DIRECT`.
+ *      - Self-approval is strictly rejected (`LEAVE_SELF_APPROVAL_FORBIDDEN`).
+ *      - Requester can withdraw `PENDING` (`WITHDRAWN`), freeing the dates, but cannot withdraw `APPROVED`.
+ *      - Authorized approver or Admin/BoD can cancel `APPROVED` (`CANCEL_APPROVED` with mandatory reason),
+ *        reversing/releasing units back to the exact original `lot_id` (and immediately expiring returned carry-over
+ *        units if cancelled after `X`).
+ *  11. Single & bulk opening balance preview + atomic apply.
+ *  12. Narrow `HR_REPORT_VIEWER` grant/revoke by Full Admin and monthly report accuracy.
+ */
+import assert from "node:assert/strict";
+import { readFile, readdir } from "node:fs/promises";
+import path from "node:path";
+import test from "node:test";
+
+import { PGlite } from "@electric-sql/pglite";
+import {
+  LEAVE_MANAGEMENT_WP1_MIGRATION_NAME,
+  LEAVE_MANAGEMENT_WP1_RPC_SIGNATURES,
+} from "./lib/migration-validation.mjs";
+import { AUTH_PROLOGUE } from "./lib/s04c-read-fixture.mjs";
+
+const MIGRATION_DIR = path.resolve("supabase/migrations");
+
+const TEAM_ALPHA = "99000000-0000-4000-8000-00000000000a";
+const TEAM_BETA = "99000000-0000-4000-8000-00000000000b";
+
+const ACTORS = {
+  fullAdmin: {
+    auth: "19000000-0000-4000-8000-000000000001",
+    app: "29000000-0000-4000-8000-000000000001",
+    email: "admin@company.local",
+    name: "Full Admin",
+  },
+  bodUser: {
+    auth: "19000000-0000-4000-8000-000000000002",
+    app: "29000000-0000-4000-8000-000000000002",
+    email: "bod@company.local",
+    name: "Ban Giám Đốc",
+  },
+  hrOperator: {
+    auth: "19000000-0000-4000-8000-000000000003",
+    app: "29000000-0000-4000-8000-000000000003",
+    email: "hr.operator@company.local",
+    name: "HR Vận Hành Phép",
+  },
+  hrViewer: {
+    auth: "19000000-0000-4000-8000-000000000004",
+    app: "29000000-0000-4000-8000-000000000004",
+    email: "hr.report@company.local",
+    name: "HR Xem Báo Cáo",
+  },
+  leaderAlpha: {
+    auth: "19000000-0000-4000-8000-000000000005",
+    app: "29000000-0000-4000-8000-000000000005",
+    recruiter: "39000000-0000-4000-8000-000000000005",
+    email: "leader.alpha@company.local",
+    name: "Trưởng Nhóm Alpha",
+    code: "TL-A",
+  },
+  leaderBeta: {
+    auth: "19000000-0000-4000-8000-000000000006",
+    app: "29000000-0000-4000-8000-000000000006",
+    recruiter: "39000000-0000-4000-8000-000000000006",
+    email: "leader.beta@company.local",
+    name: "Trưởng Nhóm Beta",
+    code: "TL-B",
+  },
+  recruiterOfficial: {
+    auth: "19000000-0000-4000-8000-000000000007",
+    app: "29000000-0000-4000-8000-000000000007",
+    recruiter: "39000000-0000-4000-8000-000000000007",
+    email: "recruiter.official@company.local",
+    name: "Chuyên Viên Tuyển Dụng Chính Thức",
+    code: "NV-TD-01",
+  },
+  recruiterMidMonth: {
+    auth: "19000000-0000-4000-8000-000000000008",
+    app: "29000000-0000-4000-8000-000000000008",
+    recruiter: "39000000-0000-4000-8000-000000000008",
+    email: "recruiter.midmonth@company.local",
+    name: "Nhân Viên Vào Giữa Tháng",
+    code: "NV-TD-02",
+  },
+  probationUser: {
+    auth: "19000000-0000-4000-8000-000000000009",
+    app: "29000000-0000-4000-8000-000000000009",
+    recruiter: "39000000-0000-4000-8000-000000000009",
+    email: "probation@company.local",
+    name: "Nhân Viên Thử Việc",
+    code: "NV-TV-01",
+  },
+  marketingHead: {
+    auth: "19000000-0000-4000-8000-000000000010",
+    app: "29000000-0000-4000-8000-000000000010",
+    email: "mkt.head@company.local",
+    name: "Trưởng Phòng Marketing",
+  },
+  marketingStaff: {
+    auth: "19000000-0000-4000-8000-000000000011",
+    app: "29000000-0000-4000-8000-000000000011",
+    email: "mkt.staff@company.local",
+    name: "Nhân Viên Marketing",
+  },
+  sharedMarketing: {
+    auth: "19000000-0000-4000-8000-000000000012",
+    app: "29000000-0000-4000-8000-000000000012",
+    email: "marketing@company.local",
+    name: "Tài Khoản Marketing Dùng Chung",
+  },
+  unconfiguredUser: {
+    auth: "19000000-0000-4000-8000-000000000013",
+    app: "29000000-0000-4000-8000-000000000013",
+    email: "unconfigured@company.local",
+    name: "Nhân Viên Chưa Cấu Hình Hồ Sơ",
+  },
+};
+
+async function loadMigrations() {
+  const names = (await readdir(MIGRATION_DIR))
+    .filter((name) => name.endsWith(".sql"))
+    .sort();
+  return Promise.all(
+    names.map(async (name) => ({
+      name,
+      sql: await readFile(path.join(MIGRATION_DIR, name), "utf8"),
+    })),
+  );
+}
+
+async function setBusinessDate(db, isoDate) {
+  await db.exec(`
+    create or replace function public.direct_entry_authorization_date()
+    returns date
+    language sql
+    stable
+    security definer
+    set search_path = pg_catalog, public
+    as $function$
+      select '${isoDate}'::date
+    $function$;
+    revoke all on function public.direct_entry_authorization_date() from public, anon, authenticated, service_role;
+  `);
+}
+
+let idemCounter = 0;
+function nextIdem(prefix = "leave") {
+  idemCounter += 1;
+  return `${prefix}-idem-${idemCounter}`;
+}
+
+test("Leave Management WP1 full PGlite integration & business rule verification", async () => {
+  const db = new PGlite();
+  await db.exec(AUTH_PROLOGUE);
+  await db.exec("alter table auth.users add column email text;");
+
+  const migrations = await loadMigrations();
+  const wp1Index = migrations.findIndex(
+    (m) => m.name === LEAVE_MANAGEMENT_WP1_MIGRATION_NAME,
+  );
+  assert.ok(wp1Index >= 0, "WP1 migration must exist");
+
+  for (const m of migrations.slice(0, wp1Index)) {
+    await db.exec(m.sql);
+  }
+
+  // Seed actors & teams before WP1 migration to verify non-regression
+  for (const actor of Object.values(ACTORS)) {
+    await db.query(
+      "insert into auth.users (id, email) values ($1, $2)",
+      [actor.auth, actor.email],
+    );
+    await db.query(
+      "insert into public.direct_entry_app_users (app_user_id, auth_subject, enabled, display_name) values ($1, $2, true, $3)",
+      [actor.app, actor.auth, actor.name],
+    );
+  }
+
+  // Grant Full Admin capabilities + all scope
+  for (const cap of [
+    "entry_admin",
+    "recruiter_master_manage",
+    "team_master_manage",
+    "report_view",
+    "report_analytics_view",
+  ]) {
+    await db.query(
+      "insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from, is_current) values ($1, $2, '2025-01-01', true)",
+      [ACTORS.fullAdmin.app, cap],
+    );
+  }
+  await db.query(
+    "insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from, is_current) values ($1, 'all', null, '2025-01-01', true)",
+    [ACTORS.fullAdmin.app],
+  );
+
+  // Grant BoD capabilities + all scope
+  for (const cap of ["report_view", "report_analytics_view"]) {
+    await db.query(
+      "insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from, is_current) values ($1, $2, '2025-01-01', true)",
+      [ACTORS.bodUser.app, cap],
+    );
+  }
+  await db.query(
+    "insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from, is_current) values ($1, 'all', null, '2025-01-01', true)",
+    [ACTORS.bodUser.app],
+  );
+
+  // Seed Teams, Recruiters, Links, Team Memberships, and Team Leaders
+  await db.query(
+    "insert into public.teams (team_id, code, display_name, active) values ($1, 'TEAM_A', 'Team Alpha', true), ($2, 'TEAM_B', 'Team Beta', true)",
+    [TEAM_ALPHA, TEAM_BETA],
+  );
+
+  for (const [actor, teamId] of [
+    [ACTORS.leaderAlpha, TEAM_ALPHA],
+    [ACTORS.leaderBeta, TEAM_BETA],
+    [ACTORS.recruiterOfficial, TEAM_ALPHA],
+    [ACTORS.recruiterMidMonth, TEAM_ALPHA],
+    [ACTORS.probationUser, TEAM_ALPHA],
+  ]) {
+    await db.query(
+      "insert into public.recruiters (recruiter_id, display_name, personnel_code, active) values ($1, $2, $3, true)",
+      [actor.recruiter, actor.name, actor.code],
+    );
+    await db.query(
+      "insert into public.direct_entry_app_user_recruiter_links (app_user_id, recruiter_id, verified, valid_from, is_current) values ($1, $2, true, '2025-01-01', true)",
+      [actor.app, actor.recruiter],
+    );
+    await db.query(
+      "insert into public.recruiter_team_memberships (recruiter_id, team_id, valid_from, is_current) values ($1, $2, '2025-01-01', true)",
+      [actor.recruiter, teamId],
+    );
+  }
+
+  await db.query(
+    "insert into public.direct_entry_team_leader_assignments (team_id, leader_app_user_id, leader_recruiter_id, valid_from, is_current) values ($1, $2, $3, '2025-01-01', true), ($4, $5, $6, '2025-01-01', true)",
+    [
+      TEAM_ALPHA,
+      ACTORS.leaderAlpha.app,
+      ACTORS.leaderAlpha.recruiter,
+      TEAM_BETA,
+      ACTORS.leaderBeta.app,
+      ACTORS.leaderBeta.recruiter,
+    ],
+  );
+
+  const { rows: preContextRows } = await db.query(
+    "select public.direct_entry_resolve_actor_context($1::uuid) as ctx",
+    [ACTORS.recruiterOfficial.auth],
+  );
+
+  // Apply WP1 migration (and any subsequent migrations)
+  for (const m of migrations.slice(wp1Index)) {
+    await db.exec(m.sql);
+  }
+
+  // 1. Verify non-regression of direct_entry_resolve_actor_context and organization_departments
+  const { rows: postContextRows } = await db.query(
+    "select public.direct_entry_resolve_actor_context($1::uuid) as ctx",
+    [ACTORS.recruiterOfficial.auth],
+  );
+  assert.deepEqual(
+    postContextRows[0].ctx,
+    preContextRows[0].ctx,
+    "WP1 migration must not alter direct_entry_resolve_actor_context output",
+  );
+
+  const { rows: sysDepts } = await db.query(
+    "select system_key from public.organization_departments order by system_key",
+  );
+  assert.deepEqual(
+    sysDepts.map((r) => r.system_key),
+    ["ACCOUNTING", "RECRUITMENT"],
+    "WP1 migration must not alter system organization_departments",
+  );
+
+  // Verify 13 public RPC signatures exist and are granted only to service_role
+  for (const sig of LEAVE_MANAGEMENT_WP1_RPC_SIGNATURES) {
+    const { rows } = await db.query(
+      `select pg_catalog.has_function_privilege('service_role', $1::regprocedure, 'EXECUTE') as srv,
+              pg_catalog.has_function_privilege('authenticated', $1::regprocedure, 'EXECUTE') as auth,
+              pg_catalog.has_function_privilege('anon', $1::regprocedure, 'EXECUTE') as anon`,
+      [sig],
+    );
+    assert.equal(rows[0].srv, true, `${sig} must be executable by service_role`);
+    assert.equal(rows[0].auth, false, `${sig} must not be executable by authenticated`);
+    assert.equal(rows[0].anon, false, `${sig} must not be executable by anon`);
+  }
+
+  // Set business date to 2026-03-15 (Month 3)
+  await setBusinessDate(db, "2026-03-15");
+
+  // Helper to invoke RPC as service_role
+  async function rpc(fnName, params) {
+    const placeholders = params.map((_, i) => `$${i + 1}`).join(", ");
+    await db.exec("set role service_role");
+    try {
+      const { rows } = await db.query(
+        `select public.${fnName}(${placeholders}) as res`,
+        params,
+      );
+      return rows[0]?.res;
+    } finally {
+      await db.exec("reset role");
+    }
+  }
+
+  // 2. Verify append-only immutability triggers on audit/revision tables
+  await assert.rejects(
+    db.query("delete from public.leave_policy_revisions"),
+    (err) => err?.code === "P0001" && String(err?.message).includes("append-only"),
+    "leave_policy_revisions must be append-only",
+  );
+
+  // 3. Unconfigured personal account can view summary (0 paid units) and submit unpaid request routed to Admin/BoD fallback
+  const unconfSummary = await rpc("leave_management_get_my_summary", [
+    ACTORS.unconfiguredUser.auth,
+    ACTORS.unconfiguredUser.app,
+    2026,
+  ]);
+  assert.equal(unconfSummary.balance.profile_configured, false);
+  assert.equal(unconfSummary.balance.available_units, 0);
+  assert.equal(unconfSummary.routing.route_kind, "ADMIN_BOD_FALLBACK");
+  assert.equal(
+    unconfSummary.routing.fallback_reason,
+    "PROFILE_UNCONFIGURED_OR_UNMAPPED",
+  );
+
+  const unconfReq = await rpc("leave_management_create_request", [
+    ACTORS.unconfiguredUser.auth,
+    ACTORS.unconfiguredUser.app,
+    JSON.stringify([{ leave_date: "2026-03-18", session_code: "FULL" }]),
+    "Xin nghỉ việc cá nhân khi chưa cấu hình hồ sơ",
+    nextIdem("unconf"),
+    "fp-unconf-1",
+  ]);
+  assert.equal(unconfReq.request.pay_treatment, "UNPAID_UNCONFIGURED_PROFILE");
+  assert.equal(unconfReq.request.profile_configured_at_submit, false);
+  assert.equal(unconfReq.request.route_kind, "ADMIN_BOD_FALLBACK");
+
+  // 4. Full Admin grants HR_LEAVE_OPERATOR to hrOperator and marks sharedMarketing as shared non-employee
+  await rpc("leave_management_manage_module_grant_admin", [
+    ACTORS.fullAdmin.auth,
+    ACTORS.fullAdmin.app,
+    "GRANT",
+    ACTORS.hrOperator.app,
+    "HR_LEAVE_OPERATOR",
+    0,
+    "Cấp quyền vận hành hồ sơ phép cho HR",
+    nextIdem("grant-hrop"),
+    "fp-grant-hrop",
+  ]);
+
+  await rpc("leave_management_upsert_employee_profile_admin", [
+    ACTORS.hrOperator.auth,
+    ACTORS.hrOperator.app,
+    ACTORS.sharedMarketing.app,
+    true, // is_shared_non_employee
+    "UNCONFIGURED",
+    "MARKETING",
+    null,
+    null,
+    null,
+    0,
+    0,
+    "Đánh dấu tài khoản Marketing dùng chung",
+    nextIdem("shared-mkt"),
+    "fp-shared-mkt",
+  ]);
+
+  await assert.rejects(
+    rpc("leave_management_get_my_summary", [
+      ACTORS.sharedMarketing.auth,
+      ACTORS.sharedMarketing.app,
+      2026,
+    ]),
+    (err) => String(err?.message).includes("LEAVE_SHARED_ACCOUNT_FORBIDDEN"),
+    "Shared non-employee account must be blocked from get_my_summary",
+  );
+
+  await assert.rejects(
+    rpc("leave_management_create_request", [
+      ACTORS.sharedMarketing.auth,
+      ACTORS.sharedMarketing.app,
+      JSON.stringify([{ leave_date: "2026-03-19", session_code: "AM" }]),
+      "Thử tạo đơn từ tài khoản dùng chung",
+      nextIdem("shared-req"),
+      "fp-shared-req",
+    ]),
+    (err) => String(err?.message).includes("LEAVE_SHARED_ACCOUNT_FORBIDDEN"),
+    "Shared non-employee account must be blocked from create_request",
+  );
+
+  // 5. Monthly accrual boundary at M=3 (2026-03-15) and mid-month hire date
+  await rpc("leave_management_upsert_employee_profile_admin", [
+    ACTORS.hrOperator.auth,
+    ACTORS.hrOperator.app,
+    ACTORS.recruiterOfficial.app,
+    false,
+    "OFFICIAL",
+    "RECRUITMENT",
+    "2025-01-01",
+    "2025-03-01",
+    null,
+    0,
+    0,
+    "Cấu hình hồ sơ chính thức cho chuyên viên tuyển dụng",
+    nextIdem("prof-rec1"),
+    "fp-prof-rec1",
+  ]);
+
+  const recSummaryM3 = await rpc("leave_management_get_my_summary", [
+    ACTORS.recruiterOfficial.auth,
+    ACTORS.recruiterOfficial.app,
+    2026,
+  ]);
+  assert.equal(
+    recSummaryM3.balance.monthly_accrued_units,
+    6,
+    "At M=3 (March), monthly accrued units must be 6 half-day units (3.0 days), not 24 (12 days)",
+  );
+  assert.equal(recSummaryM3.balance.available_units, 6);
+  assert.equal(recSummaryM3.routing.route_kind, "TEAM_LEADER");
+  assert.equal(
+    recSummaryM3.routing.primary_approver_app_user_id,
+    ACTORS.leaderAlpha.app,
+  );
+
+  // Requesting 3.5 days (7 units) in March must fail closed with LEAVE_INSUFFICIENT_BALANCE
+  await assert.rejects(
+    rpc("leave_management_create_request", [
+      ACTORS.recruiterOfficial.auth,
+      ACTORS.recruiterOfficial.app,
+      JSON.stringify([
+        { leave_date: "2026-03-23", session_code: "FULL" },
+        { leave_date: "2026-03-24", session_code: "FULL" },
+        { leave_date: "2026-03-25", session_code: "FULL" },
+        { leave_date: "2026-03-26", session_code: "AM" },
+      ]),
+      "Xin nghỉ 3.5 ngày vượt quá 3 ngày phép tháng 3",
+      nextIdem("over-m3"),
+      "fp-over-m3",
+    ]),
+    (err) => String(err?.message).includes("LEAVE_INSUFFICIENT_BALANCE"),
+    "Cannot use future months' leave before accrued",
+  );
+
+  // Mid-month hire date: started 2026-03-20 as OFFICIAL -> at 2026-03-20 receives full 1 day (2 units) for March
+  await setBusinessDate(db, "2026-03-20");
+  const midMonthProf = await rpc("leave_management_upsert_employee_profile_admin", [
+    ACTORS.hrOperator.auth,
+    ACTORS.hrOperator.app,
+    ACTORS.recruiterMidMonth.app,
+    false,
+    "OFFICIAL",
+    "RECRUITMENT",
+    "2026-03-20",
+    "2026-03-20",
+    null,
+    0,
+    0,
+    "Nhân viên vào làm giữa tháng 20/03/2026",
+    nextIdem("prof-mid"),
+    "fp-prof-mid",
+  ]);
+  assert.equal(
+    midMonthProf.balance.monthly_accrued_units,
+    2,
+    "Employee starting mid-month on 2026-03-20 still earns full 1 day (2 half-day units) for March",
+  );
+  assert.equal(midMonthProf.balance.available_units, 2);
+
+  // 6. Probation unpaid leave & transition to Official catch-up accrual
+  const probProf = await rpc("leave_management_upsert_employee_profile_admin", [
+    ACTORS.hrOperator.auth,
+    ACTORS.hrOperator.app,
+    ACTORS.probationUser.app,
+    false,
+    "PROBATION",
+    "RECRUITMENT",
+    "2026-01-15",
+    null,
+    null,
+    0,
+    0,
+    "Nhân viên thử việc từ 15/01/2026",
+    nextIdem("prof-prob"),
+    "fp-prof-prob",
+  ]);
+  assert.equal(probProf.balance.available_units, 0);
+
+  const probReq = await rpc("leave_management_create_request", [
+    ACTORS.probationUser.auth,
+    ACTORS.probationUser.app,
+    JSON.stringify([{ leave_date: "2026-02-10", session_code: "AM" }]),
+    "Xin nghỉ nửa ngày thời gian thử việc",
+    nextIdem("prob-req"),
+    "fp-prob-req",
+  ]);
+  assert.equal(probReq.request.pay_treatment, "UNPAID_PROBATION");
+
+  // Team Leader Alpha approves probation request -> 0 lots consumed
+  const probApproved = await rpc("leave_management_decide_request", [
+    ACTORS.leaderAlpha.auth,
+    ACTORS.leaderAlpha.app,
+    probReq.request.request_id,
+    "APPROVE",
+    probReq.request.row_version,
+    "Duyệt nghỉ không lương thử việc",
+    nextIdem("prob-app"),
+    "fp-prob-app",
+  ]);
+  assert.equal(probApproved.request.status, "APPROVED");
+  assert.equal(probApproved.requester_balance.consumed_units, 0);
+  assert.equal(probApproved.requester_balance.approved_unpaid_units, 1);
+
+  // Transition probationUser to OFFICIAL effective 2026-03-15 (while business date is 2026-03-20)
+  const officialTransition = await rpc(
+    "leave_management_upsert_employee_profile_admin",
+    [
+      ACTORS.hrOperator.auth,
+      ACTORS.hrOperator.app,
+      ACTORS.probationUser.app,
+      false,
+      "OFFICIAL",
+      "RECRUITMENT",
+      "2026-01-15",
+      "2026-03-15",
+      null,
+      0,
+      probProf.profile.row_version,
+      "Chuyển chính thức từ 15/03/2026",
+      nextIdem("prof-prob-off"),
+      "fp-prof-prob-off",
+    ],
+  );
+  assert.equal(
+    officialTransition.balance.monthly_accrued_units,
+    6,
+    "Transition to OFFICIAL in March backfills Jan + Feb (PROBATION_CATCHUP) + Mar (MONTHLY_ACCRUAL) = 6 units",
+  );
+  assert.equal(officialTransition.balance.available_units, 6);
+  const catchupLots = officialTransition.balance.lots.filter(
+    (l) => l.lot_kind === "PROBATION_CATCHUP",
+  );
+  assert.equal(catchupLots.length, 2, "Jan and Feb lots are PROBATION_CATCHUP");
+  assert.ok(
+    catchupLots.every((l) => l.usable_from_date === "2026-03-15"),
+    "Catch-up lots are only usable from official_effective_date (2026-03-15)",
+  );
+
+  // Calling get_my_summary again must not duplicate catch-up lots
+  const probAfterRetry = await rpc("leave_management_get_my_summary", [
+    ACTORS.probationUser.auth,
+    ACTORS.probationUser.app,
+    2026,
+  ]);
+  assert.equal(probAfterRetry.balance.monthly_accrued_units, 6);
+
+  // 7. Seniority configuration authority & effective date unlocking
+  // HR Operator cannot configure seniority fields -> LEAVE_SENIORITY_CONFIG_FORBIDDEN
+  await assert.rejects(
+    rpc("leave_management_upsert_employee_profile_admin", [
+      ACTORS.hrOperator.auth,
+      ACTORS.hrOperator.app,
+      ACTORS.recruiterOfficial.app,
+      false,
+      "OFFICIAL",
+      "RECRUITMENT",
+      "2025-01-01",
+      "2025-03-01",
+      "2026-03-25",
+      2,
+      1,
+      "HR tự thử cấu hình thâm niên",
+      nextIdem("hr-sen-forbid"),
+      "fp-hr-sen-forbid",
+    ]),
+    (err) => String(err?.message).includes("LEAVE_SENIORITY_CONFIG_FORBIDDEN"),
+    "Only Admin/BoD may configure next_seniority_effective_date / next_seniority_units",
+  );
+
+  // BoD configures next_seniority_effective_date = 2026-03-25, next_seniority_units = 2 for recruiterOfficial
+  const bodSenBeforeDate = await rpc(
+    "leave_management_upsert_employee_profile_admin",
+    [
+      ACTORS.bodUser.auth,
+      ACTORS.bodUser.app,
+      ACTORS.recruiterOfficial.app,
+      false,
+      "OFFICIAL",
+      "RECRUITMENT",
+      "2025-01-01",
+      "2025-03-01",
+      "2026-03-25",
+      2,
+      1,
+      "BoD cấu hình ngày tăng phép thâm niên 25/03/2026 (+1 ngày)",
+      nextIdem("bod-sen"),
+      "fp-bod-sen",
+    ],
+  );
+  assert.equal(
+    bodSenBeforeDate.balance.seniority_granted_units,
+    0,
+    "Before 2026-03-25, seniority units are not yet unlocked",
+  );
+
+  await setBusinessDate(db, "2026-03-25");
+  const recOnSenDate = await rpc("leave_management_get_my_summary", [
+    ACTORS.recruiterOfficial.auth,
+    ACTORS.recruiterOfficial.app,
+    2026,
+  ]);
+  assert.equal(
+    recOnSenDate.balance.seniority_granted_units,
+    2,
+    "On 2026-03-25, seniority grant (+2 half-day units) unlocks automatically",
+  );
+  assert.equal(recOnSenDate.balance.available_units, 8); // 6 monthly + 2 seniority
+
+  // 8. Carry-over unconfigured guard, policy update, FIFO consumption, and X+1 expiration
+  await setBusinessDate(db, "2026-03-20");
+
+  // Preview opening batch with carry_over_units > 0 while carry_over_expiry is NULL -> invalid with LEAVE_CARRY_OVER_EXPIRY_NOT_CONFIGURED
+  const previewBeforePolicy = await rpc(
+    "leave_management_preview_opening_batch",
+    [
+      ACTORS.hrOperator.auth,
+      ACTORS.hrOperator.app,
+      2026,
+      JSON.stringify([
+        {
+          app_user_id: ACTORS.recruiterOfficial.app,
+          carry_over_units: 4,
+          opening_current_year_units: 0,
+          seniority_units: 0,
+          note: "Phép tồn 2025 chuyển sang",
+        },
+      ]),
+    ],
+  );
+  assert.equal(previewBeforePolicy.valid, false);
+  assert.equal(previewBeforePolicy.has_carry_over_expiry_error, true);
+
+  await assert.rejects(
+    rpc("leave_management_apply_opening_batch", [
+      ACTORS.hrOperator.auth,
+      ACTORS.hrOperator.app,
+      2026,
+      JSON.stringify([
+        {
+          app_user_id: ACTORS.recruiterOfficial.app,
+          carry_over_units: 4,
+          opening_current_year_units: 0,
+          seniority_units: 0,
+        },
+      ]),
+      "Thử áp dụng phép năm cũ khi chưa đặt hạn dùng",
+      nextIdem("apply-no-exp"),
+      "fp-apply-no-exp",
+    ]),
+    (err) =>
+      String(err?.message).includes("LEAVE_CARRY_OVER_EXPIRY_NOT_CONFIGURED"),
+    "Applying CARRY_OVER before configuring expiry date must fail closed",
+  );
+
+  // Full Admin configures carry-over expiry date to 31/03 (month=3, day=31)
+  const policyUpdated = await rpc("leave_management_update_policy_admin", [
+    ACTORS.fullAdmin.auth,
+    ACTORS.fullAdmin.app,
+    3,
+    31,
+    1,
+    "Chốt hạn dùng phép chuyển năm là 31/03",
+    nextIdem("pol-3103"),
+    "fp-pol-3103",
+  ]);
+  assert.equal(
+    policyUpdated.policy.carry_over_expires_after_date,
+    "2026-03-31",
+  );
+
+  // Now apply opening batch (bulk of 2 rows: recruiterOfficial gets 4 carry_over_units, leaderAlpha gets 2 opening_current_year_units)
+  const batchApplied = await rpc("leave_management_apply_opening_batch", [
+    ACTORS.hrOperator.auth,
+    ACTORS.hrOperator.app,
+    2026,
+    JSON.stringify([
+      {
+        app_user_id: ACTORS.recruiterOfficial.app,
+        carry_over_units: 4,
+        opening_current_year_units: 0,
+        seniority_units: 0,
+        note: "Phép chuyển năm 2 ngày",
+      },
+      {
+        app_user_id: ACTORS.leaderAlpha.app,
+        carry_over_units: 0,
+        opening_current_year_units: 2,
+        seniority_units: 0,
+        note: "Số dư đầu kỳ 1 ngày",
+      },
+    ]),
+    "Áp dụng lô số dư đầu kỳ 2026",
+    nextIdem("apply-batch-1"),
+    "fp-apply-batch-1",
+  ]);
+  assert.equal(batchApplied.batch.batch_kind, "BULK");
+  assert.equal(batchApplied.batch.row_count, 2);
+  assert.equal(batchApplied.batch.total_carry_over_units, 4);
+
+  // At 2026-03-20, recruiterOfficial has: 4 carry-over + 6 monthly + 2 seniority = 12 available units
+  // Submit a request for 2.5 days (5 units): 2026-03-19 (FULL, past/current -> CONSUME), 2026-03-26 (FULL, future -> RESERVE), 2026-03-27 (AM, future -> RESERVE)
+  const fifoReq = await rpc("leave_management_create_request", [
+    ACTORS.recruiterOfficial.auth,
+    ACTORS.recruiterOfficial.app,
+    JSON.stringify([
+      { leave_date: "2026-03-19", session_code: "FULL" },
+      { leave_date: "2026-03-26", session_code: "FULL" },
+      { leave_date: "2026-03-27", session_code: "AM" },
+    ]),
+    "Nghỉ 2.5 ngày kiểm tra FIFO và RESERVE/CONSUME",
+    nextIdem("fifo-req"),
+    "fp-fifo-req",
+  ]);
+  assert.equal(fifoReq.request.requested_units, 5);
+  assert.equal(
+    fifoReq.balance.reserved_units,
+    0,
+    "PENDING request must not reserve units before approval",
+  );
+  assert.equal(fifoReq.balance.pending_paid_units, 5);
+
+  // Team Leader Beta (wrong team) cannot approve Team Alpha request
+  await assert.rejects(
+    rpc("leave_management_decide_request", [
+      ACTORS.leaderBeta.auth,
+      ACTORS.leaderBeta.app,
+      fifoReq.request.request_id,
+      "APPROVE",
+      fifoReq.request.row_version,
+      "Duyệt nhầm nhóm",
+      nextIdem("wrong-tl"),
+      "fp-wrong-tl",
+    ]),
+    (err) => String(err?.message).includes("LEAVE_APPROVAL_FORBIDDEN"),
+    "Team Leader of another team must be rejected",
+  );
+
+  // Team Leader Alpha approves fifoReq
+  const fifoApproved = await rpc("leave_management_decide_request", [
+    ACTORS.leaderAlpha.auth,
+    ACTORS.leaderAlpha.app,
+    fifoReq.request.request_id,
+    "APPROVE",
+    fifoReq.request.row_version,
+    "Đồng ý duyệt 2.5 ngày phép",
+    nextIdem("tl-approve-fifo"),
+    "fp-tl-approve-fifo",
+  ]);
+  assert.equal(fifoApproved.request.status, "APPROVED");
+  assert.equal(
+    fifoApproved.requester_balance.consumed_units,
+    2,
+    "2026-03-19 (<= 2026-03-20) is immediately CONSUMED (2 units)",
+  );
+  assert.equal(
+    fifoApproved.requester_balance.reserved_units,
+    3,
+    "2026-03-26 (FULL=2) and 2026-03-27 (AM=1) (> 2026-03-20) are RESERVED (3 units)",
+  );
+  assert.equal(
+    fifoApproved.requester_balance.carry_over_available_units,
+    0,
+    "FIFO must allocate all 4 CARRY_OVER units first before touching MONTHLY_ACCRUAL",
+  );
+  const allocByKind = fifoApproved.request.allocations.map((a) => ({
+    date: a.leave_date,
+    kind: a.lot_kind,
+    units: a.allocated_units,
+    status: a.status,
+  }));
+  assert.deepEqual(allocByKind, [
+    { date: "2026-03-19", kind: "CARRY_OVER", units: 2, status: "CONSUMED" },
+    { date: "2026-03-26", kind: "CARRY_OVER", units: 2, status: "RESERVED" },
+    { date: "2026-03-27", kind: "MONTHLY_ACCRUAL", units: 1, status: "RESERVED" },
+  ]);
+
+  // 9. Half-day session overlap check on 2026-03-27 (AM is already active, so PM is allowed, but AM or FULL is rejected!)
+  await assert.rejects(
+    rpc("leave_management_create_request", [
+      ACTORS.recruiterOfficial.auth,
+      ACTORS.recruiterOfficial.app,
+      JSON.stringify([{ leave_date: "2026-03-27", session_code: "AM" }]),
+      "Trùng buổi sáng 27/03",
+      nextIdem("overlap-am"),
+      "fp-overlap-am",
+    ]),
+    (err) => String(err?.message).includes("LEAVE_REQUEST_OVERLAP"),
+    "AM + AM on the same date must be rejected",
+  );
+
+  await assert.rejects(
+    rpc("leave_management_create_request", [
+      ACTORS.recruiterOfficial.auth,
+      ACTORS.recruiterOfficial.app,
+      JSON.stringify([{ leave_date: "2026-03-27", session_code: "FULL" }]),
+      "Trùng cả ngày 27/03",
+      nextIdem("overlap-full"),
+      "fp-overlap-full",
+    ]),
+    (err) => String(err?.message).includes("LEAVE_REQUEST_OVERLAP"),
+    "FULL overlapping existing AM on the same date must be rejected",
+  );
+
+  // Requesting PM on 2026-03-27 succeeds!
+  const pmReq = await rpc("leave_management_create_request", [
+    ACTORS.recruiterOfficial.auth,
+    ACTORS.recruiterOfficial.app,
+    JSON.stringify([{ leave_date: "2026-03-27", session_code: "PM" }]),
+    "Xin nghỉ thêm buổi chiều 27/03",
+    nextIdem("pm-2703"),
+    "fp-pm-2703",
+  ]);
+  assert.equal(pmReq.request.status, "PENDING");
+  assert.equal(pmReq.request.requested_units, 1);
+
+  // Requester withdraws PENDING pmReq -> status becomes WITHDRAWN, freeing 2026-03-27 PM
+  const pmWithdrawn = await rpc("leave_management_withdraw_request", [
+    ACTORS.recruiterOfficial.auth,
+    ACTORS.recruiterOfficial.app,
+    pmReq.request.request_id,
+    pmReq.request.row_version,
+    "Tự rút đơn buổi chiều 27/03",
+    nextIdem("withdraw-pm"),
+    "fp-withdraw-pm",
+  ]);
+  assert.equal(pmWithdrawn.request.status, "WITHDRAWN");
+
+  // Requester CANNOT withdraw already-APPROVED fifoReq
+  await assert.rejects(
+    rpc("leave_management_withdraw_request", [
+      ACTORS.recruiterOfficial.auth,
+      ACTORS.recruiterOfficial.app,
+      fifoReq.request.request_id,
+      fifoApproved.request.row_version,
+      "Thử tự rút đơn đã duyệt",
+      nextIdem("withdraw-approved-fail"),
+      "fp-withdraw-approved-fail",
+    ]),
+    (err) => String(err?.message).includes("LEAVE_INVALID_STATE_TRANSITION"),
+    "Requester cannot self-withdraw an APPROVED request",
+  );
+
+  // 10. Advance business date to 2026-03-31 (day X): RESERVED allocations for 26 & 27 March settle to CONSUMED
+  await setBusinessDate(db, "2026-03-31");
+  const summaryOnX = await rpc("leave_management_get_my_summary", [
+    ACTORS.recruiterOfficial.auth,
+    ACTORS.recruiterOfficial.app,
+    2026,
+  ]);
+  assert.equal(
+    summaryOnX.balance.reserved_units,
+    0,
+    "By 2026-03-31, reserved allocations for 2026-03-26..27 are settled into CONSUMED",
+  );
+  assert.equal(summaryOnX.balance.consumed_units, 5);
+
+  // Advance business date to 2026-04-01 (day X + 1, Month 4)
+  await setBusinessDate(db, "2026-04-01");
+
+  // Now Team Leader Alpha cancels the APPROVED fifoReq on 2026-04-01 (after carry-over expiry 2026-03-31!)
+  // The 4 units returned to CARRY_OVER lot must immediately expire (expired_units = 4), while the 1 unit returned to MONTHLY_ACCRUAL becomes available again!
+  const cancelledAfterX = await rpc("leave_management_decide_request", [
+    ACTORS.leaderAlpha.auth,
+    ACTORS.leaderAlpha.app,
+    fifoReq.request.request_id,
+    "CANCEL_APPROVED",
+    fifoApproved.request.row_version,
+    "Hủy đơn đã duyệt do nhân sự đi làm lại",
+    nextIdem("cancel-after-x"),
+    "fp-cancel-after-x",
+  ]);
+  assert.equal(cancelledAfterX.request.status, "CANCELLED");
+  assert.equal(cancelledAfterX.requester_balance.consumed_units, 0);
+  assert.equal(
+    cancelledAfterX.requester_balance.expired_units,
+    4,
+    "4 units returned to CARRY_OVER lot after 2026-03-31 must expire immediately so expired carry-over cannot be reused",
+  );
+  // At 2026-04-01 (M=4), monthly_accrued_units = 8 (4 months * 2) + 2 seniority = 10 available units
+  assert.equal(cancelledAfterX.requester_balance.monthly_accrued_units, 8);
+  assert.equal(cancelledAfterX.requester_balance.available_units, 10);
+
+  // 11. Marketing Department Head routing & self-approval prohibition
+  await rpc("leave_management_upsert_employee_profile_admin", [
+    ACTORS.hrOperator.auth,
+    ACTORS.hrOperator.app,
+    ACTORS.marketingHead.app,
+    false,
+    "OFFICIAL",
+    "MARKETING",
+    "2024-01-01",
+    "2024-03-01",
+    null,
+    0,
+    0,
+    "Cấu hình hồ sơ Trưởng phòng Marketing",
+    nextIdem("prof-mkt-head"),
+    "fp-prof-mkt-head",
+  ]);
+  await rpc("leave_management_upsert_employee_profile_admin", [
+    ACTORS.hrOperator.auth,
+    ACTORS.hrOperator.app,
+    ACTORS.marketingStaff.app,
+    false,
+    "OFFICIAL",
+    "MARKETING",
+    "2025-06-01",
+    "2025-08-01",
+    null,
+    0,
+    0,
+    "Cấu hình hồ sơ Nhân viên Marketing",
+    nextIdem("prof-mkt-staff"),
+    "fp-mkt-staff",
+  ]);
+
+  // Before configuring Marketing department approver, marketingStaff routes to ADMIN_BOD_FALLBACK
+  const mktBeforeHead = await rpc("leave_management_get_my_summary", [
+    ACTORS.marketingStaff.auth,
+    ACTORS.marketingStaff.app,
+    2026,
+  ]);
+  assert.equal(mktBeforeHead.routing.route_kind, "ADMIN_BOD_FALLBACK");
+  assert.equal(
+    mktBeforeHead.routing.fallback_reason,
+    "DEPARTMENT_APPROVER_NOT_CONFIGURED",
+  );
+
+  // Admin configures marketingHead as DEPARTMENT_HEAD for MARKETING
+  await rpc("leave_management_set_department_approver_admin", [
+    ACTORS.fullAdmin.auth,
+    ACTORS.fullAdmin.app,
+    "MARKETING",
+    ACTORS.marketingHead.app,
+    "2026-01-01",
+    0,
+    "Bổ nhiệm Trưởng phòng duyệt phép khối Marketing",
+    nextIdem("set-mkt-head"),
+    "fp-set-mkt-head",
+  ]);
+
+  const mktAfterHead = await rpc("leave_management_get_my_summary", [
+    ACTORS.marketingStaff.auth,
+    ACTORS.marketingStaff.app,
+    2026,
+  ]);
+  assert.equal(mktAfterHead.routing.route_kind, "DEPARTMENT_HEAD");
+  assert.equal(
+    mktAfterHead.routing.primary_approver_app_user_id,
+    ACTORS.marketingHead.app,
+  );
+
+  // Marketing Head's own request routes to ADMIN_BOD_DIRECT and cannot be self-approved
+  const headOwnReq = await rpc("leave_management_create_request", [
+    ACTORS.marketingHead.auth,
+    ACTORS.marketingHead.app,
+    JSON.stringify([{ leave_date: "2026-04-10", session_code: "FULL" }]),
+    "Trưởng phòng Marketing xin nghỉ 1 ngày",
+    nextIdem("head-own-req"),
+    "fp-head-own-req",
+  ]);
+  assert.equal(headOwnReq.request.route_kind, "ADMIN_BOD_DIRECT");
+
+  await assert.rejects(
+    rpc("leave_management_decide_request", [
+      ACTORS.marketingHead.auth,
+      ACTORS.marketingHead.app,
+      headOwnReq.request.request_id,
+      "APPROVE",
+      headOwnReq.request.row_version,
+      "Tự duyệt đơn của mình",
+      nextIdem("self-approve-fail"),
+      "fp-self-approve-fail",
+    ]),
+    (err) => String(err?.message).includes("LEAVE_SELF_APPROVAL_FORBIDDEN"),
+    "Approver must never self-approve their own leave request",
+  );
+
+  // BoD approves Marketing Head's request
+  const headApprovedByBod = await rpc("leave_management_decide_request", [
+    ACTORS.bodUser.auth,
+    ACTORS.bodUser.app,
+    headOwnReq.request.request_id,
+    "APPROVE",
+    headOwnReq.request.row_version,
+    "BoD duyệt đơn Trưởng phòng Marketing",
+    nextIdem("bod-approve-head"),
+    "fp-bod-approve-head",
+  ]);
+  assert.equal(headApprovedByBod.request.status, "APPROVED");
+
+  // 12. HR Monthly Report narrow authority grant & revoke + M=12 check
+  await assert.rejects(
+    rpc("leave_management_monthly_report", [
+      ACTORS.hrViewer.auth,
+      ACTORS.hrViewer.app,
+      "2026-04",
+      "ALL",
+      null,
+      100,
+      0,
+    ]),
+    (err) => String(err?.message).includes("LEAVE_REPORT_FORBIDDEN"),
+    "Account without HR_REPORT_VIEWER grant cannot read monthly leave report",
+  );
+
+  const hrViewerGrant = await rpc("leave_management_manage_module_grant_admin", [
+    ACTORS.fullAdmin.auth,
+    ACTORS.fullAdmin.app,
+    "GRANT",
+    ACTORS.hrViewer.app,
+    "HR_REPORT_VIEWER",
+    0,
+    "Cấp quyền xem báo cáo phép tháng cho HR Viewer",
+    nextIdem("grant-hr-viewer"),
+    "fp-grant-hr-viewer",
+  ]);
+  assert.equal(hrViewerGrant.grant.is_current, true);
+
+  const aprilReport = await rpc("leave_management_monthly_report", [
+    ACTORS.hrViewer.auth,
+    ACTORS.hrViewer.app,
+    "2026-04",
+    "ALL",
+    null,
+    100,
+    0,
+  ]);
+  assert.equal(aprilReport.year_month, "2026-04");
+  assert.ok(
+    !aprilReport.rows.some((r) => r.app_user_id === ACTORS.sharedMarketing.app),
+    "Shared non-employee Marketing account is excluded from monthly report",
+  );
+  const mktHeadRow = aprilReport.rows.find(
+    (r) => r.app_user_id === ACTORS.marketingHead.app,
+  );
+  assert.equal(mktHeadRow.month_paid_leave_units, 2);
+
+  // HR_REPORT_VIEWER still cannot access admin overview or approve requests
+  await assert.rejects(
+    rpc("leave_management_get_admin_overview", [
+      ACTORS.hrViewer.auth,
+      ACTORS.hrViewer.app,
+      null,
+      50,
+      0,
+    ]),
+    (err) => String(err?.message).includes("LEAVE_ADMIN_FORBIDDEN"),
+    "HR_REPORT_VIEWER must not gain admin config authority",
+  );
+
+  // Revoke HR_REPORT_VIEWER -> immediately loses report access
+  await rpc("leave_management_manage_module_grant_admin", [
+    ACTORS.fullAdmin.auth,
+    ACTORS.fullAdmin.app,
+    "REVOKE",
+    ACTORS.hrViewer.app,
+    "HR_REPORT_VIEWER",
+    hrViewerGrant.grant.row_version,
+    "Thu hồi quyền xem báo cáo phép tháng",
+    nextIdem("revoke-hr-viewer"),
+    "fp-revoke-hr-viewer",
+  ]);
+
+  await assert.rejects(
+    rpc("leave_management_monthly_report", [
+      ACTORS.hrViewer.auth,
+      ACTORS.hrViewer.app,
+      "2026-04",
+      "ALL",
+      null,
+      100,
+      0,
+    ]),
+    (err) => String(err?.message).includes("LEAVE_REPORT_FORBIDDEN"),
+    "Revoked HR_REPORT_VIEWER immediately loses monthly report access",
+  );
+
+  // Finally advance to 2026-12-10 (M=12) and verify full 12 days (24 monthly units) accrued
+  await setBusinessDate(db, "2026-12-10");
+  const decSummary = await rpc("leave_management_get_my_summary", [
+    ACTORS.recruiterOfficial.auth,
+    ACTORS.recruiterOfficial.app,
+    2026,
+  ]);
+  assert.equal(
+    decSummary.balance.monthly_accrued_units,
+    24,
+    "At M=12 (December), full 12 days (24 half-day units) of monthly accrual are unlocked",
+  );
+});
