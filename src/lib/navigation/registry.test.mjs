@@ -17,13 +17,30 @@ const {
 const { isDirectEntryUiEnabled } = await import("../direct-entry/ui-model.ts");
 
 test("CURRENT_NAV_ENTRIES chứa các entry hiện hành trong một registry", () => {
-  assert.equal(CURRENT_NAV_ENTRIES.length, 10, "phải có đúng 10 entries current");
+  assert.equal(CURRENT_NAV_ENTRIES.length, 13, "phải có đúng 13 entries current");
   const ids = CURRENT_NAV_ENTRIES.map((e) => e.id).sort();
-  assert.deepEqual(ids, ["admin", "change-requests", "dashboard", "direct-entry", "finance", "leave", "project-operations", "work-report-reviews", "work-reports", "worker-operations"],
-    `got ids: ${ids.join(",")}`);
+  assert.deepEqual(
+    ids,
+    [
+      "admin",
+      "attendance-report",
+      "change-requests",
+      "dashboard",
+      "direct-entry",
+      "finance",
+      "leave",
+      "project-operations",
+      "work-report-analytics",
+      "work-report-assignments",
+      "work-report-reviews",
+      "work-reports",
+      "worker-operations",
+    ],
+    `got ids: ${ids.join(",")}`
+  );
 });
 
-test("Work Reports nav groups preserve their routes and omit empty groups", () => {
+test("Global IA nav groups separate 'Công việc của tôi' and 'Quản trị', and omit empty groups", () => {
   const menu = groupNavEntries(CURRENT_NAV_ENTRIES.map(({ id, label, path, group }) => ({
     id, label, path, group,
   })));
@@ -33,11 +50,22 @@ test("Work Reports nav groups preserve their routes and omit empty groups", () =
     children: item.entries.map((entry) => entry.id),
   })), [
     {
-      id: "new-reports",
-      label: "Báo cáo cấp mới",
-      children: ["direct-entry", "project-operations", "worker-operations", "change-requests"],
+      id: "my-work",
+      label: "Công việc của tôi",
+      children: ["direct-entry", "worker-operations", "change-requests", "work-reports", "leave"],
     },
-    { id: "daily-reports", label: "Báo cáo hàng ngày", children: ["work-reports", "work-report-reviews"] },
+    {
+      id: "management",
+      label: "Quản trị",
+      children: [
+        "project-operations",
+        "work-report-assignments",
+        "work-report-reviews",
+        "work-report-analytics",
+        "attendance-report",
+        "admin",
+      ],
+    },
   ]);
   const dashboardOnly = CURRENT_NAV_ENTRIES.filter((entry) => entry.id === "dashboard")
     .map(({ id, label, path, group }) => ({ id, label, path, group }));
@@ -77,15 +105,42 @@ test("Work Reports hiện trong menu hiện hành sau khi F1 được tích hợ
   const entry = CURRENT_NAV_ENTRIES.find((item) => item.id === "work-reports");
   assert.ok(entry);
   assert.equal(entry?.status, "current");
+  assert.equal(entry?.label, "Báo cáo của tôi");
   assert.equal(entry?.path, "/work-reports");
+  assert.equal(entry?.group, "my-work");
 });
 
-test("Work Report reviews nav points to the F2 review inbox", () => {
+test("Work Report reviews nav points to the F2 review inbox under group 'management'", () => {
   const entry = CURRENT_NAV_ENTRIES.find((item) => item.id === "work-report-reviews");
   assert.ok(entry);
+  assert.equal(entry?.label, "Cần duyệt báo cáo");
   assert.equal(entry?.path, "/work-reports/reviews");
-  assert.equal(entry?.group, "daily-reports");
+  assert.equal(entry?.group, "management");
   assert.equal(entry?.capability, "work_report_reviews");
+});
+
+test("Work Report assignments, analytics, and Attendance Report entries point to their canonical routes in 'management'", () => {
+  const assignments = CURRENT_NAV_ENTRIES.find((item) => item.id === "work-report-assignments");
+  assert.ok(assignments);
+  assert.equal(assignments?.label, "Quản lý/Giao báo cáo");
+  assert.equal(assignments?.path, "/work-reports/assignments");
+  assert.equal(assignments?.group, "management");
+  assert.equal(assignments?.capability, "work_report_assignments");
+
+  const analytics = CURRENT_NAV_ENTRIES.find((item) => item.id === "work-report-analytics");
+  assert.ok(analytics);
+  assert.equal(analytics?.label, "Theo dõi báo cáo");
+  assert.equal(analytics?.path, "/work-reports/analytics");
+  assert.equal(analytics?.group, "management");
+  assert.equal(analytics?.capability, "work_report_analytics");
+
+  const attendance = CURRENT_NAV_ENTRIES.find((item) => item.id === "attendance-report");
+  assert.ok(attendance);
+  assert.equal(attendance?.label, "Báo cáo chấm công");
+  assert.equal(attendance?.path, "/admin/attendance");
+  assert.equal(attendance?.group, "management");
+  assert.equal(attendance?.capability, "attendance_report");
+  assert.equal(findEntryByPath("/admin/attendance")?.id, "attendance-report");
 });
 
 test("Vendor Finance nav entry points to /finance and highlights all /finance/** child routes", () => {
@@ -111,7 +166,20 @@ test("Desktop viewport theo feature flag, luôn giữ Dashboard và không có P
   assert.ok(!desktop.some((e) => e.id === "pipeline-check"));
   assert.ok(desktop.some((e) => e.id === "dashboard"));
   assert.ok(desktop.some((e) => e.id === "direct-entry"));
-  assert.deepEqual(entriesForViewport("desktop", false).map((entry) => entry.id), ["dashboard", "work-reports", "work-report-reviews", "finance", "leave", "admin"]);
+  assert.deepEqual(
+    entriesForViewport("desktop", false).map((entry) => entry.id),
+    [
+      "dashboard",
+      "work-reports",
+      "leave",
+      "work-report-assignments",
+      "work-report-reviews",
+      "work-report-analytics",
+      "attendance-report",
+      "admin",
+      "finance",
+    ],
+  );
 });
 
 test("Mobile viewport theo feature flag, luôn giữ Dashboard và không có Pipeline Check", () => {
@@ -119,15 +187,39 @@ test("Mobile viewport theo feature flag, luôn giữ Dashboard và không có Pi
   assert.ok(!mobile.some((e) => e.id === "pipeline-check"));
   assert.ok(mobile.some((e) => e.id === "dashboard"));
   assert.ok(mobile.some((e) => e.id === "direct-entry"));
-  assert.deepEqual(entriesForViewport("mobile", false).map((entry) => entry.id), ["dashboard", "work-reports", "work-report-reviews", "finance", "leave", "admin"]);
+  assert.deepEqual(
+    entriesForViewport("mobile", false).map((entry) => entry.id),
+    [
+      "dashboard",
+      "work-reports",
+      "leave",
+      "work-report-assignments",
+      "work-report-reviews",
+      "work-report-analytics",
+      "attendance-report",
+      "admin",
+      "finance",
+    ],
+  );
 });
 
 test("feature flag Direct Entry chỉ mở với giá trị chính xác true", () => {
   assert.equal(isDirectEntryUiEnabled("true"), true);
+  const expectedWithoutDirectEntry = [
+    "dashboard",
+    "work-reports",
+    "leave",
+    "work-report-assignments",
+    "work-report-reviews",
+    "work-report-analytics",
+    "attendance-report",
+    "admin",
+    "finance",
+  ];
   for (const flag of [undefined, "", "false", "TRUE", "1", " true "]) {
     assert.equal(isDirectEntryUiEnabled(flag), false, String(flag));
-    assert.deepEqual(entriesForViewport("desktop", isDirectEntryUiEnabled(flag)).map((entry) => entry.id), ["dashboard", "work-reports", "work-report-reviews", "finance", "leave", "admin"]);
-    assert.deepEqual(entriesForViewport("mobile", isDirectEntryUiEnabled(flag)).map((entry) => entry.id), ["dashboard", "work-reports", "work-report-reviews", "finance", "leave", "admin"]);
+    assert.deepEqual(entriesForViewport("desktop", isDirectEntryUiEnabled(flag)).map((entry) => entry.id), expectedWithoutDirectEntry);
+    assert.deepEqual(entriesForViewport("mobile", isDirectEntryUiEnabled(flag)).map((entry) => entry.id), expectedWithoutDirectEntry);
   }
 });
 
@@ -171,8 +263,11 @@ test("registry: mỗi entry có id ổn định, label, path, icon, status, capa
         "worker_operations",
         "change_requests",
         "admin_area",
+        "attendance_report",
         "work_reports",
+        "work_report_assignments",
         "work_report_reviews",
+        "work_report_analytics",
         "workforce_offboarding",
         "leave",
       ].includes(entry.capability),
@@ -227,9 +322,19 @@ test("findEntryByPath('/direct-entry') trả về direct-entry entry", () => {
   assert.equal(entry?.id, "direct-entry");
 });
 
-test("findEntryByPath('/work-reports') trả về Work Reports entry", () => {
+test("findEntryByPath('/work-reports') trả về Work Reports entry và route con resolve đúng entry dài nhất", () => {
   const entry = findEntryByPath("/work-reports");
   assert.equal(entry?.id, "work-reports");
+  assert.equal(findEntryByPath("/work-reports/my-reports")?.id, "work-reports");
+  assert.equal(findEntryByPath("/work-reports/assignments")?.id, "work-report-assignments");
+  assert.equal(findEntryByPath("/work-reports/assignments/detail")?.id, "work-report-assignments");
+  assert.equal(findEntryByPath("/work-reports/reviews")?.id, "work-report-reviews");
+  assert.equal(findEntryByPath("/work-reports/reviews/obligation-1")?.id, "work-report-reviews");
+  assert.equal(findEntryByPath("/work-reports/analytics")?.id, "work-report-analytics");
+  assert.equal(findEntryByPath("/work-reports/analytics/detail")?.id, "work-report-analytics");
+  assert.equal(findEntryByPath("/leave")?.id, "leave");
+  assert.equal(findEntryByPath("/admin/attendance")?.id, "attendance-report");
+  assert.equal(findEntryByPath("/admin/catalog/personnel")?.id, "admin");
 });
 
 test("findEntryByPath('/pipeline-check') trả về undefined (đã retired khỏi navbar)", () => {

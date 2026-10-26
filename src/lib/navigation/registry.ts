@@ -57,10 +57,13 @@ export type NavCapability =
   | "entry_admin"
   | "project_admin"
   | "admin_area"
+  | "attendance_report"
   | "worker_operations"
   | "change_requests"
   | "work_reports"
+  | "work_report_assignments"
   | "work_report_reviews"
+  | "work_report_analytics"
   | "workforce_offboarding"
   | "leave";
 
@@ -73,11 +76,11 @@ export type NavVisibility = {
   mobile: boolean;
 };
 
-export type NavGroupId = "new-reports" | "daily-reports";
+export type NavGroupId = "my-work" | "management";
 
 export const NAV_GROUP_LABELS: Readonly<Record<NavGroupId, string>> = {
-  "new-reports": "Báo cáo cấp mới",
-  "daily-reports": "Báo cáo hàng ngày",
+  "my-work": "Công việc của tôi",
+  "management": "Quản trị",
 };
 
 /** Một entry trong navigation registry. */
@@ -166,7 +169,58 @@ export const NAV_ENTRIES: ReadonlyArray<NavEntry> = [
     icon: ClipboardList,
     status: "current",
     capability: "entry_admin",
-    group: "new-reports",
+    group: "my-work",
+    visibility: { desktop: true, mobile: true },
+  },
+  {
+    id: "worker-operations",
+    label: "Người lao động",
+    path: "/direct-entry/workers",
+    description:
+      "P2.5-W06: tra cứu người lao động theo ba quan hệ — hồ sơ bạn đã nhập, người bạn " +
+      "tuyển, và người thuộc dự án bạn đang quản lý. CTA đề xuất thay đổi do server " +
+      "allowed_actions quyết định; created_by/recruiter_id không tạo quyền.",
+    icon: Users,
+    status: "current",
+    capability: "worker_operations",
+    group: "my-work",
+    visibility: { desktop: true, mobile: true },
+  },
+  {
+    id: "change-requests",
+    label: "Yêu cầu thay đổi",
+    path: "/direct-entry/change-requests",
+    description:
+      "R2.2: theo dõi yêu cầu thay đổi đã gửi, xử lý yêu cầu chờ duyệt theo thẩm quyền " +
+      "hiện tại và tra cứu lịch sử xử lý bất biến.",
+    icon: FileDiff,
+    status: "current",
+    capability: "change_requests",
+    group: "my-work",
+    visibility: { desktop: true, mobile: true },
+  },
+  {
+    id: "work-reports",
+    label: "Báo cáo của tôi",
+    path: "/work-reports",
+    description:
+      "Tạo, nộp và tra cứu báo cáo công việc được giao theo capability và resource scope do server xác nhận.",
+    icon: NotebookPen,
+    status: "current",
+    capability: "work_reports",
+    group: "my-work",
+    visibility: { desktop: true, mobile: true },
+  },
+  {
+    id: "leave",
+    label: "Nghỉ phép của tôi",
+    path: "/leave",
+    description:
+      "Theo dõi quỹ phép cá nhân, tạo đơn xin nghỉ cả ngày hoặc nửa ngày sáng/chiều, duyệt phép theo cấp quản lý và báo cáo chốt công phép tháng.",
+    icon: CalendarDays,
+    status: "current",
+    capability: "leave",
+    group: "my-work",
     visibility: { desktop: true, mobile: true },
   },
   {
@@ -181,58 +235,66 @@ export const NAV_ENTRIES: ReadonlyArray<NavEntry> = [
     icon: Building2,
     status: "current",
     capability: "project_admin",
-    group: "new-reports",
+    group: "management",
     visibility: { desktop: true, mobile: true },
   },
   {
-    id: "worker-operations",
-    label: "Người lao động",
-    path: "/direct-entry/workers",
+    id: "work-report-assignments",
+    label: "Quản lý/Giao báo cáo",
+    path: "/work-reports/assignments",
     description:
-      "P2.5-W06: tra cứu người lao động theo ba quan hệ — hồ sơ bạn đã nhập, người bạn " +
-      "tuyển, và người thuộc dự án bạn đang quản lý. CTA đề xuất thay đổi do server " +
-      "allowed_actions quyết định; created_by/recruiter_id không tạo quyền.",
-    icon: Users,
+      "Tạo đợt giao báo cáo, quản lý nhóm người nhận và theo dõi tiến độ từng thành viên trong phạm vi được cấp quyền.",
+    icon: ClipboardList,
     status: "current",
-    capability: "worker_operations",
-    group: "new-reports",
-    visibility: { desktop: true, mobile: true },
-  },
-  {
-    id: "change-requests",
-    label: "Yêu cầu thay đổi",
-    path: "/direct-entry/change-requests",
-    description:
-      "R2.2: theo dõi yêu cầu thay đổi đã gửi, xử lý yêu cầu chờ duyệt theo thẩm quyền " +
-      "hiện tại và tra cứu lịch sử xử lý bất biến.",
-    icon: FileDiff,
-    status: "current",
-    capability: "change_requests",
-    group: "new-reports",
-    visibility: { desktop: true, mobile: true },
-  },
-  {
-    id: "work-reports",
-    label: "Báo cáo công việc",
-    path: "/work-reports",
-    description:
-      "Tạo, giao, nộp và tra cứu báo cáo công việc theo capability và resource scope do server xác nhận.",
-    icon: NotebookPen,
-    status: "current",
-    capability: "work_reports",
-    group: "daily-reports",
+    capability: "work_report_assignments",
+    group: "management",
     visibility: { desktop: true, mobile: true },
   },
   {
     id: "work-report-reviews",
-    label: "Cần duyệt",
+    label: "Cần duyệt báo cáo",
     path: "/work-reports/reviews",
     description:
       "Mở hàng đợi báo cáo đang chờ duyệt theo quyền review và phạm vi hiệu lực do máy chủ chiếu.",
     icon: ClipboardList,
     status: "current",
     capability: "work_report_reviews",
-    group: "daily-reports",
+    group: "management",
+    visibility: { desktop: true, mobile: true },
+  },
+  {
+    id: "work-report-analytics",
+    label: "Theo dõi báo cáo",
+    path: "/work-reports/analytics",
+    description:
+      "Theo dõi tổng quan tiến độ, chỉ tiêu KPI và danh sách bài nộp trong phạm vi được cấp quyền.",
+    icon: NotebookPen,
+    status: "current",
+    capability: "work_report_analytics",
+    group: "management",
+    visibility: { desktop: true, mobile: true },
+  },
+  {
+    id: "attendance-report",
+    label: "Báo cáo chấm công",
+    path: "/admin/attendance",
+    description:
+      "Tra cứu lịch sử check-in GPS, ảnh chụp, khoảng cách và ghi chú chấm công theo thẩm quyền Admin/BoD.",
+    icon: CalendarDays,
+    status: "current",
+    capability: "attendance_report",
+    group: "management",
+    visibility: { desktop: true, mobile: true },
+  },
+  {
+    id: "admin",
+    label: "Quản trị hệ thống",
+    path: "/admin",
+    description: "Quản lý danh mục nhân sự và các thiết lập quản trị được cấp quyền.",
+    icon: ShieldCheck,
+    status: "current",
+    capability: "admin_area",
+    group: "management",
     visibility: { desktop: true, mobile: true },
   },
   {
@@ -244,27 +306,6 @@ export const NAV_ENTRIES: ReadonlyArray<NavEntry> = [
     icon: Landmark,
     status: "current",
     capability: "finance",
-    visibility: { desktop: true, mobile: true },
-  },
-  {
-    id: "leave",
-    label: "Nghỉ phép",
-    path: "/leave",
-    description:
-      "Theo dõi quỹ phép cá nhân, tạo đơn xin nghỉ cả ngày hoặc nửa ngày sáng/chiều, duyệt phép theo cấp quản lý và báo cáo chốt công phép tháng.",
-    icon: CalendarDays,
-    status: "current",
-    capability: "leave",
-    visibility: { desktop: true, mobile: true },
-  },
-  {
-    id: "admin",
-    label: "Quản trị",
-    path: "/admin",
-    description: "Quản lý danh mục nhân sự và các thiết lập quản trị được cấp quyền.",
-    icon: ShieldCheck,
-    status: "current",
-    capability: "admin_area",
     visibility: { desktop: true, mobile: true },
   },
 ];

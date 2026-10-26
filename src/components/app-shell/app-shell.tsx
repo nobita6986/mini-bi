@@ -48,7 +48,12 @@ import { DesktopNav } from "./desktop-nav";
 import { MobileNav } from "./mobile-nav";
 import { UserSessionControl } from "./user-session-control";
 
-const WORK_REPORTS_NAV_ENTRY_IDS = new Set(["work-reports", "work-report-reviews"]);
+const WORK_REPORTS_NAV_ENTRY_IDS = new Set([
+  "work-reports",
+  "work-report-assignments",
+  "work-report-reviews",
+  "work-report-analytics",
+]);
 
 /**
  * Props:
