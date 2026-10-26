@@ -9,7 +9,11 @@ import {
   MAX_PASSWORD_BYTES,
   MIN_PASSWORD_BYTES,
   projectEligibleAccountsEnvelope,
+  projectRecruiterLinkCandidatesEnvelope,
+  projectRecruiterLinkStatusEnvelope,
   type EligibleAccountsEnvelope,
+  type RecruiterLinkCandidatesEnvelope,
+  type RecruiterLinkStatusEnvelope,
 } from "./account-operation-contract.ts";
 import {
   newIdempotencyKey,
@@ -211,4 +215,57 @@ export function projectEligibleAccounts(payload: unknown): EligibleAccountsEnvel
   const record = payload as Record<string, unknown>;
   if (record.ok !== true) return null;
   return projectEligibleAccountsEnvelope(record.list);
+}
+
+export function buildLinkRecruiterAccountRequest(input: {
+  accountRef: string;
+  expectedAccountVersion: number;
+  expectedRecruiterVersion: number;
+  reason?: string | null;
+  idempotencyKey: string;
+}): RequestResult {
+  const failure = validateUuid(input.accountRef)
+    ?? validateVersion(input.expectedAccountVersion)
+    ?? (input.expectedAccountVersion < 1 ? "Dữ liệu tài khoản chưa hợp lệ. Vui lòng tải lại." : null)
+    ?? validateVersion(input.expectedRecruiterVersion)
+    ?? (input.expectedRecruiterVersion < 1 ? "Dữ liệu nhân sự chưa hợp lệ. Vui lòng tải lại." : null)
+    ?? validateReason(input.reason)
+    ?? validateUuid(input.idempotencyKey);
+  if (failure) return { ok: false, message: failure };
+  return {
+    ok: true,
+    body: {
+      account_ref: input.accountRef,
+      expected_account_version: input.expectedAccountVersion,
+      expected_recruiter_version: input.expectedRecruiterVersion,
+      reason: normalizeOptionalActionReason(input.reason),
+      idempotency_key: input.idempotencyKey,
+    },
+  };
+}
+
+export function buildRecruiterLinkStatusQuery(recruiterIds: readonly string[]): URLSearchParams | null {
+  if (recruiterIds.length > 100) return null;
+  const cleaned: string[] = [];
+  for (const id of recruiterIds) {
+    if (validateUuid(id) !== null) return null;
+    cleaned.push(id);
+  }
+  return new URLSearchParams({
+    recruiter_ids: cleaned.join(","),
+  });
+}
+
+export function projectRecruiterLinkStatus(payload: unknown): RecruiterLinkStatusEnvelope | null {
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return null;
+  const record = payload as Record<string, unknown>;
+  if (record.ok !== true) return null;
+  return projectRecruiterLinkStatusEnvelope(record.status);
+}
+
+export function projectRecruiterLinkCandidates(payload: unknown): RecruiterLinkCandidatesEnvelope | null {
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return null;
+  const record = payload as Record<string, unknown>;
+  if (record.ok !== true) return null;
+  return projectRecruiterLinkCandidatesEnvelope(record.candidates);
 }

@@ -326,6 +326,168 @@ export function projectEligibleAccountsEnvelope(v: unknown): EligibleAccountsEnv
   return { page: v.page, page_size: v.page_size, total: v.total, has_more: v.has_more, accounts };
 }
 
+/* ---------- link existing personnel to existing account ---------- */
+export type LinkRecruiterToAccountRequest = {
+  account_ref: string;
+  expected_account_version: number;
+  expected_recruiter_version: number;
+  reason: string | null;
+  idempotency_key: string;
+};
+export function parseLinkRecruiterToAccount(body: unknown): Parsed<LinkRecruiterToAccountRequest> {
+  if (!isRecord(body) || !hasExactKeysWithOptionalReason(body, [
+    "account_ref", "expected_account_version", "expected_recruiter_version",
+    "reason", "idempotency_key",
+  ])) {
+    return { ok: false, code: "ACCOUNT_OPERATION_INVALID" };
+  }
+  const account_ref = uuid(body.account_ref);
+  const expected_account_version = version(body.expected_account_version);
+  const expected_recruiter_version = version(body.expected_recruiter_version);
+  const reason = projectOptionalActionReason(body.reason, REASON_MAX);
+  const idempotency_key = uuid(body.idempotency_key);
+  if (!account_ref ||
+      expected_account_version === null || expected_account_version < 1 ||
+      expected_recruiter_version === null || expected_recruiter_version < 1 ||
+      !reason.ok || !idempotency_key) {
+    return { ok: false, code: "ACCOUNT_OPERATION_INVALID" };
+  }
+  return {
+    ok: true,
+    value: {
+      account_ref,
+      expected_account_version,
+      expected_recruiter_version,
+      reason: reason.value,
+      idempotency_key,
+    },
+  };
+}
+
+export type RecruiterLinkStatusEnvelope = {
+  linked_recruiter_ids: string[];
+};
+export function projectRecruiterLinkStatusEnvelope(v: unknown): RecruiterLinkStatusEnvelope | null {
+  if (!isRecord(v) || !exact(v, ["linked_recruiter_ids"]) || !Array.isArray(v.linked_recruiter_ids)) {
+    return null;
+  }
+  const linked_recruiter_ids: string[] = [];
+  for (const raw of v.linked_recruiter_ids) {
+    const id = uuid(raw);
+    if (!id) return null;
+    linked_recruiter_ids.push(id);
+  }
+  return { linked_recruiter_ids };
+}
+
+export type RecruiterLinkCandidate = {
+  app_user_id: string;
+  display_name: string;
+  login_id: string;
+  version: number;
+};
+export type RecruiterLinkCandidatesEnvelope = {
+  recruiter_id: string;
+  display_name: string;
+  personnel_code: string | null;
+  personnel_position: PersonnelPosition | null;
+  active: boolean;
+  version: number;
+  already_linked: boolean;
+  candidates: RecruiterLinkCandidate[];
+};
+export function projectRecruiterLinkCandidatesEnvelope(v: unknown): RecruiterLinkCandidatesEnvelope | null {
+  if (!isRecord(v) || !exact(v, [
+    "recruiter_id", "display_name", "personnel_code", "personnel_position",
+    "active", "version", "already_linked", "candidates",
+  ])) {
+    return null;
+  }
+  const recruiter_id = uuid(v.recruiter_id);
+  if (!recruiter_id || typeof v.display_name !== "string") return null;
+  if (v.personnel_code !== null && typeof v.personnel_code !== "string") return null;
+  if (v.personnel_position !== null &&
+      v.personnel_position !== "STAFF" &&
+      v.personnel_position !== "TEAM_LEADER") {
+    return null;
+  }
+  if (typeof v.active !== "boolean" || typeof v.already_linked !== "boolean") return null;
+  const recVersion = version(v.version);
+  if (recVersion === null || recVersion < 1 || !Array.isArray(v.candidates)) return null;
+  const candidates: RecruiterLinkCandidate[] = [];
+  for (const raw of v.candidates) {
+    if (!isRecord(raw) || !exact(raw, ["app_user_id", "display_name", "login_id", "version"])) {
+      return null;
+    }
+    const app_user_id = uuid(raw.app_user_id);
+    const accVersion = version(raw.version);
+    if (!app_user_id ||
+        typeof raw.display_name !== "string" ||
+        typeof raw.login_id !== "string" || !LOGIN_ID.test(raw.login_id) ||
+        accVersion === null || accVersion < 1) {
+      return null;
+    }
+    candidates.push({
+      app_user_id,
+      display_name: raw.display_name,
+      login_id: raw.login_id,
+      version: accVersion,
+    });
+  }
+  return {
+    recruiter_id,
+    display_name: v.display_name,
+    personnel_code: v.personnel_code as string | null,
+    personnel_position: v.personnel_position as PersonnelPosition | null,
+    active: v.active,
+    version: recVersion,
+    already_linked: v.already_linked,
+    candidates,
+  };
+}
+
+export type LinkRecruiterEnvelope = {
+  link_id: string;
+  app_user_id: string;
+  app_user_version: number;
+  app_user_revision_id: string;
+  recruiter_id: string;
+  recruiter_version: number;
+  personnel_code: string;
+  valid_from: string;
+};
+export function projectLinkRecruiterEnvelope(v: unknown): LinkRecruiterEnvelope | null {
+  if (!isRecord(v) || !exact(v, [
+    "link_id", "app_user_id", "app_user_version", "app_user_revision_id",
+    "recruiter_id", "recruiter_version", "personnel_code", "valid_from",
+  ])) {
+    return null;
+  }
+  const link_id = uuid(v.link_id);
+  const app_user_id = uuid(v.app_user_id);
+  const app_user_revision_id = uuid(v.app_user_revision_id);
+  const recruiter_id = uuid(v.recruiter_id);
+  const app_user_version = version(v.app_user_version);
+  const recruiter_version = version(v.recruiter_version);
+  if (!link_id || !app_user_id || !app_user_revision_id || !recruiter_id ||
+      app_user_version === null || app_user_version < 1 ||
+      recruiter_version === null || recruiter_version < 1 ||
+      typeof v.personnel_code !== "string" || !LOGIN_ID.test(v.personnel_code) ||
+      typeof v.valid_from !== "string" || !DATE.test(v.valid_from)) {
+    return null;
+  }
+  return {
+    link_id,
+    app_user_id,
+    app_user_version,
+    app_user_revision_id,
+    recruiter_id,
+    recruiter_version,
+    personnel_code: v.personnel_code,
+    valid_from: v.valid_from,
+  };
+}
+
 /** D3-A intent terminal states (finish/finalize). */
 export const ACCOUNT_OPERATION_TERMINAL = [
   "APPLIED", "FAILED", "INDETERMINATE", "BLOCKED", "CONFLICT", "EXPIRED",

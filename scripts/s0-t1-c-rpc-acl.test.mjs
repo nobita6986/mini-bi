@@ -61,6 +61,8 @@ import {
   CCCD_REVIEW_MANUAL_RESOLUTION_RPC_SIGNATURE,
   WORK_REPORTS_ANDROID_SYNC_AND_UX_MIGRATION_NAME,
   WORK_REPORTS_ANDROID_SYNC_AND_UX_RPC_SIGNATURE,
+  ADMIN_LINK_EXISTING_PERSONNEL_ACCOUNT_MIGRATION_NAME,
+  ADMIN_LINK_EXISTING_PERSONNEL_ACCOUNT_RPC_SIGNATURES,
   OFFBOARDING_REPORT_MIGRATION_NAME,
   OFFBOARDING_REPORT_RPC_SIGNATURES,
   migrationChecksum,
@@ -917,6 +919,28 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
         "work_report_get_assignment_detail RPC revokes client and inherited EXECUTE before granting service_role",
       );
 
+      const adminLinkPersonnelAccountMigration = await readFile(
+        path.join(MIGRATION_DIR, ADMIN_LINK_EXISTING_PERSONNEL_ACCOUNT_MIGRATION_NAME),
+        "utf8",
+      );
+      const adminLinkPersonnelAccountNormalized = adminLinkPersonnelAccountMigration
+        .replace(/\s+/g, " ")
+        .replace(/\(\s+/g, "(")
+        .replace(/\s+\)/g, ")")
+        .toLowerCase();
+      for (const sig of ADMIN_LINK_EXISTING_PERSONNEL_ACCOUNT_RPC_SIGNATURES) {
+        const sigGrant = `grant execute on function ${sig.toLowerCase()} to service_role;`;
+        const sigRevoke = `revoke all on function ${sig.toLowerCase()} from public, anon, authenticated, service_role;`;
+        assert.ok(
+          adminLinkPersonnelAccountNormalized.includes(sigGrant),
+          `Admin Link Personnel Account RPC ${sig} is explicitly granted only to service_role`,
+        );
+        assert.ok(
+          adminLinkPersonnelAccountNormalized.includes(sigRevoke),
+          `Admin Link Personnel Account RPC ${sig} revokes client and inherited EXECUTE before granting service_role`,
+        );
+      }
+
       expectedSignatures.push(R1_2_SERVICE_RPC, ...F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES,
         F1_WORK_REPORTS_ASSIGNMENT_OPTIONS_RPC_SIGNATURE,
         F1_WORK_REPORTS_ASSIGNMENT_TRACKING_RPC_SIGNATURE,
@@ -938,7 +962,8 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
         ...CCCD_QR_ASYNC_STAGE1_RPC_SIGNATURES,
         ...PRE_WAVE2_CCCD_REVIEW_RPC_SIGNATURES,
         CCCD_REVIEW_MANUAL_RESOLUTION_RPC_SIGNATURE,
-        WORK_REPORTS_ANDROID_SYNC_AND_UX_RPC_SIGNATURE);
+        WORK_REPORTS_ANDROID_SYNC_AND_UX_RPC_SIGNATURE,
+        ...ADMIN_LINK_EXISTING_PERSONNEL_ACCOUNT_RPC_SIGNATURES);
       assert.ok(expectedSignatures.length > 0, "the explicit server/invoker allowlist is not empty");
       assert.equal(new Set(expectedSignatures).size, expectedSignatures.length, "the allowlist has no duplicates");
       const { rows: resolvedExpected } = await client.query(
@@ -975,7 +1000,8 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
           ...CCCD_QR_ASYNC_STAGE1_RPC_SIGNATURES,
           ...PRE_WAVE2_CCCD_REVIEW_RPC_SIGNATURES,
           CCCD_REVIEW_MANUAL_RESOLUTION_RPC_SIGNATURE,
-          WORK_REPORTS_ANDROID_SYNC_AND_UX_RPC_SIGNATURE].sort(),
+          WORK_REPORTS_ANDROID_SYNC_AND_UX_RPC_SIGNATURE,
+          ...ADMIN_LINK_EXISTING_PERSONNEL_ACCOUNT_RPC_SIGNATURES].sort(),
         "only explicitly reviewed post-S0 RPCs add service_role grants after the S0 baseline",
       );
       const removedSourceService = sourceService

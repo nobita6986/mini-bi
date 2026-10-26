@@ -195,6 +195,13 @@ export const WORK_REPORTS_ANDROID_SYNC_AND_UX_MIGRATION_NAME =
   "20261026230000_work_reports_android_sync_and_ux.sql";
 export const WORK_REPORTS_ANDROID_SYNC_AND_UX_RPC_SIGNATURE =
   "public.work_report_get_assignment_detail(uuid, uuid, uuid)";
+export const ADMIN_LINK_EXISTING_PERSONNEL_ACCOUNT_MIGRATION_NAME =
+  "20261026233000_admin_link_existing_personnel_account.sql";
+export const ADMIN_LINK_EXISTING_PERSONNEL_ACCOUNT_RPC_SIGNATURES = Object.freeze([
+  "public.direct_entry_account_operation_recruiter_link_status(uuid, uuid, uuid[])",
+  "public.direct_entry_account_operation_recruiter_link_candidates(uuid, uuid, uuid)",
+  "public.direct_entry_account_operation_link_recruiter(uuid, uuid, uuid, integer, uuid, integer, text, text)",
+]);
 export const F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES = Object.freeze([
   "public.work_report_list_templates(uuid, uuid)",
   "public.work_report_get_template(uuid, uuid, uuid)",
@@ -425,7 +432,8 @@ export async function verifyS0T1CHistoricalCompatibility(
     cccdQrAsyncStage1Applied = false,
     preWave2CccdReviewApplied = false,
     cccdReviewManualResolutionApplied = false,
-    workReportsAndroidSyncAndUxApplied = false } = {},
+    workReportsAndroidSyncAndUxApplied = false,
+    adminLinkExistingPersonnelAccountApplied = false } = {},
 ) {
   const baseAllowlist = extractS0T1CAllowlistSignatures(migrationSql);
   if (baseAllowlist.length === 0) {
@@ -478,6 +486,9 @@ export async function verifyS0T1CHistoricalCompatibility(
       : []),
     ...(workReportsAndroidSyncAndUxApplied
       ? [WORK_REPORTS_ANDROID_SYNC_AND_UX_RPC_SIGNATURE]
+      : []),
+    ...(adminLinkExistingPersonnelAccountApplied
+      ? ADMIN_LINK_EXISTING_PERSONNEL_ACCOUNT_RPC_SIGNATURES
       : []),
   ];
 
@@ -711,6 +722,8 @@ export async function verifyAppliedMigrationChecksum(
           appliedMap.has(CCCD_REVIEW_MANUAL_RESOLUTION_MIGRATION_NAME),
         workReportsAndroidSyncAndUxApplied:
           appliedMap.has(WORK_REPORTS_ANDROID_SYNC_AND_UX_MIGRATION_NAME),
+        adminLinkExistingPersonnelAccountApplied:
+          appliedMap.has(ADMIN_LINK_EXISTING_PERSONNEL_ACCOUNT_MIGRATION_NAME),
       },
     );
     if (postconditions.ok) {

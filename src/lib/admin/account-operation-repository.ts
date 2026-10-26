@@ -16,8 +16,11 @@ import {
   projectEligibleAccountsEnvelope,
   projectFinalizeCreateEnvelope,
   projectIntentEnvelope,
+  projectLinkRecruiterEnvelope,
   projectPersonnelFromAccountEnvelope,
   projectReadIntentEnvelope,
+  projectRecruiterLinkCandidatesEnvelope,
+  projectRecruiterLinkStatusEnvelope,
 } from "./account-operation-contract.ts";
 import type {
   ClaimEnvelope,
@@ -25,8 +28,11 @@ import type {
   EligibleAccountsEnvelope,
   FinalizeCreateEnvelope,
   IntentEnvelope,
+  LinkRecruiterEnvelope,
   PersonnelFromAccountEnvelope,
   ReadIntentEnvelope,
+  RecruiterLinkCandidatesEnvelope,
+  RecruiterLinkStatusEnvelope,
 } from "./account-operation-contract.ts";
 
 type Rpc = (name: string, args: Record<string, unknown>) => Promise<{
@@ -65,6 +71,15 @@ export type AccountOperationRepository = {
   }): Promise<AccountOperationOutcome<PersonnelFromAccountEnvelope>>;
   listEligibleAccounts(input: AccountOperationActor & { page: number; page_size: number }):
     Promise<AccountOperationOutcome<EligibleAccountsEnvelope>>;
+  readRecruiterLinkStatus(input: AccountOperationActor & { recruiter_ids: string[] }):
+    Promise<AccountOperationOutcome<RecruiterLinkStatusEnvelope>>;
+  readRecruiterLinkCandidates(input: AccountOperationActor & { recruiter_id: string }):
+    Promise<AccountOperationOutcome<RecruiterLinkCandidatesEnvelope>>;
+  linkRecruiterToAccount(input: AccountOperationActor & {
+    recruiter_id: string; expected_recruiter_version: number;
+    account_ref: string; expected_account_version: number;
+    reason: string | null; idempotency_key: string;
+  }): Promise<AccountOperationOutcome<LinkRecruiterEnvelope>>;
   reclassify(input: AccountOperationActor): Promise<AccountOperationOutcome<{ reclassified: number; purged: number; deleted: number }>>;
 };
 
@@ -183,6 +198,32 @@ export function createAccountOperationRepository(rpc?: Rpc): AccountOperationRep
         p_auth_subject: input.auth_subject, p_actor_app_user_id: input.app_user_id,
         p_page: input.page, p_page_size: input.page_size,
       }, projectEligibleAccountsEnvelope);
+    },
+    readRecruiterLinkStatus(input) {
+      return call("direct_entry_account_operation_recruiter_link_status", {
+        p_auth_subject: input.auth_subject,
+        p_actor_app_user_id: input.app_user_id,
+        p_recruiter_ids: input.recruiter_ids,
+      }, projectRecruiterLinkStatusEnvelope);
+    },
+    readRecruiterLinkCandidates(input) {
+      return call("direct_entry_account_operation_recruiter_link_candidates", {
+        p_auth_subject: input.auth_subject,
+        p_actor_app_user_id: input.app_user_id,
+        p_recruiter_id: input.recruiter_id,
+      }, projectRecruiterLinkCandidatesEnvelope);
+    },
+    linkRecruiterToAccount(input) {
+      return call("direct_entry_account_operation_link_recruiter", {
+        p_auth_subject: input.auth_subject,
+        p_actor_app_user_id: input.app_user_id,
+        p_recruiter_id: input.recruiter_id,
+        p_expected_recruiter_version: input.expected_recruiter_version,
+        p_account_ref: input.account_ref,
+        p_expected_account_version: input.expected_account_version,
+        p_reason: input.reason,
+        p_idempotency_key: input.idempotency_key,
+      }, projectLinkRecruiterEnvelope);
     },
     reclassify(input) {
       return call("direct_entry_account_operation_reclassify", {
