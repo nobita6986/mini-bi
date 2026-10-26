@@ -163,14 +163,18 @@ async function parseJsonResponse<T>(response: Response): Promise<{
     payload = null;
   }
 
+  const envelope =
+    payload && typeof payload === "object" && !Array.isArray(payload)
+      ? (payload as { ok?: unknown; data?: unknown; code?: unknown; error?: unknown })
+      : null;
+
   if (!response.ok) {
     const code =
-      payload &&
-      typeof payload === "object" &&
-      "error" in payload &&
-      typeof (payload as { error?: unknown }).error === "string"
-        ? (payload as { error: string }).error
-        : "LEAVE_INTERNAL_ERROR";
+      typeof envelope?.code === "string"
+        ? envelope.code
+        : typeof envelope?.error === "string"
+          ? envelope.error
+          : "LEAVE_INTERNAL_ERROR";
     return {
       ok: false,
       status: response.status,
@@ -178,10 +182,18 @@ async function parseJsonResponse<T>(response: Response): Promise<{
     };
   }
 
+  if (envelope?.ok !== true || !Object.prototype.hasOwnProperty.call(envelope, "data")) {
+    return {
+      ok: false,
+      status: response.status,
+      errorCode: "LEAVE_INTERNAL_ERROR",
+    };
+  }
+
   return {
     ok: true,
     status: response.status,
-    data: payload as T,
+    data: envelope.data as T,
   };
 }
 
