@@ -18,7 +18,7 @@ describe("R2.2 — 28/28 Table & List Surface Adoption + 4 Owner Screenshot Fixe
     assert.match(src, /submissionStateBadgeProps/, "must map submission state to Vietnamese StatusBadge");
     assert.ok(!src.includes("<td className=\"px-3 py-3 text-foreground\">{item.state}</td>"), "must not render raw English {item.state} in SubmissionTable");
     assert.match(src, /data-testid="worker-filter-summary"/, "must preserve worker-filter-summary testid");
-    assert.match(src, /data-testid="worker-change-request-module-link"/, "must preserve worker-change-request-module-link testid");
+    assert.doesNotMatch(src, /worker-change-request-module-link/, "worker list header must not show a redundant change-request link");
   });
 
   test("Screenshot 4 Fix: outer /direct-entry header & compact panel upgraded while Grid/Form Core remains 100% locked", () => {
