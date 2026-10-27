@@ -104,11 +104,16 @@ test("WP2 Admin & HR Config surface covers employee profiles, seniority mileston
   assert.ok(workspaceSource.includes("canApplyOpeningBatch"));
 });
 
-test("WP2 Monthly Attendance & Leave Closing Report surface supports server filters and Excel (.xlsx) export", () => {
+test("WP2 Monthly Attendance & Leave Closing Report surface supports server filters, attendance dates, explicit leave types, and Excel (.xlsx) export without pay_treatment inference", () => {
   assert.ok(workspaceSource.includes('data-testid="leave-tab-report"'));
   assert.ok(workspaceSource.includes('dataTestId="leave-report-filter-toolbar"'));
   assert.ok(workspaceSource.includes('dataTestId="leave-monthly-report-table"'));
   assert.ok(workspaceSource.includes('data-testid="leave-report-export-btn"'));
   assert.ok(workspaceSource.includes("/api/leave/reports/monthly"));
   assert.ok(workspaceSource.includes("buildMonthlyLeaveReportExportUrl"));
+  assert.ok(workspaceSource.includes("Chấm công trong tháng"));
+  assert.ok(workspaceSource.includes("Chi tiết ngày nghỉ, loại nghỉ & buổi nghỉ"));
+  assert.ok(workspaceSource.includes("LEAVE_TYPES"));
+  assert.ok(workspaceSource.includes("autoAllocateDraftDaysByBalance"));
+  assert.equal(workspaceSource.includes("leavePayTreatmentBadge"), false);
 });

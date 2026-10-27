@@ -3,6 +3,23 @@ import { createHash } from "node:crypto";
 export const LEAVE_SESSION_CODES = ["FULL", "AM", "PM"] as const;
 export type LeaveSessionCode = (typeof LEAVE_SESSION_CODES)[number];
 
+export const LEAVE_TYPES = [
+  "ANNUAL",
+  "BEREAVEMENT",
+  "MARRIAGE",
+  "SICK",
+  "UNPAID",
+] as const;
+export type LeaveType = (typeof LEAVE_TYPES)[number];
+
+export const LEAVE_TYPE_MAX_UNITS_PER_REQUEST: Record<LeaveType, number | null> = {
+  ANNUAL: null,
+  BEREAVEMENT: 6, // max 3 days (6 half-day units)
+  MARRIAGE: 6, // max 3 days (6 half-day units)
+  SICK: 14, // max 7 days (14 half-day units)
+  UNPAID: 14, // max 7 days (14 half-day units)
+};
+
 export const LEAVE_UNIT_KINDS = [
   "UNCLASSIFIED",
   "RECRUITMENT",
@@ -72,6 +89,9 @@ export type LeaveErrorCode =
   | "LEAVE_REASON_INVALID"
   | "LEAVE_REASON_REQUIRED"
   | "LEAVE_REQUEST_DAYS_INVALID"
+  | "LEAVE_TYPE_INVALID"
+  | "LEAVE_TYPE_LIMIT_EXCEEDED"
+  | "LEAVE_TYPE_ALLOCATION_MISMATCH"
   | "LEAVE_REQUEST_YEAR_OUT_OF_RANGE"
   | "LEAVE_REQUEST_DUPLICATE_DATE"
   | "LEAVE_REQUEST_OVERLAP"
@@ -143,6 +163,8 @@ export function leaveHttpStatusForError(code: LeaveErrorCode): number {
     case "LEAVE_REPORT_EXPORT_INCOMPLETE":
       return 409;
     case "LEAVE_INSUFFICIENT_BALANCE":
+    case "LEAVE_TYPE_LIMIT_EXCEEDED":
+    case "LEAVE_TYPE_ALLOCATION_MISMATCH":
     case "LEAVE_CARRY_OVER_EXPIRY_NOT_CONFIGURED":
     case "LEAVE_OPENING_BATCH_VALIDATION_FAILED":
     case "LEAVE_REPORT_EXPORT_LIMIT_EXCEEDED":
@@ -229,10 +251,17 @@ function sha256Hex(payload: unknown): string {
 export type LeaveDayInput = {
   leave_date: string;
   session_code: LeaveSessionCode;
+  leave_type: LeaveType;
+};
+
+export type LeaveTypeAllocationInput = {
+  leave_type: LeaveType;
+  half_day_units: number;
 };
 
 export type CreateLeaveRequestInput = {
   days: readonly LeaveDayInput[];
+  type_allocations?: readonly LeaveTypeAllocationInput[];
   reason: string | null;
   idempotency_key: string;
   request_fingerprint: string;
@@ -342,6 +371,12 @@ export function parseMyLeaveSummaryQuery(
   return { ok: true, leave_year: year };
 }
 
+function sessionOrder(sessionCode: LeaveSessionCode): number {
+  if (sessionCode === "FULL") return 1;
+  if (sessionCode === "AM") return 2;
+  return 3;
+}
+
 export function parseCreateLeaveRequestBody(
   body: unknown,
 ): { ok: true; data: CreateLeaveRequestInput } | { ok: false; code: LeaveErrorCode } {
@@ -357,13 +392,24 @@ export function parseCreateLeaveRequestBody(
   if (
     !Array.isArray(body.days) ||
     body.days.length < 1 ||
-    body.days.length > 60
+    body.days.length > 120
   ) {
     return { ok: false, code: "LEAVE_REQUEST_DAYS_INVALID" };
   }
 
-  const seenDates = new Set<string>();
-  const normalizedDays: LeaveDayInput[] = [];
+  type RawParsedDay = {
+    leave_date: string;
+    session_code: LeaveSessionCode;
+    half_day_units: number;
+    explicit_leave_type: LeaveType | null;
+  };
+
+  const seenByDate = new Map<string, RawParsedDay[]>();
+  const rawParsedDays: RawParsedDay[] = [];
+  let totalDayUnits = 0;
+  let hasExplicitDayTypes = false;
+  let allDaysHaveExplicitTypes = true;
+
   for (const rawDay of body.days) {
     if (!isPlainObject(rawDay)) {
       return { ok: false, code: "LEAVE_REQUEST_DAYS_INVALID" };
@@ -380,17 +426,248 @@ export function parseCreateLeaveRequestBody(
     ) {
       return { ok: false, code: "LEAVE_REQUEST_DAYS_INVALID" };
     }
-    if (seenDates.has(leaveDate)) {
-      return { ok: false, code: "LEAVE_REQUEST_DUPLICATE_DATE" };
+
+    const halfDayUnits = sessionCode === "FULL" ? 2 : 1;
+    if (rawDay.half_day_units !== undefined && rawDay.half_day_units !== null) {
+      if (
+        typeof rawDay.half_day_units !== "number" ||
+        !Number.isInteger(rawDay.half_day_units) ||
+        rawDay.half_day_units !== halfDayUnits
+      ) {
+        return { ok: false, code: "LEAVE_TYPE_ALLOCATION_MISMATCH" };
+      }
     }
-    seenDates.add(leaveDate);
-    normalizedDays.push({
+
+    let explicitLeaveType: LeaveType | null = null;
+    if (
+      rawDay.leave_type !== undefined &&
+      rawDay.leave_type !== null &&
+      String(rawDay.leave_type).trim() !== ""
+    ) {
+      const candidateType =
+        typeof rawDay.leave_type === "string"
+          ? rawDay.leave_type.trim().toUpperCase()
+          : "";
+      if (!LEAVE_TYPES.includes(candidateType as LeaveType)) {
+        return { ok: false, code: "LEAVE_TYPE_INVALID" };
+      }
+      explicitLeaveType = candidateType as LeaveType;
+      hasExplicitDayTypes = true;
+    } else {
+      allDaysHaveExplicitTypes = false;
+    }
+
+    const existingForDate = seenByDate.get(leaveDate) ?? [];
+    for (const prev of existingForDate) {
+      if (
+        prev.session_code === "FULL" ||
+        sessionCode === "FULL" ||
+        prev.session_code === sessionCode ||
+        (prev.explicit_leave_type ?? "ANNUAL") ===
+          (explicitLeaveType ?? "ANNUAL")
+      ) {
+        return { ok: false, code: "LEAVE_REQUEST_DUPLICATE_DATE" };
+      }
+    }
+
+    const parsedItem: RawParsedDay = {
       leave_date: leaveDate,
       session_code: sessionCode as LeaveSessionCode,
-    });
+      half_day_units: halfDayUnits,
+      explicit_leave_type: explicitLeaveType,
+    };
+    existingForDate.push(parsedItem);
+    seenByDate.set(leaveDate, existingForDate);
+    rawParsedDays.push(parsedItem);
+    totalDayUnits += halfDayUnits;
   }
 
-  normalizedDays.sort((a, b) => a.leave_date.localeCompare(b.leave_date));
+  rawParsedDays.sort((a, b) => {
+    const cmp = a.leave_date.localeCompare(b.leave_date);
+    if (cmp !== 0) return cmp;
+    return sessionOrder(a.session_code) - sessionOrder(b.session_code);
+  });
+
+  const rawAllocs =
+    body.type_allocations !== undefined
+      ? body.type_allocations
+      : body.allocations;
+
+  let normalizedAllocations: LeaveTypeAllocationInput[] | undefined;
+  const normalizedDays: LeaveDayInput[] = [];
+
+  if (rawAllocs !== undefined && rawAllocs !== null) {
+    if (
+      !Array.isArray(rawAllocs) ||
+      rawAllocs.length < 1 ||
+      rawAllocs.length > 20
+    ) {
+      return { ok: false, code: "LEAVE_TYPE_ALLOCATION_MISMATCH" };
+    }
+
+    normalizedAllocations = [];
+    let totalAllocUnits = 0;
+
+    for (const rawAlloc of rawAllocs) {
+      if (!isPlainObject(rawAlloc)) {
+        return { ok: false, code: "LEAVE_TYPE_ALLOCATION_MISMATCH" };
+      }
+      const allocType =
+        typeof rawAlloc.leave_type === "string"
+          ? rawAlloc.leave_type.trim().toUpperCase()
+          : "";
+      if (!LEAVE_TYPES.includes(allocType as LeaveType)) {
+        return { ok: false, code: "LEAVE_TYPE_INVALID" };
+      }
+
+      let allocUnits: number | null = null;
+      if (
+        rawAlloc.half_day_units !== undefined &&
+        rawAlloc.half_day_units !== null
+      ) {
+        if (
+          typeof rawAlloc.half_day_units !== "number" ||
+          !Number.isInteger(rawAlloc.half_day_units) ||
+          rawAlloc.half_day_units < 1
+        ) {
+          return { ok: false, code: "LEAVE_TYPE_ALLOCATION_MISMATCH" };
+        }
+        allocUnits = rawAlloc.half_day_units;
+      }
+
+      if (rawAlloc.days !== undefined && rawAlloc.days !== null) {
+        if (
+          typeof rawAlloc.days !== "number" ||
+          !Number.isFinite(rawAlloc.days) ||
+          rawAlloc.days <= 0 ||
+          !Number.isInteger(rawAlloc.days * 2)
+        ) {
+          return { ok: false, code: "LEAVE_TYPE_ALLOCATION_MISMATCH" };
+        }
+        const fromDays = Math.round(rawAlloc.days * 2);
+        if (allocUnits !== null && allocUnits !== fromDays) {
+          return { ok: false, code: "LEAVE_TYPE_ALLOCATION_MISMATCH" };
+        }
+        allocUnits = fromDays;
+      }
+
+      if (allocUnits === null || allocUnits < 1) {
+        return { ok: false, code: "LEAVE_TYPE_ALLOCATION_MISMATCH" };
+      }
+
+      normalizedAllocations.push({
+        leave_type: allocType as LeaveType,
+        half_day_units: allocUnits,
+      });
+      totalAllocUnits += allocUnits;
+    }
+
+    if (totalAllocUnits !== totalDayUnits) {
+      return { ok: false, code: "LEAVE_TYPE_ALLOCATION_MISMATCH" };
+    }
+
+    if (hasExplicitDayTypes) {
+      if (!allDaysHaveExplicitTypes) {
+        return { ok: false, code: "LEAVE_TYPE_ALLOCATION_MISMATCH" };
+      }
+      const dayTypeSums = new Map<LeaveType, number>();
+      for (const d of rawParsedDays) {
+        const t = d.explicit_leave_type as LeaveType;
+        dayTypeSums.set(t, (dayTypeSums.get(t) ?? 0) + d.half_day_units);
+      }
+      const allocTypeSums = new Map<LeaveType, number>();
+      for (const a of normalizedAllocations) {
+        allocTypeSums.set(
+          a.leave_type,
+          (allocTypeSums.get(a.leave_type) ?? 0) + a.half_day_units,
+        );
+      }
+      for (const t of LEAVE_TYPES) {
+        if ((dayTypeSums.get(t) ?? 0) !== (allocTypeSums.get(t) ?? 0)) {
+          return { ok: false, code: "LEAVE_TYPE_ALLOCATION_MISMATCH" };
+        }
+      }
+      for (const d of rawParsedDays) {
+        normalizedDays.push({
+          leave_date: d.leave_date,
+          session_code: d.session_code,
+          leave_type: d.explicit_leave_type as LeaveType,
+        });
+      }
+    } else {
+      const slotTypes: LeaveType[] = [];
+      for (const alloc of normalizedAllocations) {
+        for (let i = 0; i < alloc.half_day_units; i += 1) {
+          slotTypes.push(alloc.leave_type);
+        }
+      }
+
+      let cursor = 0;
+      for (const d of rawParsedDays) {
+        if (d.session_code === "FULL") {
+          const amType = slotTypes[cursor];
+          const pmType = slotTypes[cursor + 1];
+          cursor += 2;
+          if (amType === pmType) {
+            normalizedDays.push({
+              leave_date: d.leave_date,
+              session_code: "FULL",
+              leave_type: amType,
+            });
+          } else {
+            normalizedDays.push({
+              leave_date: d.leave_date,
+              session_code: "AM",
+              leave_type: amType,
+            });
+            normalizedDays.push({
+              leave_date: d.leave_date,
+              session_code: "PM",
+              leave_type: pmType,
+            });
+          }
+        } else {
+          const slotType = slotTypes[cursor];
+          cursor += 1;
+          normalizedDays.push({
+            leave_date: d.leave_date,
+            session_code: d.session_code,
+            leave_type: slotType,
+          });
+        }
+      }
+    }
+  } else {
+    for (const d of rawParsedDays) {
+      normalizedDays.push({
+        leave_date: d.leave_date,
+        session_code: d.session_code,
+        leave_type: d.explicit_leave_type ?? "ANNUAL",
+      });
+    }
+  }
+
+  normalizedDays.sort((a, b) => {
+    const cmp = a.leave_date.localeCompare(b.leave_date);
+    if (cmp !== 0) return cmp;
+    return sessionOrder(a.session_code) - sessionOrder(b.session_code);
+  });
+
+  const unitsByType = new Map<LeaveType, number>();
+  for (const day of normalizedDays) {
+    const units = day.session_code === "FULL" ? 2 : 1;
+    unitsByType.set(
+      day.leave_type,
+      (unitsByType.get(day.leave_type) ?? 0) + units,
+    );
+  }
+
+  for (const [leaveType, totalUnits] of unitsByType.entries()) {
+    const maxUnits = LEAVE_TYPE_MAX_UNITS_PER_REQUEST[leaveType];
+    if (maxUnits !== null && totalUnits > maxUnits) {
+      return { ok: false, code: "LEAVE_TYPE_LIMIT_EXCEEDED" };
+    }
+  }
 
   const request_fingerprint = sha256Hex({
     op: "CREATE_REQUEST",
@@ -402,6 +679,9 @@ export function parseCreateLeaveRequestBody(
     ok: true,
     data: {
       days: normalizedDays,
+      ...(normalizedAllocations
+        ? { type_allocations: normalizedAllocations }
+        : {}),
       reason: reason.reason,
       idempotency_key: idem.key,
       request_fingerprint,
