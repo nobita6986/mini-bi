@@ -1,9 +1,10 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
 import { parseAsString, useQueryStates } from "nuqs";
 
 import { CatalogFilterCombobox } from "@/components/ui/catalog-filter-combobox";
+import { useNotify } from "@/components/ui/notify-provider";
 import { buildCompanyDisplayNames } from "@/lib/display/company-display-name";
 import { EMPLOYMENT_OPTIONS, PROVIDER_OPTIONS, WORK_STATUS_OPTIONS } from "@/lib/reporting/p1-dashboard";
 import type { ReportingOptionsCatalog } from "@/lib/reporting/p1-dashboard";
@@ -67,8 +68,28 @@ export function DashboardFilters({
     () => options.dimensions.recruiters.map((o) => ({ id: o.key, label: o.display, keywords: o.key })),
     [options.dimensions.recruiters],
   );
-  const [filters, setFilters] = useQueryStates(parsers, { shallow: false, scroll: false });
+  const notify = useNotify();
+  const [isPending, startTransition] = useTransition();
+  const filterRefreshRequestedRef = useRef(false);
+  const observedFilterTransitionRef = useRef(false);
+  const [filters, setFilters] = useQueryStates(parsers, { shallow: false, scroll: false, startTransition });
   const [advancedOpen, setAdvancedOpen] = useState(false);
+
+  useEffect(() => {
+    if (isPending) {
+      if (filterRefreshRequestedRef.current) observedFilterTransitionRef.current = true;
+      return;
+    }
+    if (!filterRefreshRequestedRef.current || !observedFilterTransitionRef.current) return;
+    filterRefreshRequestedRef.current = false;
+    observedFilterTransitionRef.current = false;
+    notify.success({ title: "Đã áp dụng bộ lọc và cập nhật báo cáo." });
+  }, [isPending, notify]);
+
+  function applyFilters(values: Parameters<typeof setFilters>[0]) {
+    filterRefreshRequestedRef.current = true;
+    void setFilters(values);
+  }
 
   const now = new Date();
   const presets = computeDatePresets(now);
@@ -109,7 +130,7 @@ export function DashboardFilters({
               Bộ lọc nâng cao
             </button>
             {activeCount > 0 || allTime ? (
-              <button type="button" onClick={() => setFilters(null)} className="inline-flex h-11 items-center rounded-lg bg-primary px-3 text-sm font-medium text-on-primary transition-colors duration-[var(--ui-motion-hover,160ms)] ease-[var(--ui-motion-ease,cubic-bezier(0.22,1,0.36,1))] motion-reduce:transition-none hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-ring/40">
+              <button type="button" onClick={() => applyFilters(null)} className="inline-flex h-11 items-center rounded-lg bg-primary px-3 text-sm font-medium text-on-primary transition-colors duration-[var(--ui-motion-hover,160ms)] ease-[var(--ui-motion-ease,cubic-bezier(0.22,1,0.36,1))] motion-reduce:transition-none hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-ring/40">
                 Xóa bộ lọc
               </button>
             ) : null}
@@ -118,11 +139,11 @@ export function DashboardFilters({
 
         <div role="group" aria-label="Khoảng thời gian nhanh" className="mt-2.5 flex gap-1.5 overflow-x-auto pb-1">
           {presets.map((p) => (
-            <button key={p.key} type="button" aria-pressed={activePresetKey === p.key} onClick={() => setFilters({ from: p.from, to: p.to, range: null })} className={chip(activePresetKey === p.key)}>
+            <button key={p.key} type="button" aria-pressed={activePresetKey === p.key} onClick={() => applyFilters({ from: p.from, to: p.to, range: null })} className={chip(activePresetKey === p.key)}>
               {p.label}
             </button>
           ))}
-          <button type="button" aria-pressed={allTime} onClick={() => setFilters({ from: null, to: null, range: EXPLICIT_ALL_TIME_RANGE_PARAM })} className={chip(allTime)}>
+          <button type="button" aria-pressed={allTime} onClick={() => applyFilters({ from: null, to: null, range: EXPLICIT_ALL_TIME_RANGE_PARAM })} className={chip(allTime)}>
             Tất cả thời gian
           </button>
         </div>
@@ -139,7 +160,7 @@ export function DashboardFilters({
               onChange={(e) => {
                 const nextFrom = e.target.value || null;
                 const nextTo = effectiveTo;
-                setFilters({
+                applyFilters({
                   from: nextFrom,
                   to: nextTo,
                   range: nextFrom === null && nextTo === null ? EXPLICIT_ALL_TIME_RANGE_PARAM : null,
@@ -156,7 +177,7 @@ export function DashboardFilters({
               onChange={(e) => {
                 const nextFrom = effectiveFrom;
                 const nextTo = e.target.value || null;
-                setFilters({
+                applyFilters({
                   from: nextFrom,
                   to: nextTo,
                   range: nextFrom === null && nextTo === null ? EXPLICIT_ALL_TIME_RANGE_PARAM : null,
@@ -171,7 +192,7 @@ export function DashboardFilters({
             placeholder="Gõ tên dự án để tìm"
             options={projectFilterOptions}
             value={filters.project ?? ""}
-            onChange={(value) => setFilters({ project: value || null })}
+            onChange={(value) => applyFilters({ project: value || null })}
           />
           {showRecruiter ? (
             <CatalogFilterCombobox
@@ -181,23 +202,23 @@ export function DashboardFilters({
               placeholder="Gõ tên người tuyển để tìm"
               options={recruiterFilterOptions}
               value={filters.recruiter ?? ""}
-              onChange={(value) => setFilters({ recruiter: value || null })}
+              onChange={(value) => applyFilters({ recruiter: value || null })}
             />
           ) : null}
           <Field id="f-provider" label="HRP/Vendor">
-            <select id="f-provider" className={inputClass} value={filters.provider ?? ""} onChange={(e) => setFilters({ provider: e.target.value || null })}>
+            <select id="f-provider" className={inputClass} value={filters.provider ?? ""} onChange={(e) => applyFilters({ provider: e.target.value || null })}>
               <option value="">Tất cả</option>
               {PROVIDER_OPTIONS.map((o) => <option key={o.key} value={o.key}>{o.display}</option>)}
             </select>
           </Field>
           <Field id="f-employment" label="Loại hình làm việc">
-            <select id="f-employment" className={inputClass} value={filters.employment ?? ""} onChange={(e) => setFilters({ employment: e.target.value || null })}>
+            <select id="f-employment" className={inputClass} value={filters.employment ?? ""} onChange={(e) => applyFilters({ employment: e.target.value || null })}>
               <option value="">Tất cả</option>
               {EMPLOYMENT_OPTIONS.map((o) => <option key={o.key} value={o.key}>{o.display}</option>)}
             </select>
           </Field>
-          <Field id="f-status" label="Trạng thái làm việc (tính đến ngày cuối kỳ)">
-            <select id="f-status" className={inputClass} value={filters.status ?? ""} onChange={(e) => setFilters({ status: e.target.value || null })}>
+          <Field id="f-status" label="Trạng thái làm việc">
+            <select id="f-status" className={inputClass} value={filters.status ?? ""} onChange={(e) => applyFilters({ status: e.target.value || null })}>
               <option value="">Tất cả trạng thái</option>
               {WORK_STATUS_OPTIONS.map((o) => <option key={o.key} value={o.key}>{o.display}</option>)}
             </select>
