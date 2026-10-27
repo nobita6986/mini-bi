@@ -43,6 +43,7 @@ const NAV_ICONS: Record<string, typeof LayoutDashboard> = {
   "attendance-report": CalendarDays,
   finance: Landmark,
   leave: CalendarDays,
+  "leave-admin": CalendarDays,
   admin: ShieldCheck,
 } as const;
 

@@ -17,7 +17,7 @@ const {
 const { isDirectEntryUiEnabled } = await import("../direct-entry/ui-model.ts");
 
 test("CURRENT_NAV_ENTRIES chứa các entry hiện hành trong một registry", () => {
-  assert.equal(CURRENT_NAV_ENTRIES.length, 13, "phải có đúng 13 entries current");
+  assert.equal(CURRENT_NAV_ENTRIES.length, 14, "phải có đúng 14 entries current");
   const ids = CURRENT_NAV_ENTRIES.map((e) => e.id).sort();
   assert.deepEqual(
     ids,
@@ -29,6 +29,7 @@ test("CURRENT_NAV_ENTRIES chứa các entry hiện hành trong một registry", 
       "direct-entry",
       "finance",
       "leave",
+      "leave-admin",
       "project-operations",
       "work-report-analytics",
       "work-report-assignments",
@@ -59,6 +60,7 @@ test("Global IA nav groups separate 'Công việc của tôi' and 'Quản trị'
       label: "Quản trị",
       children: [
         "project-operations",
+        "leave-admin",
         "work-report-assignments",
         "attendance-report",
         "admin",
@@ -187,6 +189,7 @@ test("Desktop viewport theo feature flag, luôn giữ Dashboard và không có P
       "work-reports",
       "leave",
       "finance",
+      "leave-admin",
       "work-report-assignments",
       "attendance-report",
       "admin",
@@ -206,6 +209,7 @@ test("Mobile viewport theo feature flag, luôn giữ Dashboard và không có Pi
       "work-reports",
       "leave",
       "finance",
+      "leave-admin",
       "work-report-assignments",
       "attendance-report",
       "admin",
@@ -220,6 +224,7 @@ test("feature flag Direct Entry chỉ mở với giá trị chính xác true", (
     "work-reports",
     "leave",
     "finance",
+    "leave-admin",
     "work-report-assignments",
     "attendance-report",
     "admin",
@@ -278,6 +283,7 @@ test("registry: mỗi entry có id ổn định, label, path, icon, status, capa
         "work_report_analytics",
         "workforce_offboarding",
         "leave",
+        "leave_admin",
       ].includes(entry.capability),
       `entry '${entry.id}' capability không hợp lệ: ${entry.capability}`
     );

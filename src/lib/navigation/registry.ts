@@ -65,7 +65,8 @@ export type NavCapability =
   | "work_report_reviews"
   | "work_report_analytics"
   | "workforce_offboarding"
-  | "leave";
+  | "leave"
+  | "leave_admin";
 
 /** Icon component type — accept cả LucideIcon và custom SVG component. */
 export type NavIcon = LucideIcon | ComponentType<SVGProps<SVGSVGElement>>;
@@ -246,6 +247,18 @@ export const NAV_ENTRIES: ReadonlyArray<NavEntry> = [
     icon: Building2,
     status: "current",
     capability: "project_admin",
+    group: "management",
+    visibility: { desktop: true, mobile: true },
+  },
+  {
+    id: "leave-admin",
+    label: "Quản trị nghỉ phép",
+    path: "/leave/admin",
+    description:
+      "Cấu hình chính sách, hồ sơ, số dư đầu kỳ và xem báo cáo nghỉ phép trong phạm vi được cấp quyền.",
+    icon: CalendarDays,
+    status: "current",
+    capability: "leave_admin",
     group: "management",
     visibility: { desktop: true, mobile: true },
   },

@@ -464,6 +464,7 @@ test("filterEntriesForActor: owner (đủ 3 admin) + viewport=mobile → các kh
       "direct-entry",
       "finance",
       "leave",
+      "leave-admin",
       "project-operations",
       "work-report-assignments",
       "work-reports",
@@ -506,6 +507,7 @@ test("CURRENT_NAV_ENTRIES giữ nguyên một registry duy nhất (không tạo 
       "direct-entry",
       "finance",
       "leave",
+      "leave-admin",
       "project-operations",
       "work-report-analytics",
       "work-report-assignments",
@@ -634,6 +636,7 @@ test("Global IA representative actor matrix: Recruiter/Nhân viên, Team Leader,
     capabilities: ["entry_privileged_edit", "report_analytics_view", "report_view", "change_review", "vendor_finance_view"],
     scopes: all,
     hasLeaveManagementAccess: true,
+    hasLeaveAdminAccess: true,
   };
   const bodMenu = projectMenuForBothViewports(bodActor);
   assert.deepEqual(bodMenu.topLevelIds, ["dashboard", "group:my-work", "finance", "group:management"]);
@@ -646,7 +649,7 @@ test("Global IA representative actor matrix: Recruiter/Nhân viên, Team Leader,
     {
       id: "management",
       label: "Quản trị",
-      children: ["attendance-report"],
+      children: ["leave-admin", "attendance-report"],
     },
   ]);
   assert.equal(bodMenu.ids.includes("attendance-report"), true, "BoD sees Báo cáo chấm công");
@@ -670,6 +673,7 @@ test("Global IA representative actor matrix: Recruiter/Nhân viên, Team Leader,
       label: "Quản trị",
       children: [
         "project-operations",
+        "leave-admin",
         "work-report-assignments",
         "attendance-report",
         "admin",

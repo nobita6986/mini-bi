@@ -33,6 +33,7 @@ export type NavActorProjection = {
   hasVendorFinanceRecordAccess?: boolean;
   hasVendorFinanceReconcileAccess?: boolean;
   hasLeaveManagementAccess?: boolean;
+  hasLeaveAdminAccess?: boolean;
 };
 
 /** Predicate phụ thuộc entry — registry.ts có metadata `capability`. */
@@ -271,6 +272,10 @@ export const vendorFinanceAdminNavPredicate: NavCapabilityPredicate = adminAutho
 export const leaveManagementNavPredicate: NavCapabilityPredicate = (actor) =>
   adminAuthorityNavPredicate(actor) || actor.hasLeaveManagementAccess === true;
 
+export const leaveAdminNavPredicate: NavCapabilityPredicate = (actor) =>
+  adminAuthorityNavPredicate(actor) ||
+  actor.hasLeaveAdminAccess === true;
+
 /** Bảng ánh xạ `entry.capability` metadata → predicate tương ứng. */
 export const NAV_CAPABILITY_PREDICATES: Readonly<Record<string, NavCapabilityPredicate>> = {
   any: () => true,
@@ -279,6 +284,7 @@ export const NAV_CAPABILITY_PREDICATES: Readonly<Record<string, NavCapabilityPre
   attendance_report: attendanceReportNavPredicate,
   finance: vendorFinanceNavPredicate,
   leave: leaveManagementNavPredicate,
+  leave_admin: leaveAdminNavPredicate,
   hrp: directEntryNavPredicate,
   entry_own: directEntryNavPredicate,
   entry_team: directEntryNavPredicate,
