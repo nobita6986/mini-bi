@@ -209,7 +209,7 @@ export type LeaveRequestProjection = {
   unit_kind_snapshot: string;
   profile_configured_at_submit: boolean;
   requested_units: number;
-  reason: string;
+  reason: string | null;
   route_kind: string;
   primary_approver_app_user_id: string | null;
   primary_approver: LeaveAccountProjection | null;
@@ -914,11 +914,9 @@ export function evaluateLeaveRequestDraft(input: {
 
   const trimmedReason = (input.reason ?? "").trim();
   const reasonError =
-    trimmedReason.length === 0
-      ? "Vui lòng nhập lý do xin nghỉ phép."
-      : trimmedReason.length > 2000
-        ? "Lý do không được vượt quá 2.000 ký tự."
-        : null;
+    trimmedReason.length > 2000
+      ? "Lý do không được vượt quá 2.000 ký tự."
+      : null;
 
   let blockingError: string | null = null;
   if (input.days.length === 0) {
@@ -988,8 +986,8 @@ export function validateApproverDecisionInput(input: {
     if (input.request.status !== "PENDING") {
       return { ok: false, message: "Chỉ có thể từ chối đơn đang ở trạng thái Chờ duyệt." };
     }
-    if (input.reason.trim().length === 0) {
-      return { ok: false, message: "Bắt buộc nhập lý do khi từ chối đơn nghỉ phép." };
+    if (input.reason.trim().length > 2000) {
+      return { ok: false, message: "Lý do không được vượt quá 2.000 ký tự." };
     }
     return { ok: true };
   }
@@ -1000,8 +998,8 @@ export function validateApproverDecisionInput(input: {
         message: "Chỉ có thể hủy đơn đã ở trạng thái Đã duyệt để hoàn lại phép.",
       };
     }
-    if (input.reason.trim().length === 0) {
-      return { ok: false, message: "Bắt buộc nhập lý do khi hủy đơn nghỉ phép đã duyệt." };
+    if (input.reason.trim().length > 2000) {
+      return { ok: false, message: "Lý do không được vượt quá 2.000 ký tự." };
     }
     return { ok: true };
   }
@@ -1027,7 +1025,6 @@ export function canApplyOpeningBatch(input: {
   rows: readonly OpeningBatchRowInput[];
   preview: LeaveOpeningPreviewProjection | null;
   previewSignature: string | null;
-  reason: string;
 }): { ok: boolean; blockingReason: string | null } {
   if (input.rows.length === 0) {
     return { ok: false, blockingReason: "Vui lòng thêm ít nhất 1 nhân sự vào danh sách số dư đầu kỳ." };
@@ -1050,12 +1047,6 @@ export function canApplyOpeningBatch(input: {
     return {
       ok: false,
       blockingReason: `Bản xem trước còn ${input.preview.error_row_count} dòng lỗi. Vui lòng sửa lỗi rồi xem trước lại.`,
-    };
-  }
-  if (input.reason.trim().length === 0) {
-    return {
-      ok: false,
-      blockingReason: "Vui lòng nhập lý do áp dụng số dư đầu kỳ (ghi sổ kiểm toán).",
     };
   }
   return { ok: true, blockingReason: null };

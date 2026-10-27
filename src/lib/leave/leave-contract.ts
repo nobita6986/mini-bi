@@ -233,7 +233,7 @@ export type LeaveDayInput = {
 
 export type CreateLeaveRequestInput = {
   days: readonly LeaveDayInput[];
-  reason: string;
+  reason: string | null;
   idempotency_key: string;
   request_fingerprint: string;
 };
@@ -259,7 +259,7 @@ export type PatchAdminConfigInput =
       carry_over_expiry_month: number;
       carry_over_expiry_day: number;
       expected_row_version: number;
-      reason: string;
+      reason: string | null;
       idempotency_key: string;
       request_fingerprint: string;
     }
@@ -274,7 +274,7 @@ export type PatchAdminConfigInput =
       next_seniority_effective_date: string | null;
       next_seniority_units: number;
       expected_row_version: number;
-      reason: string;
+      reason: string | null;
       idempotency_key: string;
       request_fingerprint: string;
     }
@@ -284,7 +284,7 @@ export type PatchAdminConfigInput =
       approver_app_user_id: string | null;
       valid_from: string | null;
       expected_row_version: number;
-      reason: string;
+      reason: string | null;
       idempotency_key: string;
       request_fingerprint: string;
     }
@@ -294,7 +294,7 @@ export type PatchAdminConfigInput =
       target_app_user_id: string;
       role_code: LeaveModuleGrantRole;
       expected_row_version: number;
-      reason: string;
+      reason: string | null;
       idempotency_key: string;
       request_fingerprint: string;
     };
@@ -315,7 +315,7 @@ export type PreviewOpeningBatchInput = {
 export type ApplyOpeningBatchInput = {
   leave_year: number;
   rows: readonly OpeningBatchRowInput[];
-  reason: string;
+  reason: string | null;
   idempotency_key: string;
   request_fingerprint: string;
 };
@@ -351,10 +351,8 @@ export function parseCreateLeaveRequestBody(
   const idem = normalizeIdempotencyKey(body.idempotency_key);
   if (!idem.ok) return idem;
 
-  const reason = normalizeReason(body.reason, true);
-  if (!reason.ok || reason.reason === null) {
-    return { ok: false, code: "LEAVE_REASON_INVALID" };
-  }
+  const reason = normalizeReason(body.reason, false);
+  if (!reason.ok) return reason;
 
   if (
     !Array.isArray(body.days) ||
@@ -513,8 +511,7 @@ export function parseDecideLeaveRequestBody(
     return { ok: false, code: "INVALID_REQUEST" };
   }
 
-  const reasonRequired = decision === "REJECT" || decision === "CANCEL_APPROVED";
-  const reason = normalizeReason(body.reason, reasonRequired);
+  const reason = normalizeReason(body.reason, false);
   if (!reason.ok) return reason;
 
   const request_fingerprint = sha256Hex({
@@ -582,10 +579,8 @@ export function parsePatchAdminConfigBody(
   const idem = normalizeIdempotencyKey(body.idempotency_key);
   if (!idem.ok) return idem;
 
-  const reason = normalizeReason(body.reason, true);
-  if (!reason.ok || reason.reason === null) {
-    return { ok: false, code: "LEAVE_REASON_REQUIRED" };
-  }
+  const reason = normalizeReason(body.reason, false);
+  if (!reason.ok) return reason;
 
   const expectedRowVersion = Number(body.expected_row_version ?? 0);
   if (!Number.isInteger(expectedRowVersion) || expectedRowVersion < 0) {
@@ -892,10 +887,8 @@ export function parseApplyOpeningBatchBody(
   const idem = normalizeIdempotencyKey(body.idempotency_key);
   if (!idem.ok) return idem;
 
-  const reason = normalizeReason(body.reason, true);
-  if (!reason.ok || reason.reason === null) {
-    return { ok: false, code: "LEAVE_REASON_REQUIRED" };
-  }
+  const reason = normalizeReason(body.reason, false);
+  if (!reason.ok) return reason;
 
   const preview = parsePreviewOpeningBatchBody(body);
   if (!preview.ok) return preview;

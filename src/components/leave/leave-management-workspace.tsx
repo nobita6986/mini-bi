@@ -197,13 +197,21 @@ async function parseJsonResponse<T>(response: Response): Promise<{
   };
 }
 
-export function LeaveManagementWorkspace() {
+export function LeaveManagementWorkspace({
+  viewMode = "personal",
+  initialAdminTab = "admin",
+}: {
+  viewMode?: "personal" | "admin";
+  initialAdminTab?: "admin" | "reports";
+}) {
   const notify = useNotify();
   const yearSelectId = useId();
   const reasonTextareaId = useId();
 
   const [leaveYear, setLeaveYear] = useState<number>(() => currentVietnamLeaveYear());
-  const [activeTab, setActiveTab] = useState<LeaveWorkspaceTab>("personal");
+  const [activeTab, setActiveTab] = useState<LeaveWorkspaceTab>(
+    viewMode === "admin" ? initialAdminTab : "personal",
+  );
 
   // 1. Personal Summary State
   const [meLoading, setMeLoading] = useState<boolean>(true);
@@ -442,12 +450,12 @@ export function LeaveManagementWorkspace() {
   const authority = summary?.authority ?? null;
 
   useEffect(() => {
-    if (authority?.can_approve_requests) {
+    if (viewMode === "personal" && authority?.can_approve_requests) {
       queueMicrotask(() => {
         void loadInbox(inboxStatusFilter, inboxPage);
       });
     }
-  }, [authority?.can_approve_requests, inboxStatusFilter, inboxPage, loadInbox]);
+  }, [viewMode, authority?.can_approve_requests, inboxStatusFilter, inboxPage, loadInbox]);
 
   useEffect(() => {
     if (activeTab === "admin" && authority?.can_manage_config) {
@@ -473,14 +481,15 @@ export function LeaveManagementWorkspace() {
     loadMonthlyReport,
   ]);
 
-  const visibleTabs = useMemo(
-    () =>
-      resolveVisibleLeaveTabs(
-        authority,
-        inboxStatusFilter === "PENDING" ? inboxData?.total : undefined,
-      ),
-    [authority, inboxStatusFilter, inboxData?.total],
-  );
+  const visibleTabs = useMemo(() => {
+    const tabs = resolveVisibleLeaveTabs(
+      authority,
+      inboxStatusFilter === "PENDING" ? inboxData?.total : undefined,
+    );
+    return viewMode === "admin"
+      ? tabs.filter((tab) => tab.id === "admin" || tab.id === "reports")
+      : tabs.filter((tab) => tab.id === "personal" || tab.id === "approvals");
+  }, [authority, inboxStatusFilter, inboxData?.total, viewMode]);
 
   const draftEvaluation = useMemo(
     () =>
@@ -511,14 +520,12 @@ export function LeaveManagementWorkspace() {
         rows: parsedOpeningContractRows.rows,
         preview: openingPreviewResult,
         previewSignature: openingPreviewSignature,
-        reason: openingReason,
       }),
     [
       openingYear,
       parsedOpeningContractRows.rows,
       openingPreviewResult,
       openingPreviewSignature,
-      openingReason,
     ],
   );
 
@@ -564,7 +571,7 @@ export function LeaveManagementWorkspace() {
         credentials: "same-origin",
         body: JSON.stringify({
           days: draftDays,
-          reason: draftReason.trim(),
+          reason: draftReason.trim() || null,
           idempotency_key: newClientIdempotencyKey("leave-create"),
         }),
       });
@@ -715,14 +722,6 @@ export function LeaveManagementWorkspace() {
   const handleSavePolicy = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!adminData || savingPolicy) return;
-    if (!policyReason.trim()) {
-      notify.warning({
-        title: "Thiếu lý do cập nhật",
-        description: "Vui lòng nhập lý do cập nhật chính sách hạn sử dụng phép chuyển năm.",
-      });
-      return;
-    }
-
     setSavingPolicy(true);
     try {
       const response = await fetch("/api/leave/admin/config", {
@@ -734,7 +733,7 @@ export function LeaveManagementWorkspace() {
           carry_over_expiry_month: Number(policyExpiryMonth),
           carry_over_expiry_day: Number(policyExpiryDay),
           expected_row_version: adminData.policy.row_version,
-          reason: policyReason.trim(),
+          reason: policyReason.trim() || null,
           idempotency_key: newClientIdempotencyKey("leave-policy"),
         }),
       });
@@ -766,10 +765,10 @@ export function LeaveManagementWorkspace() {
   const handleSaveDepartmentApprover = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!adminData || savingDeptApprover) return;
-    if (!deptApproverUserId.trim() || !deptReason.trim()) {
+    if (!deptApproverUserId.trim()) {
       notify.warning({
         title: "Thiếu thông tin người duyệt",
-        description: "Vui lòng chọn người duyệt bộ phận và nhập lý do cấu hình.",
+        description: "Vui lòng chọn người duyệt bộ phận.",
       });
       return;
     }
@@ -790,7 +789,7 @@ export function LeaveManagementWorkspace() {
           approver_app_user_id: deptApproverUserId.trim(),
           valid_from: deptValidFrom,
           expected_row_version: existingCurrent?.row_version ?? 0,
-          reason: deptReason.trim(),
+          reason: deptReason.trim() || null,
           idempotency_key: newClientIdempotencyKey("leave-dept-approver"),
         }),
       });
@@ -821,10 +820,10 @@ export function LeaveManagementWorkspace() {
   const handleGrantModuleRole = async (event: React.FormEvent) => {
     event.preventDefault();
     if (savingGrant) return;
-    if (!grantUserId.trim() || !grantReason.trim()) {
+    if (!grantUserId.trim()) {
       notify.warning({
         title: "Thiếu thông tin phân quyền",
-        description: "Vui lòng chọn tài khoản và nhập lý do cấp quyền.",
+        description: "Vui lòng chọn tài khoản.",
       });
       return;
     }
@@ -841,7 +840,7 @@ export function LeaveManagementWorkspace() {
           target_app_user_id: grantUserId.trim(),
           role_code: grantRoleCode,
           expected_row_version: 0,
-          reason: grantReason.trim(),
+          reason: grantReason.trim() || null,
           idempotency_key: newClientIdempotencyKey("leave-grant"),
         }),
       });
@@ -887,7 +886,7 @@ export function LeaveManagementWorkspace() {
           target_app_user_id: targetUserId,
           role_code: roleCode,
           expected_row_version: rowVersion,
-          reason: "Thu hồi quyền từ giao diện quản trị cấu hình nghỉ phép",
+          reason: null,
           idempotency_key: newClientIdempotencyKey("leave-revoke"),
         }),
       });
@@ -930,14 +929,6 @@ export function LeaveManagementWorkspace() {
     event.preventDefault();
     if (!editingEmployee || savingProfile) return;
 
-    if (!profileReason.trim()) {
-      notify.warning({
-        title: "Thiếu lý do cập nhật",
-        description: "Vui lòng nhập lý do cập nhật hồ sơ nghỉ phép của nhân sự.",
-      });
-      return;
-    }
-
     const canEditSeniority = Boolean(authority?.is_full_admin || authority?.is_bod);
     const parsedSeniorityUnits = canEditSeniority
       ? parseDaysInputToHalfDayUnits(profileSeniorityDays, 60)
@@ -973,7 +964,7 @@ export function LeaveManagementWorkspace() {
             : editingEmployee.profile.next_seniority_effective_date,
           next_seniority_units: parsedSeniorityUnits,
           expected_row_version: editingEmployee.profile.row_version,
-          reason: profileReason.trim(),
+          reason: profileReason.trim() || null,
           idempotency_key: newClientIdempotencyKey("leave-profile"),
         }),
       });
@@ -1074,7 +1065,7 @@ export function LeaveManagementWorkspace() {
       if (parsed.data.valid && parsed.data.error_row_count === 0) {
         notify.success({
           title: "Kiểm tra xem trước hợp lệ",
-          description: `Tất cả ${parsed.data.row_count} dòng đều hợp lệ. Bạn có thể nhập lý do và bấm Áp dụng chính thức.`,
+          description: `Tất cả ${parsed.data.row_count} dòng đều hợp lệ. Bạn có thể bấm Áp dụng chính thức.`,
         });
       } else {
         notify.warning({
@@ -1104,7 +1095,7 @@ export function LeaveManagementWorkspace() {
         body: JSON.stringify({
           leave_year: openingYear,
           rows: parsedOpeningContractRows.rows,
-          reason: openingReason.trim(),
+          reason: openingReason.trim() || null,
           idempotency_key: newClientIdempotencyKey("leave-opening-apply"),
         }),
       });
@@ -1205,9 +1196,9 @@ export function LeaveManagementWorkspace() {
     <PageShell dataTestId="leave-management-workspace">
       <PageHeader
         eyebrow="Quản trị Nhân sự & Chấm công"
-        title="Quản lý nghỉ phép"
+        title={viewMode === "admin" ? "Quản trị nghỉ phép" : "Nghỉ phép của tôi"}
         badge={
-          summary ? (
+          viewMode === "personal" && summary ? (
             <StatusBadge
               tone={leaveEmploymentStatusBadge(summary.balance.employment_status).tone}
               dot
@@ -1216,7 +1207,11 @@ export function LeaveManagementWorkspace() {
             </StatusBadge>
           ) : null
         }
-        description="Theo dõi hạn mức phép cá nhân theo đơn vị nửa ngày (0,5 ngày), tạo đơn xin nghỉ sáng/chiều/cả ngày, phê duyệt theo cấp quản lý và tổng hợp báo cáo chốt công & phép hằng tháng."
+        description={
+          viewMode === "admin"
+            ? "Cấu hình chính sách, hồ sơ, người duyệt và số dư phép; theo dõi báo cáo chốt công & phép theo quyền được cấp."
+            : "Theo dõi quỹ phép cá nhân, tạo đơn xin nghỉ sáng/chiều/cả ngày và xử lý các đơn trong hộp thư duyệt được giao."
+        }
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <label htmlFor={yearSelectId} className="text-xs font-medium text-muted">
@@ -1263,8 +1258,9 @@ export function LeaveManagementWorkspace() {
       />
 
       {/* Shared Marketing / Non-Employee Account Banner */}
-      {meErrorCode === "LEAVE_SHARED_ACCOUNT_FORBIDDEN" ||
-      summary?.authority.is_shared_non_employee ? (
+      {viewMode === "personal" &&
+      (meErrorCode === "LEAVE_SHARED_ACCOUNT_FORBIDDEN" ||
+        summary?.authority.is_shared_non_employee) ? (
         <StatusBanner
           tone="warning"
           title="Tài khoản dùng chung không thuộc đối tượng quản lý nghỉ phép cá nhân"
@@ -1586,15 +1582,14 @@ export function LeaveManagementWorkspace() {
                         htmlFor={reasonTextareaId}
                         className="block text-sm font-medium text-foreground mb-1"
                       >
-                        Lý do xin nghỉ <span className="text-rose-600">*</span>
+                        Lý do xin nghỉ (không bắt buộc)
                       </label>
                       <textarea
                         id={reasonTextareaId}
                         rows={2}
-                        required
                         value={draftReason}
                         onChange={(e) => setDraftReason(e.target.value)}
-                        placeholder="Nhập lý do xin nghỉ phép (bắt buộc)..."
+                        placeholder="Nhập lý do xin nghỉ nếu cần..."
                         data-testid="leave-request-reason-input"
                         className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
                       />
@@ -2357,11 +2352,10 @@ export function LeaveManagementWorkspace() {
                       </div>
                       <div>
                         <label className="block text-xs font-medium text-muted mb-1">
-                          Lý do cập nhật chính sách <span className="text-rose-600">*</span>
+                          Lý do cập nhật chính sách (không bắt buộc)
                         </label>
                         <input
                           type="text"
-                          required
                           disabled={!authority.is_full_admin && !authority.is_bod}
                           value={policyReason}
                           onChange={(e) => setPolicyReason(e.target.value)}
@@ -2487,11 +2481,10 @@ export function LeaveManagementWorkspace() {
                       <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
                         <div className="flex-1">
                           <label className="block text-xs font-medium text-muted mb-1">
-                            Lý do phân công <span className="text-rose-600">*</span>
+                            Lý do phân công (không bắt buộc)
                           </label>
                           <input
                             type="text"
-                            required
                             disabled={!authority.is_full_admin && !authority.is_bod}
                             value={deptReason}
                             onChange={(e) => setDeptReason(e.target.value)}
@@ -2633,11 +2626,10 @@ export function LeaveManagementWorkspace() {
                         </div>
                         <div className="sm:col-span-3">
                           <label className="block text-xs font-medium text-muted mb-1">
-                            Lý do cấp quyền <span className="text-rose-600">*</span>
+                            Lý do cấp quyền (không bắt buộc)
                           </label>
                           <input
                             type="text"
-                            required
                             value={grantReason}
                             onChange={(e) => setGrantReason(e.target.value)}
                             placeholder="Nhập lý do..."
@@ -2903,8 +2895,7 @@ export function LeaveManagementWorkspace() {
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-12 sm:items-end">
                       <div className="sm:col-span-6">
                         <label className="block text-xs font-medium text-muted mb-1">
-                          Lý do khởi tạo số dư đầu kỳ (Bắt buộc khi Áp dụng){" "}
-                          <span className="text-rose-600">*</span>
+                          Lý do khởi tạo số dư đầu kỳ (không bắt buộc)
                         </label>
                         <input
                           type="text"
@@ -3409,23 +3400,13 @@ export function LeaveManagementWorkspace() {
             </div>
             <div>
               <label className="block text-sm font-medium text-foreground mb-1">
-                Lý do / Ghi chú phản hồi{" "}
-                {decisionAction !== "APPROVE" ? (
-                  <span className="text-rose-600">*</span>
-                ) : (
-                  "(không bắt buộc)"
-                )}
+                Lý do / Ghi chú phản hồi (không bắt buộc)
               </label>
               <textarea
                 rows={3}
-                required={decisionAction !== "APPROVE"}
                 value={decisionReason}
                 onChange={(e) => setDecisionReason(e.target.value)}
-                placeholder={
-                  decisionAction === "APPROVE"
-                    ? "Ghi chú phê duyệt (nếu có)..."
-                    : "Bắt buộc nhập lý do từ chối hoặc hủy đơn đã duyệt..."
-                }
+                placeholder="Ghi chú xử lý đơn (nếu có)..."
                 data-testid="leave-decision-reason-input"
                 className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground"
               />
@@ -3605,11 +3586,10 @@ export function LeaveManagementWorkspace() {
 
             <div>
               <label className="block text-xs font-medium text-muted mb-1">
-                Lý do cập nhật hồ sơ <span className="text-rose-600">*</span>
+                Lý do cập nhật hồ sơ (không bắt buộc)
               </label>
               <input
                 type="text"
-                required
                 value={profileReason}
                 onChange={(e) => setProfileReason(e.target.value)}
                 placeholder="Nhập lý do cấu hình hoặc chuyển trạng thái nhân sự..."

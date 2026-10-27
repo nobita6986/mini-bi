@@ -196,7 +196,7 @@ test("WP2 decideLeavePageAccess and resolveVisibleLeaveTabs project strictly fro
   );
 });
 
-test("WP2 evaluateLeaveRequestDraft validates FULL/AM/PM units, duplicate dates, probation unpaid, and official balance", () => {
+test("WP2 evaluateLeaveRequestDraft allows optional reasons and validates FULL/AM/PM units, dates, and balance", () => {
   const officialBalance = {
     has_profile: true,
     profile_configured: true,
@@ -212,11 +212,12 @@ test("WP2 evaluateLeaveRequestDraft validates FULL/AM/PM units, duplicate dates,
       { leave_date: "2026-05-10", session_code: "FULL" },
       { leave_date: "2026-05-11", session_code: "AM" },
     ],
-    reason: "Nghỉ việc gia đình",
+    reason: "",
     leaveYear: 2026,
     balance: officialBalance,
   });
   assert.equal(okOfficial.valid, true);
+  assert.equal(okOfficial.reason_error, null);
   assert.equal(okOfficial.total_units, 3);
   assert.equal(okOfficial.total_days, 1.5);
   assert.equal(okOfficial.predicted_pay_treatment, "PAID_LEAVE");
@@ -323,7 +324,7 @@ test("WP2 canWithdrawOwnLeaveRequest and validateApproverDecisionInput enforce a
     true,
   );
 
-  // Reject requires reason
+  // Reject without a reason is allowed
   assert.equal(
     validateApproverDecisionInput({
       actorAppUserId: "leader-1",
@@ -331,7 +332,7 @@ test("WP2 canWithdrawOwnLeaveRequest and validateApproverDecisionInput enforce a
       decision: "REJECT",
       reason: "   ",
     }).ok,
-    false,
+    true,
   );
   assert.equal(
     validateApproverDecisionInput({
@@ -343,7 +344,7 @@ test("WP2 canWithdrawOwnLeaveRequest and validateApproverDecisionInput enforce a
     true,
   );
 
-  // Cancel approved requires APPROVED status and reason
+  // Cancel approved requires APPROVED status but not a reason
   assert.equal(
     validateApproverDecisionInput({
       actorAppUserId: "leader-1",
@@ -351,7 +352,7 @@ test("WP2 canWithdrawOwnLeaveRequest and validateApproverDecisionInput enforce a
       decision: "CANCEL_APPROVED",
       reason: "",
     }).ok,
-    false,
+    true,
   );
   assert.equal(
     validateApproverDecisionInput({
@@ -425,14 +426,13 @@ test("WP2 Opening Balance bulk parser and mandatory preview-before-apply guard",
     rows: [],
   };
 
-  // Allowed when preview succeeded, signatures match, and reason is provided
+  // Allowed when preview succeeded and signatures match; admin reason is optional
   assert.equal(
     canApplyOpeningBatch({
       leaveYear: 2026,
       rows: bulk.rows,
       preview: validPreview,
       previewSignature: sig1,
-      reason: "Chốt số dư đầu kỳ 2026",
     }).ok,
     true,
   );
@@ -447,21 +447,19 @@ test("WP2 Opening Balance bulk parser and mandatory preview-before-apply guard",
       ],
       preview: validPreview,
       previewSignature: sig1,
-      reason: "Chốt số dư đầu kỳ 2026",
     }).ok,
     false,
   );
 
-  // Blocked when reason is empty
+  // Optional reason does not block applying a valid preview
   assert.equal(
     canApplyOpeningBatch({
       leaveYear: 2026,
       rows: bulk.rows,
       preview: validPreview,
       previewSignature: sig1,
-      reason: "   ",
     }).ok,
-    false,
+    true,
   );
 
   // Blocked when preview has error rows
@@ -471,7 +469,6 @@ test("WP2 Opening Balance bulk parser and mandatory preview-before-apply guard",
       rows: bulk.rows,
       preview: { ...validPreview, valid: false, error_row_count: 1 },
       previewSignature: sig1,
-      reason: "Chốt số dư đầu kỳ 2026",
     }).ok,
     false,
   );

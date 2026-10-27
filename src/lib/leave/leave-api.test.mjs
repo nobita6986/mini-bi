@@ -132,7 +132,6 @@ test("leave-contract parsers validate inputs and build deterministic fingerprint
 
   const createParsed1 = parseCreateLeaveRequestBody({
     idempotency_key: "idem-001",
-    reason: "Nghỉ việc gia đình",
     days: [
       { leave_date: "2026-03-21", session_code: "am" },
       { leave_date: "2026-03-20", session_code: "FULL" },
@@ -140,7 +139,6 @@ test("leave-contract parsers validate inputs and build deterministic fingerprint
   });
   const createParsed2 = parseCreateLeaveRequestBody({
     idempotency_key: "idem-002",
-    reason: "Nghỉ việc gia đình",
     days: [
       { leave_date: "2026-03-20", session_code: "FULL" },
       { leave_date: "2026-03-21", session_code: "AM" },
@@ -148,6 +146,7 @@ test("leave-contract parsers validate inputs and build deterministic fingerprint
   });
   assert.equal(createParsed1.ok, true);
   assert.equal(createParsed2.ok, true);
+  assert.equal(createParsed1.data.reason, null);
   assert.equal(
     createParsed1.data.request_fingerprint,
     createParsed2.data.request_fingerprint,
@@ -173,20 +172,16 @@ test("leave-contract parsers validate inputs and build deterministic fingerprint
     expected_row_version: 1,
     reason: "   ",
   });
-  assert.deepEqual(rejectWithoutReason, {
-    ok: false,
-    code: "LEAVE_REASON_REQUIRED",
-  });
+  assert.equal(rejectWithoutReason.ok, true);
+  assert.equal(rejectWithoutReason.data.reason, null);
 
   const cancelWithoutReason = parseDecideLeaveRequestBody(REQ_ID, {
     idempotency_key: "idem-dec-2",
     decision: "CANCEL_APPROVED",
     expected_row_version: 2,
   });
-  assert.deepEqual(cancelWithoutReason, {
-    ok: false,
-    code: "LEAVE_REASON_REQUIRED",
-  });
+  assert.equal(cancelWithoutReason.ok, true);
+  assert.equal(cancelWithoutReason.data.reason, null);
 
   const approveWithoutReason = parseDecideLeaveRequestBody(REQ_ID, {
     idempotency_key: "idem-dec-3",
@@ -200,10 +195,10 @@ test("leave-contract parsers validate inputs and build deterministic fingerprint
     carry_over_expiry_month: 3,
     carry_over_expiry_day: 31,
     expected_row_version: 1,
-    reason: "Cấu hình hạn phép năm cũ 31/03",
     idempotency_key: "idem-pol-1",
   });
   assert.equal(patchPolicy.ok, true);
+  assert.equal(patchPolicy.data.reason, null);
 
   const patchGrant = parsePatchAdminConfigBody({
     operation: "MANAGE_MODULE_GRANT",
@@ -211,14 +206,13 @@ test("leave-contract parsers validate inputs and build deterministic fingerprint
     target_app_user_id: TARGET_APP,
     role_code: "HR_REPORT_VIEWER",
     expected_row_version: 0,
-    reason: "Cấp quyền xem báo cáo phép tháng cho HR",
     idempotency_key: "idem-grant-1",
   });
   assert.equal(patchGrant.ok, true);
+  assert.equal(patchGrant.data.reason, null);
 
   const applyBatch = parseApplyOpeningBatchBody({
     leave_year: 2026,
-    reason: "Nhập số dư đầu kỳ 2026",
     idempotency_key: "idem-open-1",
     rows: [
       {
@@ -231,6 +225,7 @@ test("leave-contract parsers validate inputs and build deterministic fingerprint
     ],
   });
   assert.equal(applyBatch.ok, true);
+  assert.equal(applyBatch.data.reason, null);
 
   const reportQuery = parseMonthlyReportQuery(
     new URL("https://bi.example.com/api/leave/reports/monthly?month=2026-03&unit_kind=MARKETING"),

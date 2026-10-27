@@ -141,10 +141,14 @@ export const resolveVendorFinanceAccessForRequest = cache(
 );
 
 export const resolveLeaveManagementAccessForRequest = cache(
-  async (): Promise<boolean> => {
+  async (): Promise<{
+    canAccess: boolean;
+    canManageConfig: boolean;
+    canViewMonthlyReport: boolean;
+  } | null> => {
     const actor = await resolveActorForRequest();
     if (!actor.ok) {
-      return false;
+      return null;
     }
     try {
       const summary = await createLeaveRepository().getMySummary({
@@ -153,12 +157,27 @@ export const resolveLeaveManagementAccessForRequest = cache(
         leave_year: null,
       });
       if (summary.ok) {
-        return true;
+        const authority = summary.data.authority;
+        const canManageConfig =
+          authority !== null &&
+          typeof authority === "object" &&
+          "can_manage_config" in authority &&
+          authority.can_manage_config === true;
+        const canViewMonthlyReport =
+          authority !== null &&
+          typeof authority === "object" &&
+          "can_view_monthly_report" in authority &&
+          authority.can_view_monthly_report === true;
+        return {
+          canAccess: true,
+          canManageConfig,
+          canViewMonthlyReport,
+        };
       }
     } catch {
       // Fail closed without disrupting AppShell rendering.
     }
-    return false;
+    return null;
   },
 );
 
@@ -210,9 +229,11 @@ export const resolveNavActorForAppShell = cache(
       process.env.DIRECT_ENTRY_API_ENABLED === "true" &&
       !leaveManagementNavPredicate(projection)
     ) {
-      const hasLeaveAccess = await resolveLeaveManagementAccessForRequest();
-      if (hasLeaveAccess) {
+      const leaveAccess = await resolveLeaveManagementAccessForRequest();
+      if (leaveAccess?.canAccess) {
         projection.hasLeaveManagementAccess = true;
+        projection.hasLeaveAdminAccess =
+          leaveAccess.canManageConfig || leaveAccess.canViewMonthlyReport;
       }
     }
     if (input.directEntryEnabled && !changeRequestsNavPredicate(projection)) {
