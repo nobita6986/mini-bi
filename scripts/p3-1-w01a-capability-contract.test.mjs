@@ -49,10 +49,11 @@ const F1_WORK_REPORT_TOKENS = [
 ];
 const F2_WORK_REPORT_TOKENS = ["report_review", "report_delegate"];
 const VFIN_TOKENS = ["vendor_finance_view", "vendor_finance_record"];
+const DUPLICATE_CCCD_TOKENS = ["duplicate_cccd_withdraw"];
 const LEGACY_TOKEN_COUNT = 21;
 const RETIRED_TOKENS = ["pii_view", "pii_export", "payment_view", "payment_edit"];
-const TOKEN_COUNT = 31;
-const ACTIVE_TOKEN_COUNT = 27;
+const TOKEN_COUNT = 32;
+const ACTIVE_TOKEN_COUNT = 28;
 const UNKNOWN_TOKEN = "unknown_capability_probe";
 
 const AUTH_SUBJECT = "10000000-0000-4000-8000-00000000c001";
@@ -146,6 +147,7 @@ test("the auth contract is versioned as direct-entry-auth/1.6 without retired ca
   for (const token of F1_WORK_REPORT_TOKENS) assert.ok(CAPABILITIES.includes(token), token);
   for (const token of F2_WORK_REPORT_TOKENS) assert.ok(CAPABILITIES.includes(token), token);
   for (const token of VFIN_TOKENS) assert.ok(CAPABILITIES.includes(token), token);
+  for (const token of DUPLICATE_CCCD_TOKENS) assert.ok(CAPABILITIES.includes(token), token);
 });
 
 test("database preserves legacy grant storage while active SQL and TypeScript agree", async () => {
@@ -189,7 +191,8 @@ test("migration 67 is append-only: the frozen foundation vocabulary is untouched
           !NEW_TOKENS.includes(token) &&
           !F1_WORK_REPORT_TOKENS.includes(token) &&
           !F2_WORK_REPORT_TOKENS.includes(token) &&
-          !VFIN_TOKENS.includes(token),
+          !VFIN_TOKENS.includes(token) &&
+          !DUPLICATE_CCCD_TOKENS.includes(token),
       )
       .concat(RETIRED_TOKENS)
       .sort(),
@@ -199,7 +202,8 @@ test("migration 67 is append-only: the frozen foundation vocabulary is untouched
   const schemaTokens = await schemaVocabulary(db);
   assert.deepEqual(
     schemaTokens.filter((token) => !foundationTokens.includes(token)).sort(),
-    [...NEW_TOKENS, ...F1_WORK_REPORT_TOKENS, ...F2_WORK_REPORT_TOKENS, ...VFIN_TOKENS].sort(),
+    [...NEW_TOKENS, ...F1_WORK_REPORT_TOKENS, ...F2_WORK_REPORT_TOKENS, ...VFIN_TOKENS,
+      ...DUPLICATE_CCCD_TOKENS].sort(),
   );
   await db.close();
 });

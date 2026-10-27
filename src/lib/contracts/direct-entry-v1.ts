@@ -176,7 +176,8 @@ export type Capability =
   | "report_review"
   | "report_delegate"
   | "vendor_finance_view"
-  | "vendor_finance_record";
+  | "vendor_finance_record"
+  | "duplicate_cccd_withdraw";
 
 export type ValidationIssue = { code: string; path: string };
 export type ValidationResult =

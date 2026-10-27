@@ -183,7 +183,7 @@ await seedFixtures(db);
 
 test("F1 schema, forced RLS, table privilege revocation and RPC allowlist match locked contract", async () => {
   assert.equal(DIRECT_ENTRY_AUTH_CONTRACT_VERSION, "direct-entry-auth/1.6");
-  assert.equal(CAPABILITIES.length, 27);
+  assert.equal(CAPABILITIES.length, 28);
   assert.equal(WORK_REPORT_FIELD_TYPES.length, 8);
 
   const { rows: tableRows } = await db.query(

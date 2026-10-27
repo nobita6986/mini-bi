@@ -818,7 +818,7 @@ test("service-role only EXECUTE, revoked helpers, forced RLS and immutability", 
   );
 });
 
-test("migration #68 remains unique and the F2 capability vocabulary has 29 tokens", async () => {
+test("migration #68 remains unique and the current capability vocabulary has 32 tokens", async () => {
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
   assert.ok(names.includes(NEW_MIGRATION), "migration #68 must exist");
   assert.ok(NEW_MIGRATION > "20261009030000_p3_1_w01a_capability_contract_foundation.sql",
@@ -832,7 +832,7 @@ test("migration #68 remains unique and the F2 capability vocabulary has 29 token
     + " where n.nspname = 'public' and t.relname = 'direct_entry_capability_grants'"
     + " and c.conname = 'direct_entry_capability_grants_capability_check'");
   const tokens = [...String(rows[0].definition).matchAll(/'([^']+)'::text/g)].map((m) => m[1]);
-  assert.equal(tokens.length, 31, "the capability vocabulary includes W01A, F1, F2, and VFIN-01 tokens");
+  assert.equal(tokens.length, 32, "the capability vocabulary includes W01A, F1, F2, VFIN-01, and duplicate CCCD tokens");
   assert.ok(tokens.includes("catalog_master_manage"));
   assert.ok(tokens.includes("team_manager_assign"));
 
