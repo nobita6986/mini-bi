@@ -363,15 +363,30 @@ test("Leave Management WP1 full PGlite integration & business rule verification"
     "PROFILE_UNCONFIGURED_OR_UNMAPPED",
   );
 
+  // Requesting ANNUAL leave with 0 available units must reject with LEAVE_INSUFFICIENT_BALANCE
+  await assert.rejects(
+    rpc("leave_management_create_request", [
+      ACTORS.unconfiguredUser.auth,
+      ACTORS.unconfiguredUser.app,
+      JSON.stringify([{ leave_date: "2026-03-18", session_code: "FULL", leave_type: "ANNUAL" }]),
+      "Xin nghỉ phép năm khi chưa có quỹ phép năm",
+      nextIdem("unconf-annual-fail"),
+      "fp-unconf-annual-fail",
+    ]),
+    (err) => String(err?.message).includes("LEAVE_INSUFFICIENT_BALANCE"),
+    "Unconfigured account with 0 annual leave cannot submit ANNUAL leave",
+  );
+
   const unconfReq = await rpc("leave_management_create_request", [
     ACTORS.unconfiguredUser.auth,
     ACTORS.unconfiguredUser.app,
-    JSON.stringify([{ leave_date: "2026-03-18", session_code: "FULL" }]),
-    "Xin nghỉ việc cá nhân khi chưa cấu hình hồ sơ",
+    JSON.stringify([{ leave_date: "2026-03-18", session_code: "FULL", leave_type: "UNPAID" }]),
+    "Xin nghỉ việc cá nhân không lương khi chưa cấu hình hồ sơ",
     nextIdem("unconf"),
     "fp-unconf-1",
   ]);
-  assert.equal(unconfReq.request.pay_treatment, "UNPAID_UNCONFIGURED_PROFILE");
+  assert.equal(unconfReq.request.pay_treatment, undefined);
+  assert.deepEqual(unconfReq.request.leave_types, ["UNPAID"]);
   assert.equal(unconfReq.request.profile_configured_at_submit, false);
   assert.equal(unconfReq.request.route_kind, "ADMIN_BOD_FALLBACK");
 
@@ -529,12 +544,13 @@ test("Leave Management WP1 full PGlite integration & business rule verification"
   const probReq = await rpc("leave_management_create_request", [
     ACTORS.probationUser.auth,
     ACTORS.probationUser.app,
-    JSON.stringify([{ leave_date: "2026-02-10", session_code: "AM" }]),
-    "Xin nghỉ nửa ngày thời gian thử việc",
+    JSON.stringify([{ leave_date: "2026-02-10", session_code: "AM", leave_type: "UNPAID" }]),
+    "Xin nghỉ nửa ngày không lương thời gian thử việc",
     nextIdem("prob-req"),
     "fp-prob-req",
   ]);
-  assert.equal(probReq.request.pay_treatment, "UNPAID_PROBATION");
+  assert.equal(probReq.request.pay_treatment, undefined);
+  assert.deepEqual(probReq.request.leave_types, ["UNPAID"]);
 
   // Team Leader Alpha approves probation request -> 0 lots consumed
   const probApproved = await rpc("leave_management_decide_request", [
@@ -543,7 +559,7 @@ test("Leave Management WP1 full PGlite integration & business rule verification"
     probReq.request.request_id,
     "APPROVE",
     probReq.request.row_version,
-    "Duyệt nghỉ không lương thử việc",
+    "Duyệt nghỉ không lương",
     nextIdem("prob-app"),
     "fp-prob-app",
   ]);
@@ -767,7 +783,7 @@ test("Leave Management WP1 full PGlite integration & business rule verification"
     0,
     "PENDING request must not reserve units before approval",
   );
-  assert.equal(fifoReq.balance.pending_paid_units, 5);
+  assert.equal(fifoReq.balance.pending_annual_units, 5);
 
   // Team Leader Beta (wrong team) cannot approve Team Alpha request
   await assert.rejects(
@@ -1084,7 +1100,7 @@ test("Leave Management WP1 full PGlite integration & business rule verification"
   const mktHeadRow = aprilReport.rows.find(
     (r) => r.app_user_id === ACTORS.marketingHead.app,
   );
-  assert.equal(mktHeadRow.month_paid_leave_units, 2);
+  assert.equal(mktHeadRow.month_annual_leave_units, 2);
 
   // HR_REPORT_VIEWER still cannot access admin overview or approve requests
   await assert.rejects(
@@ -1269,5 +1285,300 @@ test("Leave Management WP1 full PGlite integration & business rule verification"
     postReportRecLots2028[0].cnt,
     0,
     "Monthly report filtered to MARKETING must not lock or materialize lots for RECRUITMENT accounts outside the page",
+  );
+
+  // 16. Explicit leave types & per-request duration limits:
+  // BEREAVEMENT & MARRIAGE max 3 days (6 half-day units); SICK & UNPAID max 7 days (14 half-day units)
+  await setBusinessDate(db, "2028-03-15");
+
+  await assert.rejects(
+    rpc("leave_management_create_request", [
+      ACTORS.recruiterOfficial.auth,
+      ACTORS.recruiterOfficial.app,
+      JSON.stringify([
+        { leave_date: "2028-03-01", session_code: "FULL", leave_type: "BEREAVEMENT" },
+        { leave_date: "2028-03-02", session_code: "FULL", leave_type: "BEREAVEMENT" },
+        { leave_date: "2028-03-03", session_code: "FULL", leave_type: "BEREAVEMENT" },
+        { leave_date: "2028-03-04", session_code: "AM", leave_type: "BEREAVEMENT" },
+      ]),
+      "Nghỉ tang 3.5 ngày vượt trần 3 ngày",
+      nextIdem("bereavement-over"),
+      "fp-bereavement-over",
+    ]),
+    (err) => String(err?.message).includes("LEAVE_TYPE_LIMIT_EXCEEDED"),
+    "BEREAVEMENT > 3 days (6 half-day units) per request must be rejected",
+  );
+
+  await assert.rejects(
+    rpc("leave_management_create_request", [
+      ACTORS.recruiterOfficial.auth,
+      ACTORS.recruiterOfficial.app,
+      JSON.stringify([
+        { leave_date: "2028-03-01", session_code: "FULL", leave_type: "MARRIAGE" },
+        { leave_date: "2028-03-02", session_code: "FULL", leave_type: "MARRIAGE" },
+        { leave_date: "2028-03-03", session_code: "FULL", leave_type: "MARRIAGE" },
+        { leave_date: "2028-03-04", session_code: "PM", leave_type: "MARRIAGE" },
+      ]),
+      "Nghỉ cưới 3.5 ngày vượt trần 3 ngày",
+      nextIdem("marriage-over"),
+      "fp-marriage-over",
+    ]),
+    (err) => String(err?.message).includes("LEAVE_TYPE_LIMIT_EXCEEDED"),
+    "MARRIAGE > 3 days (6 half-day units) per request must be rejected",
+  );
+
+  await assert.rejects(
+    rpc("leave_management_create_request", [
+      ACTORS.recruiterOfficial.auth,
+      ACTORS.recruiterOfficial.app,
+      JSON.stringify([
+        { leave_date: "2028-03-01", session_code: "FULL", leave_type: "SICK" },
+        { leave_date: "2028-03-02", session_code: "FULL", leave_type: "SICK" },
+        { leave_date: "2028-03-03", session_code: "FULL", leave_type: "SICK" },
+        { leave_date: "2028-03-04", session_code: "FULL", leave_type: "SICK" },
+        { leave_date: "2028-03-05", session_code: "FULL", leave_type: "SICK" },
+        { leave_date: "2028-03-06", session_code: "FULL", leave_type: "SICK" },
+        { leave_date: "2028-03-07", session_code: "FULL", leave_type: "SICK" },
+        { leave_date: "2028-03-08", session_code: "AM", leave_type: "SICK" },
+      ]),
+      "Nghỉ ốm 7.5 ngày vượt trần 7 ngày",
+      nextIdem("sick-over"),
+      "fp-sick-over",
+    ]),
+    (err) => String(err?.message).includes("LEAVE_TYPE_LIMIT_EXCEEDED"),
+    "SICK > 7 days (14 half-day units) per request must be rejected",
+  );
+
+  await assert.rejects(
+    rpc("leave_management_create_request", [
+      ACTORS.recruiterOfficial.auth,
+      ACTORS.recruiterOfficial.app,
+      JSON.stringify([
+        { leave_date: "2028-03-01", session_code: "FULL", leave_type: "UNPAID" },
+        { leave_date: "2028-03-02", session_code: "FULL", leave_type: "UNPAID" },
+        { leave_date: "2028-03-03", session_code: "FULL", leave_type: "UNPAID" },
+        { leave_date: "2028-03-04", session_code: "FULL", leave_type: "UNPAID" },
+        { leave_date: "2028-03-05", session_code: "FULL", leave_type: "UNPAID" },
+        { leave_date: "2028-03-06", session_code: "FULL", leave_type: "UNPAID" },
+        { leave_date: "2028-03-07", session_code: "FULL", leave_type: "UNPAID" },
+        { leave_date: "2028-03-08", session_code: "PM", leave_type: "UNPAID" },
+      ]),
+      "Nghỉ không lương 7.5 ngày vượt trần 7 ngày",
+      nextIdem("unpaid-over"),
+      "fp-unpaid-over",
+    ]),
+    (err) => String(err?.message).includes("LEAVE_TYPE_LIMIT_EXCEEDED"),
+    "UNPAID > 7 days (14 half-day units) per request must be rejected",
+  );
+
+  // 17. Non-annual leave types (MARRIAGE = 3 days, SICK = 1.5 days) do NOT deduct from annual leave balance
+  const marriageReq = await rpc("leave_management_create_request", [
+    ACTORS.recruiterOfficial.auth,
+    ACTORS.recruiterOfficial.app,
+    JSON.stringify([
+      { leave_date: "2028-03-06", session_code: "FULL", leave_type: "MARRIAGE" },
+      { leave_date: "2028-03-07", session_code: "FULL", leave_type: "MARRIAGE" },
+      { leave_date: "2028-03-08", session_code: "FULL", leave_type: "MARRIAGE" },
+    ]),
+    "Xin nghỉ cưới 3 ngày",
+    nextIdem("marriage-ok"),
+    "fp-marriage-ok",
+  ]);
+  assert.equal(marriageReq.request.requested_units, 6);
+  assert.equal(marriageReq.request.requested_annual_units, 0);
+  assert.equal(marriageReq.request.requested_non_annual_units, 6);
+  assert.deepEqual(marriageReq.request.leave_types, ["MARRIAGE"]);
+
+  const marriageApproved = await rpc("leave_management_decide_request", [
+    ACTORS.leaderAlpha.auth,
+    ACTORS.leaderAlpha.app,
+    marriageReq.request.request_id,
+    "APPROVE",
+    marriageReq.request.row_version,
+    null, // optional reason
+    nextIdem("approve-marriage"),
+    "fp-approve-marriage",
+  ]);
+  assert.equal(marriageApproved.request.status, "APPROVED");
+  assert.equal(
+    marriageApproved.requester_balance.available_units,
+    6,
+    "MARRIAGE leave approval must NOT deduct any annual leave units (remains 6 units = 3 days)",
+  );
+  assert.equal(marriageApproved.requester_balance.consumed_units, 0);
+  assert.equal(marriageApproved.requester_balance.approved_marriage_units, 6);
+  assert.equal(marriageApproved.request.allocations.length, 0);
+
+  // 18. Multi-type allocation in a single request:
+  // recruiterOfficial has 3 days (6 half-day units) of ANNUAL leave available in March 2028.
+  // Requests 4 days (8 half-day units): 3 days ANNUAL (2028-03-13..15) + 1 day UNPAID (2028-03-16),
+  // plus a half-day split on 2028-03-17 (AM = BEREAVEMENT, PM = SICK).
+  const splitReq = await rpc("leave_management_create_request", [
+    ACTORS.recruiterOfficial.auth,
+    ACTORS.recruiterOfficial.app,
+    JSON.stringify([
+      { leave_date: "2028-03-13", session_code: "FULL", leave_type: "ANNUAL" },
+      { leave_date: "2028-03-14", session_code: "FULL", leave_type: "ANNUAL" },
+      { leave_date: "2028-03-15", session_code: "FULL", leave_type: "ANNUAL" },
+      { leave_date: "2028-03-16", session_code: "FULL", leave_type: "UNPAID" },
+      { leave_date: "2028-03-17", session_code: "AM", leave_type: "BEREAVEMENT" },
+      { leave_date: "2028-03-17", session_code: "PM", leave_type: "SICK" },
+    ]),
+    "Xin nghỉ gộp nhiều loại: 3 ngày phép năm + 1 ngày không lương + sáng nghỉ tang + chiều nghỉ ốm",
+    nextIdem("split-req"),
+    "fp-split-req",
+  ]);
+  assert.equal(splitReq.request.requested_units, 10);
+  assert.equal(splitReq.request.requested_annual_units, 6);
+  assert.equal(splitReq.request.requested_non_annual_units, 4);
+  assert.deepEqual(splitReq.request.leave_types, [
+    "ANNUAL",
+    "UNPAID",
+    "BEREAVEMENT",
+    "SICK",
+  ]);
+
+  const splitApproved = await rpc("leave_management_decide_request", [
+    ACTORS.leaderAlpha.auth,
+    ACTORS.leaderAlpha.app,
+    splitReq.request.request_id,
+    "APPROVE",
+    splitReq.request.row_version,
+    null,
+    nextIdem("approve-split"),
+    "fp-approve-split",
+  ]);
+  assert.equal(splitApproved.request.status, "APPROVED");
+  assert.equal(
+    splitApproved.requester_balance.consumed_units,
+    6,
+    "Only the 3 ANNUAL days (6 units) are deducted from annual leave lots",
+  );
+  assert.equal(splitApproved.requester_balance.available_units, 0);
+  assert.equal(splitApproved.requester_balance.approved_unpaid_units, 2);
+  assert.equal(splitApproved.requester_balance.approved_bereavement_units, 1);
+  assert.equal(splitApproved.requester_balance.approved_sick_units, 1);
+  assert.equal(
+    splitApproved.request.allocations.reduce((acc, a) => acc + a.allocated_units, 0),
+    6,
+    "FIFO lot allocations must only be created for the 6 ANNUAL half-day units",
+  );
+
+  // 19. Admin operations with optional reason (reason = null) succeed and preserve audit log
+  const currentPolicyRows = await db.query(
+    "select row_version from public.leave_policy_configs where config_key = 'default'",
+  );
+  const policyNoReason = await rpc("leave_management_update_policy_admin", [
+    ACTORS.fullAdmin.auth,
+    ACTORS.fullAdmin.app,
+    3,
+    31,
+    currentPolicyRows.rows[0].row_version,
+    null, // optional reason
+    nextIdem("policy-no-reason"),
+    "fp-policy-no-reason",
+  ]);
+  assert.equal(policyNoReason.policy.carry_over_expiry_month, 3);
+
+  const { rows: auditRowsNoReason } = await db.query(
+    `select actor_app_user_id, event_type, reason, payload
+       from public.leave_audit_events
+      where event_type = 'POLICY_UPDATED'
+      order by created_at desc
+      limit 1`,
+  );
+  assert.equal(auditRowsNoReason[0].actor_app_user_id, ACTORS.fullAdmin.app);
+  assert.equal(auditRowsNoReason[0].reason, null);
+  assert.ok(auditRowsNoReason[0].payload);
+
+  // 20. Monthly attendance & leave closing report includes attendance check-in dates + explicit leave types & sessions
+  const checkinDates = [
+    {
+      idem: "e2800000-0000-4000-8000-000000000001",
+      anchor: "2028-03-01T01:15:00.000Z",
+      claimed: "2028-03-01T01:20:00.000Z",
+      received: "2028-03-01T01:20:01.000Z",
+      sha: "1".repeat(64),
+    },
+    {
+      idem: "e2800000-0000-4000-8000-000000000002",
+      anchor: "2028-03-02T01:15:00.000Z",
+      claimed: "2028-03-02T01:20:00.000Z",
+      received: "2028-03-02T01:20:01.000Z",
+      sha: "2".repeat(64),
+    },
+    {
+      idem: "e2800000-0000-4000-8000-000000000003",
+      anchor: "2028-03-17T01:15:00.000Z",
+      claimed: "2028-03-17T01:20:00.000Z",
+      received: "2028-03-17T01:20:01.000Z",
+      sha: "3".repeat(64),
+    },
+  ];
+  for (const ck of checkinDates) {
+    await rpc("attendance_record_checkin", [
+      ACTORS.recruiterOfficial.auth,
+      ACTORS.recruiterOfficial.app,
+      ck.idem,
+      ck.sha,
+      21.0285,
+      105.8542,
+      8.5,
+      "Hà Nội",
+      "Chấm công sáng",
+      ck.claimed,
+      "SERVER_ANCHORED",
+      ck.anchor,
+      300_000,
+      "c".repeat(64),
+      `preview/attendance-checkins/${ACTORS.recruiterOfficial.app}/${ck.idem}.jpg`,
+      ck.sha,
+      4096,
+      "image/jpeg",
+      ck.received,
+    ]);
+  }
+
+  const closingReport202803 = await rpc("leave_management_monthly_report", [
+    ACTORS.fullAdmin.auth,
+    ACTORS.fullAdmin.app,
+    "2028-03",
+    "RECRUITMENT",
+    "NV-TD-01",
+    50,
+    0,
+  ]);
+  assert.equal(closingReport202803.rows.length, 1);
+  const recRow = closingReport202803.rows[0];
+  assert.equal(recRow.attendance_day_count, 3);
+  assert.deepEqual(recRow.attendance_dates, [
+    "2028-03-01",
+    "2028-03-02",
+    "2028-03-17",
+  ]);
+  assert.equal(recRow.month_annual_leave_units, 6);
+  assert.equal(recRow.month_marriage_leave_units, 6);
+  assert.equal(recRow.month_unpaid_leave_units, 2);
+  assert.equal(recRow.month_bereavement_leave_units, 1);
+  assert.equal(recRow.month_sick_leave_units, 1);
+  assert.equal(recRow.leave_days.length, 9);
+  assert.deepEqual(
+    recRow.leave_days.map((d) => ({
+      leave_date: d.leave_date,
+      session_code: d.session_code,
+      leave_type: d.leave_type,
+      half_day_units: d.half_day_units,
+    })),
+    [
+      { leave_date: "2028-03-06", session_code: "FULL", leave_type: "MARRIAGE", half_day_units: 2 },
+      { leave_date: "2028-03-07", session_code: "FULL", leave_type: "MARRIAGE", half_day_units: 2 },
+      { leave_date: "2028-03-08", session_code: "FULL", leave_type: "MARRIAGE", half_day_units: 2 },
+      { leave_date: "2028-03-13", session_code: "FULL", leave_type: "ANNUAL", half_day_units: 2 },
+      { leave_date: "2028-03-14", session_code: "FULL", leave_type: "ANNUAL", half_day_units: 2 },
+      { leave_date: "2028-03-15", session_code: "FULL", leave_type: "ANNUAL", half_day_units: 2 },
+      { leave_date: "2028-03-16", session_code: "FULL", leave_type: "UNPAID", half_day_units: 2 },
+      { leave_date: "2028-03-17", session_code: "AM", leave_type: "BEREAVEMENT", half_day_units: 1 },
+      { leave_date: "2028-03-17", session_code: "PM", leave_type: "SICK", half_day_units: 1 },
+    ],
   );
 });

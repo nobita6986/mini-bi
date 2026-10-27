@@ -97,9 +97,39 @@ function createNoopRepo(overrides = {}) {
               unit_kind: "RECRUITMENT",
               work_start_date: "2025-01-10",
               official_effective_date: "2025-03-10",
-              month_paid_leave_units: 3,
-              month_unpaid_probation_units: 0,
-              month_unpaid_other_units: 0,
+              attendance_day_count: 2,
+              attendance_dates: ["2026-03-02", "2026-03-03"],
+              leave_days: [
+                {
+                  leave_date: "2026-03-10",
+                  session_code: "FULL",
+                  leave_type: "ANNUAL",
+                  half_day_units: 2,
+                },
+                {
+                  leave_date: "2026-03-11",
+                  session_code: "AM",
+                  leave_type: "ANNUAL",
+                  half_day_units: 1,
+                },
+                {
+                  leave_date: "2026-03-11",
+                  session_code: "PM",
+                  leave_type: "SICK",
+                  half_day_units: 1,
+                },
+                {
+                  leave_date: "2026-03-15",
+                  session_code: "FULL",
+                  leave_type: "MARRIAGE",
+                  half_day_units: 2,
+                },
+              ],
+              month_annual_leave_units: 3,
+              month_bereavement_leave_units: 0,
+              month_marriage_leave_units: 2,
+              month_sick_leave_units: 1,
+              month_unpaid_leave_units: 0,
               month_pending_units: 1,
               balance: {
                 carry_over_granted_units: 2,
@@ -157,13 +187,106 @@ test("leave-contract parsers validate inputs and build deterministic fingerprint
     idempotency_key: "idem-dup",
     reason: "Nghỉ phép",
     days: [
-      { leave_date: "2026-03-20", session_code: "AM" },
-      { leave_date: "2026-03-20", session_code: "PM" },
+      { leave_date: "2026-03-20", session_code: "AM", leave_type: "ANNUAL" },
+      { leave_date: "2026-03-20", session_code: "PM", leave_type: "ANNUAL" },
     ],
   });
   assert.deepEqual(dupDate, {
     ok: false,
     code: "LEAVE_REQUEST_DUPLICATE_DATE",
+  });
+
+  // Same date split across AM + PM with DIFFERENT leave types is allowed
+  const splitSameDate = parseCreateLeaveRequestBody({
+    idempotency_key: "idem-split-date",
+    days: [
+      { leave_date: "2026-03-20", session_code: "AM", leave_type: "ANNUAL" },
+      { leave_date: "2026-03-20", session_code: "PM", leave_type: "UNPAID" },
+    ],
+  });
+  assert.equal(splitSameDate.ok, true);
+  assert.deepEqual(splitSameDate.data.days, [
+    { leave_date: "2026-03-20", session_code: "AM", leave_type: "ANNUAL" },
+    { leave_date: "2026-03-20", session_code: "PM", leave_type: "UNPAID" },
+  ]);
+
+  // Multi-type allocation via type_allocations (e.g. 4 days requested: 3 days ANNUAL + 1 day UNPAID)
+  const allocated4Days = parseCreateLeaveRequestBody({
+    idempotency_key: "idem-alloc-4d",
+    days: [
+      { leave_date: "2026-03-23", session_code: "FULL" },
+      { leave_date: "2026-03-24", session_code: "FULL" },
+      { leave_date: "2026-03-25", session_code: "FULL" },
+      { leave_date: "2026-03-26", session_code: "FULL" },
+    ],
+    type_allocations: [
+      { leave_type: "ANNUAL", half_day_units: 6 },
+      { leave_type: "UNPAID", half_day_units: 2 },
+    ],
+  });
+  assert.equal(allocated4Days.ok, true);
+  assert.deepEqual(
+    allocated4Days.data.days.map((d) => d.leave_type),
+    ["ANNUAL", "ANNUAL", "ANNUAL", "UNPAID"],
+  );
+
+  // Mismatched type_allocations sum is rejected with LEAVE_TYPE_ALLOCATION_MISMATCH
+  const badAllocationSum = parseCreateLeaveRequestBody({
+    idempotency_key: "idem-alloc-bad",
+    days: [
+      { leave_date: "2026-03-23", session_code: "FULL" },
+      { leave_date: "2026-03-24", session_code: "FULL" },
+    ],
+    type_allocations: [
+      { leave_type: "ANNUAL", half_day_units: 2 },
+      { leave_type: "UNPAID", half_day_units: 1 },
+    ],
+  });
+  assert.deepEqual(badAllocationSum, {
+    ok: false,
+    code: "LEAVE_TYPE_ALLOCATION_MISMATCH",
+  });
+
+  // Per-request leave type limits: BEREAVEMENT/MARRIAGE max 3 days (6 units), SICK/UNPAID max 7 days (14 units)
+  const overMarriage = parseCreateLeaveRequestBody({
+    idempotency_key: "idem-over-marriage",
+    days: [
+      { leave_date: "2026-03-23", session_code: "FULL", leave_type: "MARRIAGE" },
+      { leave_date: "2026-03-24", session_code: "FULL", leave_type: "MARRIAGE" },
+      { leave_date: "2026-03-25", session_code: "FULL", leave_type: "MARRIAGE" },
+      { leave_date: "2026-03-26", session_code: "AM", leave_type: "MARRIAGE" },
+    ],
+  });
+  assert.deepEqual(overMarriage, {
+    ok: false,
+    code: "LEAVE_TYPE_LIMIT_EXCEEDED",
+  });
+
+  const overSick = parseCreateLeaveRequestBody({
+    idempotency_key: "idem-over-sick",
+    days: [
+      { leave_date: "2026-03-01", session_code: "FULL", leave_type: "SICK" },
+      { leave_date: "2026-03-02", session_code: "FULL", leave_type: "SICK" },
+      { leave_date: "2026-03-03", session_code: "FULL", leave_type: "SICK" },
+      { leave_date: "2026-03-04", session_code: "FULL", leave_type: "SICK" },
+      { leave_date: "2026-03-05", session_code: "FULL", leave_type: "SICK" },
+      { leave_date: "2026-03-06", session_code: "FULL", leave_type: "SICK" },
+      { leave_date: "2026-03-07", session_code: "FULL", leave_type: "SICK" },
+      { leave_date: "2026-03-08", session_code: "AM", leave_type: "SICK" },
+    ],
+  });
+  assert.deepEqual(overSick, {
+    ok: false,
+    code: "LEAVE_TYPE_LIMIT_EXCEEDED",
+  });
+
+  const badType = parseCreateLeaveRequestBody({
+    idempotency_key: "idem-bad-type",
+    days: [{ leave_date: "2026-03-23", session_code: "FULL", leave_type: "MATERNITY" }],
+  });
+  assert.deepEqual(badType, {
+    ok: false,
+    code: "LEAVE_TYPE_INVALID",
   });
 
   const rejectWithoutReason = parseDecideLeaveRequestBody(REQ_ID, {
@@ -349,6 +472,9 @@ test("leave-api passes session-resolved actor to repository and maps status code
   assert.equal(leaveHttpStatusForError("LEAVE_REQUEST_OVERLAP"), 409);
   assert.equal(leaveHttpStatusForError("LEAVE_ROW_VERSION_CONFLICT"), 409);
   assert.equal(leaveHttpStatusForError("LEAVE_INSUFFICIENT_BALANCE"), 422);
+  assert.equal(leaveHttpStatusForError("LEAVE_TYPE_LIMIT_EXCEEDED"), 422);
+  assert.equal(leaveHttpStatusForError("LEAVE_TYPE_ALLOCATION_MISMATCH"), 422);
+  assert.equal(leaveHttpStatusForError("LEAVE_TYPE_INVALID"), 400);
   assert.equal(leaveHttpStatusForError("LEAVE_CARRY_OVER_EXPIRY_NOT_CONFIGURED"), 422);
   assert.equal(leaveHttpStatusForError("LEAVE_SHARED_ACCOUNT_FORBIDDEN"), 403);
   assert.equal(leaveHttpStatusForError("LEAVE_REPORT_FORBIDDEN"), 403);
@@ -395,8 +521,21 @@ test("leave-api monthly report and .xlsx export return valid workbook with forma
   assert.ok(sheet, "Worksheet Nghỉ phép 2026-03 exists");
   assert.equal(sheet.getRow(2).getCell(1).value, "NV001");
   assert.equal(sheet.getRow(2).getCell(2).value, "Nguyễn Văn A");
-  assert.equal(sheet.getRow(2).getCell(9).value, "1.5"); // 3 half-day units = 1.5 days
-  assert.equal(sheet.getRow(2).getCell(12).value, "0.5"); // 1 half-day unit = 0.5 days
+  assert.equal(sheet.getRow(2).getCell(9).value, "2"); // 2 attendance days
+  assert.equal(sheet.getRow(2).getCell(10).value, "2026-03-02, 2026-03-03");
+  assert.ok(
+    String(sheet.getRow(2).getCell(11).value).includes("2026-03-10: Phép năm (Cả ngày)"),
+  );
+  assert.equal(sheet.getRow(2).getCell(12).value, "1.5"); // 3 half-day units = 1.5 days Phép năm
+  assert.equal(sheet.getRow(2).getCell(14).value, "1"); // 2 half-day units = 1 day Nghỉ cưới
+  assert.equal(sheet.getRow(2).getCell(15).value, "0.5"); // 1 half-day unit = 0.5 day Nghỉ ốm
+  assert.equal(sheet.getRow(2).getCell(17).value, "0.5"); // 1 half-day unit = 0.5 day Đang chờ duyệt
+
+  const detailSheet = workbook.getWorksheet("Chi tiết ngày công & nghỉ");
+  assert.ok(detailSheet, "Worksheet Chi tiết ngày công & nghỉ exists");
+  assert.equal(detailSheet.getRow(2).getCell(6).value, "2026-03-10");
+  assert.equal(detailSheet.getRow(2).getCell(9).value, "Phép năm");
+  assert.equal(detailSheet.getRow(2).getCell(10).value, "Cả ngày");
 
   const sameOriginHeaders = {
     Host: "bi.example.com",

@@ -28,7 +28,9 @@ import {
   LEAVE_MODULE_GRANT_ROLES,
   LEAVE_REQUEST_STATUS_FILTERS,
   LEAVE_SESSION_CODES,
+  LEAVE_TYPES,
   LEAVE_UNIT_KINDS,
+  autoAllocateDraftDaysByBalance,
   buildMonthlyLeaveReportExportUrl,
   buildMonthlyLeaveReportQuery,
   canApplyOpeningBatch,
@@ -49,15 +51,18 @@ import {
   leaveLotKindLabel,
   leaveModuleGrantRoleLabel,
   leaveOpeningRowErrorLabel,
-  leavePayTreatmentBadge,
   leaveRequestStatusBadge,
   leaveRouteKindLabel,
   leaveSessionLabel,
   leaveSessionShortLabel,
+  leaveTypeBadge,
+  leaveTypeLabel,
+  leaveTypeShortLabel,
   leaveUnitKindLabel,
   newClientIdempotencyKey,
   parseDaysInputToHalfDayUnits,
   parseOpeningBalanceBulkText,
+  resolveRequestTypeBreakdown,
   resolveVisibleLeaveTabs,
   todayVietnamIsoDate,
   validateApproverDecisionInput,
@@ -66,6 +71,7 @@ import {
   type LeaveApprovalInboxProjection,
   type LeaveDecisionCode,
   type LeaveDepartmentApproverUnitKind,
+  type LeaveDraftDayRow,
   type LeaveEmploymentStatus,
   type LeaveMeSummaryProjection,
   type LeaveModuleGrantRole,
@@ -74,6 +80,7 @@ import {
   type LeaveRequestProjection,
   type LeaveRequestStatusFilter,
   type LeaveSessionCode,
+  type LeaveType,
   type LeaveUnitKind,
   type LeaveWorkspaceTab,
   type OpeningBatchRowInput,
@@ -219,8 +226,8 @@ export function LeaveManagementWorkspace({
   const [summary, setSummary] = useState<LeaveMeSummaryProjection | null>(null);
 
   // Create Leave Request Draft State
-  const [draftDays, setDraftDays] = useState<{ leave_date: string; session_code: LeaveSessionCode }[]>(
-    () => [{ leave_date: todayVietnamIsoDate(), session_code: "FULL" }],
+  const [draftDays, setDraftDays] = useState<LeaveDraftDayRow[]>(
+    () => [{ leave_date: todayVietnamIsoDate(), session_code: "FULL", leave_type: "ANNUAL" }],
   );
   const [draftReason, setDraftReason] = useState<string>("");
   const [creatingRequest, setCreatingRequest] = useState<boolean>(false);
@@ -539,7 +546,7 @@ export function LeaveManagementWorkspace({
   const handleAddDraftDay = () => {
     setDraftDays((prev) => [
       ...prev,
-      { leave_date: todayVietnamIsoDate(), session_code: "FULL" },
+      { leave_date: todayVietnamIsoDate(), session_code: "FULL", leave_type: "ANNUAL" },
     ]);
   };
 
@@ -559,6 +566,34 @@ export function LeaveManagementWorkspace({
     );
   };
 
+  const handleChangeDraftDayLeaveType = (index: number, nextLeaveType: LeaveType) => {
+    setDraftDays((prev) =>
+      prev.map((item, idx) => (idx === index ? { ...item, leave_type: nextLeaveType } : item)),
+    );
+  };
+
+  const handleSplitDraftDayToHalfDays = (index: number) => {
+    setDraftDays((prev) => {
+      const target = prev[index];
+      if (!target || target.session_code !== "FULL") return prev;
+      const primaryType: LeaveType = target.leave_type ?? "ANNUAL";
+      const secondaryType: LeaveType = primaryType === "ANNUAL" ? "UNPAID" : "ANNUAL";
+      return [
+        ...prev.slice(0, index),
+        { leave_date: target.leave_date, session_code: "AM", leave_type: primaryType },
+        { leave_date: target.leave_date, session_code: "PM", leave_type: secondaryType },
+        ...prev.slice(index + 1),
+      ];
+    });
+  };
+
+  const handleAutoSplitDraftByBalance = () => {
+    const availableAnnualUnits = summary?.balance.available_units ?? 0;
+    setDraftDays((prev) =>
+      autoAllocateDraftDaysByBalance(prev, availableAnnualUnits, "UNPAID"),
+    );
+  };
+
   const handleSubmitLeaveRequest = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!draftEvaluation.valid || creatingRequest) return;
@@ -570,7 +605,11 @@ export function LeaveManagementWorkspace({
         headers: { "Content-Type": "application/json" },
         credentials: "same-origin",
         body: JSON.stringify({
-          days: draftDays,
+          days: draftDays.map((d) => ({
+            leave_date: d.leave_date,
+            session_code: d.session_code,
+            leave_type: d.leave_type ?? "ANNUAL",
+          })),
           reason: draftReason.trim() || null,
           idempotency_key: newClientIdempotencyKey("leave-create"),
         }),
@@ -588,7 +627,7 @@ export function LeaveManagementWorkspace({
         description: `Đơn nghỉ (${formatHalfDayUnits(draftEvaluation.total_units)}) đã được chuyển tới bộ phận duyệt.`,
       });
       setDraftReason("");
-      setDraftDays([{ leave_date: todayVietnamIsoDate(), session_code: "FULL" }]);
+      setDraftDays([{ leave_date: todayVietnamIsoDate(), session_code: "FULL", leave_type: "ANNUAL" }]);
       await loadMySummary(leaveYear);
       if (authority?.can_approve_requests) {
         await loadInbox(inboxStatusFilter, inboxPage);
@@ -1332,7 +1371,7 @@ export function LeaveManagementWorkspace({
               <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-4">
                 <Card className="p-4">
                   <p className="text-xs font-medium uppercase tracking-wider text-muted">
-                    Phép có lương khả dụng
+                    Phép năm khả dụng
                   </p>
                   <p
                     className="mt-1.5 text-2xl font-semibold text-primary font-mono tabular-nums"
@@ -1358,14 +1397,15 @@ export function LeaveManagementWorkspace({
                   <p className="mt-1 text-xs text-muted">
                     Đang chờ duyệt:{" "}
                     {formatHalfDayUnits(
-                      summary.balance.pending_paid_units + summary.balance.pending_unpaid_units,
+                      (summary.balance.pending_annual_units ?? 0) +
+                        (summary.balance.pending_non_annual_units ?? 0),
                     )}
                   </p>
                 </Card>
 
                 <Card className="p-4">
                   <p className="text-xs font-medium uppercase tracking-wider text-muted">
-                    Đã sử dụng trong năm {summary.leave_year}
+                    Đã sử dụng phép năm ({summary.leave_year})
                   </p>
                   <p
                     className="mt-1.5 text-2xl font-semibold text-foreground font-mono tabular-nums"
@@ -1374,8 +1414,12 @@ export function LeaveManagementWorkspace({
                     {formatHalfDayUnits(summary.balance.consumed_units)}
                   </p>
                   <p className="mt-1 text-xs text-muted">
-                    Nghỉ không lương đã duyệt:{" "}
-                    {formatHalfDayUnits(summary.balance.approved_unpaid_units)}
+                    Nghỉ khác phép năm đã duyệt:{" "}
+                    {formatHalfDayUnits(
+                      summary.balance.approved_non_annual_units ??
+                        summary.balance.approved_unpaid_units ??
+                        0,
+                    )}
                   </p>
                 </Card>
 
@@ -1487,17 +1531,40 @@ export function LeaveManagementWorkspace({
                 <Card className="lg:col-span-7 space-y-4">
                   <CardHeader
                     title="Tạo đơn xin nghỉ phép"
-                    description="Chọn từng ngày nghỉ và buổi nghỉ (Cả ngày = 1 ngày, Buổi sáng = 0,5 ngày, Buổi chiều = 0,5 ngày). Hệ thống tự động trừ phép chuyển năm trước (FIFO)."
+                    description="Chọn từng ngày nghỉ, khung buổi (Cả ngày = 1 ngày, Buổi sáng = 0,5 ngày, Buổi chiều = 0,5 ngày) và loại nghỉ rõ ràng (Phép năm, Nghỉ tang, Nghỉ cưới, Nghỉ ốm, Nghỉ không lương). Chỉ Phép năm mới trừ vào quỹ phép năm (FIFO)."
                   />
 
                   {draftEvaluation.unpaid_notice ? (
                     <StatusBanner
-                      tone="warning"
-                      title="Lưu ý về chế độ tính lương khi gửi đơn"
+                      tone="info"
+                      title="Thông tin loại nghỉ & trừ quỹ phép năm"
                       dataTestId="leave-unpaid-notice-banner"
                     >
                       <p>{draftEvaluation.unpaid_notice}</p>
                     </StatusBanner>
+                  ) : null}
+
+                  {draftEvaluation.can_split_excess_annual_to_unpaid ? (
+                    <div
+                      className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5 text-xs text-amber-900 dark:text-amber-200"
+                      data-testid="leave-split-suggestion-banner"
+                    >
+                      <span>
+                        Số ngày Phép năm đang chọn vượt quá số dư khả dụng (
+                        {formatHalfDayUnits(summary.balance.available_units)}). Bạn có thể tự động
+                        chia phần vượt hạn mức sang <strong>Nghỉ không lương</strong> trong cùng
+                        yêu cầu này.
+                      </span>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        onClick={handleAutoSplitDraftByBalance}
+                        data-testid="leave-auto-split-balance-btn"
+                      >
+                        Tự động chia Phép năm + Nghỉ không lương
+                      </Button>
+                    </div>
                   ) : null}
 
                   <form
@@ -1508,7 +1575,7 @@ export function LeaveManagementWorkspace({
                     <div className="space-y-2.5">
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-sm font-medium text-foreground">
-                          Danh sách ngày xin nghỉ <span className="text-rose-600">*</span>
+                          Danh sách ngày & loại nghỉ <span className="text-rose-600">*</span>
                         </span>
                         <Button
                           type="button"
@@ -1526,7 +1593,7 @@ export function LeaveManagementWorkspace({
                           key={idx}
                           className="grid grid-cols-1 gap-2 rounded-xl border border-border bg-surface-muted/30 p-3 sm:grid-cols-12 sm:items-center"
                         >
-                          <div className="sm:col-span-5">
+                          <div className="sm:col-span-3">
                             <label className="block text-xs text-muted mb-1">
                               Ngày nghỉ #{idx + 1}
                             </label>
@@ -1539,7 +1606,7 @@ export function LeaveManagementWorkspace({
                               className="w-full min-h-10 rounded-lg border border-border bg-surface px-3 py-1.5 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
                             />
                           </div>
-                          <div className="sm:col-span-5">
+                          <div className="sm:col-span-3">
                             <label className="block text-xs text-muted mb-1">
                               Khung buổi nghỉ
                             </label>
@@ -1561,7 +1628,36 @@ export function LeaveManagementWorkspace({
                               ))}
                             </select>
                           </div>
-                          <div className="sm:col-span-2 flex sm:justify-end sm:pt-5">
+                          <div className="sm:col-span-4">
+                            <label className="block text-xs text-muted mb-1">Loại nghỉ</label>
+                            <select
+                              value={dayRow.leave_type ?? "ANNUAL"}
+                              onChange={(e) =>
+                                handleChangeDraftDayLeaveType(idx, e.target.value as LeaveType)
+                              }
+                              data-testid={`leave-day-type-${idx}`}
+                              className="w-full min-h-10 rounded-lg border border-border bg-surface px-3 py-1.5 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                            >
+                              {LEAVE_TYPES.map((code) => (
+                                <option key={code} value={code}>
+                                  {leaveTypeLabel(code)}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="sm:col-span-2 flex flex-wrap sm:justify-end gap-1.5 sm:pt-5">
+                            {dayRow.session_code === "FULL" ? (
+                              <Button
+                                type="button"
+                                variant="secondary"
+                                size="sm"
+                                onClick={() => handleSplitDraftDayToHalfDays(idx)}
+                                data-testid={`leave-split-day-btn-${idx}`}
+                                title="Tách ngày này thành 2 buổi Sáng/Chiều để chọn 2 loại nghỉ khác nhau"
+                              >
+                                Tách 2 buổi
+                              </Button>
+                            ) : null}
                             <Button
                               type="button"
                               variant="danger-outline"
@@ -1597,7 +1693,7 @@ export function LeaveManagementWorkspace({
 
                     {/* Live Draft Summary Bar */}
                     <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-surface-muted/40 px-4 py-3 text-sm">
-                      <div className="flex flex-wrap items-center gap-2.5">
+                      <div className="flex flex-wrap items-center gap-2">
                         <span className="text-muted">Tổng thời lượng:</span>
                         <strong
                           className="font-mono text-base text-foreground"
@@ -1608,13 +1704,14 @@ export function LeaveManagementWorkspace({
                         <span className="text-xs text-muted">
                           ({draftEvaluation.total_units} đơn vị nửa ngày)
                         </span>
-                        <StatusBadge
-                          tone={
-                            leavePayTreatmentBadge(draftEvaluation.predicted_pay_treatment).tone
-                          }
-                        >
-                          {leavePayTreatmentBadge(draftEvaluation.predicted_pay_treatment).label}
-                        </StatusBadge>
+                        {draftEvaluation.type_breakdown.map((tb) => {
+                          const badge = leaveTypeBadge(tb.leave_type);
+                          return (
+                            <StatusBadge key={tb.leave_type} tone={badge.tone}>
+                              {badge.label}: {formatHalfDayUnits(tb.half_day_units)}
+                            </StatusBadge>
+                          );
+                        })}
                       </div>
 
                       <Button
@@ -1628,7 +1725,7 @@ export function LeaveManagementWorkspace({
                       </Button>
                     </div>
 
-                    {draftEvaluation.blocking_error && draftReason.trim().length > 0 ? (
+                    {draftEvaluation.blocking_error ? (
                       <StatusBanner
                         tone="error"
                         title="Đơn xin nghỉ chưa hợp lệ"
@@ -1730,9 +1827,9 @@ export function LeaveManagementWorkspace({
                     <table className={DATA_TABLE_CLASS}>
                       <thead className={DATA_TABLE_HEAD_CLASS}>
                         <tr>
-                          <th className={DATA_TABLE_TH_CLASS}>Chi tiết ngày & buổi</th>
+                          <th className={DATA_TABLE_TH_CLASS}>Chi tiết ngày, buổi & loại nghỉ</th>
                           <th className={DATA_TABLE_TH_CLASS}>Tổng cộng</th>
-                          <th className={DATA_TABLE_TH_CLASS}>Chế độ phép</th>
+                          <th className={DATA_TABLE_TH_CLASS}>Phân bổ loại nghỉ</th>
                           <th className={DATA_TABLE_TH_CLASS}>Cấp duyệt</th>
                           <th className={DATA_TABLE_TH_CLASS}>Trạng thái</th>
                           <th className={DATA_TABLE_TH_CLASS}>Lý do / Phản hồi</th>
@@ -1742,14 +1839,17 @@ export function LeaveManagementWorkspace({
                       <tbody>
                         {summary.requests.map((req) => {
                           const statusBadge = leaveRequestStatusBadge(req.status);
-                          const payBadge = leavePayTreatmentBadge(req.pay_treatment);
+                          const typeBreakdown = resolveRequestTypeBreakdown(req);
                           const allowWithdraw = canWithdrawOwnLeaveRequest({
                             actorAppUserId: summary.authority.app_user_id,
                             request: req,
                           });
                           return (
                             <tr key={req.request_id} className={DATA_TABLE_ROW_CLASS}>
-                              <td className={DATA_TABLE_TD_CLASS} data-label="Chi tiết ngày & buổi">
+                              <td
+                                className={DATA_TABLE_TD_CLASS}
+                                data-label="Chi tiết ngày, buổi & loại nghỉ"
+                              >
                                 <div className="flex flex-wrap gap-1">
                                   {req.days.map((d) => (
                                     <span
@@ -1757,7 +1857,8 @@ export function LeaveManagementWorkspace({
                                       className="inline-flex items-center rounded border border-border bg-surface-muted px-2 py-0.5 text-xs font-mono"
                                     >
                                       {formatIsoDateVi(d.leave_date)}:{" "}
-                                      {leaveSessionShortLabel(d.session_code)}
+                                      {leaveSessionShortLabel(d.session_code)} ·{" "}
+                                      {leaveTypeShortLabel(d.leave_type)}
                                     </span>
                                   ))}
                                 </div>
@@ -1765,8 +1866,17 @@ export function LeaveManagementWorkspace({
                               <td className={DATA_TABLE_TD_CLASS} data-label="Tổng cộng">
                                 <strong>{formatHalfDayUnits(req.requested_units)}</strong>
                               </td>
-                              <td className={DATA_TABLE_TD_CLASS} data-label="Chế độ phép">
-                                <StatusBadge tone={payBadge.tone}>{payBadge.label}</StatusBadge>
+                              <td className={DATA_TABLE_TD_CLASS} data-label="Phân bổ loại nghỉ">
+                                <div className="flex flex-wrap gap-1">
+                                  {typeBreakdown.map((tb) => {
+                                    const badge = leaveTypeBadge(tb.leave_type);
+                                    return (
+                                      <StatusBadge key={tb.leave_type} tone={badge.tone}>
+                                        {badge.label}: {formatHalfDayUnits(tb.half_day_units)}
+                                      </StatusBadge>
+                                    );
+                                  })}
+                                </div>
                               </td>
                               <td className={DATA_TABLE_TD_CLASS} data-label="Cấp duyệt">
                                 <span className="text-xs">
@@ -1967,9 +2077,9 @@ export function LeaveManagementWorkspace({
                   <tr>
                     <th className={DATA_TABLE_TH_CLASS}>Nhân sự</th>
                     <th className={DATA_TABLE_TH_CLASS}>Bộ phận / Team</th>
-                    <th className={DATA_TABLE_TH_CLASS}>Ngày & Buổi nghỉ</th>
+                    <th className={DATA_TABLE_TH_CLASS}>Ngày, Buổi & Loại nghỉ</th>
                     <th className={DATA_TABLE_TH_CLASS}>Tổng ngày</th>
-                    <th className={DATA_TABLE_TH_CLASS}>Chế độ phép</th>
+                    <th className={DATA_TABLE_TH_CLASS}>Phân bổ loại nghỉ</th>
                     <th className={DATA_TABLE_TH_CLASS}>Tuyến duyệt</th>
                     <th className={DATA_TABLE_TH_CLASS}>Trạng thái</th>
                     <th className={DATA_TABLE_TH_CLASS}>Lý do</th>
@@ -1979,7 +2089,7 @@ export function LeaveManagementWorkspace({
                 <tbody>
                   {inboxData.items.map((item) => {
                     const statusBadge = leaveRequestStatusBadge(item.status);
-                    const payBadge = leavePayTreatmentBadge(item.pay_treatment);
+                    const typeBreakdown = resolveRequestTypeBreakdown(item);
                     const isSelf =
                       item.app_user_id.toLowerCase() ===
                       (summary?.authority.app_user_id ?? "").toLowerCase();
@@ -2002,7 +2112,7 @@ export function LeaveManagementWorkspace({
                             <div className="text-xs text-muted">{item.routed_team_name}</div>
                           ) : null}
                         </td>
-                        <td className={DATA_TABLE_TD_CLASS} data-label="Ngày & Buổi nghỉ">
+                        <td className={DATA_TABLE_TD_CLASS} data-label="Ngày, Buổi & Loại nghỉ">
                           <div className="flex flex-wrap gap-1">
                             {item.days.map((d) => (
                               <span
@@ -2010,7 +2120,8 @@ export function LeaveManagementWorkspace({
                                 className="inline-flex rounded border border-border bg-surface-muted px-1.5 py-0.5 text-[11px] font-mono"
                               >
                                 {formatIsoDateVi(d.leave_date)}:{" "}
-                                {leaveSessionShortLabel(d.session_code)}
+                                {leaveSessionShortLabel(d.session_code)} ·{" "}
+                                {leaveTypeShortLabel(d.leave_type)}
                               </span>
                             ))}
                           </div>
@@ -2018,8 +2129,17 @@ export function LeaveManagementWorkspace({
                         <td className={DATA_TABLE_TD_CLASS} data-label="Tổng ngày">
                           <strong>{formatHalfDayUnits(item.requested_units)}</strong>
                         </td>
-                        <td className={DATA_TABLE_TD_CLASS} data-label="Chế độ phép">
-                          <StatusBadge tone={payBadge.tone}>{payBadge.label}</StatusBadge>
+                        <td className={DATA_TABLE_TD_CLASS} data-label="Phân bổ loại nghỉ">
+                          <div className="flex flex-wrap gap-1">
+                            {typeBreakdown.map((tb) => {
+                              const badge = leaveTypeBadge(tb.leave_type);
+                              return (
+                                <StatusBadge key={tb.leave_type} tone={badge.tone}>
+                                  {badge.label}: {formatHalfDayUnits(tb.half_day_units)}
+                                </StatusBadge>
+                              );
+                            })}
+                          </div>
                         </td>
                         <td className={DATA_TABLE_TD_CLASS} data-label="Tuyến duyệt">
                           <div className="text-xs">
@@ -3187,18 +3307,22 @@ export function LeaveManagementWorkspace({
                     <th className={DATA_TABLE_TH_CLASS}>Nhân sự</th>
                     <th className={DATA_TABLE_TH_CLASS}>Bộ phận / Team</th>
                     <th className={DATA_TABLE_TH_CLASS}>Trạng thái & Mốc làm việc</th>
-                    <th className={DATA_TABLE_TH_CLASS}>Nghỉ có lương (Tháng)</th>
-                    <th className={DATA_TABLE_TH_CLASS}>Nghỉ KL Thử việc (Tháng)</th>
-                    <th className={DATA_TABLE_TH_CLASS}>Nghỉ KL Khác (Tháng)</th>
+                    <th className={DATA_TABLE_TH_CLASS}>Chấm công trong tháng</th>
+                    <th className={DATA_TABLE_TH_CLASS}>Chi tiết ngày nghỉ, loại nghỉ & buổi nghỉ</th>
+                    <th className={DATA_TABLE_TH_CLASS}>Tổng hợp loại nghỉ (Tháng)</th>
                     <th className={DATA_TABLE_TH_CLASS}>Chờ duyệt (Tháng)</th>
                     <th className={DATA_TABLE_TH_CLASS}>Nguồn phép năm (CN / Tháng / TN)</th>
                     <th className={DATA_TABLE_TH_CLASS}>Đã dùng / Giữ chỗ / Hết hạn</th>
-                    <th className={DATA_TABLE_TH_CLASS}>Phép khả dụng cuối kỳ</th>
+                    <th className={DATA_TABLE_TH_CLASS}>Phép năm khả dụng cuối kỳ</th>
                   </tr>
                 </thead>
                 <tbody>
                   {reportData.rows.map((row) => {
                     const empBadge = leaveEmploymentStatusBadge(row.employment_status);
+                    const attendanceDates = Array.isArray(row.attendance_dates)
+                      ? row.attendance_dates
+                      : [];
+                    const leaveDays = Array.isArray(row.leave_days) ? row.leave_days : [];
                     return (
                       <tr key={row.app_user_id} className={DATA_TABLE_ROW_CLASS}>
                         <td className={DATA_TABLE_TD_CLASS} data-label="Nhân sự">
@@ -3230,27 +3354,94 @@ export function LeaveManagementWorkspace({
                         </td>
                         <td
                           className={DATA_TABLE_TD_CLASS}
-                          data-label="Nghỉ có lương (Tháng)"
+                          data-label="Chấm công trong tháng"
                         >
-                          <strong className="font-mono">
-                            {formatHalfDayUnits(row.month_paid_leave_units)}
-                          </strong>
+                          <div className="font-mono font-semibold text-foreground">
+                            {row.attendance_day_count ?? attendanceDates.length} ngày
+                          </div>
+                          {attendanceDates.length > 0 ? (
+                            <div className="mt-1 flex max-w-xs flex-wrap gap-1">
+                              {attendanceDates.map((isoDate) => (
+                                <span
+                                  key={isoDate}
+                                  className="inline-flex rounded border border-border bg-surface-muted px-1.5 py-0.5 text-[11px] font-mono"
+                                >
+                                  {formatIsoDateVi(isoDate)}
+                                </span>
+                              ))}
+                            </div>
+                          ) : (
+                            <span className="text-xs text-muted">Chưa có ngày chấm công</span>
+                          )}
                         </td>
                         <td
                           className={DATA_TABLE_TD_CLASS}
-                          data-label="Nghỉ KL Thử việc (Tháng)"
+                          data-label="Chi tiết ngày nghỉ, loại nghỉ & buổi nghỉ"
                         >
-                          <span className="font-mono">
-                            {formatHalfDayUnits(row.month_unpaid_probation_units)}
-                          </span>
+                          {leaveDays.length > 0 ? (
+                            <div className="flex max-w-sm flex-wrap gap-1">
+                              {leaveDays.map((ld, idx) => {
+                                const badge = leaveTypeBadge(ld.leave_type);
+                                return (
+                                  <span
+                                    key={`${ld.request_id}-${ld.leave_date}-${ld.session_code}-${idx}`}
+                                    className="inline-flex items-center gap-1 rounded border border-border bg-surface-muted px-1.5 py-0.5 text-[11px] font-mono"
+                                  >
+                                    <span>
+                                      {formatIsoDateVi(ld.leave_date)} (
+                                      {leaveSessionShortLabel(ld.session_code)})
+                                    </span>
+                                    <StatusBadge tone={badge.tone}>{badge.label}</StatusBadge>
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <span className="text-xs text-muted">Không phát sinh nghỉ</span>
+                          )}
                         </td>
                         <td
                           className={DATA_TABLE_TD_CLASS}
-                          data-label="Nghỉ KL Khác (Tháng)"
+                          data-label="Tổng hợp loại nghỉ (Tháng)"
                         >
-                          <span className="font-mono">
-                            {formatHalfDayUnits(row.month_unpaid_other_units)}
-                          </span>
+                          <div className="space-y-0.5 text-xs font-mono">
+                            <div>
+                              Phép năm:{" "}
+                              <strong>
+                                {formatHalfDayUnits(row.month_annual_leave_units ?? 0)}
+                              </strong>
+                            </div>
+                            {(row.month_bereavement_leave_units ?? 0) > 0 ? (
+                              <div>
+                                Nghỉ tang:{" "}
+                                <strong>
+                                  {formatHalfDayUnits(row.month_bereavement_leave_units)}
+                                </strong>
+                              </div>
+                            ) : null}
+                            {(row.month_marriage_leave_units ?? 0) > 0 ? (
+                              <div>
+                                Nghỉ cưới:{" "}
+                                <strong>
+                                  {formatHalfDayUnits(row.month_marriage_leave_units)}
+                                </strong>
+                              </div>
+                            ) : null}
+                            {(row.month_sick_leave_units ?? 0) > 0 ? (
+                              <div>
+                                Nghỉ ốm:{" "}
+                                <strong>{formatHalfDayUnits(row.month_sick_leave_units)}</strong>
+                              </div>
+                            ) : null}
+                            {(row.month_unpaid_leave_units ?? 0) > 0 ? (
+                              <div>
+                                Nghỉ không lương:{" "}
+                                <strong>
+                                  {formatHalfDayUnits(row.month_unpaid_leave_units)}
+                                </strong>
+                              </div>
+                            ) : null}
+                          </div>
                         </td>
                         <td className={DATA_TABLE_TD_CLASS} data-label="Chờ duyệt (Tháng)">
                           <span className="font-mono">
@@ -3279,7 +3470,7 @@ export function LeaveManagementWorkspace({
                         </td>
                         <td
                           className={DATA_TABLE_TD_CLASS}
-                          data-label="Phép khả dụng cuối kỳ"
+                          data-label="Phép năm khả dụng cuối kỳ"
                         >
                           <strong className="font-mono text-primary">
                             {formatHalfDayUnits(row.balance.available_units)}
@@ -3321,7 +3512,8 @@ export function LeaveManagementWorkspace({
                     key={d.request_day_id}
                     className="inline-flex rounded border border-border bg-surface px-2 py-0.5 text-xs font-mono"
                   >
-                    {formatIsoDateVi(d.leave_date)}: {leaveSessionShortLabel(d.session_code)}
+                    {formatIsoDateVi(d.leave_date)}: {leaveSessionShortLabel(d.session_code)} ·{" "}
+                    {leaveTypeShortLabel(d.leave_type)}
                   </span>
                 ))}
               </div>
@@ -3372,7 +3564,7 @@ export function LeaveManagementWorkspace({
         title={leaveDecisionActionLabel(decisionAction)}
         description={
           decisionAction === "CANCEL_APPROVED"
-            ? "Hủy đơn đã duyệt sẽ hoàn trả số đơn vị phép có lương về đúng lô phép ban đầu và ghi bút toán đảo vào sổ cái."
+            ? "Hủy đơn đã duyệt sẽ hoàn trả số đơn vị Phép năm về đúng lô phép ban đầu và ghi bút toán đảo vào sổ cái."
             : "Xác nhận quyết định xử lý đơn xin nghỉ phép của nhân sự."
         }
         closeDisabled={submittingDecision}
@@ -3393,10 +3585,17 @@ export function LeaveManagementWorkspace({
                 Tổng thời lượng:{" "}
                 <strong>{formatHalfDayUnits(decisionTarget.requested_units)}</strong>
               </p>
-              <p>
-                Chế độ:{" "}
-                <strong>{leavePayTreatmentBadge(decisionTarget.pay_treatment).label}</strong>
-              </p>
+              <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                <span>Loại nghỉ:</span>
+                {resolveRequestTypeBreakdown(decisionTarget).map((tb) => {
+                  const badge = leaveTypeBadge(tb.leave_type);
+                  return (
+                    <StatusBadge key={tb.leave_type} tone={badge.tone}>
+                      {badge.label}: {formatHalfDayUnits(tb.half_day_units)}
+                    </StatusBadge>
+                  );
+                })}
+              </div>
             </div>
             <div>
               <label className="block text-sm font-medium text-foreground mb-1">

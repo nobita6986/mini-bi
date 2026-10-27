@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  autoAllocateDraftDaysByBalance,
   buildMonthlyLeaveReportExportUrl,
   buildMonthlyLeaveReportQuery,
   canApplyOpeningBatch,
@@ -18,12 +19,14 @@ import {
   leaveErrorMessage,
   leaveFallbackReasonLabel,
   leaveOpeningRowErrorLabel,
-  leavePayTreatmentBadge,
   leaveRequestStatusBadge,
   leaveRouteKindLabel,
   leaveSessionHalfDayUnits,
   leaveSessionLabel,
   leaveSessionShortLabel,
+  leaveTypeBadge,
+  leaveTypeLabel,
+  leaveTypeShortLabel,
   leaveUnitKindLabel,
   parseDaysInputToHalfDayUnits,
   parseOpeningBalanceBulkText,
@@ -81,8 +84,14 @@ test("WP2 session units and Vietnamese labels match WP1 leave contract", () => {
   assert.equal(leaveRequestStatusBadge("CANCELLED").label, "Đã hủy sau duyệt");
   assert.equal(leaveRequestStatusBadge("WITHDRAWN").label, "Đã tự rút");
 
-  assert.equal(leavePayTreatmentBadge("PAID_LEAVE").label, "Nghỉ phép có lương");
-  assert.equal(leavePayTreatmentBadge("UNPAID_PROBATION").label, "Nghỉ không lương (Thử việc)");
+  assert.equal(leaveTypeBadge("ANNUAL").label, "Phép năm");
+  assert.equal(leaveTypeBadge("BEREAVEMENT").label, "Nghỉ tang");
+  assert.equal(leaveTypeBadge("MARRIAGE").label, "Nghỉ cưới");
+  assert.equal(leaveTypeBadge("SICK").label, "Nghỉ ốm");
+  assert.equal(leaveTypeBadge("UNPAID").label, "Nghỉ không lương");
+  assert.equal(leaveTypeShortLabel("MARRIAGE"), "Nghỉ cưới");
+  assert.ok(leaveTypeLabel("BEREAVEMENT").includes("tối đa 3 ngày"));
+  assert.ok(leaveTypeLabel("SICK").includes("tối đa 7 ngày"));
   assert.equal(leaveRouteKindLabel("TEAM_LEADER", "Team Alpha"), "Team Leader (Team Alpha)");
   assert.equal(
     leaveRouteKindLabel("DEPARTMENT_HEAD", null, "MARKETING"),
@@ -196,21 +205,21 @@ test("WP2 decideLeavePageAccess and resolveVisibleLeaveTabs project strictly fro
   );
 });
 
-test("WP2 evaluateLeaveRequestDraft allows optional reasons and validates FULL/AM/PM units, dates, and balance", () => {
+test("WP2 evaluateLeaveRequestDraft validates explicit leave types, per-type day limits, multi-type allocation, and balance", () => {
   const officialBalance = {
     has_profile: true,
     profile_configured: true,
     employment_status: "OFFICIAL",
     work_start_date: "2025-01-15",
     official_effective_date: "2025-03-15",
-    available_units: 4,
+    available_units: 6, // 3 days available
   };
 
-  // 1. Official employee with 1 FULL day + 1 AM half-day = 3 units (1.5 days), sufficient balance
+  // 1. Official employee with 1 FULL day + 1 AM half-day = 3 units (1.5 days) ANNUAL, sufficient balance
   const okOfficial = evaluateLeaveRequestDraft({
     days: [
-      { leave_date: "2026-05-10", session_code: "FULL" },
-      { leave_date: "2026-05-11", session_code: "AM" },
+      { leave_date: "2026-05-10", session_code: "FULL", leave_type: "ANNUAL" },
+      { leave_date: "2026-05-11", session_code: "AM", leave_type: "ANNUAL" },
     ],
     reason: "",
     leaveYear: 2026,
@@ -220,26 +229,66 @@ test("WP2 evaluateLeaveRequestDraft allows optional reasons and validates FULL/A
   assert.equal(okOfficial.reason_error, null);
   assert.equal(okOfficial.total_units, 3);
   assert.equal(okOfficial.total_days, 1.5);
-  assert.equal(okOfficial.predicted_pay_treatment, "PAID_LEAVE");
+  assert.equal(okOfficial.annual_units, 3);
+  assert.equal(okOfficial.non_annual_units, 0);
   assert.equal(okOfficial.unpaid_notice, null);
 
-  // 2. Official employee exceeding available balance
+  // 2. Requesting 4 days ANNUAL when only 3 days (6 units) remain -> blocked with split suggestion
   const insufficient = evaluateLeaveRequestDraft({
     days: [
-      { leave_date: "2026-05-10", session_code: "FULL" },
-      { leave_date: "2026-05-11", session_code: "FULL" },
+      { leave_date: "2026-05-10", session_code: "FULL", leave_type: "ANNUAL" },
+      { leave_date: "2026-05-11", session_code: "FULL", leave_type: "ANNUAL" },
+      { leave_date: "2026-05-12", session_code: "FULL", leave_type: "ANNUAL" },
+      { leave_date: "2026-05-13", session_code: "FULL", leave_type: "ANNUAL" },
     ],
-    reason: "Nghỉ phép",
+    reason: "Nghỉ phép 4 ngày",
     leaveYear: 2026,
-    balance: { ...officialBalance, available_units: 3 },
+    balance: officialBalance,
   });
   assert.equal(insufficient.valid, false);
   assert.equal(insufficient.exceeds_available_balance, true);
+  assert.equal(insufficient.can_split_excess_annual_to_unpaid, true);
 
-  // 3. Probation employee with 0 available paid leave is allowed as UNPAID_PROBATION
-  const probation = evaluateLeaveRequestDraft({
-    days: [{ leave_date: "2026-05-12", session_code: "PM" }],
-    reason: "Khám sức khỏe",
+  // Auto-splitting 4 days with 3 days (6 units) available -> 3 days ANNUAL + 1 day UNPAID, now valid!
+  const splitDays = autoAllocateDraftDaysByBalance(
+    [
+      { leave_date: "2026-05-10", session_code: "FULL", leave_type: "ANNUAL" },
+      { leave_date: "2026-05-11", session_code: "FULL", leave_type: "ANNUAL" },
+      { leave_date: "2026-05-12", session_code: "FULL", leave_type: "ANNUAL" },
+      { leave_date: "2026-05-13", session_code: "FULL", leave_type: "ANNUAL" },
+    ],
+    6,
+    "UNPAID",
+  );
+  assert.deepEqual(
+    splitDays.map((d) => d.leave_type),
+    ["ANNUAL", "ANNUAL", "ANNUAL", "UNPAID"],
+  );
+  const validAfterSplit = evaluateLeaveRequestDraft({
+    days: splitDays,
+    reason: "Nghỉ phép 4 ngày chia 3 phép năm + 1 không lương",
+    leaveYear: 2026,
+    balance: officialBalance,
+  });
+  assert.equal(validAfterSplit.valid, true);
+  assert.equal(validAfterSplit.annual_units, 6);
+  assert.equal(validAfterSplit.non_annual_units, 2);
+
+  // Auto-splitting when 0.5 day (1 unit) ANNUAL remains on a FULL day -> splits that date into AM ANNUAL + PM UNPAID
+  const halfDaySplit = autoAllocateDraftDaysByBalance(
+    [{ leave_date: "2026-05-10", session_code: "FULL", leave_type: "ANNUAL" }],
+    1,
+    "UNPAID",
+  );
+  assert.deepEqual(halfDaySplit, [
+    { leave_date: "2026-05-10", session_code: "AM", leave_type: "ANNUAL" },
+    { leave_date: "2026-05-10", session_code: "PM", leave_type: "UNPAID" },
+  ]);
+
+  // 3. Non-annual leave (UNPAID / SICK / MARRIAGE / BEREAVEMENT) with 0 available annual balance is valid
+  const unpaidWithZeroBalance = evaluateLeaveRequestDraft({
+    days: [{ leave_date: "2026-05-12", session_code: "PM", leave_type: "UNPAID" }],
+    reason: "Việc riêng",
     leaveYear: 2026,
     balance: {
       has_profile: true,
@@ -250,16 +299,34 @@ test("WP2 evaluateLeaveRequestDraft allows optional reasons and validates FULL/A
       available_units: 0,
     },
   });
-  assert.equal(probation.valid, true);
-  assert.equal(probation.total_units, 1);
-  assert.equal(probation.predicted_pay_treatment, "UNPAID_PROBATION");
-  assert.ok(probation.unpaid_notice?.includes("Thử việc"));
+  assert.equal(unpaidWithZeroBalance.valid, true);
+  assert.equal(unpaidWithZeroBalance.total_units, 1);
+  assert.equal(unpaidWithZeroBalance.annual_units, 0);
+  assert.equal(unpaidWithZeroBalance.non_annual_units, 1);
 
-  // 4. Duplicate date in the same request is rejected
+  // 4. Per-request type limits: BEREAVEMENT > 3 days (6 units) is rejected
+  const overBereavement = evaluateLeaveRequestDraft({
+    days: [
+      { leave_date: "2026-05-10", session_code: "FULL", leave_type: "BEREAVEMENT" },
+      { leave_date: "2026-05-11", session_code: "FULL", leave_type: "BEREAVEMENT" },
+      { leave_date: "2026-05-12", session_code: "FULL", leave_type: "BEREAVEMENT" },
+      { leave_date: "2026-05-13", session_code: "AM", leave_type: "BEREAVEMENT" },
+    ],
+    reason: "",
+    leaveYear: 2026,
+    balance: officialBalance,
+  });
+  assert.equal(overBereavement.valid, false);
+  assert.deepEqual(
+    overBereavement.exceeded_type_limits.map((item) => item.leave_type),
+    ["BEREAVEMENT"],
+  );
+
+  // 5. Duplicate date with same leave_type in the same request is rejected, but AM + PM with different leave_type is allowed
   const duplicate = evaluateLeaveRequestDraft({
     days: [
-      { leave_date: "2026-05-15", session_code: "AM" },
-      { leave_date: "2026-05-15", session_code: "PM" },
+      { leave_date: "2026-05-15", session_code: "AM", leave_type: "ANNUAL" },
+      { leave_date: "2026-05-15", session_code: "PM", leave_type: "ANNUAL" },
     ],
     reason: "Trùng ngày",
     leaveYear: 2026,
@@ -268,9 +335,20 @@ test("WP2 evaluateLeaveRequestDraft allows optional reasons and validates FULL/A
   assert.equal(duplicate.valid, false);
   assert.equal(duplicate.duplicate_dates.length, 1);
 
-  // 5. Cross-year date is rejected
+  const sameDateDiffTypes = evaluateLeaveRequestDraft({
+    days: [
+      { leave_date: "2026-05-15", session_code: "AM", leave_type: "ANNUAL" },
+      { leave_date: "2026-05-15", session_code: "PM", leave_type: "SICK" },
+    ],
+    reason: "Sáng phép năm chiều nghỉ ốm",
+    leaveYear: 2026,
+    balance: officialBalance,
+  });
+  assert.equal(sameDateDiffTypes.valid, true);
+
+  // 6. Cross-year date is rejected
   const wrongYear = evaluateLeaveRequestDraft({
-    days: [{ leave_date: "2027-01-02", session_code: "FULL" }],
+    days: [{ leave_date: "2027-01-02", session_code: "FULL", leave_type: "ANNUAL" }],
     reason: "Khác năm",
     leaveYear: 2026,
     balance: officialBalance,

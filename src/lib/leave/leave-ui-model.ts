@@ -4,17 +4,22 @@ import {
   decideSessionPageAccess,
   type SessionPageDecision,
 } from "../auth/session-page-access.ts";
-import type {
-  LeaveDecisionCode,
-  LeaveDepartmentApproverUnitKind,
-  LeaveEmploymentStatus,
-  LeaveModuleGrantRole,
-  LeaveRequestStatusFilter,
-  LeaveSessionCode,
-  LeaveUnitKind,
-  OpeningBatchRowInput,
+import {
+  LEAVE_TYPES,
+  LEAVE_TYPE_MAX_UNITS_PER_REQUEST,
+  type LeaveDecisionCode,
+  type LeaveDepartmentApproverUnitKind,
+  type LeaveEmploymentStatus,
+  type LeaveModuleGrantRole,
+  type LeaveRequestStatusFilter,
+  type LeaveSessionCode,
+  type LeaveType,
+  type LeaveTypeAllocationInput,
+  type LeaveUnitKind,
+  type OpeningBatchRowInput,
 } from "./leave-contract.ts";
 
+export { LEAVE_TYPES, LEAVE_TYPE_MAX_UNITS_PER_REQUEST };
 export const LEAVE_SESSION_CODES = ["FULL", "AM", "PM"] as const;
 export const LEAVE_UNIT_KINDS = [
   "UNCLASSIFIED",
@@ -79,6 +84,8 @@ export type {
   LeaveModuleGrantRole,
   LeaveRequestStatusFilter,
   LeaveSessionCode,
+  LeaveType,
+  LeaveTypeAllocationInput,
   LeaveUnitKind,
   OpeningBatchRowInput,
 };
@@ -116,7 +123,12 @@ export type LeaveAuthorityProjection = {
 };
 
 export type LeaveRoutingProjection = {
-  route_kind: "TEAM_LEADER" | "DEPARTMENT_HEAD" | "ADMIN_BOD_DIRECT" | "ADMIN_BOD_FALLBACK" | string;
+  route_kind:
+    | "TEAM_LEADER"
+    | "DEPARTMENT_HEAD"
+    | "ADMIN_BOD_DIRECT"
+    | "ADMIN_BOD_FALLBACK"
+    | string;
   unit_kind: LeaveUnitKind | string;
   primary_approver_app_user_id: string | null;
   team_id: string | null;
@@ -173,9 +185,15 @@ export type LeaveBalanceProjection = {
   reserved_units: number;
   consumed_units: number;
   expired_units: number;
-  pending_paid_units: number;
-  pending_unpaid_units: number;
-  approved_unpaid_units: number;
+  pending_annual_units?: number;
+  pending_non_annual_units?: number;
+  pending_unpaid_units?: number;
+  approved_annual_units?: number;
+  approved_non_annual_units?: number;
+  approved_bereavement_units?: number;
+  approved_marriage_units?: number;
+  approved_sick_units?: number;
+  approved_unpaid_units?: number;
   lots: readonly LeaveLotProjection[];
 };
 
@@ -183,8 +201,14 @@ export type LeaveRequestDayProjection = {
   request_day_id: string;
   leave_date: string;
   session_code: LeaveSessionCode;
+  leave_type: LeaveType | string;
   half_day_units: number;
   is_active: boolean;
+};
+
+export type LeaveRequestTypeBreakdownProjection = {
+  leave_type: LeaveType | string;
+  half_day_units: number;
 };
 
 export type LeaveRequestAllocationProjection = {
@@ -203,12 +227,21 @@ export type LeaveRequestProjection = {
   request_id: string;
   app_user_id: string;
   requester: LeaveAccountProjection | null;
-  status: "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED" | "WITHDRAWN" | string;
-  pay_treatment: "PAID_LEAVE" | "UNPAID_PROBATION" | "UNPAID_UNCONFIGURED_PROFILE" | string;
+  status:
+    | "PENDING"
+    | "APPROVED"
+    | "REJECTED"
+    | "CANCELLED"
+    | "WITHDRAWN"
+    | string;
+  leave_types?: readonly (LeaveType | string)[];
+  type_breakdown?: readonly LeaveRequestTypeBreakdownProjection[];
   employment_status_snapshot: string;
   unit_kind_snapshot: string;
   profile_configured_at_submit: boolean;
   requested_units: number;
+  requested_annual_units?: number;
+  requested_non_annual_units?: number;
   reason: string | null;
   route_kind: string;
   primary_approver_app_user_id: string | null;
@@ -347,6 +380,22 @@ export type LeaveOpeningPreviewProjection = {
   rows: readonly LeaveOpeningPreviewRowProjection[];
 };
 
+export type LeaveMonthlyReportAttendanceDayProjection = {
+  business_date: string;
+  checkin_count: number;
+  first_captured_at?: string | null;
+  last_captured_at?: string | null;
+};
+
+export type LeaveMonthlyReportLeaveDayProjection = {
+  request_id: string;
+  request_day_id: string;
+  leave_date: string;
+  session_code: LeaveSessionCode | string;
+  leave_type: LeaveType | string;
+  half_day_units: number;
+};
+
 export type LeaveMonthlyReportRowProjection = {
   app_user_id: string;
   account: LeaveAccountProjection | null;
@@ -355,9 +404,17 @@ export type LeaveMonthlyReportRowProjection = {
   unit_kind: LeaveUnitKind | string;
   work_start_date: string | null;
   official_effective_date: string | null;
-  month_paid_leave_units: number;
-  month_unpaid_probation_units: number;
-  month_unpaid_other_units: number;
+  attendance_day_count: number;
+  attendance_dates: readonly string[];
+  attendance_days?: readonly LeaveMonthlyReportAttendanceDayProjection[];
+  leave_days: readonly LeaveMonthlyReportLeaveDayProjection[];
+  pending_leave_days?: readonly LeaveMonthlyReportLeaveDayProjection[];
+  month_annual_leave_units: number;
+  month_bereavement_leave_units: number;
+  month_marriage_leave_units: number;
+  month_sick_leave_units: number;
+  month_unpaid_leave_units: number;
+  month_total_approved_leave_units: number;
   month_pending_units: number;
   month_approved_request_count: number;
   balance: LeaveBalanceProjection;
@@ -487,6 +544,77 @@ export function leaveSessionHalfDayUnits(sessionCode: LeaveSessionCode | string)
   return sessionCode === "FULL" ? 2 : 1;
 }
 
+export function leaveTypeShortLabel(leaveType: LeaveType | string): string {
+  switch (leaveType) {
+    case "ANNUAL":
+      return "Phép năm";
+    case "BEREAVEMENT":
+      return "Nghỉ tang";
+    case "MARRIAGE":
+      return "Nghỉ cưới";
+    case "SICK":
+      return "Nghỉ ốm";
+    case "UNPAID":
+      return "Nghỉ không lương";
+    default:
+      return leaveType;
+  }
+}
+
+export function leaveTypeLabel(leaveType: LeaveType | string): string {
+  switch (leaveType) {
+    case "ANNUAL":
+      return "Phép năm";
+    case "BEREAVEMENT":
+      return "Nghỉ tang (tối đa 3 ngày/đơn)";
+    case "MARRIAGE":
+      return "Nghỉ cưới (tối đa 3 ngày/đơn)";
+    case "SICK":
+      return "Nghỉ ốm (tối đa 7 ngày/đơn)";
+    case "UNPAID":
+      return "Nghỉ không lương (tối đa 7 ngày/đơn)";
+    default:
+      return leaveType;
+  }
+}
+
+export function leaveTypeBadge(leaveType: LeaveType | string): {
+  label: string;
+  tone: BadgeTone;
+} {
+  switch (leaveType) {
+    case "ANNUAL":
+      return { label: "Phép năm", tone: "primary" };
+    case "BEREAVEMENT":
+      return { label: "Nghỉ tang", tone: "neutral" };
+    case "MARRIAGE":
+      return { label: "Nghỉ cưới", tone: "success" };
+    case "SICK":
+      return { label: "Nghỉ ốm", tone: "warning" };
+    case "UNPAID":
+      return { label: "Nghỉ không lương", tone: "neutral" };
+    default:
+      return { label: leaveType, tone: "neutral" };
+  }
+}
+
+export function resolveRequestTypeBreakdown(
+  request: Pick<LeaveRequestProjection, "days" | "type_breakdown">,
+): readonly LeaveRequestTypeBreakdownProjection[] {
+  if (Array.isArray(request.type_breakdown) && request.type_breakdown.length > 0) {
+    return request.type_breakdown;
+  }
+  const byType = new Map<string, number>();
+  for (const day of request.days ?? []) {
+    const t = (day.leave_type || "ANNUAL").toString();
+    byType.set(t, (byType.get(t) ?? 0) + Number(day.half_day_units ?? 0));
+  }
+  return Array.from(byType.entries()).map(([leave_type, half_day_units]) => ({
+    leave_type,
+    half_day_units,
+  }));
+}
+
 export function leaveEmploymentStatusBadge(status: string): {
   label: string;
   tone: BadgeTone;
@@ -539,22 +667,6 @@ export function leaveRequestStatusBadge(status: string): {
       return { label: "Đã tự rút", tone: "neutral" };
     default:
       return { label: status, tone: "neutral" };
-  }
-}
-
-export function leavePayTreatmentBadge(payTreatment: string): {
-  label: string;
-  tone: BadgeTone;
-} {
-  switch (payTreatment) {
-    case "PAID_LEAVE":
-      return { label: "Nghỉ phép có lương", tone: "primary" };
-    case "UNPAID_PROBATION":
-      return { label: "Nghỉ không lương (Thử việc)", tone: "warning" };
-    case "UNPAID_UNCONFIGURED_PROFILE":
-      return { label: "Nghỉ không lương (Chưa cấu hình hồ sơ)", tone: "warning" };
-    default:
-      return { label: payTreatment, tone: "neutral" };
   }
 }
 
@@ -714,15 +826,21 @@ export function leaveErrorMessage(code: string | null | undefined): string {
     case "LEAVE_REASON_REQUIRED":
       return "Vui lòng nhập lý do hợp lệ (tối đa 2.000 ký tự).";
     case "LEAVE_REQUEST_DAYS_INVALID":
-      return "Danh sách ngày xin nghỉ không hợp lệ. Vui lòng chọn từ 1 đến 60 ngày nghỉ hợp lệ.";
+      return "Danh sách ngày xin nghỉ không hợp lệ. Vui lòng chọn các ngày nghỉ hợp lệ.";
+    case "LEAVE_TYPE_INVALID":
+      return "Loại nghỉ không hợp lệ. Vui lòng chọn Phép năm, Nghỉ tang, Nghỉ cưới, Nghỉ ốm hoặc Nghỉ không lương.";
+    case "LEAVE_TYPE_LIMIT_EXCEEDED":
+      return "Số ngày nghỉ vượt quá giới hạn tối đa mỗi yêu cầu (Nghỉ tang/Nghỉ cưới tối đa 3 ngày; Nghỉ ốm/Nghỉ không lương tối đa 7 ngày).";
+    case "LEAVE_TYPE_ALLOCATION_MISMATCH":
+      return "Tổng số ngày/đơn vị phân bổ theo loại nghỉ không khớp với các ngày/buổi đã chọn trong yêu cầu.";
     case "LEAVE_REQUEST_YEAR_OUT_OF_RANGE":
       return "Ngày xin nghỉ phải thuộc năm nghiệp vụ hiện hành.";
     case "LEAVE_REQUEST_DUPLICATE_DATE":
-      return "Không được chọn trùng một ngày nhiều lần trong cùng một đơn xin nghỉ.";
+      return "Không được chọn trùng một ngày/buổi với cùng loại nghỉ nhiều lần trong cùng một đơn.";
     case "LEAVE_REQUEST_OVERLAP":
       return "Ngày hoặc buổi xin nghỉ bị trùng với một đơn đang chờ duyệt hoặc đã được duyệt.";
     case "LEAVE_INSUFFICIENT_BALANCE":
-      return "Số dư phép khả dụng tại thời điểm ngày nghỉ không đủ để đáp ứng đơn xin nghỉ có lương.";
+      return "Số dư phép năm khả dụng tại thời điểm ngày nghỉ không đủ cho phần Phép năm đã chọn. Bạn có thể chia yêu cầu sang Nghỉ không lương hoặc loại nghỉ phù hợp.";
     case "LEAVE_REQUEST_NOT_FOUND":
       return "Không tìm thấy đơn xin nghỉ phép.";
     case "LEAVE_REQUEST_OWNERSHIP_FORBIDDEN":
@@ -823,27 +941,50 @@ export function resolveVisibleLeaveTabs(
 }
 
 export type LeaveDraftDayRow = {
-  id: string;
+  id?: string;
   leave_date: string;
   session_code: LeaveSessionCode;
+  leave_type: LeaveType;
+};
+
+export type LeaveDraftTypeBreakdownItem = {
+  leave_type: LeaveType;
+  half_day_units: number;
+  days: number;
+};
+
+export type LeaveExceededTypeLimitItem = {
+  leave_type: LeaveType;
+  requested_units: number;
+  max_units: number;
 };
 
 export type LeaveRequestDraftEvaluation = {
   valid: boolean;
   total_units: number;
   total_days: number;
-  predicted_pay_treatment: "PAID_LEAVE" | "UNPAID_PROBATION" | "UNPAID_UNCONFIGURED_PROFILE";
+  annual_units: number;
+  annual_days: number;
+  non_annual_units: number;
+  non_annual_days: number;
+  type_breakdown: readonly LeaveDraftTypeBreakdownItem[];
+  exceeded_type_limits: readonly LeaveExceededTypeLimitItem[];
   duplicate_dates: readonly string[];
   invalid_dates: readonly string[];
   out_of_year_dates: readonly string[];
   exceeds_available_balance: boolean;
+  can_split_excess_annual_to_unpaid: boolean;
+  unpaid_notice: string | null;
   reason_error: string | null;
   blocking_error: string | null;
-  unpaid_notice: string | null;
 };
 
 export function evaluateLeaveRequestDraft(input: {
-  days: readonly { leave_date: string; session_code: LeaveSessionCode }[];
+  days: readonly {
+    leave_date: string;
+    session_code: LeaveSessionCode;
+    leave_type?: LeaveType;
+  }[];
   reason: string;
   leaveYear: number;
   balance: Pick<
@@ -856,17 +997,25 @@ export function evaluateLeaveRequestDraft(input: {
     | "available_units"
   > | null;
 }): LeaveRequestDraftEvaluation {
-  const seen = new Set<string>();
+  const seenByDate = new Map<
+    string,
+    { session_code: LeaveSessionCode; leave_type: LeaveType }[]
+  >();
   const duplicateDates: string[] = [];
   const invalidDates: string[] = [];
   const outOfYearDates: string[] = [];
+  const unitsByType = new Map<LeaveType, number>();
   let totalUnits = 0;
-  let minDate: string | null = null;
 
   for (const row of input.days) {
     const d = (row.leave_date ?? "").trim();
     const session = row.session_code;
-    if (!isValidIsoDate(d) || !LEAVE_SESSION_CODES.includes(session)) {
+    const rawLeaveType = (row.leave_type ?? "ANNUAL") as LeaveType;
+    if (
+      !isValidIsoDate(d) ||
+      !LEAVE_SESSION_CODES.includes(session) ||
+      !LEAVE_TYPES.includes(rawLeaveType)
+    ) {
       invalidDates.push(d || "(trống)");
       continue;
     }
@@ -874,43 +1023,61 @@ export function evaluateLeaveRequestDraft(input: {
     if (year !== input.leaveYear) {
       outOfYearDates.push(d);
     }
-    if (seen.has(d)) {
+
+    const existing = seenByDate.get(d) ?? [];
+    const isDuplicate = existing.some(
+      (prev) =>
+        prev.session_code === "FULL" ||
+        session === "FULL" ||
+        prev.session_code === session ||
+        prev.leave_type === rawLeaveType,
+    );
+    if (isDuplicate) {
       if (!duplicateDates.includes(d)) {
         duplicateDates.push(d);
       }
     } else {
-      seen.add(d);
+      existing.push({ session_code: session, leave_type: rawLeaveType });
+      seenByDate.set(d, existing);
     }
-    totalUnits += leaveSessionHalfDayUnits(session);
-    if (minDate === null || d < minDate) {
-      minDate = d;
+
+    const units = leaveSessionHalfDayUnits(session);
+    totalUnits += units;
+    unitsByType.set(rawLeaveType, (unitsByType.get(rawLeaveType) ?? 0) + units);
+  }
+
+  const typeBreakdown: LeaveDraftTypeBreakdownItem[] = [];
+  const exceededTypeLimits: LeaveExceededTypeLimitItem[] = [];
+  for (const t of LEAVE_TYPES) {
+    const u = unitsByType.get(t) ?? 0;
+    if (u > 0) {
+      typeBreakdown.push({
+        leave_type: t,
+        half_day_units: u,
+        days: halfDayUnitsToDays(u),
+      });
+      const maxUnits = LEAVE_TYPE_MAX_UNITS_PER_REQUEST[t];
+      if (maxUnits !== null && u > maxUnits) {
+        exceededTypeLimits.push({
+          leave_type: t,
+          requested_units: u,
+          max_units: maxUnits,
+        });
+      }
     }
   }
 
-  let predictedPayTreatment: "PAID_LEAVE" | "UNPAID_PROBATION" | "UNPAID_UNCONFIGURED_PROFILE" =
-    "PAID_LEAVE";
-  let unpaidNotice: string | null = null;
-
-  const bal = input.balance;
-  if (!bal || !bal.has_profile || !bal.profile_configured) {
-    predictedPayTreatment = "UNPAID_UNCONFIGURED_PROFILE";
-    unpaidNotice =
-      "Hồ sơ nghỉ phép của bạn chưa được HR/Admin cấu hình ngày vào làm hoặc trạng thái chính thức. Đơn vẫn được gửi bình thường và ghi nhận là Nghỉ không lương (định tuyến về Admin/BoD dự phòng).";
-  } else {
-    const effectiveOfficialDate = bal.official_effective_date ?? bal.work_start_date;
-    if (
-      bal.employment_status === "PROBATION" ||
-      (minDate !== null && effectiveOfficialDate !== null && minDate < effectiveOfficialDate)
-    ) {
-      predictedPayTreatment = "UNPAID_PROBATION";
-      unpaidNotice =
-        "Bạn đang trong giai đoạn Thử việc (hoặc ngày xin nghỉ trước ngày lên chính thức). Đơn xin nghỉ sẽ được ghi nhận là Nghỉ không lương trong thời gian thử việc.";
-    }
-  }
-
-  const availableUnits = bal?.available_units ?? 0;
-  const exceedsAvailableBalance =
-    predictedPayTreatment === "PAID_LEAVE" && totalUnits > availableUnits;
+  const annualUnits = unitsByType.get("ANNUAL") ?? 0;
+  const nonAnnualUnits = totalUnits - annualUnits;
+  const availableUnits = Math.max(0, input.balance?.available_units ?? 0);
+  const exceedsAvailableBalance = annualUnits > availableUnits;
+  const currentUnpaidUnits = unitsByType.get("UNPAID") ?? 0;
+  const excessAnnualUnits = Math.max(0, annualUnits - availableUnits);
+  const canSplitExcessAnnualToUnpaid =
+    exceedsAvailableBalance &&
+    excessAnnualUnits > 0 &&
+    currentUnpaidUnits + excessAnnualUnits <=
+      (LEAVE_TYPE_MAX_UNITS_PER_REQUEST.UNPAID ?? 14);
 
   const trimmedReason = (input.reason ?? "").trim();
   const reasonError =
@@ -921,16 +1088,19 @@ export function evaluateLeaveRequestDraft(input: {
   let blockingError: string | null = null;
   if (input.days.length === 0) {
     blockingError = "Vui lòng thêm ít nhất 1 ngày xin nghỉ.";
-  } else if (input.days.length > 60) {
-    blockingError = "Mỗi đơn chỉ được đăng ký tối đa 60 ngày nghỉ.";
+  } else if (input.days.length > 120) {
+    blockingError = "Mỗi đơn chỉ được đăng ký tối đa 120 dòng ngày/buổi nghỉ.";
   } else if (invalidDates.length > 0) {
-    blockingError = "Vui lòng chọn đầy đủ ngày nghỉ hợp lệ (YYYY-MM-DD).";
+    blockingError = "Vui lòng chọn đầy đủ ngày nghỉ hợp lệ (YYYY-MM-DD) và loại nghỉ.";
   } else if (duplicateDates.length > 0) {
-    blockingError = `Ngày nghỉ bị trùng lặp trong cùng đơn: ${duplicateDates.map(formatIsoDateVi).join(", ")}.`;
+    blockingError = `Ngày/buổi nghỉ bị trùng lặp trong cùng đơn: ${duplicateDates.map(formatIsoDateVi).join(", ")}.`;
   } else if (outOfYearDates.length > 0) {
     blockingError = `Ngày nghỉ phải nằm trong năm ${input.leaveYear}: ${outOfYearDates.map(formatIsoDateVi).join(", ")}.`;
+  } else if (exceededTypeLimits.length > 0) {
+    const first = exceededTypeLimits[0];
+    blockingError = `Loại nghỉ '${leaveTypeShortLabel(first.leave_type)}' đang chọn ${formatHalfDayUnits(first.requested_units)}, vượt quá giới hạn tối đa ${formatHalfDayUnits(first.max_units)} mỗi yêu cầu.`;
   } else if (exceedsAvailableBalance) {
-    blockingError = `Tổng số ngày xin nghỉ (${formatHalfDayUnits(totalUnits)}) vượt quá số dư phép khả dụng hiện tại (${formatHalfDayUnits(availableUnits)}).`;
+    blockingError = `Phần Phép năm đã chọn (${formatHalfDayUnits(annualUnits)}) vượt quá số dư phép năm khả dụng hiện tại (${formatHalfDayUnits(availableUnits)}). Hãy chuyển phần vượt quá sang Nghỉ không lương hoặc loại nghỉ phù hợp.`;
   } else if (reasonError !== null) {
     blockingError = reasonError;
   }
@@ -939,15 +1109,74 @@ export function evaluateLeaveRequestDraft(input: {
     valid: blockingError === null,
     total_units: totalUnits,
     total_days: halfDayUnitsToDays(totalUnits),
-    predicted_pay_treatment: predictedPayTreatment,
+    annual_units: annualUnits,
+    annual_days: halfDayUnitsToDays(annualUnits),
+    non_annual_units: nonAnnualUnits,
+    non_annual_days: halfDayUnitsToDays(nonAnnualUnits),
+    type_breakdown: typeBreakdown,
+    exceeded_type_limits: exceededTypeLimits,
     duplicate_dates: duplicateDates,
     invalid_dates: invalidDates,
     out_of_year_dates: outOfYearDates,
     exceeds_available_balance: exceedsAvailableBalance,
+    can_split_excess_annual_to_unpaid: canSplitExcessAnnualToUnpaid,
+    unpaid_notice:
+      nonAnnualUnits > 0
+        ? "Các loại nghỉ ngoài Phép năm (Nghỉ tang, Nghỉ cưới, Nghỉ ốm, Nghỉ không lương) không trừ vào số dư phép năm khả dụng."
+        : null,
     reason_error: reasonError,
     blocking_error: blockingError,
-    unpaid_notice: unpaidNotice,
   };
+}
+
+/**
+ * Splits/allocates `"ANNUAL"` draft rows so that at most `availableAnnualUnits`
+ * remain `"ANNUAL"` and any remaining `"ANNUAL"` units become `fallbackLeaveType`
+ * (default `"UNPAID"`), splitting a `"FULL"` day into `"AM"` + `"PM"` if the
+ * balance boundary lands on a half-day.
+ */
+export function autoAllocateDraftDaysByBalance(
+  days: readonly LeaveDraftDayRow[],
+  availableAnnualUnits: number,
+  fallbackLeaveType: LeaveType = "UNPAID",
+): LeaveDraftDayRow[] {
+  let remainingAnnual = Math.max(0, Math.trunc(availableAnnualUnits));
+  const result: LeaveDraftDayRow[] = [];
+
+  for (const row of days) {
+    const leaveType = row.leave_type ?? "ANNUAL";
+    if (leaveType !== "ANNUAL") {
+      result.push({ ...row, leave_type: leaveType });
+      continue;
+    }
+
+    const rowUnits = leaveSessionHalfDayUnits(row.session_code);
+    if (remainingAnnual >= rowUnits) {
+      remainingAnnual -= rowUnits;
+      result.push({ ...row, leave_type: "ANNUAL" });
+    } else if (remainingAnnual === 1 && row.session_code === "FULL") {
+      remainingAnnual = 0;
+      result.push({
+        ...(row.id ? { id: `${row.id}-am` } : {}),
+        leave_date: row.leave_date,
+        session_code: "AM",
+        leave_type: "ANNUAL",
+      });
+      result.push({
+        ...(row.id ? { id: `${row.id}-pm` } : {}),
+        leave_date: row.leave_date,
+        session_code: "PM",
+        leave_type: fallbackLeaveType,
+      });
+    } else {
+      result.push({
+        ...row,
+        leave_type: fallbackLeaveType,
+      });
+    }
+  }
+
+  return result;
 }
 
 export function canWithdrawOwnLeaveRequest(input: {
