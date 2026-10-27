@@ -132,6 +132,7 @@ function buildPreviousFilters(
   if (filters.recruiter) next.recruiter = filters.recruiter;
   if (filters.provider) next.provider = filters.provider;
   if (filters.employment) next.employment = filters.employment;
+  if (filters.status) next.status = filters.status;
   return next;
 }
 

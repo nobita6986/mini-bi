@@ -15,6 +15,10 @@ export type ProviderFilter = (typeof PROVIDER_FILTER_VALUES)[number];
 export const EMPLOYMENT_FILTER_VALUES = ["thời vụ", "chính thức", "__unknown__", "__invalid__"] as const;
 export type EmploymentFilter = (typeof EMPLOYMENT_FILTER_VALUES)[number];
 
+/** Trạng thái lao động được dùng làm bộ lọc as-of trên dashboard. */
+export const WORK_STATUS_FILTER_VALUES = ["ON", "OFF", "UNCONFIRMED"] as const;
+export type WorkStatusFilter = (typeof WORK_STATUS_FILTER_VALUES)[number];
+
 export interface ReportingFilters {
   from?: string;
   to?: string;
@@ -22,6 +26,7 @@ export interface ReportingFilters {
   recruiter?: string;
   provider?: ProviderFilter;
   employment?: EmploymentFilter;
+  status?: WorkStatusFilter;
   source?: string;
 }
 
@@ -64,6 +69,7 @@ export function parseReportingFilters(
   const recruiter = firstString(params.recruiter);
   const provider = firstString(params.provider);
   const employment = firstString(params.employment);
+  const status = firstString(params.status);
   const source = firstString(params.source);
 
   const filters: ReportingFilters = {};
@@ -102,6 +108,13 @@ export function parseReportingFilters(
       return fail("employment phải là thời vụ|chính thức|__unknown__|__invalid__");
     }
     filters.employment = employment as EmploymentFilter;
+  }
+
+  if (status !== undefined && status !== "") {
+    if (!(WORK_STATUS_FILTER_VALUES as readonly string[]).includes(status)) {
+      return fail("status phải là ON|OFF|UNCONFIRMED");
+    }
+    filters.status = status as WorkStatusFilter;
   }
 
   if (source !== undefined && source !== "") {

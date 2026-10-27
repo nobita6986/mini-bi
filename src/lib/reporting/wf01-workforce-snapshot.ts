@@ -5355,6 +5355,7 @@ function buildWorkforceRpcFilterRecord(
   if (filters.recruiter) rpcFilters.recruiter = filters.recruiter;
   if (filters.provider) rpcFilters.provider = filters.provider;
   if (filters.employment) rpcFilters.employment = filters.employment;
+  if (filters.status) rpcFilters.status = filters.status;
   if (teamBucketKey) rpcFilters.team_bucket = teamBucketKey;
   if (extra) {
     for (const [k, v] of Object.entries(extra)) {
