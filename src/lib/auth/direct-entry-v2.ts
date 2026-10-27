@@ -36,6 +36,7 @@ export const CAPABILITIES = [
   // VFIN-01: Vendor Finance direct-grant capability tokens (both require effective `all` scope).
   "vendor_finance_view",
   "vendor_finance_record",
+  "duplicate_cccd_withdraw",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];

@@ -1160,3 +1160,91 @@ test("HF: self-withdraw enforces strict creator ownership, idempotency, active-d
     await db.close();
   }
 });
+
+test("HF: duplicate_cccd_withdraw grants only all-company duplicate withdrawal and audits the delegated actor", async () => {
+  const db = await buildDb();
+  try {
+    await seed(db);
+    const DELEGATE_AUTH = uuid(350), DELEGATE_APP = uuid(360);
+    await insertActor(db, DELEGATE_AUTH, DELEGATE_APP, ["duplicate_cccd_withdraw"]);
+
+    const first = await seedEpisode(db, {
+      cccd: "079200009876", name: "Company Duplicate A", project: PROJ_A,
+      date: "2026-10-05", createdBy: ADMIN_APP,
+    });
+    const second = await seedEpisode(db, {
+      cccd: "079200009876", name: "Company Duplicate B", project: PROJ_B,
+      date: "2026-10-06", createdBy: BOD_APP,
+    });
+
+    const delegatePrivileges = (await db.query(
+      "select public.direct_entry_has_scope($1::uuid, 'all') as all_scope, " +
+      "public.direct_entry_has_capability($1::uuid, 'entry_admin') as entry_admin, " +
+      "public.direct_entry_has_capability($1::uuid, 'entry_privileged_edit') as privileged_edit",
+      [DELEGATE_APP],
+    )).rows[0];
+    assert.deepEqual(delegatePrivileges, {
+      all_scope: false, entry_admin: false, privileged_edit: false,
+    }, "the narrow grant must not create general scope or administration rights");
+
+    const delegateView = await report(db, {
+      auth: DELEGATE_AUTH, app: DELEGATE_APP, managedOnly: false,
+    });
+    assert.equal(delegateView.groups.length, 1);
+    assert.deepEqual(
+      Object.fromEntries(delegateView.groups[0].episodes.map((episode) => [episode.entry_id, episode.can_self_withdraw])),
+      { [first.entryId]: true, [second.entryId]: true },
+      "the capability enables withdrawal actions on every episode in the visible company report",
+    );
+
+    const ungrantedView = await report(db, {
+      auth: OUTSIDE_AUTH, app: OUTSIDE_APP, managedOnly: false,
+    });
+    assert.ok(ungrantedView.groups[0].episodes.every((episode) => !episode.can_self_withdraw));
+    await assert.rejects(
+      () => db.query(
+        "select public.direct_entry_self_withdraw_duplicate_cccd($1::uuid,$2::uuid,$3::uuid,1,$4::text,$5::text)",
+        [OUTSIDE_AUTH, OUTSIDE_APP, first.entryId, "Unauthorized withdrawal", idemKey()],
+      ),
+      (error) => error.code === "42501",
+      "global report access alone must not grant global withdrawal",
+    );
+
+    assert.equal(await count(
+      db,
+      "select coalesce(sum(recruited_count), 0) from public.direct_entry_reporting_facts_v01",
+    ), 2);
+    const withdrawn = (await db.query(
+      "select public.direct_entry_self_withdraw_duplicate_cccd($1::uuid,$2::uuid,$3::uuid,1,$4::text,$5::text) as data",
+      [DELEGATE_AUTH, DELEGATE_APP, first.entryId, "Đã xác nhận hồ sơ trùng", idemKey()],
+    )).rows[0].data;
+    assert.deepEqual(withdrawn, { entry_id: first.entryId, version: 2 });
+
+    const entry = (await db.query(
+      "select voided_by_user_id, version from public.direct_entries where entry_id = $1",
+      [first.entryId],
+    )).rows[0];
+    assert.equal(entry.voided_by_user_id, DELEGATE_APP);
+    assert.equal(entry.version, 2);
+    const audit = (await db.query(
+      "select app_user_id, capability, scope_kind from public.direct_entry_audit_events " +
+      "where resource_ref = $1 and action = 'entry_self_withdraw_duplicate_cccd' " +
+      "and outcome = 'APPLIED'",
+      [first.entryId],
+    )).rows[0];
+    assert.deepEqual(audit, {
+      app_user_id: DELEGATE_APP,
+      capability: "duplicate_cccd_withdraw",
+      scope_kind: "all",
+    }, "audit must identify the delegated capability rather than mislabeling the creator");
+    assert.equal(await count(
+      db,
+      "select coalesce(sum(recruited_count), 0) from public.direct_entry_reporting_facts_v01",
+    ), 1, "the withdrawn duplicate is removed from recruitment reporting facts exactly once");
+    assert.equal((await report(db, {
+      auth: DELEGATE_AUTH, app: DELEGATE_APP, managedOnly: false,
+    })).total_groups, 0);
+  } finally {
+    await db.close();
+  }
+});

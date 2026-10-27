@@ -23,6 +23,7 @@ test("authorization hardening is versioned", () => {
   assert.equal(DIRECT_ENTRY_AUTH_CONTRACT_VERSION, "direct-entry-auth/1.6");
   const retired = ["pii_view", "pii_export", "payment_view", "payment_edit"];
   assert.equal(CAPABILITIES.some((capability) => retired.includes(capability)), false);
+  assert.ok(CAPABILITIES.includes("duplicate_cccd_withdraw"));
 });
 
 function repositoryFor(person) {

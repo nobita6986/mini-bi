@@ -452,9 +452,9 @@ export function DuplicateCccdReportPanel() {
       <Alert tone="info" title="Thao tác có kiểm soát">
         <p>
           Số CCCD được che, chỉ hiển thị 4 chữ số cuối. Chỉ những dòng bạn được cấp quyền mới hiện
-          thao tác: người đã nhập hồ sơ có thể Rút trùng (giữ nguyên lịch sử kiểm toán và điều chỉnh
-          số tuyển mới), người phụ trách phạm vi có thể đổi Đang làm sang Đã nghỉ kèm lý do nghỉ việc
-          bắt buộc.
+          thao tác: người đã nhập hồ sơ hoặc tài khoản được cấp quyền rút trùng toàn công ty có thể
+          Rút trùng (giữ nguyên lịch sử kiểm toán và điều chỉnh số tuyển mới), người phụ trách phạm
+          vi có thể đổi Đang làm sang Đã nghỉ kèm lý do nghỉ việc bắt buộc.
         </p>
       </Alert>
 
@@ -671,7 +671,7 @@ export function DuplicateCccdReportPanel() {
         }}
         closeDisabled={withdrawSubmitting}
         title="Xác nhận rút trùng hồ sơ"
-        description="Thao tác dành riêng cho đúng người đã nhập hồ sơ này trên hệ thống."
+        description="Người nhập hồ sơ hoặc tài khoản được cấp quyền có thể thực hiện thao tác này. Hệ thống lưu người thực hiện và lý do vào lịch sử kiểm toán."
       >
         {withdrawTarget ? (
           <form onSubmit={submitSelfWithdraw} className="space-y-4">
