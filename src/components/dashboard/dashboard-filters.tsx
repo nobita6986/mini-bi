@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { parseAsString, useQueryStates } from "nuqs";
 
+import { CatalogFilterCombobox } from "@/components/ui/catalog-filter-combobox";
 import { buildCompanyDisplayNames } from "@/lib/display/company-display-name";
-import { EMPLOYMENT_OPTIONS, PROVIDER_OPTIONS } from "@/lib/reporting/p1-dashboard";
+import { EMPLOYMENT_OPTIONS, PROVIDER_OPTIONS, WORK_STATUS_OPTIONS } from "@/lib/reporting/p1-dashboard";
 import type { ReportingOptionsCatalog } from "@/lib/reporting/p1-dashboard";
 import {
   computeDatePresets,
@@ -24,6 +25,7 @@ const parsers = {
   recruiter: parseAsString,
   provider: parseAsString,
   employment: parseAsString,
+  status: parseAsString,
   source: parseAsString,
 };
 
@@ -49,8 +51,22 @@ export function DashboardFilters({
 }) {
   // P3-UI-COMPANY-DISPLAY-NAMES: danh sach chon hien thi ten gon; gia tri value
   // van la project key nen khong doi khoa lien ket hay ket qua loc.
-  const projectDisplayNames = buildCompanyDisplayNames(
-    options.dimensions.projects.map((o) => ({ key: o.key, fullName: o.display })));
+  const projectDisplayNames = useMemo(
+    () => buildCompanyDisplayNames(options.dimensions.projects.map((o) => ({ key: o.key, fullName: o.display }))),
+    [options.dimensions.projects],
+  );
+  const projectFilterOptions = useMemo(
+    () => options.dimensions.projects.map((o) => ({
+      id: o.key,
+      label: projectDisplayNames.get(o.key) ?? o.display,
+      keywords: o.display,
+    })),
+    [options.dimensions.projects, projectDisplayNames],
+  );
+  const recruiterFilterOptions = useMemo(
+    () => options.dimensions.recruiters.map((o) => ({ id: o.key, label: o.display, keywords: o.key })),
+    [options.dimensions.recruiters],
+  );
   const [filters, setFilters] = useQueryStates(parsers, { shallow: false, scroll: false });
   const [advancedOpen, setAdvancedOpen] = useState(false);
 
@@ -113,7 +129,7 @@ export function DashboardFilters({
       </section>
 
       <div id="advanced-filters" hidden={!advancedOpen} data-ui-panel-motion="true" className="mt-2 rounded-2xl border border-border bg-surface p-3.5 shadow-sm">
-        <div className="grid max-h-[70vh] grid-cols-1 gap-3 overflow-y-auto sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <Field id="f-from" label="Từ ngày">
             <input
               id="f-from"
@@ -148,19 +164,25 @@ export function DashboardFilters({
               }}
             />
           </Field>
-          <Field id="f-project" label="Dự án">
-            <select id="f-project" className={inputClass} value={filters.project ?? ""} onChange={(e) => setFilters({ project: e.target.value || null })}>
-              <option value="">Tất cả dự án</option>
-              {options.dimensions.projects.map((o) => <option key={o.key} value={o.key}>{projectDisplayNames.get(o.key) ?? o.display}</option>)}
-            </select>
-          </Field>
+          <CatalogFilterCombobox
+            id="f-project"
+            label="Dự án"
+            allLabel="Tất cả dự án"
+            placeholder="Gõ tên dự án để tìm"
+            options={projectFilterOptions}
+            value={filters.project ?? ""}
+            onChange={(value) => setFilters({ project: value || null })}
+          />
           {showRecruiter ? (
-            <Field id="f-recruiter" label="Người tuyển">
-              <select id="f-recruiter" className={inputClass} value={filters.recruiter ?? ""} onChange={(e) => setFilters({ recruiter: e.target.value || null })}>
-                <option value="">Tất cả người tuyển</option>
-                {options.dimensions.recruiters.map((o) => <option key={o.key} value={o.key}>{o.display}</option>)}
-              </select>
-            </Field>
+            <CatalogFilterCombobox
+              id="f-recruiter"
+              label="Người tuyển"
+              allLabel="Tất cả người tuyển"
+              placeholder="Gõ tên người tuyển để tìm"
+              options={recruiterFilterOptions}
+              value={filters.recruiter ?? ""}
+              onChange={(value) => setFilters({ recruiter: value || null })}
+            />
           ) : null}
           <Field id="f-provider" label="HRP/Vendor">
             <select id="f-provider" className={inputClass} value={filters.provider ?? ""} onChange={(e) => setFilters({ provider: e.target.value || null })}>
@@ -172,6 +194,12 @@ export function DashboardFilters({
             <select id="f-employment" className={inputClass} value={filters.employment ?? ""} onChange={(e) => setFilters({ employment: e.target.value || null })}>
               <option value="">Tất cả</option>
               {EMPLOYMENT_OPTIONS.map((o) => <option key={o.key} value={o.key}>{o.display}</option>)}
+            </select>
+          </Field>
+          <Field id="f-status" label="Trạng thái làm việc (tính đến ngày cuối kỳ)">
+            <select id="f-status" className={inputClass} value={filters.status ?? ""} onChange={(e) => setFilters({ status: e.target.value || null })}>
+              <option value="">Tất cả trạng thái</option>
+              {WORK_STATUS_OPTIONS.map((o) => <option key={o.key} value={o.key}>{o.display}</option>)}
             </select>
           </Field>
         </div>

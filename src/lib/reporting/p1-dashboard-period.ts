@@ -278,6 +278,7 @@ export function computeCompositionInsights(
       data.applied.recruiter ||
       data.applied.provider ||
       data.applied.employment ||
+      data.applied.status ||
       data.applied.source,
   );
 

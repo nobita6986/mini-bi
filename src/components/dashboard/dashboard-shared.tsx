@@ -535,6 +535,7 @@ export function buildWorkforceDeepFilterSignature(data: ReportingData): string {
     a.recruiter ?? "",
     a.provider ?? "",
     a.employment ?? "",
+    a.status ?? "",
   ].join("|");
 }
 
@@ -551,6 +552,7 @@ export function buildWorkforceDeepUrl(
   if (a.recruiter) query.set("recruiter", a.recruiter);
   if (a.provider) query.set("provider", a.provider);
   if (a.employment) query.set("employment", a.employment);
+  if (a.status) query.set("status", a.status);
   if (options?.mode && options.mode !== "deep") {
     query.set("mode", options.mode);
   }

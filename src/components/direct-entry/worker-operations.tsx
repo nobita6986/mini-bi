@@ -17,6 +17,7 @@ import { Dialog } from "radix-ui";
 import { WorkerDetailDialog } from "@/components/direct-entry/worker-detail-dialog";
 import { StatusBadge, submissionStateBadgeProps } from "@/components/ui/badge";
 import { buttonClasses } from "@/components/ui/button";
+import { CatalogFilterCombobox, type CatalogFilterOption } from "@/components/ui/catalog-filter-combobox";
 import { CursorLoadMore } from "@/components/ui/cursor-load-more";
 import {
   DATA_TABLE_CLASS,
@@ -102,8 +103,6 @@ import {
   type WorkerEntryFieldForm,
 } from "@/lib/direct-entry/change-request-proposal-builders";
 import { parseDirectEntryCatalogResponse } from "@/lib/direct-entry/catalog-response";
-import { filterCatalogSearchOptions } from "@/lib/direct-entry/catalog-search";
-import { moveTypeaheadIndex, typeaheadKeyAction } from "@/lib/direct-entry/typeahead";
 import {
   OPTIONAL_STATE_LABELS,
   PAYMENT_STATE_LABELS,
@@ -160,114 +159,6 @@ function httpFailure(status: number): FetchOutcome<never> {
   if (status === 403) return { ok: false, state: "denied", message: workerListErrorMessage(403) };
   if (status >= 500) return { ok: false, state: "unavailable", message: workerListErrorMessage(500) };
   return { ok: false, state: "error", message: workerListErrorMessage(status) };
-}
-
-type CatalogFilterOption = { id: string; label: string; keywords?: string };
-
-/**
- * R1.2-HF: searchable single-select for the worker directory Dự án / Người tuyển filters.
- * Reuses the existing pure helpers (filterCatalogSearchOptions / moveTypeaheadIndex /
- * typeaheadKeyAction) so the matching and keyboard rules are shared with the grid typeahead.
- * The committed value is ALWAYS the stable catalog id ("Tất cả" clears it to ""); the text the
- * operator types is only a local query and is never sent to the server as an id.
- */
-function CatalogFilterCombobox({
-  id, label, allLabel, placeholder, options, value, disabled = false, onChange,
-}: {
-  id: string;
-  label: string;
-  allLabel: string;
-  placeholder: string;
-  options: readonly CatalogFilterOption[];
-  value: string;
-  disabled?: boolean;
-  onChange: (nextValue: string) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState("");
-  const [activeIndex, setActiveIndex] = useState(-1);
-  const listId = id + "-listbox";
-  const entries = useMemo<CatalogFilterOption[]>(
-    () => [{ id: "", label: allLabel, keywords: "" }, ...options],
-    [allLabel, options],
-  );
-  const visible = useMemo(() => filterCatalogSearchOptions(entries, query), [entries, query]);
-  const activeId = activeIndex >= 0 && activeIndex < visible.length ? visible[activeIndex].id : undefined;
-  const selectedLabel = value === "" ? ""
-    : (options.find((option) => option.id === value)?.label ?? "");
-
-  const choose = (nextValue: string) => {
-    setQuery("");
-    setOpen(false);
-    setActiveIndex(-1);
-    onChange(nextValue);
-  };
-
-  const onKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    const action = typeaheadKeyAction(event.key, event.nativeEvent.isComposing);
-    if (action === null || action === "ignore") return;
-    if (action === "up" || action === "down") {
-      event.preventDefault();
-      setOpen(true);
-      setActiveIndex((index) => moveTypeaheadIndex(index, visible.length, action));
-    } else if (action === "commit") {
-      if (activeId !== undefined) {
-        event.preventDefault();
-        choose(activeId);
-      }
-    } else if (action === "close" || action === "tab") {
-      setOpen(false);
-      setActiveIndex(-1);
-    }
-  };
-
-  return (
-    <div className="relative flex flex-col gap-1">
-      <label htmlFor={id} className="text-xs font-medium text-muted">{label}</label>
-      <input
-        id={id}
-        type="text"
-        role="combobox"
-        aria-autocomplete="list"
-        aria-controls={listId}
-        aria-expanded={open}
-        aria-activedescendant={open && activeId !== undefined
-          ? listId + "-" + encodeURIComponent(activeId) : undefined}
-        className={inputClass}
-        placeholder={placeholder}
-        disabled={disabled}
-        value={open ? query : selectedLabel}
-        onChange={(event) => {
-          setQuery(event.target.value);
-          setActiveIndex(-1);
-          setOpen(true);
-        }}
-        onFocus={() => { setQuery(""); setOpen(true); setActiveIndex(-1); }}
-        onKeyDown={onKeyDown}
-        onBlur={() => { setOpen(false); setActiveIndex(-1); }}
-      />
-      {open ? (
-        <ul id={listId} role="listbox" aria-label={label + " — gợi ý"}
-          className="absolute top-full z-30 mt-1 max-h-64 w-full overflow-y-auto rounded-lg border border-border bg-surface py-1 shadow-lg">
-          {visible.length === 0 ? (
-            <li role="presentation" className="px-3 py-2 text-sm text-muted">Không có kết quả phù hợp</li>
-          ) : visible.map((option) => (
-            <li
-              key={option.id === "" ? "__all__" : option.id}
-              id={listId + "-" + encodeURIComponent(option.id)}
-              role="option"
-              aria-selected={activeId === option.id}
-              className="cursor-pointer px-3 py-2 text-sm hover:bg-surface-hover aria-selected:bg-surface-hover"
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() => choose(option.id)}
-            >
-              {option.label}
-            </li>
-          ))}
-        </ul>
-      ) : null}
-    </div>
-  );
 }
 
 export function WorkerOperations({
@@ -658,6 +549,9 @@ export function WorkerOperations({
                         placeholder="Gõ tên hoặc mã dự án"
                         options={projectFilterOptions}
                         value={filters.projectId}
+                        containerClassName="relative flex flex-col gap-1"
+                        labelClassName="text-xs font-medium text-muted"
+                        inputClassName={inputClass}
                         onChange={(nextValue) => changeFilter("projectId", nextValue)}
                       />
                     </div>
@@ -669,6 +563,9 @@ export function WorkerOperations({
                         placeholder="Gõ tên, mã hoặc login người tuyển"
                         options={recruiterFilterOptions}
                         value={filters.recruiterId}
+                        containerClassName="relative flex flex-col gap-1"
+                        labelClassName="text-xs font-medium text-muted"
+                        inputClassName={inputClass}
                         onChange={(nextValue) => changeFilter("recruiterId", nextValue)}
                       />
                     </div>

@@ -95,6 +95,12 @@ export const EMPLOYMENT_OPTIONS = [
   { key: "__invalid__", display: "Không hợp lệ" },
 ] as const;
 
+export const WORK_STATUS_OPTIONS = [
+  { key: "ON", display: "Đang làm" },
+  { key: "OFF", display: "Đã nghỉ" },
+  { key: "UNCONFIRMED", display: "Đang chờ việc" },
+] as const;
+
 /** Source option hiển thị bằng file_name (không dùng full drive_file_id làm nhãn). */
 export function buildSourceOptions(sources: { id: string; file_name: string }[]): SourceOption[] {
   return sources

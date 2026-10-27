@@ -8,6 +8,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const source = readFileSync(new URL("./worker-operations.tsx", import.meta.url), "utf8");
+const catalogFilterCombobox = readFileSync(new URL("../ui/catalog-filter-combobox.tsx", import.meta.url), "utf8");
 const directEntry = readFileSync(new URL("./direct-entry-live.tsx", import.meta.url), "utf8");
 const changeRequestsWorkspace = readFileSync(
   new URL("./change-requests-workspace.tsx", import.meta.url), "utf8");
@@ -106,21 +107,22 @@ test("R1.2-B: search is bounded, server-filtered, resets paging and omits the ex
 });
 
 test("R1.2-HF: Dự án and Người tuyển filters are searchable comboboxes over stable ids", () => {
-  assert.match(source, /function CatalogFilterCombobox\(/);
+  assert.match(source, /from "@\/components\/ui\/catalog-filter-combobox"/);
+  assert.match(catalogFilterCombobox, /function CatalogFilterCombobox\(/);
   // Reuses the existing pure helpers; no new search library.
-  assert.match(source, /filterCatalogSearchOptions\(/);
-  assert.match(source, /moveTypeaheadIndex\(/);
-  assert.match(source, /typeaheadKeyAction\(/);
-  assert.match(source, /from "@\/lib\/direct-entry\/catalog-search"/);
-  assert.match(source, /from "@\/lib\/direct-entry\/typeahead"/);
+  assert.match(catalogFilterCombobox, /filterCatalogSearchOptions\(/);
+  assert.match(catalogFilterCombobox, /moveTypeaheadIndex\(/);
+  assert.match(catalogFilterCombobox, /typeaheadKeyAction\(/);
+  assert.match(catalogFilterCombobox, /from "@\/lib\/direct-entry\/catalog-search"/);
+  assert.match(catalogFilterCombobox, /from "@\/lib\/direct-entry\/typeahead"/);
   // Proper combobox/listbox ARIA plus an explicit no-results state.
-  assert.match(source, /role="combobox"/);
-  assert.match(source, /aria-autocomplete="list"/);
-  assert.match(source, /role="listbox"/);
-  assert.match(source, /role="option"/);
-  assert.match(source, /aria-activedescendant=/);
-  assert.match(source, /aria-expanded=\{open\}/);
-  assert.match(source, /Không có kết quả phù hợp/);
+  assert.match(catalogFilterCombobox, /role="combobox"/);
+  assert.match(catalogFilterCombobox, /aria-autocomplete="list"/);
+  assert.match(catalogFilterCombobox, /role="listbox"/);
+  assert.match(catalogFilterCombobox, /role="option"/);
+  assert.match(catalogFilterCombobox, /aria-activedescendant=/);
+  assert.match(catalogFilterCombobox, /aria-expanded=\{open\}/);
+  assert.match(catalogFilterCombobox, /Không có kết quả phù hợp/);
   // "Tất cả" clears the filter and the committed value is always a stable catalog id.
   assert.match(source, /allLabel="Tất cả dự án"/);
   assert.match(source, /allLabel="Tất cả người tuyển"/);
