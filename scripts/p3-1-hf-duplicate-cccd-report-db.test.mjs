@@ -21,6 +21,10 @@ import { test } from "node:test";
 
 import { PGlite } from "@electric-sql/pglite";
 import { seedLegacyReviewSubmission } from "./lib/seed-legacy-review-submission.mjs";
+import {
+  projectDuplicateCccdReportRpcPage,
+  projectDuplicateCccdReportResponse,
+} from "../src/lib/direct-entry/duplicate-cccd-report-contract.ts";
 
 const MIGRATION_DIR = path.resolve("supabase/migrations");
 const HOTFIX_MIGRATION = "20261009100000_p3_1_hf_duplicate_cccd_reporting.sql";
@@ -1237,13 +1241,313 @@ test("HF: duplicate_cccd_withdraw grants only all-company duplicate withdrawal a
       capability: "duplicate_cccd_withdraw",
       scope_kind: "all",
     }, "audit must identify the delegated capability rather than mislabeling the creator");
-    assert.equal(await count(
+    assert.equal( await count(
       db,
       "select coalesce(sum(recruited_count), 0) from public.direct_entry_reporting_facts_v01",
     ), 1, "the withdrawn duplicate is removed from recruitment reporting facts exactly once");
     assert.equal((await report(db, {
       auth: DELEGATE_AUTH, app: DELEGATE_APP, managedOnly: false,
     })).total_groups, 0);
+  } finally {
+    await db.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 14. T1C HF: Same-(CCCD, project_id, first_work_date) clusters stay in the
+//     report across ON+OFF and OFF+OFF, while cross-day/cross-project OFF
+//     rehires stay excluded, and void/soft-delete recalculates or drops groups.
+// ---------------------------------------------------------------------------
+test("HF same-project-same-day: ON+OFF and OFF+OFF stay reported, cross-day/cross-project OFF stay excluded, and void/soft-delete recalculates", async () => {
+  const db = await buildDb();
+  try {
+    await seed(db);
+    const DELEGATE_AUTH = uuid(450), DELEGATE_APP = uuid(460);
+    await insertActor(db, DELEGATE_AUTH, DELEGATE_APP, ["duplicate_cccd_withdraw"]);
+
+    // Case 1 & 2: Same CCCD (079200001111) + same project (PROJ_A) + same first_work_date (2026-10-05)
+    // Start with two ON profiles created at different times:
+    const ep1 = await seedEpisode(db, {
+      cccd: "079200001111", name: "Same Day Dup 1", project: PROJ_A,
+      date: "2026-10-05", status: "ON", createdBy: ADMIN_APP,
+    });
+    const ep2 = await seedEpisode(db, {
+      cccd: "079200001111", name: "Same Day Dup 2", project: PROJ_A,
+      date: "2026-10-05", status: "ON", createdBy: ADMIN_APP,
+    });
+
+    // Transition ep2 to OFF (ON + OFF on same project + same day):
+    await appendStatus(db, ep2.entryId, "OFF", "2026-10-10", 2, null);
+
+    const onOffRaw = await report(db, { auth: ADMIN_AUTH, app: ADMIN_APP, managedOnly: false });
+    assert.equal(onOffRaw.total_groups, 1, "ON + OFF same project & day remains in report");
+    assert.equal(onOffRaw.total_entries, 2);
+    const onOffPage = projectDuplicateCccdReportRpcPage(onOffRaw, { page: 1, page_size: 25 });
+    assert.ok(onOffPage, "ON + OFF group passes TypeScript RPC projection");
+    assert.ok(
+      projectDuplicateCccdReportResponse({ ok: true, ...onOffPage }, { page: 1, page_size: 25 }),
+      "ON + OFF group passes API response projection",
+    );
+    const [onOffGroup] = onOffPage.groups;
+    assert.equal(onOffGroup.profile_count, 2);
+    assert.equal(onOffGroup.project_count, 1);
+    assert.equal(onOffGroup.active_profile_count, 1);
+    assert.deepEqual(
+      onOffGroup.episodes.map((e) => ({
+        entry_id: e.entry_id,
+        latest_status: e.latest_status,
+        active: e.active,
+        can_mark_off: e.can_mark_off,
+        can_self_withdraw: e.can_self_withdraw,
+      })),
+      [
+        {
+          entry_id: ep1.entryId,
+          latest_status: "ON",
+          active: true,
+          can_mark_off: true,
+          can_self_withdraw: false,
+        },
+        {
+          entry_id: ep2.entryId,
+          latest_status: "OFF",
+          active: false,
+          can_mark_off: false,
+          can_self_withdraw: false,
+        },
+      ],
+      "ON episode keeps can_mark_off=true but can_self_withdraw=false when active_profile_count < 2; OFF episode has both false",
+    );
+
+    // Delegate with duplicate_cccd_withdraw also gets can_self_withdraw=false when active_profile_count < 2,
+    // matching the RPC rejection:
+    const delegateOnOff = await report(db, { auth: DELEGATE_AUTH, app: DELEGATE_APP, managedOnly: false });
+    assert.ok(delegateOnOff.groups[0].episodes.every((e) => !e.can_self_withdraw));
+    await assert.rejects(
+      () => db.query(
+        "select public.direct_entry_self_withdraw_duplicate_cccd($1::uuid,$2::uuid,$3::uuid,1,$4::text,$5::text)",
+        [ADMIN_AUTH, ADMIN_APP, ep1.entryId, "Reject when counterpart is OFF", idemKey()],
+      ),
+      (err) => err.code === "PT409" && /not an active duplicate/i.test(err.message),
+    );
+
+    // Transition ep1 to OFF as well (OFF + OFF on same project + same day):
+    await appendStatus(db, ep1.entryId, "OFF", "2026-10-12", 2, null);
+
+    // Recruitment facts are untouched by OFF transitions:
+    assert.equal(
+      await count(db, "select coalesce(sum(recruited_count), 0) from public.direct_entry_reporting_facts_v01"),
+      2,
+      "OFF transition never removes hires from recruitment facts",
+    );
+
+    const offOffRaw = await report(db, { auth: ADMIN_AUTH, app: ADMIN_APP, managedOnly: false });
+    assert.equal(offOffRaw.total_groups, 1, "OFF + OFF same project & day remains in report");
+    assert.equal(offOffRaw.total_entries, 2);
+    const offOffPage = projectDuplicateCccdReportRpcPage(offOffRaw, { page: 1, page_size: 25 });
+    assert.ok(offOffPage, "OFF + OFF group passes TypeScript RPC projection");
+    assert.equal(offOffPage.groups[0].active_profile_count, 0);
+    assert.deepEqual(
+      offOffPage.groups[0].episodes.map((e) => ({
+        latest_status: e.latest_status,
+        active: e.active,
+        can_mark_off: e.can_mark_off,
+        can_self_withdraw: e.can_self_withdraw,
+      })),
+      [
+        { latest_status: "OFF", active: false, can_mark_off: false, can_self_withdraw: false },
+        { latest_status: "OFF", active: false, can_mark_off: false, can_self_withdraw: false },
+      ],
+    );
+
+    // Case 3: Same CCCD + same project + DIFFERENT first_work_date, both OFF (or ON + OFF) -> NOT reported!
+    const diffDay1 = await seedEpisode(db, {
+      cccd: "079200002222", name: "Rehire Day 1", project: PROJ_A, date: "2026-01-05", status: "ON",
+    });
+    const diffDay2 = await seedEpisode(db, {
+      cccd: "079200002222", name: "Rehire Day 2", project: PROJ_A, date: "2026-06-01", status: "ON",
+    });
+    await appendStatus(db, diffDay1.entryId, "OFF", "2026-02-01", 2, null);
+    await appendStatus(db, diffDay2.entryId, "OFF", "2026-07-01", 2, null);
+
+    // Case 4: Same CCCD + DIFFERENT project, both OFF (same day and different day) -> NOT reported!
+    const diffProj1 = await seedEpisode(db, {
+      cccd: "079200003333", name: "Diff Proj 1", project: PROJ_A, date: "2026-10-05", status: "ON",
+    });
+    const diffProj2 = await seedEpisode(db, {
+      cccd: "079200003333", name: "Diff Proj 2", project: PROJ_B, date: "2026-10-05", status: "ON",
+    });
+    await appendStatus(db, diffProj1.entryId, "OFF", "2026-10-10", 2, null);
+    await appendStatus(db, diffProj2.entryId, "OFF", "2026-10-10", 2, null);
+
+    const checkExclusions = await report(db, { auth: ADMIN_AUTH, app: ADMIN_APP, managedOnly: false });
+    assert.equal(checkExclusions.total_groups, 1, "cross-day and cross-project OFF pairs stay excluded");
+    assert.deepEqual(checkExclusions.groups.map((g) => g.cccd_last4), ["1111"]);
+
+    // Case 5: Add a 3rd same-(CCCD, project, day) row to 079200001111, then soft-delete one and void another:
+    const ep3 = await seedEpisode(db, {
+      cccd: "079200001111", name: "Same Day Dup 3", project: PROJ_A,
+      date: "2026-10-05", status: "ON", createdBy: ADMIN_APP,
+    });
+    await appendStatus(db, ep3.entryId, "OFF", "2026-10-15", 2, null);
+
+    const withThree = await report(db, { auth: ADMIN_AUTH, app: ADMIN_APP, managedOnly: false });
+    assert.equal(withThree.total_groups, 1);
+    assert.equal(withThree.total_entries, 3);
+    assert.equal(withThree.groups[0].profile_count, 3);
+
+    // Soft-delete ep3 -> group recalculates from 3 to 2:
+    await softDeleteEntry(db, ep3.entryId);
+    const afterSoftDelete = await report(db, { auth: ADMIN_AUTH, app: ADMIN_APP, managedOnly: false });
+    assert.equal(afterSoftDelete.total_groups, 1);
+    assert.equal(afterSoftDelete.total_entries, 2);
+    assert.equal(afterSoftDelete.groups[0].profile_count, 2);
+
+    // Apply ENTRY_VOID to ep2 -> only 1 eligible row remains in the cluster, so the group disappears:
+    const voidReasonId = (await db.query(
+      "insert into public.direct_entry_restricted_reasons (actor_user_id, reason_text) values ($1, 'Void historical duplicate') returning reason_id",
+      [ADMIN_APP],
+    )).rows[0].reason_id;
+    await db.query(
+      "update public.direct_entries set voided_at = now(), voided_by_user_id = $2, void_reason_id = $3, version = version + 1 where entry_id = $1",
+      [ep2.entryId, ADMIN_APP, voidReasonId],
+    );
+    const afterVoid = await report(db, { auth: ADMIN_AUTH, app: ADMIN_APP, managedOnly: false });
+    assert.equal(afterVoid.total_groups, 0, "group disappears once < 2 non-deleted, non-voided rows remain");
+    assert.equal(afterVoid.total_entries, 0);
+    assert.deepEqual(afterVoid.groups, []);
+  } finally {
+    await db.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 15. T1C HF: ON+UNCONFIRMED, UNCONFIRMED+UNCONFIRMED, action flag alignment,
+//     and pagination/totals when mixing live and historical same-project-day groups.
+// ---------------------------------------------------------------------------
+test("HF UNCONFIRMED contract + action flag consistency + mixed live/historical pagination", async () => {
+  const db = await buildDb();
+  try {
+    await seed(db);
+
+    // Group 1 (last4: 1001): ON + UNCONFIRMED (different projects)
+    const g1On = await seedEpisode(db, {
+      cccd: "079200001001", name: "G1 ON", project: PROJ_A, date: "2026-10-01",
+      status: "ON", createdBy: ADMIN_APP,
+    });
+    const g1Unc = await seedEpisode(db, {
+      cccd: "079200001001", name: "G1 UNCONFIRMED", project: PROJ_B, date: "2026-10-02",
+      status: "UNCONFIRMED", createdBy: ADMIN_APP,
+    });
+
+    // Group 2 (last4: 1002): UNCONFIRMED + UNCONFIRMED (same project & day)
+    await seedEpisode(db, {
+      cccd: "079200001002", name: "G2 UNC A", project: PROJ_A, date: "2026-10-03",
+      status: "UNCONFIRMED", createdBy: ADMIN_APP,
+    });
+    await seedEpisode(db, {
+      cccd: "079200001002", name: "G2 UNC B", project: PROJ_A, date: "2026-10-03",
+      status: "UNCONFIRMED", createdBy: ADMIN_APP,
+    });
+
+    // Group 3 (last4: 1003): ON + ON + OFF on same project & day -> active_profile_count = 2
+    // Plus a 4th OFF episode on a DIFFERENT project (PROJ_B) which must NOT be included!
+    const g3On1 = await seedEpisode(db, {
+      cccd: "079200001003", name: "G3 ON 1", project: PROJ_A, date: "2026-10-04",
+      status: "ON", createdBy: ADMIN_APP,
+    });
+    const g3On2 = await seedEpisode(db, {
+      cccd: "079200001003", name: "G3 ON 2", project: PROJ_A, date: "2026-10-04",
+      status: "ON", createdBy: ADMIN_APP,
+    });
+    const g3OffSame = await seedEpisode(db, {
+      cccd: "079200001003", name: "G3 OFF Same", project: PROJ_A, date: "2026-10-04",
+      status: "ON", createdBy: ADMIN_APP,
+    });
+    await appendStatus(db, g3OffSame.entryId, "OFF", "2026-10-06", 2, null);
+
+    const g3OffOtherProj = await seedEpisode(db, {
+      cccd: "079200001003", name: "G3 OFF Other Proj", project: PROJ_B, date: "2026-05-01",
+      status: "ON", createdBy: ADMIN_APP,
+    });
+    await appendStatus(db, g3OffOtherProj.entryId, "OFF", "2026-06-01", 2, null);
+
+    // Read full page and verify TypeScript contract projection does not fail closed (no 500):
+    const fullRaw = await report(db, { auth: ADMIN_AUTH, app: ADMIN_APP, page: 1, pageSize: 25, managedOnly: false });
+    assert.equal(fullRaw.total_groups, 3);
+    assert.equal(fullRaw.total_entries, 7, "2 + 2 + 3 episodes (excluding the unrelated OFF episode on PROJ_B)");
+    const fullProjected = projectDuplicateCccdReportRpcPage(fullRaw, { page: 1, page_size: 25 });
+    assert.ok(fullProjected, "mixed ON/UNCONFIRMED/OFF payload passes TypeScript RPC projection");
+    assert.ok(
+      projectDuplicateCccdReportResponse({ ok: true, ...fullProjected }, { page: 1, page_size: 25 }),
+      "mixed payload passes API/UI response contract",
+    );
+
+    const [projG1, projG2, projG3] = fullProjected.groups;
+
+    // Verify Group 1 (ON + UNCONFIRMED):
+    assert.equal(projG1.cccd_last4, "1001");
+    assert.equal(projG1.profile_count, 2);
+    assert.equal(projG1.active_profile_count, 1);
+    assert.deepEqual(
+      projG1.episodes.map((e) => ({
+        entry_id: e.entry_id,
+        status: e.latest_status,
+        active: e.active,
+        can_mark_off: e.can_mark_off,
+        can_self_withdraw: e.can_self_withdraw,
+      })),
+      [
+        { entry_id: g1On.entryId, status: "ON", active: true, can_mark_off: true, can_self_withdraw: false },
+        { entry_id: g1Unc.entryId, status: "UNCONFIRMED", active: false, can_mark_off: false, can_self_withdraw: false },
+      ],
+      "ON + UNCONFIRMED has active_profile_count=1 so neither episode emits can_self_withdraw=true",
+    );
+
+    // Verify Group 2 (UNCONFIRMED + UNCONFIRMED):
+    assert.equal(projG2.cccd_last4, "1002");
+    assert.equal(projG2.profile_count, 2);
+    assert.equal(projG2.active_profile_count, 0);
+    assert.ok(projG2.episodes.every((e) =>
+      e.latest_status === "UNCONFIRMED" && !e.active && !e.can_mark_off && !e.can_self_withdraw));
+
+    // Verify Group 3 (ON + ON + OFF on same project & day, excluding g3OffOtherProj):
+    assert.equal(projG3.cccd_last4, "1003");
+    assert.equal(projG3.profile_count, 3);
+    assert.equal(projG3.project_count, 1);
+    assert.equal(projG3.active_profile_count, 2);
+    assert.deepEqual(
+      projG3.episodes.map((e) => ({
+        entry_id: e.entry_id,
+        status: e.latest_status,
+        active: e.active,
+        can_mark_off: e.can_mark_off,
+        can_self_withdraw: e.can_self_withdraw,
+      })),
+      [
+        { entry_id: g3On1.entryId, status: "ON", active: true, can_mark_off: true, can_self_withdraw: true },
+        { entry_id: g3On2.entryId, status: "ON", active: true, can_mark_off: true, can_self_withdraw: true },
+        { entry_id: g3OffSame.entryId, status: "OFF", active: false, can_mark_off: false, can_self_withdraw: false },
+      ],
+      "when active_profile_count >= 2, ON episodes allow self-withdraw and mark-off while OFF episode allows neither",
+    );
+
+    // Verify pagination across the 3 mixed groups (pageSize = 2):
+    const page1Raw = await report(db, { auth: ADMIN_AUTH, app: ADMIN_APP, page: 1, pageSize: 2, managedOnly: false });
+    const page1 = projectDuplicateCccdReportRpcPage(page1Raw, { page: 1, page_size: 2 });
+    assert.ok(page1);
+    assert.equal(page1.total_groups, 3);
+    assert.equal(page1.total_entries, 7);
+    assert.equal(page1.has_more, true);
+    assert.deepEqual(page1.groups.map((g) => g.cccd_last4), ["1001", "1002"]);
+
+    const page2Raw = await report(db, { auth: ADMIN_AUTH, app: ADMIN_APP, page: 2, pageSize: 2, managedOnly: false });
+    const page2 = projectDuplicateCccdReportRpcPage(page2Raw, { page: 2, page_size: 2 });
+    assert.ok(page2);
+    assert.equal(page2.total_groups, 3);
+    assert.equal(page2.total_entries, 7);
+    assert.equal(page2.has_more, false);
+    assert.deepEqual(page2.groups.map((g) => g.cccd_last4), ["1003"]);
   } finally {
     await db.close();
   }
