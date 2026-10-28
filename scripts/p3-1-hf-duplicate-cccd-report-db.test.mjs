@@ -42,6 +42,7 @@ function uuid(n) {
 const TEAM = uuid(11);
 const PROJ_A = "hf_dup_proj_a";
 const PROJ_B = "hf_dup_proj_b";
+const PROJ_C = "hf_dup_proj_c";
 const REC_A = uuid(21);
 
 // Full Admin (legacy triple) / Accounting-Admin / BoD / entry_admin-only / change_review /
@@ -121,6 +122,9 @@ async function seed(db) {
   await db.query(
     "insert into public.direct_entry_projects (project_id, display_name) values ($1,'Project HF B')",
     [PROJ_B]);
+  await db.query(
+    "insert into public.direct_entry_projects (project_id, display_name) values ($1,'Project HF C')",
+    [PROJ_C]);
   await db.query(
     "insert into public.recruiters (recruiter_id, display_name) values ($1,'Recruiter HF')", [REC_A]);
   await db.query(
@@ -313,11 +317,11 @@ async function restoreWorkerDetailsCheck(db) {
     " check (public.direct_entry_valid_worker_details(worker_details)) not valid");
 }
 
-/** Hai episode song cua cung mot CCCD canonical, hai project, hai ngay lam viec. */
+/** Hai episode song trong cung mot (CCCD, project, ngay vao lam) duplicate cluster. */
 async function seedPair(db, options = {}) {
   const {
-    cccd, first = "2026-01-05", second = "2026-02-10", statusFirst = "ON", statusSecond = "ON",
-    firstProject = PROJ_A, secondProject = PROJ_B,
+    cccd, first = "2026-01-05", second = "2026-01-05", statusFirst = "ON", statusSecond = "ON",
+    firstProject = PROJ_A, secondProject = PROJ_A,
   } = options;
   const a = await seedEpisode(db, {
     cccd, name: "HF Pair A", project: firstProject, date: first, status: statusFirst,
@@ -437,7 +441,7 @@ test("PRE-W2-HF-C: every mapped active business actor reads the same global repo
     await seed(db);
     await createFullProfile(db, { cccd: "012345678901", name: "HF Gate First" });
     await createFullProfile(db, { cccd: "012345678901", name: "HF Gate Second",
-      date: "2026-10-05", code: "hrp-2026-900011" });
+      date: "2026-10-01", code: "hrp-2026-900011" });
 
     // Every mapped + enabled actor — regardless of capability or scope bundle —
     // reads the SAME global result under one stable authority label.
@@ -473,11 +477,11 @@ test("P3.1-HF: the report masks the CCCD, normalizes legacy formatting and emits
     await relaxWorkerDetailsCheck(db);
     // Mot cap trung: mot dong canonical + mot dong con giu dinh dang cu.
     const epCanonical = await seedEpisode(db, { cccd: "012345678901", name: "HF Mask Canonical", project: PROJ_A,
-      date: "2026-02-10", status: "ON" });
+      date: "2026-01-05", status: "ON" });
     // Dong dinh dang cu giu nguyen dinh dang (co khoang trang) va trang thai ON: report
     // chuan hoa CCCD, con duong ghi khong tu y sua lai gia tri.
     const epLegacy = await seedEpisode(db, { cccd: "0123 456 78901", name: "HF Mask Legacy",
-      project: PROJ_B, date: "2026-01-05", status: "ON" });
+      project: PROJ_A, date: "2026-01-05", status: "ON" });
     // Cac truong hop KHONG phai trung: xuat hien mot lan, unknown, va da xoa mem.
     const epSingle = await seedEpisode(db, { cccd: "111222333", name: "HF Mask Single", project: PROJ_A,
       date: "2026-03-01", status: "ON" });
@@ -504,19 +508,19 @@ test("P3.1-HF: the report masks the CCCD, normalizes legacy formatting and emits
     assert.equal(group.cccd_last4, "8901");
     assert.equal(group.cccd_length, 12);
     assert.equal(group.profile_count, 2);
-    assert.equal(group.project_count, 2);
+    assert.equal(group.project_count, 1);
     assert.equal(group.active_profile_count, 2);
     assert.equal(group.first_work_date, "2026-01-05");
-    assert.equal(group.latest_first_work_date, "2026-02-10");
+    assert.equal(group.latest_first_work_date, "2026-01-05");
 
-    // Episode xep theo first_work_date: dong dinh dang cu (som hon) dung truoc.
-    assert.deepEqual(group.episodes.map((e) => e.entry_id), [epLegacy.entryId, epCanonical.entryId]);
-    assert.deepEqual(group.episodes.map((e) => e.first_work_date), ["2026-01-05", "2026-02-10"]);
+    // Same-day episodes use entry_id as the deterministic tiebreaker.
+    assert.deepEqual(group.episodes.map((e) => e.entry_id), [epCanonical.entryId, epLegacy.entryId]);
+    assert.deepEqual(group.episodes.map((e) => e.first_work_date), ["2026-01-05", "2026-01-05"]);
     assert.deepEqual(group.episodes.map((e) => e.latest_status), ["ON", "ON"]);
     assert.deepEqual(group.episodes.map((e) => e.active), [true, true]);
-    assert.deepEqual(group.episodes.map((e) => e.project_id), [PROJ_B, PROJ_A]);
+    assert.deepEqual(group.episodes.map((e) => e.project_id), [PROJ_A, PROJ_A]);
     assert.deepEqual(group.episodes.map((e) => e.project_display),
-      ["Project HF B", "Project HF A"]);
+      ["Project HF A", "Project HF A"]);
     assert.deepEqual(Object.keys(group.episodes[0]).sort(), [
       "active", "can_mark_off", "can_self_withdraw", "display_name", "employee_code", "entry_id",
       "entry_version", "first_work_date", "latest_status", "project_display", "project_id",
@@ -599,7 +603,7 @@ test("P3.1-HF: group and episode ordering plus paging are deterministic", async 
   try {
     await seed(db);
     await seedPair(db, { cccd: "111111111" });
-    await seedPair(db, { cccd: "222222222", first: "2026-03-01", second: "2026-01-01" });
+    const middlePair = await seedPair(db, { cccd: "222222222", first: "2026-03-01", second: "2026-03-01" });
     await seedPair(db, { cccd: "333333333" });
 
     const first = await report(db, { pageSize: 2 });
@@ -608,9 +612,9 @@ test("P3.1-HF: group and episode ordering plus paging are deterministic", async 
     assert.equal(first.has_more, true);
     assert.deepEqual(first.groups.map((g) => g.cccd_last4), ["1111", "2222"]);
     assert.deepEqual(first.groups.map((g) => g.cccd_length), [9, 9]);
-    // Episode trong mot nhom xep theo first_work_date, khong theo thu tu ghi.
-    assert.deepEqual(first.groups[1].episodes.map((e) => e.first_work_date),
-      ["2026-01-01", "2026-03-01"]);
+    // Same-date episodes use entry_id as the deterministic tiebreaker.
+    assert.deepEqual(first.groups[1].episodes.map((e) => e.entry_id),
+      [middlePair.a.entryId, middlePair.b.entryId]);
 
     const second = await report(db, { page: 2, pageSize: 2 });
     assert.equal(second.has_more, false);
@@ -740,10 +744,6 @@ test("HF: managed_only filters by effective PM assignment, retains counterpart e
   const db = await buildDb();
   try {
     await seed(db);
-    const PROJ_C = "hf_dup_proj_c";
-    await db.query(
-      "insert into public.direct_entry_projects (project_id, display_name) values ($1,'Project HF C')",
-      [PROJ_C]);
 
     const PM_AUTH = uuid(131), PM_APP = uuid(141), PM_REC = uuid(121);
     const FUTURE_PM_AUTH = uuid(132), FUTURE_PM_APP = uuid(142), FUTURE_PM_REC = uuid(122);
@@ -800,10 +800,9 @@ test("HF: managed_only filters by effective PM assignment, retains counterpart e
       " values ($1,$2,'2020-01-01','2025-01-01',now(),$3,false)",
       [PROJ_A, REVOKED_PM_REC, ADMIN_APP]);
 
-    // Group 1 (111111111): PROJ_A + PROJ_C -> matches PM_APP (PROJ_A) and MUST retain PROJ_C counterpart!
-    await seedPair(db, { cccd: "111111111", firstProject: PROJ_A, secondProject: PROJ_C });
-    // Group 2 (222222222): PROJ_B + PROJ_C -> matches PM_APP (PROJ_B) and MUST retain PROJ_C counterpart!
-    await seedPair(db, { cccd: "222222222", firstProject: PROJ_B, secondProject: PROJ_C });
+    // Each duplicate group belongs to one project/day; managed_only keeps its full cluster.
+    await seedPair(db, { cccd: "111111111", firstProject: PROJ_A, secondProject: PROJ_A });
+    await seedPair(db, { cccd: "222222222", firstProject: PROJ_B, secondProject: PROJ_B });
     // Group 3 (333333333): PROJ_C + PROJ_C -> outside PM_APP's managed projects!
     await seedPair(db, { cccd: "333333333", firstProject: PROJ_C, secondProject: PROJ_C });
 
@@ -812,7 +811,7 @@ test("HF: managed_only filters by effective PM assignment, retains counterpart e
     assert.equal(globalRes.total_groups, 3);
     assert.equal(globalRes.total_entries, 6);
 
-    // Managed-only page 1 (page_size = 1) returns Group 1 with BOTH episodes (PROJ_A + PROJ_C) and accurate post-filter totals:
+    // Managed-only page 1 (page_size = 1) returns the full PROJ_A cluster and accurate post-filter totals:
     const managedPage1 = await report(db, { auth: PM_AUTH, app: PM_APP, page: 1, pageSize: 1, managedOnly: true });
     assert.equal(managedPage1.total_groups, 2);
     assert.equal(managedPage1.total_entries, 4);
@@ -820,7 +819,7 @@ test("HF: managed_only filters by effective PM assignment, retains counterpart e
     assert.equal(managedPage1.groups.length, 1);
     assert.equal(managedPage1.groups[0].cccd_last4, "1111");
     assert.equal(managedPage1.groups[0].profile_count, 2);
-    assert.deepEqual(managedPage1.groups[0].episodes.map((e) => e.project_id), [PROJ_A, PROJ_C]);
+    assert.deepEqual(managedPage1.groups[0].episodes.map((e) => e.project_id), [PROJ_A, PROJ_A]);
 
     // Managed-only page 2 (page_size = 1) returns Group 2 with has_more = false:
     const managedPage2 = await report(db, { auth: PM_AUTH, app: PM_APP, page: 2, pageSize: 1, managedOnly: true });
@@ -828,7 +827,7 @@ test("HF: managed_only filters by effective PM assignment, retains counterpart e
     assert.equal(managedPage2.total_entries, 4);
     assert.equal(managedPage2.has_more, false);
     assert.equal(managedPage2.groups[0].cccd_last4, "2222");
-    assert.deepEqual(managedPage2.groups[0].episodes.map((e) => e.project_id), [PROJ_B, PROJ_C]);
+    assert.deepEqual(managedPage2.groups[0].episodes.map((e) => e.project_id), [PROJ_B, PROJ_B]);
 
     // Actors with 0 effective managed projects (plain actor, future PM, revoked PM, or Full Admin without PM assignment)
     // receive an empty result (never falling back to global):
@@ -850,9 +849,9 @@ test("HF: managed_only filters by effective PM assignment, retains counterpart e
 });
 
 // ---------------------------------------------------------------------------
-// 12. HF: can_mark_off projection va direct_entry_privileged_edit ON -> OFF.
+// 12. HF: can_mark_off authority; same-project/day history remains after OFF.
 // ---------------------------------------------------------------------------
-test("HF: can_mark_off matches canonical direct-edit authority and ON -> OFF removes active duplicate", async () => {
+test("HF: can_mark_off matches direct-edit authority and OFF transitions preserve duplicate history", async () => {
   const db = await buildDb();
   try {
     await seed(db);
@@ -908,10 +907,9 @@ test("HF: can_mark_off matches canonical direct-edit authority and ON -> OFF rem
     // Plain creator without direct-edit authority:
     await insertActor(db, CREATOR_AUTH, CREATOR_APP, ["entry_own", "entry_create"], ["own"]);
 
-    // Duplicate group 012345678901:
-    //   epA: PROJ_A, TEAM, SUBMITTED, created by CREATOR_APP
-    //   epB: PROJ_B, TEAM_B, SUBMITTED, created by ADMIN_APP
-    //   epReview: PROJ_A, TEAM, REVIEW (locked from direct edit!)
+    // Two same-CCCD project/day clusters:
+    //   PROJ_A: epA (SUBMITTED, CREATOR_APP) + epReview (REVIEW)
+    //   PROJ_B: epB + epBPair (SUBMITTED, TEAM_B)
     const epA = await seedEpisode(db, {
       cccd: "012345678901", name: "Worker A", project: PROJ_A, date: "2026-01-05",
       createdBy: CREATOR_APP, recruiter: REC_A, team: TEAM, submissionState: "SUBMITTED",
@@ -920,8 +918,12 @@ test("HF: can_mark_off matches canonical direct-edit authority and ON -> OFF rem
       cccd: "012345678901", name: "Worker B", project: PROJ_B, date: "2026-02-10",
       createdBy: ADMIN_APP, recruiter: REC_B, team: TEAM_B, submissionState: "SUBMITTED",
     });
+    const epBPair = await seedEpisode(db, {
+      cccd: "012345678901", name: "Worker B Pair", project: PROJ_B, date: "2026-02-10",
+      createdBy: ADMIN_APP, recruiter: REC_B, team: TEAM_B, submissionState: "SUBMITTED",
+    });
     const epReview = await seedEpisode(db, {
-      cccd: "012345678901", name: "Worker Review", project: PROJ_A, date: "2026-03-01",
+      cccd: "012345678901", name: "Worker Review", project: PROJ_A, date: "2026-01-05",
       createdBy: ADMIN_APP, recruiter: REC_A, team: TEAM, submissionState: "REVIEW",
     });
 
@@ -932,22 +934,22 @@ test("HF: can_mark_off matches canonical direct-edit authority and ON -> OFF rem
 
     // Full Admin and BoD can mark OFF SUBMITTED rows, never REVIEW rows:
     assert.deepEqual(await flagsByActor(ADMIN_AUTH, ADMIN_APP), {
-      [epA.entryId]: true, [epB.entryId]: true, [epReview.entryId]: false,
+      [epA.entryId]: true, [epB.entryId]: true, [epBPair.entryId]: true, [epReview.entryId]: false,
     });
     assert.deepEqual(await flagsByActor(BOD_AUTH, BOD_APP), {
-      [epA.entryId]: true, [epB.entryId]: true, [epReview.entryId]: false,
+      [epA.entryId]: true, [epB.entryId]: true, [epBPair.entryId]: true, [epReview.entryId]: false,
     });
     // Team Leader of TEAM can mark OFF only TEAM's non-REVIEW row:
     assert.deepEqual(await flagsByActor(LEADER_AUTH, LEADER_APP), {
-      [epA.entryId]: true, [epB.entryId]: false, [epReview.entryId]: false,
+      [epA.entryId]: true, [epB.entryId]: false, [epBPair.entryId]: false, [epReview.entryId]: false,
     });
     // PM of PROJ_A can mark OFF only PROJ_A's non-REVIEW row:
     assert.deepEqual(await flagsByActor(PM_AUTH, PM_APP), {
-      [epA.entryId]: true, [epB.entryId]: false, [epReview.entryId]: false,
+      [epA.entryId]: true, [epB.entryId]: false, [epBPair.entryId]: false, [epReview.entryId]: false,
     });
     // Plain creator cannot mark OFF even their own row:
     assert.deepEqual(await flagsByActor(CREATOR_AUTH, CREATOR_APP), {
-      [epA.entryId]: false, [epB.entryId]: false, [epReview.entryId]: false,
+      [epA.entryId]: false, [epB.entryId]: false, [epBPair.entryId]: false, [epReview.entryId]: false,
     });
 
     // Missing leave_reason on ON -> OFF is rejected:
@@ -970,7 +972,7 @@ test("HF: can_mark_off matches canonical direct-edit authority and ON -> OFF rem
       (err) => err.code === "PT409",
     );
 
-    // PM marks epA OFF with valid leave_reason -> epA leaves the active ON duplicate group:
+    // PM marks epA OFF with valid leave_reason; its same-project/day duplicate cluster remains in history.
     await db.query(
       "select public.direct_entry_privileged_edit($1::uuid,$2::uuid,$3::uuid,1,$4::jsonb,$5::text,$6::text)",
       [PM_AUTH, PM_APP, epA.entryId, JSON.stringify({
@@ -978,7 +980,7 @@ test("HF: can_mark_off matches canonical direct-edit authority and ON -> OFF rem
       }), "Cập nhật từ báo cáo CCCD trùng", idemKey()],
     );
 
-    // Admin transitions epReview to OFF too (first move submission to SUBMITTED or mark epB OFF):
+    // Admin marks the PROJ_B cluster sibling OFF too; both clusters remain visible as history.
     await db.query(
       "select public.direct_entry_privileged_edit($1::uuid,$2::uuid,$3::uuid,1,$4::jsonb,null,$5::text)",
       [ADMIN_AUTH, ADMIN_APP, epB.entryId, JSON.stringify({
@@ -987,8 +989,9 @@ test("HF: can_mark_off matches canonical direct-edit authority and ON -> OFF rem
     );
 
     const afterOff = await report(db);
-    assert.equal(afterOff.total_groups, 0, "group disappears once fewer than 2 episodes remain ON");
-    assert.deepEqual(afterOff.groups, []);
+    assert.equal(afterOff.total_groups, 1, "same-project/day duplicate history remains visible after OFF transitions");
+    assert.equal(afterOff.total_entries, 4);
+    assert.equal(afterOff.groups[0].active_profile_count, 2);
   } finally {
     await db.close();
   }
@@ -1028,12 +1031,13 @@ test("HF: self-withdraw enforces strict creator ownership, idempotency, active-d
     // Seed two post-cutoff SUBMITTED ON episodes sharing CCCD 079200001234:
     //   ownEp: created_by_user_id = CREATOR_APP, recruiter_id = REC_ATTRIBUTED (linked to OTHER_APP!)
     //   counterpartEp: created_by_user_id = OTHER_APP, recruiter_id = REC_A
+    // Both rows belong to the same CCCD/project/first-work-date duplicate cluster.
     const ownEp = await seedEpisode(db, {
       cccd: "079200001234", name: "Creator Duplicate", project: PROJ_A, date: "2026-10-05",
       createdBy: CREATOR_APP, recruiter: REC_ATTRIBUTED, team: TEAM, submissionState: "SUBMITTED",
     });
     const counterpartEp = await seedEpisode(db, {
-      cccd: "079200001234", name: "Counterpart Duplicate", project: PROJ_B, date: "2026-10-06",
+      cccd: "079200001234", name: "Counterpart Duplicate", project: PROJ_A, date: "2026-10-05",
       createdBy: OTHER_APP, recruiter: REC_A, team: TEAM, submissionState: "SUBMITTED",
     });
 
@@ -1177,8 +1181,8 @@ test("HF: duplicate_cccd_withdraw grants only all-company duplicate withdrawal a
       date: "2026-10-05", createdBy: ADMIN_APP,
     });
     const second = await seedEpisode(db, {
-      cccd: "079200009876", name: "Company Duplicate B", project: PROJ_B,
-      date: "2026-10-06", createdBy: BOD_APP,
+      cccd: "079200009876", name: "Company Duplicate B", project: PROJ_A,
+      date: "2026-10-05", createdBy: BOD_APP,
     });
 
     const delegatePrivileges = (await db.query(
@@ -1496,13 +1500,28 @@ test("HF UNCONFIRMED contract + action flag consistency + mixed live/historical 
   try {
     await seed(db);
 
-    // Group 1 (last4: 1001): ON + UNCONFIRMED (different projects)
+    // Three active profiles with one CCCD but three different projects/dates are rehires,
+    // not a duplicate cluster (the screenshot case).
+    const unrelated1 = await seedEpisode(db, {
+      cccd: "079200001000", name: "Unrelated active 1", project: PROJ_A, date: "2026-10-01",
+      status: "ON", createdBy: ADMIN_APP,
+    });
+    await seedEpisode(db, {
+      cccd: "079200001000", name: "Unrelated active 2", project: PROJ_B, date: "2026-10-02",
+      status: "ON", createdBy: ADMIN_APP,
+    });
+    await seedEpisode(db, {
+      cccd: "079200001000", name: "Unrelated active 3", project: PROJ_C, date: "2026-10-03",
+      status: "ON", createdBy: ADMIN_APP,
+    });
+
+    // Group 1 (last4: 1001): ON + UNCONFIRMED in the same project/day duplicate cluster.
     const g1On = await seedEpisode(db, {
       cccd: "079200001001", name: "G1 ON", project: PROJ_A, date: "2026-10-01",
       status: "ON", createdBy: ADMIN_APP,
     });
     const g1Unc = await seedEpisode(db, {
-      cccd: "079200001001", name: "G1 UNCONFIRMED", project: PROJ_B, date: "2026-10-02",
+      cccd: "079200001001", name: "G1 UNCONFIRMED", project: PROJ_A, date: "2026-10-01",
       status: "UNCONFIRMED", createdBy: ADMIN_APP,
     });
 
@@ -1541,7 +1560,17 @@ test("HF UNCONFIRMED contract + action flag consistency + mixed live/historical 
     // Read full page and verify TypeScript contract projection does not fail closed (no 500):
     const fullRaw = await report(db, { auth: ADMIN_AUTH, app: ADMIN_APP, page: 1, pageSize: 25, managedOnly: false });
     assert.equal(fullRaw.total_groups, 3);
-    assert.equal(fullRaw.total_entries, 7, "2 + 2 + 3 episodes (excluding the unrelated OFF episode on PROJ_B)");
+    assert.equal(fullRaw.total_entries, 7, "three matching clusters; unrelated rehires and the lone OFF episode are excluded");
+    assert.equal(fullRaw.groups.some((g) => g.cccd_last4 === "1000"), false,
+      "same CCCD across three distinct projects/dates is not reported as a duplicate");
+    await assert.rejects(
+      () => db.query(
+        "select public.direct_entry_self_withdraw_duplicate_cccd($1::uuid,$2::uuid,$3::uuid,1,$4::text,$5::text)",
+        [ADMIN_AUTH, ADMIN_APP, unrelated1.entryId, "Do not withdraw a legitimate rehire", idemKey()],
+      ),
+      (err) => err.code === "PT409",
+      "direct RPC calls also reject rows outside a same-project same-day duplicate cluster",
+    );
     const fullProjected = projectDuplicateCccdReportRpcPage(fullRaw, { page: 1, page_size: 25 });
     assert.ok(fullProjected, "mixed ON/UNCONFIRMED/OFF payload passes TypeScript RPC projection");
     assert.ok(

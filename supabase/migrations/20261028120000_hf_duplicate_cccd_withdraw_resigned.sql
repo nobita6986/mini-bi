@@ -1,5 +1,5 @@
--- Allow an authorized actor to withdraw the OFF episode in an active same-day
--- duplicate cluster, while requiring its ON counterpart to remain intact.
+-- Restrict duplicate reporting and withdrawal to matching CCCD/project/start-date
+-- clusters; an active counterpart must remain in that exact cluster.
 begin;
 
 create function public.direct_entry_hf_duplicate_cccd_replace_proc_source(
@@ -63,9 +63,9 @@ select public.direct_entry_hf_duplicate_cccd_replace_proc_source(
     raise exception 'self withdraw target is not an active duplicate' using ERRCODE = 'PT409';
   end if;$old$,
   $new$  if v_target_status not in ('ON', 'OFF')
-     or (v_target_status = 'OFF' and
-         (v_entry.project_id is null or v_entry.first_work_date is null)) then
-    raise exception 'self withdraw target is not a duplicate with a retained active counterpart'
+     or v_entry.project_id is null
+     or v_entry.first_work_date is null then
+    raise exception 'self withdraw target is not in a same-project same-day duplicate cluster'
       using errcode = 'PT409';
   end if;$new$,
   1
@@ -80,11 +80,17 @@ select public.direct_entry_hf_duplicate_cccd_replace_proc_source(
   $new$     and public.direct_entry_canonical_national_id(
            e.worker_details->'national_id'->>'value'
          ) = v_cccd
-     and (
-       v_target_status <> 'OFF'
-       or (e.project_id = v_entry.project_id and e.first_work_date = v_entry.first_work_date)
-     )
+     and e.project_id = v_entry.project_id
+     and e.first_work_date = v_entry.first_work_date
      and coalesce(($new$,
+  1
+);
+
+select public.direct_entry_hf_duplicate_cccd_replace_proc_source(
+  'public.direct_entry_duplicate_cccd_report(uuid,uuid,integer,integer,boolean)'::regprocedure,
+  $old$     where s.latest_status in ('ON','UNCONFIRMED')
+        or s.same_project_day_count >= 2$old$,
+  $new$     where s.same_project_day_count >= 2$new$,
   1
 );
 
@@ -99,20 +105,15 @@ select public.direct_entry_hf_duplicate_cccd_replace_proc_source(
                                      )
                                    )$old$,
   $new$                                   'can_self_withdraw', (
-                                     (
-                                       (l.latest_status = 'ON' and pg.active_profile_count >= 2)
-                                       or (
-                                         l.latest_status = 'OFF'
-                                         and exists (
-                                           select 1
-                                             from statused same_day_active
-                                            where same_day_active.entry_id <> l.entry_id
-                                              and same_day_active.cccd = l.cccd
-                                              and same_day_active.project_id = l.project_id
-                                              and same_day_active.first_work_date = l.first_work_date
-                                              and same_day_active.latest_status = 'ON'
-                                         )
-                                       )
+                                     l.latest_status in ('ON','OFF')
+                                     and exists (
+                                       select 1
+                                         from statused same_day_active
+                                        where same_day_active.entry_id <> l.entry_id
+                                          and same_day_active.cccd = l.cccd
+                                          and same_day_active.project_id = l.project_id
+                                          and same_day_active.first_work_date = l.first_work_date
+                                          and same_day_active.latest_status = 'ON'
                                      )
                                      and (
                                        l.created_by_user_id = p_app_user_id
@@ -129,7 +130,7 @@ drop function public.direct_entry_hf_duplicate_cccd_replace_proc_source(
 comment on function public.direct_entry_self_withdraw_duplicate_cccd(
   uuid, uuid, uuid, integer, text, text
 ) is
-  'Creator or delegated duplicate-CCCD withdrawal. An OFF episode is eligible only when an ON counterpart with the same canonical CCCD, project, and first-work date remains; active targets retain the existing active-counterpart check. service_role only.';
+  'Creator or delegated duplicate-CCCD withdrawal. ON/OFF targets are eligible only inside a duplicate cluster sharing canonical CCCD, project, and first-work date, with another ON counterpart remaining in that cluster. service_role only.';
 
 do $check$
 declare
@@ -145,9 +146,13 @@ begin
 
   if v_withdraw is null or v_report is null
      or position('v_target_status not in (' || chr(39) || 'ON' || chr(39) || ', ' || chr(39) || 'OFF' || chr(39) || ')' in v_withdraw) = 0
-     or position('e.project_id = v_entry.project_id and e.first_work_date = v_entry.first_work_date' in v_withdraw) = 0
+     or position('e.project_id = v_entry.project_id' in v_withdraw) = 0
+     or position('e.first_work_date = v_entry.first_work_date' in v_withdraw) = 0
+     or position('where s.same_project_day_count >= 2' in v_report) = 0
+     or position('or s.same_project_day_count >= 2' in v_report) > 0
      or position('same_day_active.latest_status = ' || chr(39) || 'ON' || chr(39) in v_report) = 0
-     or position('l.latest_status = ' || chr(39) || 'OFF' || chr(39) in v_report) = 0 then
+     or position('same_day_active.project_id = l.project_id' in v_report) = 0
+     or position('same_day_active.first_work_date = l.first_work_date' in v_report) = 0 then
     raise exception 'HF duplicate CCCD resigned-withdraw eligibility drift';
   end if;
 
