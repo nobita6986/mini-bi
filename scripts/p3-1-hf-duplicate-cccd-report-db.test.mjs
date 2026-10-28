@@ -1328,7 +1328,7 @@ test("HF same-project-same-day: ON+OFF and OFF+OFF stay reported, cross-day/cros
         "select public.direct_entry_self_withdraw_duplicate_cccd($1::uuid,$2::uuid,$3::uuid,1,$4::text,$5::text)",
         [ADMIN_AUTH, ADMIN_APP, ep1.entryId, "Reject when counterpart is OFF", idemKey()],
       ),
-      (err) => err.code === "40001" && /not an active duplicate/i.test(err.message),
+      (err) => err.code === "PT409" && /not an active duplicate/i.test(err.message),
     );
 
     // Transition ep1 to OFF as well (OFF + OFF on same project + same day):
