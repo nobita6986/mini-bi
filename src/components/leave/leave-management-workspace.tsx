@@ -22,6 +22,7 @@ import { useNotify } from "@/components/ui/notify-provider";
 import { OffsetPager } from "@/components/ui/offset-pager";
 import { PageHeader, PageShell } from "@/components/ui/page-shell";
 import { StatusBanner } from "@/components/ui/status-banner";
+import type { LeaveAdminAccountStatusFilter } from "@/lib/leave/leave-contract";
 import {
   LEAVE_DEPARTMENT_APPROVER_UNIT_KINDS,
   LEAVE_EMPLOYMENT_STATUSES,
@@ -254,6 +255,8 @@ export function LeaveManagementWorkspace({
   const [adminSubTab, setAdminSubTab] = useState<"profiles" | "policy" | "opening">("profiles");
   const [adminSearchInput, setAdminSearchInput] = useState<string>("");
   const [adminAppliedSearch, setAdminAppliedSearch] = useState<string>("");
+  const [adminAccountStatus, setAdminAccountStatus] =
+    useState<LeaveAdminAccountStatusFilter>("ACTIVE");
   const [adminPage, setAdminPage] = useState<number>(1);
   const [adminLoading, setAdminLoading] = useState<boolean>(false);
   const [adminErrorCode, setAdminErrorCode] = useState<string | null>(null);
@@ -375,8 +378,12 @@ export function LeaveManagementWorkspace({
     [],
   );
 
-  // Load Admin Config (contract allows ONLY search, limit, offset)
-  const loadAdminConfig = useCallback(async (search: string, page: number) => {
+  // Load Admin Config
+  const loadAdminConfig = useCallback(async (
+    search: string,
+    page: number,
+    accountStatus: LeaveAdminAccountStatusFilter,
+  ) => {
     await Promise.resolve();
     setAdminLoading(true);
     setAdminErrorCode(null);
@@ -384,6 +391,7 @@ export function LeaveManagementWorkspace({
     const qs = new URLSearchParams({
       limit: String(ADMIN_PAGE_SIZE),
       offset: String(offset),
+      account_status: accountStatus,
     });
     if (search.trim()) {
       qs.set("search", search.trim());
@@ -467,10 +475,10 @@ export function LeaveManagementWorkspace({
   useEffect(() => {
     if (activeTab === "admin" && authority?.can_manage_config) {
       queueMicrotask(() => {
-        void loadAdminConfig(adminAppliedSearch, adminPage);
+        void loadAdminConfig(adminAppliedSearch, adminPage, adminAccountStatus);
       });
     }
-  }, [activeTab, authority?.can_manage_config, adminAppliedSearch, adminPage, loadAdminConfig]);
+  }, [activeTab, authority?.can_manage_config, adminAppliedSearch, adminAccountStatus, adminPage, loadAdminConfig]);
 
   useEffect(() => {
     if (activeTab === "reports" && authority?.can_view_monthly_report) {
@@ -789,7 +797,7 @@ export function LeaveManagementWorkspace({
         description: `Phép chuyển năm được dùng đến hết ngày ${policyExpiryDay}/${policyExpiryMonth} hằng năm.`,
       });
       setPolicyReason("");
-      await loadAdminConfig(adminAppliedSearch, adminPage);
+      await loadAdminConfig(adminAppliedSearch, adminPage, adminAccountStatus);
       await loadMySummary(leaveYear);
     } catch {
       notify.error({
@@ -845,7 +853,7 @@ export function LeaveManagementWorkspace({
         description: `Đã cập nhật người duyệt cho bộ phận ${leaveUnitKindLabel(deptUnitKind)}.`,
       });
       setDeptReason("");
-      await loadAdminConfig(adminAppliedSearch, adminPage);
+      await loadAdminConfig(adminAppliedSearch, adminPage, adminAccountStatus);
     } catch {
       notify.error({
         title: "Lỗi kết nối",
@@ -896,7 +904,7 @@ export function LeaveManagementWorkspace({
         description: `Đã cấp quyền ${leaveModuleGrantRoleLabel(grantRoleCode)}.`,
       });
       setGrantReason("");
-      await loadAdminConfig(adminAppliedSearch, adminPage);
+      await loadAdminConfig(adminAppliedSearch, adminPage, adminAccountStatus);
     } catch {
       notify.error({
         title: "Lỗi kết nối",
@@ -941,7 +949,7 @@ export function LeaveManagementWorkspace({
         title: "Đã thu hồi quyền",
         description: `Đã thu hồi quyền ${leaveModuleGrantRoleLabel(roleCode)}.`,
       });
-      await loadAdminConfig(adminAppliedSearch, adminPage);
+      await loadAdminConfig(adminAppliedSearch, adminPage, adminAccountStatus);
     } catch {
       notify.error({
         title: "Lỗi kết nối",
@@ -1020,7 +1028,7 @@ export function LeaveManagementWorkspace({
         description: `Đã cập nhật cấu hình nghỉ phép cho ${editingEmployee.account.display_name}.`,
       });
       setEditingEmployee(null);
-      await loadAdminConfig(adminAppliedSearch, adminPage);
+      await loadAdminConfig(adminAppliedSearch, adminPage, adminAccountStatus);
       await loadMySummary(leaveYear);
     } catch {
       notify.error({
@@ -1156,7 +1164,7 @@ export function LeaveManagementWorkspace({
       setOpeningPreviewSignature(null);
       setOpeningReason("");
       setOpeningUiRows([createEmptyOpeningDraftRow()]);
-      await loadAdminConfig(adminAppliedSearch, adminPage);
+      await loadAdminConfig(adminAppliedSearch, adminPage, adminAccountStatus);
       await loadMySummary(leaveYear);
     } catch {
       notify.error({
@@ -1278,7 +1286,7 @@ export function LeaveManagementWorkspace({
                   void loadInbox(inboxStatusFilter, inboxPage);
                 }
                 if (activeTab === "admin" && authority?.can_manage_config) {
-                  void loadAdminConfig(adminAppliedSearch, adminPage);
+                  void loadAdminConfig(adminAppliedSearch, adminPage, adminAccountStatus);
                 }
                 if (activeTab === "reports" && authority?.can_view_monthly_report) {
                   void loadMonthlyReport(
@@ -2281,18 +2289,42 @@ export function LeaveManagementWorkspace({
                       </Button>
                     }
                   >
-                    <div className="max-w-md">
-                      <label className="block text-xs font-medium text-muted mb-1">
-                        Tìm theo tên, mã nhân sự hoặc login ID
-                      </label>
-                      <input
-                        type="search"
-                        value={adminSearchInput}
-                        onChange={(e) => setAdminSearchInput(e.target.value)}
-                        placeholder="Nhập tên, mã NV, login..."
-                        data-testid="leave-admin-profile-search"
-                        className="w-full min-h-10 rounded-lg border border-border bg-surface px-3 py-1.5 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-                      />
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div className="max-w-md">
+                        <label className="block text-xs font-medium text-muted mb-1">
+                          Tìm theo tên, mã nhân sự hoặc login ID
+                        </label>
+                        <input
+                          type="search"
+                          value={adminSearchInput}
+                          onChange={(e) => setAdminSearchInput(e.target.value)}
+                          placeholder="Nhập tên, mã NV, login..."
+                          data-testid="leave-admin-profile-search"
+                          className="w-full min-h-10 rounded-lg border border-border bg-surface px-3 py-1.5 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                        />
+                      </div>
+                      <div className="max-w-sm">
+                        <label
+                          htmlFor="leave-admin-account-status"
+                          className="block text-xs font-medium text-muted mb-1"
+                        >
+                          Trạng thái tài khoản
+                        </label>
+                        <select
+                          id="leave-admin-account-status"
+                          value={adminAccountStatus}
+                          onChange={(e) => {
+                            setAdminAccountStatus(e.target.value as LeaveAdminAccountStatusFilter);
+                            setAdminPage(1);
+                          }}
+                          data-testid="leave-admin-account-status-filter"
+                          className="w-full min-h-10 rounded-lg border border-border bg-surface px-3 py-1.5 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                        >
+                          <option value="ACTIVE">Đang hoạt động</option>
+                          <option value="INACTIVE">Đã ngừng hoạt động</option>
+                          <option value="ALL">Tất cả tài khoản</option>
+                        </select>
+                      </div>
                     </div>
                   </FilterToolbar>
 
@@ -2341,6 +2373,11 @@ export function LeaveManagementWorkspace({
                                     ? ` · ${emp.account.personnel_code}`
                                     : ""}
                                 </div>
+                                {!emp.account.account_enabled ? (
+                                  <div className="mt-1">
+                                    <StatusBadge tone="neutral">Đã ngừng hoạt động</StatusBadge>
+                                  </div>
+                                ) : null}
                               </td>
                               <td className={DATA_TABLE_TD_CLASS} data-label="Trạng thái phép">
                                 {emp.profile.is_shared_non_employee ? (

@@ -67,6 +67,8 @@ import {
   ADMIN_LINK_EXISTING_PERSONNEL_ACCOUNT_RPC_SIGNATURES,
   LEAVE_MANAGEMENT_WP1_MIGRATION_NAME,
   LEAVE_MANAGEMENT_WP1_RPC_SIGNATURES,
+  LEAVE_ADMIN_ACCOUNT_STATUS_FILTER_MIGRATION_NAME,
+  LEAVE_ADMIN_ACCOUNT_STATUS_FILTER_RPC_SIGNATURE,
   OFFBOARDING_REPORT_MIGRATION_NAME,
   OFFBOARDING_REPORT_RPC_SIGNATURES,
   migrationChecksum,
@@ -1017,7 +1019,8 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
         CCCD_REVIEW_MANUAL_RESOLUTION_RPC_SIGNATURE,
         WORK_REPORTS_ANDROID_SYNC_AND_UX_RPC_SIGNATURE,
         ...ADMIN_LINK_EXISTING_PERSONNEL_ACCOUNT_RPC_SIGNATURES,
-        ...LEAVE_MANAGEMENT_WP1_RPC_SIGNATURES);
+        ...LEAVE_MANAGEMENT_WP1_RPC_SIGNATURES,
+        LEAVE_ADMIN_ACCOUNT_STATUS_FILTER_RPC_SIGNATURE);
       assert.ok(expectedSignatures.length > 0, "the explicit server/invoker allowlist is not empty");
       assert.equal(new Set(expectedSignatures).size, expectedSignatures.length, "the allowlist has no duplicates");
       const { rows: resolvedExpected } = await client.query(
@@ -1056,8 +1059,34 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
           CCCD_REVIEW_MANUAL_RESOLUTION_RPC_SIGNATURE,
           WORK_REPORTS_ANDROID_SYNC_AND_UX_RPC_SIGNATURE,
           ...ADMIN_LINK_EXISTING_PERSONNEL_ACCOUNT_RPC_SIGNATURES,
-          ...LEAVE_MANAGEMENT_WP1_RPC_SIGNATURES].sort(),
+          ...LEAVE_MANAGEMENT_WP1_RPC_SIGNATURES,
+          LEAVE_ADMIN_ACCOUNT_STATUS_FILTER_RPC_SIGNATURE].sort(),
         "only explicitly reviewed post-S0 RPCs add service_role grants after the S0 baseline",
+      );
+      const leaveAccountStatusMigration = await readFile(
+        path.join(MIGRATION_DIR, LEAVE_ADMIN_ACCOUNT_STATUS_FILTER_MIGRATION_NAME),
+        "utf8",
+      );
+      const leaveAccountStatusMigrationNormalized = leaveAccountStatusMigration
+        .replace(/\s+/g, " ")
+        .replace(/\(\s+/g, "(")
+        .replace(/\s+\)/g, ")")
+        .toLowerCase();
+      assert.ok(
+        leaveAccountStatusMigrationNormalized.includes(LEAVE_ADMIN_ACCOUNT_STATUS_FILTER_RPC_SIGNATURE),
+        "leave account status migration defines the filtered admin overview RPC",
+      );
+      assert.ok(
+        leaveAccountStatusMigrationNormalized.includes(
+          `revoke all on function ${LEAVE_ADMIN_ACCOUNT_STATUS_FILTER_RPC_SIGNATURE} from public, anon, authenticated, service_role;`,
+        ),
+        "leave account status migration revokes inherited RPC grants",
+      );
+      assert.ok(
+        leaveAccountStatusMigrationNormalized.includes(
+          `grant execute on function ${LEAVE_ADMIN_ACCOUNT_STATUS_FILTER_RPC_SIGNATURE} to service_role;`,
+        ),
+        "leave account status migration grants RPC execution only to service_role",
       );
       const removedSourceService = sourceService
         .filter((row) => !expectedOidSet.has(String(row.oid))).map((row) => row.signature).sort();

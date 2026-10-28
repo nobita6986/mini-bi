@@ -7,6 +7,7 @@ import {
 import {
   LEAVE_TYPES,
   LEAVE_TYPE_MAX_UNITS_PER_REQUEST,
+  type LeaveAdminAccountStatusFilter,
   type LeaveDecisionCode,
   type LeaveDepartmentApproverUnitKind,
   type LeaveEmploymentStatus,
@@ -350,6 +351,7 @@ export type LeaveAdminOverviewProjection = {
   department_approvers: readonly LeaveDepartmentApproverProjection[];
   module_grants: readonly LeaveModuleGrantProjection[];
   total_employees: number;
+  account_status: LeaveAdminAccountStatusFilter;
   limit: number;
   offset: number;
   employees: readonly LeaveAdminEmployeeItemProjection[];

@@ -55,6 +55,7 @@ export const LEAVE_REQUEST_STATUS_FILTERS = [
 ] as const;
 export type LeaveRequestStatusFilter =
   (typeof LEAVE_REQUEST_STATUS_FILTERS)[number];
+export type LeaveAdminAccountStatusFilter = "ACTIVE" | "INACTIVE" | "ALL";
 
 export const LEAVE_DECISION_CODES = [
   "APPROVE",
@@ -822,10 +823,11 @@ export function parseGetAdminOverviewQuery(
       search: string | null;
       limit: number;
       offset: number;
+      account_status: LeaveAdminAccountStatusFilter;
     }
   | { ok: false; code: LeaveErrorCode } {
   for (const key of url.searchParams.keys()) {
-    if (key !== "search" && key !== "limit" && key !== "offset") {
+    if (key !== "search" && key !== "limit" && key !== "offset" && key !== "account_status") {
       return { ok: false, code: "INVALID_QUERY" };
     }
   }
@@ -836,6 +838,7 @@ export function parseGetAdminOverviewQuery(
       : null;
   const rawLimit = url.searchParams.get("limit");
   const rawOffset = url.searchParams.get("offset");
+  const accountStatus = url.searchParams.get("account_status") ?? "ACTIVE";
   const limit = rawLimit ? Number(rawLimit) : 100;
   const offset = rawOffset ? Number(rawOffset) : 0;
   if (
@@ -847,7 +850,10 @@ export function parseGetAdminOverviewQuery(
   ) {
     return { ok: false, code: "INVALID_QUERY" };
   }
-  return { ok: true, search, limit, offset };
+  if (accountStatus !== "ACTIVE" && accountStatus !== "INACTIVE" && accountStatus !== "ALL") {
+    return { ok: false, code: "INVALID_QUERY" };
+  }
+  return { ok: true, search, limit, offset, account_status: accountStatus };
 }
 
 export function parsePatchAdminConfigBody(
