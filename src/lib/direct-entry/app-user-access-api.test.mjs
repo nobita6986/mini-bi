@@ -206,7 +206,7 @@ test("R2 API denies unavailable actors and maps repository taxonomy", async () =
     ...deps(), resolveSession: async () => ({ actor: { ok: false, reason: "ACTOR_DISABLED" } }),
   });
   assert.deepEqual([denied.status, await denied.json()], [403, { ok: false, code: "ACTOR_NOT_AVAILABLE" }]);
-  for (const [sqlstate, kind] of [["40001", "conflict"], ["42501", "denied"], ["P0002", "not-found"], ["22023", "invalid"], ["XX000", "unavailable"]]) {
+  for (const [sqlstate, kind] of [["40001", "conflict"], ["PT409", "conflict"], ["42501", "denied"], ["P0002", "not-found"], ["22023", "invalid"], ["XX000", "unavailable"]]) {
     assert.equal(classifyAccountAccessError({ code: sqlstate }), kind);
   }
   const malformedRepo = createAccountAccessRepository(async () => ({ data: { ...ACCOUNT, extra: true }, error: null }));

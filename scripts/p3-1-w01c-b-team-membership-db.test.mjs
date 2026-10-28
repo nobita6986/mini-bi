@@ -662,7 +662,7 @@ test("idempotent replay returns the stored result and a reused key with differen
   assert.equal(version >= 1, true);
 });
 
-test("a stale expected version is rejected with 40001 and leaves the intervals unchanged", async () => {
+test("a stale expected version is rejected with PT409 and leaves the intervals unchanged", async () => {
   const version = await recruiterVersion(db, HRP_D);
   const before = await counts(db);
   const stale = await rpcError(db, "direct_entry_unassign_team_membership", {
@@ -670,7 +670,7 @@ test("a stale expected version is rejected with 40001 and leaves the intervals u
     p_valid_to: FUTURE, p_expected_version: version + 9, p_reason: REASON,
     p_idempotency_key: KEY("31"),
   });
-  assert.equal(stale.code, "40001");
+  assert.equal(stale.code, "PT409");
   assert.deepEqual(await counts(db), before, "a stale version leaves zero residue");
 });
 
@@ -1012,7 +1012,7 @@ test("closing an existing membership stays possible after creation eligibility i
       p_valid_to: "2026-06-01", p_expected_version: version + 7, p_reason: REASON,
       p_idempotency_key: KEY("c" + suffix),
     });
-    assert.equal(stale.code, "40001", label + " stale close");
+    assert.equal(stale.code, "PT409", label + " stale close");
     assert.deepEqual(await counts(db), beforeStale, label + " stale close residue");
 
     // Closing the open membership succeeds, without creating anything or re-dating.

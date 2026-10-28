@@ -238,7 +238,7 @@ test("W03A Full Admin can enable, replay, and disable without touching child row
   );
   await assertSqlState(
     rpc(db, "direct_entry_disable_app_user", [ADMIN_AUTH, ADMIN_APP, TARGET_APP, 1, REASON, "w03a-disable-stale"]),
-    "40001",
+    "PT409",
   );
   assert.equal((await appUser(db, TARGET_APP)).version, 2);
 

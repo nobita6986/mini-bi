@@ -51,7 +51,7 @@ const READ_RPC: Readonly<Record<TeamLeaderState, string>> = {
 export function classifyTeamLeaderError(
   error: { code?: string; message?: string },
 ): TeamLeaderErrorKind {
-  if (error.code === "40001" || error.code === "23P01" || error.code === "23505") {
+  if (error.code === "PT409" || error.code === "40001" || error.code === "23P01" || error.code === "23505") {
     return "conflict";
   }
   if (error.code === "42501") return "denied";

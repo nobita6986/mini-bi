@@ -305,22 +305,24 @@ test("review API enforces feature flag, metadata-only inbox, CSRF, reason requir
   assert.equal((await selfReviewRes.json()).code, "WORK_REPORT_SELF_REVIEW_FORBIDDEN");
 
   // Version conflict -> 409 WORK_REPORT_VERSION_CONFLICT
-  const conflictRepo = createReviewRepository(async () => ({
-    data: null,
-    error: { code: "40001", message: "WORK_REPORT_VERSION_CONFLICT" },
-  }));
-  const conflictRes = await decideWorkReportReview(
-    postJson(`http://localhost/api/work-reports/reviews/${OBLIGATION_ID}/decision`, {
-      decision: "APPROVED",
-      expected_version: 1,
-      idempotency_key: IDEMPOTENCY_KEY,
-    }),
-    OBLIGATION_ID,
-    "true",
-    { resolveSession: activeSession, repository: conflictRepo },
-  );
-  assert.equal(conflictRes.status, 409);
-  assert.equal((await conflictRes.json()).code, "WORK_REPORT_VERSION_CONFLICT");
+  for (const sqlstate of ["40001", "PT409"]) {
+    const conflictRepo = createReviewRepository(async () => ({
+      data: null,
+      error: { code: sqlstate, message: "WORK_REPORT_VERSION_CONFLICT" },
+    }));
+    const conflictRes = await decideWorkReportReview(
+      postJson(`http://localhost/api/work-reports/reviews/${OBLIGATION_ID}/decision`, {
+        decision: "APPROVED",
+        expected_version: 1,
+        idempotency_key: IDEMPOTENCY_KEY,
+      }),
+      OBLIGATION_ID,
+      "true",
+      { resolveSession: activeSession, repository: conflictRepo },
+    );
+    assert.equal(conflictRes.status, 409);
+    assert.equal((await conflictRes.json()).code, "WORK_REPORT_VERSION_CONFLICT");
+  }
 });
 
 test("delegation API validates capabilities, date normalization, client authority fields, and versioned revoke", async () => {

@@ -13,7 +13,7 @@
  *   3. Deterministic lock-hold race on `leave_management_decide_request`: two
  *      approvers racing on the same `PENDING` request (`expected_row_version = 1`)
  *      serialize cleanly; strictly 1 wins (`row_version = 2`) and the contender
- *      rejects with `40001` (`LEAVE_ROW_VERSION_CONFLICT`), with zero double-deduction.
+ *      rejects with `PT409` (`LEAVE_ROW_VERSION_CONFLICT`), with zero double-deduction.
  *   4. Cross-operation race (`APPROVE` vs `withdraw_request` on the same `PENDING`
  *      request): strictly 1 succeeds, the contender rejects fail-closed, zero
  *      deadlocks (`40P01`), and lot/ledger invariants hold.
@@ -388,9 +388,9 @@ test("LEAVE-WP1 real PostgreSQL concurrency: accrual burst, overlapping requests
     await assert.rejects(
       blockedDecide,
       (err) =>
-        err.code === "40001" &&
+        err.code === "PT409" &&
         String(err.message).includes("LEAVE_ROW_VERSION_CONFLICT"),
-      "contending decide_request with stale row_version must reject with 40001",
+      "contending decide_request with stale row_version must reject with PT409",
     );
     await worker2.query("rollback");
 
@@ -439,8 +439,8 @@ test("LEAVE-WP1 real PostgreSQL concurrency: accrual burst, overlapping requests
       "approve vs withdraw must never deadlock (40P01)",
     );
     assert.ok(
-      ["40001", "22023"].includes(crossRejected[0].reason.code),
-      `expected 40001 or 22023 on losing contender, got ${crossRejected[0].reason.code}`,
+      ["PT409", "22023"].includes(crossRejected[0].reason.code),
+      `expected PT409 or 22023 on losing contender, got ${crossRejected[0].reason.code}`,
     );
 
     // Final invariant check on EMP_1: 6 granted, 1 reserved, 0 consumed, 5 available

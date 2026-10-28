@@ -347,7 +347,7 @@ test("background QR extraction stores candidate_data, enforces exact CCCD match 
   );
   assert.equal(extractionCountRows[0].cnt, 1);
 
-  // 3. Stale expected_entry_version on apply_blank_fields = true fails closed with 40001
+  // 3. Stale expected_entry_version on apply_blank_fields = true fails closed with PT409
   await assert.rejects(
     db.query(
       "select public.direct_entry_complete_cccd_qr_extraction(" +
@@ -360,7 +360,7 @@ test("background QR extraction stores candidate_data, enforces exact CCCD match 
         JSON.stringify(CANDIDATE_DATA),
       ],
     ),
-    (error) => error.code === "40001",
+    (error) => error.code === "PT409",
   );
 
   // 4. Matching expected_entry_version applies ONLY blank fields and preserves user-entered fields

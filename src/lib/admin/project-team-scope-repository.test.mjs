@@ -60,7 +60,7 @@ test("repository fail-closes malformed envelopes, SQL authority/conflict, and th
   assert.deepEqual(await malformed.listScopes({ ...ACTOR, project_id: null, team_id: null,
     search: null, include_history: false, page: 1, page_size: 25 }), { ok: false, kind: "unavailable" });
 
-  for (const [sqlstate, expected] of [["42501", "denied"], ["40001", "conflict"],
+  for (const [sqlstate, expected] of [["42501", "denied"], ["40001", "conflict"], ["PT409", "conflict"],
     ["P0002", "not-found"], ["22023", "invalid"], ["XX000", "unavailable"]]) {
     const repository = createProjectTeamScopeRepository(async () => ({ data: null,
       error: { code: sqlstate, message: "sensitive database detail" } }));

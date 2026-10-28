@@ -259,7 +259,7 @@ function classify(error: { code?: string; message?: string }): WorkReportReviewR
     }
     return { ok: false, kind: "denied" };
   }
-  if (error.code === "40001" || error.code === "23505") {
+  if (error.code === "PT409" || error.code === "40001" || error.code === "23505") {
     return { ok: false, kind: "conflict" };
   }
   if (error.code === "P0002") {

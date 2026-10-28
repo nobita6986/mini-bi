@@ -608,7 +608,7 @@ test("MISMATCH and QR_UNREADABLE queue, creator scope vs out-of-scope isolation,
         JSON.stringify(manualPayload),
       ],
     ),
-    (err) => err.code === "40001",
+    (err) => err.code === "PT409",
   );
   const { rows: manuallySaved } = await db.query(
     "select version, worker_details from public.direct_entries where entry_id = $1",

@@ -57,7 +57,7 @@ function classify(error: { code?: string; message?: string }): "denied" | "inval
 function classifyHide(error: { code?: string; message?: string }): OffboardingHideFailureKind {
   if (error?.code === "42501") return "denied";
   if (error?.code === "22023") return "invalid";
-  if (error?.code === "40001") return "stale";
+  if (error?.code === "PT409" || error?.code === "40001") return "stale";
   if (error?.code === "23505") return "idempotency_conflict";
   return "unavailable";
 }

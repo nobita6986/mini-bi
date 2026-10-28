@@ -187,7 +187,7 @@ test("submission deletion and submission create/submit serialize on the same agg
     const waitingSubmit = submit(submitter, first.submissionId, "s122_race_submit_second");
     await waitUntilBlocked(observer, "draft-submit-second");
     await deleter.query("commit");
-    await assert.rejects(waitingSubmit, (error) => error.code === "40001",
+    await assert.rejects(waitingSubmit, (error) => error.code === "PT409",
       "submit loses after the atomic deletion commits");
 
     await submitter.query("begin");

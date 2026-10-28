@@ -437,7 +437,7 @@ test("update honours OCC and keeps recruiter_id plus provider history immutable"
     p_personnel_code: "nv.w01b.stale", p_personnel_position: "STAFF",
     p_reason: REASON, p_idempotency_key: KEY("11"),
   });
-  assert.equal(stale.code, "40001");
+  assert.equal(stale.code, "PT409");
   assert.deepEqual(await counts(db), before, "stale version leaves zero residue");
 
   const updated = await rpc(db, "direct_entry_update_personnel", {
@@ -583,7 +583,7 @@ test("set-active is a soft state change that never deletes or rewrites history",
     p_recruiter_id: created.recruiter_id, p_active: true,
     p_expected_version: created.version, p_reason: REASON, p_idempotency_key: KEY("19"),
   });
-  assert.equal(stale.code, "40001");
+  assert.equal(stale.code, "PT409");
 
   const reactivated = await rpc(db, "direct_entry_set_personnel_active", {
     p_auth_subject: FULL_ADMIN.auth, p_app_user_id: FULL_ADMIN.app,

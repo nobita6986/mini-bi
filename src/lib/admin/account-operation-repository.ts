@@ -93,7 +93,7 @@ function serviceRoleRpc(): Rpc {
 export function classifyAccountOperationError(
   error: { code?: string; message?: string },
 ): AccountOperationErrorKind {
-  if (error.code === "40001" || error.code === "23505" || error.code === "23P01") return "conflict";
+  if (error.code === "PT409" || error.code === "40001" || error.code === "23505" || error.code === "23P01") return "conflict";
   if (error.code === "42501") return "denied";
   if (error.code === "P0002") return "not-found";
   if (error.code === "22023" || error.code === "23514") {

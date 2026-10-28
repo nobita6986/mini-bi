@@ -20,7 +20,7 @@
  *        `direct_entry_employment_status_events` 100% untouched.
  *      - Idempotent replay returns `replayed: true` without creating a second row;
  *        same key + different reason/snapshot raises `23505 IDEMPOTENCY_CONFLICT`;
- *        hiding an already-hidden snapshot with a new key raises `40001`.
+ *        hiding an already-hidden snapshot with a new key raises `PT409`.
  *      - Lifecycle invalidation:
  *        (a) Hidden worker gets a new `SUBMITTED` episode (`UNCONFIRMED`) -> reappears;
  *            transitions to `ON` -> disappears per report rule; later transitions to
@@ -694,7 +694,7 @@ test("Offboarding suppression end-to-end: phone: null, authority matrix, export 
           "idem-bod-duplicate-w1",
         ),
       (err) =>
-        err.code === "40001" &&
+        err.code === "PT409" &&
         String(err.message).includes("WORKFORCE_OFFBOARDING_SNAPSHOT_STALE"),
     );
 

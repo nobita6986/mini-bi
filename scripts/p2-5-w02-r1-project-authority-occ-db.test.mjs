@@ -401,21 +401,21 @@ test("R1: a stale project version refuses ABA after A is removed and B added", a
       () => assign(db, {
         manager: REC_C, expectedProjectVersion: snapshot.projectVersion, key: "assign-key-aba",
       }),
-      (error) => error.code === "40001",
+      (error) => error.code === "PT409",
       "a stale project snapshot may not add a manager");
     await assert.rejects(
       () => unassign(db, {
         assignmentId: second.assignment_id, expectedVersion: 1,
         expectedProjectVersion: snapshot.projectVersion, key: "unassign-key-aba-stale",
       }),
-      (error) => error.code === "40001",
+      (error) => error.code === "PT409",
       "a stale project snapshot may not remove a manager");
     await assert.rejects(
       () => updateProject(db, { expectedVersion: snapshot.projectVersion }),
-      (error) => error.code === "40001");
+      (error) => error.code === "PT409");
     await assert.rejects(
       () => setProjectActive(db, { active: false, expectedVersion: snapshot.projectVersion }),
-      (error) => error.code === "40001");
+      (error) => error.code === "PT409");
 
     // Nothing changed, and the same request with the CURRENT version succeeds.
     assert.equal(await projectVersion(db), 4);
@@ -575,24 +575,24 @@ test("R1: stale project and stale assignment versions fail closed with no mutati
     for (const stale of [1, 9]) {
       await assert.rejects(() => assign(db, {
         manager: REC_B, expectedProjectVersion: stale, key: "assign-key-stale-" + stale,
-      }), (error) => error.code === "40001");
+      }), (error) => error.code === "PT409");
       await assert.rejects(() => unassign(db, {
         assignmentId: created.assignment_id, expectedVersion: 1,
         expectedProjectVersion: stale, key: "unassign-key-stale-" + stale,
-      }), (error) => error.code === "40001");
+      }), (error) => error.code === "PT409");
       await assert.rejects(() => updateProject(db, {
         expectedVersion: stale, key: "update-key-stale-" + stale,
-      }), (error) => error.code === "40001");
+      }), (error) => error.code === "PT409");
       await assert.rejects(() => setProjectActive(db, {
         active: false, expectedVersion: stale, key: "active-key-stale-" + stale,
-      }), (error) => error.code === "40001");
+      }), (error) => error.code === "PT409");
     }
 
     // Correct project version, stale ASSIGNMENT version (tier 2 OCC).
     await assert.rejects(() => unassign(db, {
       assignmentId: created.assignment_id, expectedVersion: 7, expectedProjectVersion: 2,
       key: "unassign-key-tier2",
-    }), (error) => error.code === "40001");
+    }), (error) => error.code === "PT409");
 
     // A missing project and a missing assignment stay distinguishable from a
     // stale one.

@@ -2638,6 +2638,14 @@ test("createServiceAttendanceRepository maps SQL errors without leaking details 
     ok: false,
     code: "IDEMPOTENCY_CONFLICT",
   });
+  const pt409ConflictRepo = createServiceAttendanceRepository(async () => ({
+    data: null,
+    error: { code: "PT409", message: "IDEMPOTENCY_CONFLICT" },
+  }));
+  assert.deepEqual(await pt409ConflictRepo.recordCheckIn(baseInput), {
+    ok: false,
+    code: "IDEMPOTENCY_CONFLICT",
+  });
 
   const unexpectedSqlRepo = createServiceAttendanceRepository(async () => ({
     data: null,

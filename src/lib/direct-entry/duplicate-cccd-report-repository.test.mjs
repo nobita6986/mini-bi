@@ -213,6 +213,10 @@ test("self-withdraw repository calls only direct_entry_self_withdraw_duplicate_c
     { ok: false, kind: "conflict", code: "VERSION_CONFLICT" },
   );
   assert.deepEqual(
+    classifyDuplicateCccdSelfWithdrawError({ code: "PT409", message: "entry version conflict" }),
+    { ok: false, kind: "conflict", code: "VERSION_CONFLICT" },
+  );
+  assert.deepEqual(
     classifyDuplicateCccdSelfWithdrawError({ code: "22023", message: "reason exceeds maximum length" }),
     { ok: false, kind: "invalid", code: "SELF_WITHDRAW_INVALID" },
   );

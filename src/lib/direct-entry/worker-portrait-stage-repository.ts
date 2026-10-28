@@ -45,7 +45,7 @@ function serviceRoleRpc(): Rpc {
 
 function classify(error: { code?: string }): StageOperation<never> {
   if (error.code === "42501") return { ok: false, kind: "denied" };
-  if (error.code === "40001") return { ok: false, kind: "conflict" };
+  if (error.code === "PT409" || error.code === "40001") return { ok: false, kind: "conflict" };
   if (error.code === "22023" || error.code === "23514") return { ok: false, kind: "invalid" };
   return { ok: false, kind: "unavailable" };
 }

@@ -642,9 +642,9 @@ test("PRE-W2-HF Project<->Team: grant target validation, OCC, idempotency and in
 
     // OCC: the pair version is now 1; a stale expected version fails closed.
     await expectDenied(async () => grantScope(db, admin,
-      [PROJECT_MAPPED, TEAM_A, 0, null, "stale grant", idemKey("stale")]), "40001");
+      [PROJECT_MAPPED, TEAM_A, 0, null, "stale grant", idemKey("stale")]), "PT409");
     await expectDenied(async () => grantScope(db, admin,
-      [PROJECT_MAPPED, TEAM_A, 5, null, "future grant", idemKey("future")]), "40001");
+      [PROJECT_MAPPED, TEAM_A, 5, null, "future grant", idemKey("future")]), "PT409");
 
     // Overlapping interval for the same pair fails; no residue.
     const before = await count(db, "select count(*)::int from public.direct_entry_project_team_scopes");
@@ -781,7 +781,7 @@ test("PRE-W2-HF Project<->Team: revoke fails closed, keeps PM history, and regra
     // reopened. The same request replays the recorded result; a different key fails
     // because the mapping is already revoked.
     await expectDenied(async () => revokeScope(db, admin,
-      [grant.mapping_id, 99, null, "stale revoke", idemKey("stale-revoke")]), "40001");
+      [grant.mapping_id, 99, null, "stale revoke", idemKey("stale-revoke")]), "PT409");
     const revokePrimaryKey = idemKey("revoke-ok");
     const revoked = await revokeScope(db, admin,
       [grant.mapping_id, 1, null, "revoke mapped project", revokePrimaryKey]);

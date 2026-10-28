@@ -31,6 +31,7 @@ function repoWith(response) {
 
 test("SQLSTATE -> kind, fail-closed voi ma la", () => {
   assert.equal(classifyProjectAdminError({ code: "40001" }), "conflict");
+  assert.equal(classifyProjectAdminError({ code: "PT409" }), "conflict");
   assert.equal(classifyProjectAdminError({ code: "23505" }), "conflict");
   assert.equal(classifyProjectAdminError({ code: "42501" }), "denied");
   assert.equal(classifyProjectAdminError({ code: "P0002" }), "not-found");

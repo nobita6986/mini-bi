@@ -521,7 +521,7 @@ test("DB 1..11: migration #130 drops only direct_entries_check, allows cross-yea
       );
     }
 
-    // DB #5: Stale OCC version is rejected with 40001
+    // DB #5: Stale OCC version is rejected with PT409
     await assert.rejects(
       () =>
         db.query(
@@ -533,7 +533,7 @@ test("DB 1..11: migration #130 drops only direct_entries_check, allows cross-yea
             JSON.stringify({ first_work_date: "2026-10-01" }),
           ],
         ),
-      (error) => error.code === "40001",
+      (error) => error.code === "PT409",
       "DB #5: stale OCC expected_version is rejected",
     );
 
@@ -779,7 +779,7 @@ test("TS/API/UI 1..9: cross-year proposal, single-field direct-edit patch, sanit
     "Invalid calendar date 2026-02-30 is rejected at the API boundary",
   );
 
-  // TS #5 & #6: Duplicate code (23505) -> 409 PRIVILEGED_EDIT_CONFLICT; OCC (40001) -> 409 VERSION_CONFLICT
+  // TS #5 & #6: Duplicate code (23505) -> 409 PRIVILEGED_EDIT_CONFLICT; OCC conflicts -> 409 VERSION_CONFLICT
   const dupClassified = classifyPrivilegedEditError({
     code: "23505",
     message: 'duplicate key value violates unique constraint "direct_entries_employee_code_key"',

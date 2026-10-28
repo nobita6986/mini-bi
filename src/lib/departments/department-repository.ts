@@ -169,7 +169,7 @@ function classifyDepartmentRpcError(
       ? "DEPARTMENT_MEMBERSHIP_NOT_FOUND"
       : "DEPARTMENT_NOT_FOUND";
   }
-  if (error.code === "40001") {
+  if (error.code === "PT409" || error.code === "40001") {
     return "DEPARTMENT_MEMBERSHIP_VERSION_CONFLICT";
   }
   if (error.code === "23505") {

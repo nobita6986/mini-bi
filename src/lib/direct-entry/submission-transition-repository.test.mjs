@@ -66,6 +66,7 @@ test("direct submit and legacy REVIEW targets pass through unchanged", async () 
 
 test("database denial codes are preserved as sanitized kinds", async () => {
   assert.equal(classifySubmissionTransitionError({ code: "40001" }), "conflict");
+  assert.equal(classifySubmissionTransitionError({ code: "PT409" }), "conflict");
   assert.equal(classifySubmissionTransitionError({ code: "23505" }), "conflict");
   assert.equal(classifySubmissionTransitionError({ code: "42501" }), "denied");
   assert.equal(classifySubmissionTransitionError({ code: "P0002" }), "not-found");
@@ -95,6 +96,14 @@ test("DRAFT -> SUBMITTED database denial is never converted into success", async
     error: { code: "40001", message: "invalid submission mutation or stale version" },
   }));
   assert.deepEqual(await repository.transitionSubmission(input({ target_state: "SUBMITTED" })), {
+    ok: false,
+    kind: "conflict",
+  });
+  const pt409Repository = createSubmissionTransitionRepository(async () => ({
+    data: null,
+    error: { code: "PT409", message: "invalid submission mutation or stale version" },
+  }));
+  assert.deepEqual(await pt409Repository.transitionSubmission(input({ target_state: "SUBMITTED" })), {
     ok: false,
     kind: "conflict",
   });

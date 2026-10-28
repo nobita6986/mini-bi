@@ -281,6 +281,7 @@ test("W02C extensibility: a fourth type passes every shape check with no source 
 
 test("W02C SQLSTATE taxonomy is closed and never leaks the raw message", () => {
   assert.equal(classifyLaborTypeCatalogError({ code: "40001" }), "conflict");
+  assert.equal(classifyLaborTypeCatalogError({ code: "PT409" }), "conflict");
   assert.equal(classifyLaborTypeCatalogError({ code: "23505" }), "conflict");
   assert.equal(classifyLaborTypeCatalogError({ code: "42501" }), "denied");
   assert.equal(classifyLaborTypeCatalogError({ code: "P0002" }), "not-found");

@@ -84,7 +84,7 @@ function safeInvalidCode(message: string | undefined): string {
 
 function classify(error: { code?: string; message?: string }): FullProfileRepositoryResult {
   if (error.code === "42501") return { ok: false, kind: "denied" };
-  if (error.code === "40001" ||
+  if (error.code === "PT409" || error.code === "40001" ||
       (error.code === "22023" && error.message === "idempotency key reused with different input")) {
     return { ok: false, kind: "conflict" };
   }

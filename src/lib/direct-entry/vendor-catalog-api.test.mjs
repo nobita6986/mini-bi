@@ -320,6 +320,7 @@ test("detail and set-active validate the path business key and project the respo
 
 test("repository maps SQLSTATE to sanitized kinds and calls the canonical RPCs", async () => {
   assert.equal(classifyVendorCatalogError({ code: "40001" }), "conflict");
+  assert.equal(classifyVendorCatalogError({ code: "PT409" }), "conflict");
   assert.equal(classifyVendorCatalogError({ code: "23505" }), "conflict");
   assert.equal(classifyVendorCatalogError({ code: "42501" }), "denied");
   assert.equal(classifyVendorCatalogError({ code: "P0002" }), "not-found");

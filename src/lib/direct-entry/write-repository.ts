@@ -482,7 +482,7 @@ function classify(
     if (error.code === "42501") return "denied";
     if (operation === "list" && error.code === "54000") return "too-large";
   } else {
-    if (error.code === "40001" || error.code === "23505") return "conflict";
+    if (error.code === "PT409" || error.code === "40001" || error.code === "23505") return "conflict";
     if (error.code === "42501") return "denied";
     if (error.code === "P0002") return "not-found";
     if (operation === "delete" && error.code === "23514") return "final-row";

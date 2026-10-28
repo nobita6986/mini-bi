@@ -651,7 +651,7 @@ test("draft edits merge allowlisted fields, preserve payment, enforce OCC and st
     await assert.rejects(
       update(1, { worker_details: { display_name: "Synthetic stale update" } },
         "draft-edit-stale-950"),
-      (error) => error.code === "40001",
+      (error) => error.code === "PT409",
     );
     assert.deepEqual(await state(), saved, "stale OCC rejection creates no mutation or audit");
     assert.equal((await db.query(
@@ -762,7 +762,7 @@ test("DRAFT employment-status wrapper preserves capability, OCC, audit and DRAFT
     );
     await assert.rejects(
       apply(IDS.auth, IDS.user, 1, "ON", "draft-status-stale-951"),
-      (error) => error.code === "40001",
+      (error) => error.code === "PT409",
     );
     const afterDenied = await db.query(`
       select e.version,
@@ -1692,7 +1692,7 @@ test("migration #37 accepts partial banking metadata and projects it after row a
             "91600000-0000-4000-8000-000000000603",
           ],
         ),
-        (error) => error.code === "40001",
+        (error) => error.code === "PT409",
       );
     } finally {
       await db.exec("rollback;");

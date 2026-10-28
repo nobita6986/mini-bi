@@ -72,7 +72,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function classify(error: { code?: string; message?: string }): WorkReportSubmissionRpcOutcome<never> {
-  if (error.code === "40001" || error.code === "23505") return { ok: false, kind: "conflict" };
+  if (error.code === "PT409" || error.code === "40001" || error.code === "23505") return { ok: false, kind: "conflict" };
   if (error.code === "42501" && error.message?.includes("WORK_REPORT_DEADLINE_PASSED")) {
     return { ok: false, kind: "deadline-passed" };
   }

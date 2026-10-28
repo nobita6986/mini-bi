@@ -36,6 +36,7 @@ const DAY = "2026-02-01";
 test("membership failures retain safe, distinct reasons from database through UI", async () => {
   const cases = [
     ["40001", "recruiter version conflict", 409, "MEMBERSHIP_CONFLICT", "Hồ sơ đã thay đổi"],
+    ["PT409", "recruiter version conflict", 409, "MEMBERSHIP_CONFLICT", "Hồ sơ đã thay đổi"],
     ["23P01", "effective interval overlaps", 409, "MEMBERSHIP_OVERLAP", "Lịch phân công bị trùng"],
     ["22023", "membership already targets this team", 400, "MEMBERSHIP_SAME_TEAM", "đã được phân công vào nhóm này"],
     ["22023", "no open membership to move", 409, "MEMBERSHIP_NOT_MOVABLE", "Không có phân công"],
@@ -350,6 +351,7 @@ test("an invalid recruiter path id is rejected before session", async () => {
 
 test("repository maps SQLSTATE to sanitized kinds and calls the canonical RPCs", async () => {
   assert.equal(classifyTeamMembershipError({ code: "40001" }), "conflict");
+  assert.equal(classifyTeamMembershipError({ code: "PT409" }), "conflict");
   assert.equal(classifyTeamMembershipError({ code: "23P01" }), "overlap");
   assert.equal(classifyTeamMembershipError({ code: "23505" }), "conflict");
   assert.equal(classifyTeamMembershipError({ code: "42501" }), "denied");

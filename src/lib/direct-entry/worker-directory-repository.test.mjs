@@ -108,6 +108,7 @@ test("SQLSTATE classification reuses the shared read/mutation table", () => {
   assert.equal(classifyWorkerDirectoryError({ code: "22023" }), "invalid");
   assert.equal(classifyWorkerDirectoryError({ code: "P0002" }), "not-found");
   assert.equal(classifyWorkerDirectoryError({ code: "40001" }), "conflict");
+  assert.equal(classifyWorkerDirectoryError({ code: "PT409" }), "conflict");
   assert.equal(classifyWorkerDirectoryError({ code: "XX000" }), "unavailable");
   assert.equal(classifyWorkerDirectoryError({}), "unavailable");
 });

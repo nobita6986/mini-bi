@@ -337,7 +337,7 @@ test("approved ENTRY_VOID keeps history, accepts only the named reviewers, and d
       const created = await requestVoid(db, entry, "hf-void-create-" + index);
       assert.equal(created.error, null, "original submitter can request row " + entry.code);
       const duplicatePending = await requestVoid(db, entry, "hf-void-duplicate-" + index);
-      assert.equal(duplicatePending.error.code, "40001", "only one pending void request per row");
+      assert.equal(duplicatePending.error.code, "PT409", "only one pending void request per row");
 
       const selfReview = await decideChangeRequest(db, ACTORS.proposer, created.data.request_id,
         "approve", 1, "self review", "hf-void-self-" + index);

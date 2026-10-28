@@ -34,7 +34,7 @@ function serviceRoleRpc(): Rpc {
 export function classifySubmissionDeleteError(
   error: { code?: string; message?: string },
 ): Exclude<SubmissionDeleteOutcome, { ok: true }>["kind"] {
-  if (error.code === "40001" || error.code === "23505" || error.code === "55000") {
+  if (error.code === "PT409" || error.code === "40001" || error.code === "23505" || error.code === "55000") {
     return "conflict";
   }
   if (error.code === "55P03") return "processing";

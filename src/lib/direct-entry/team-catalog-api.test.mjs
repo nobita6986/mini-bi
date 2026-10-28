@@ -288,6 +288,7 @@ test("detail and set-active validate the path id and project the response", asyn
 
 test("repository maps SQLSTATE to sanitized kinds and calls the canonical RPCs", async () => {
   assert.equal(classifyTeamCatalogError({ code: "40001" }), "conflict");
+  assert.equal(classifyTeamCatalogError({ code: "PT409" }), "conflict");
   assert.equal(classifyTeamCatalogError({ code: "23505" }), "conflict");
   assert.equal(classifyTeamCatalogError({ code: "42501" }), "denied");
   assert.equal(classifyTeamCatalogError({ code: "P0002" }), "not-found");

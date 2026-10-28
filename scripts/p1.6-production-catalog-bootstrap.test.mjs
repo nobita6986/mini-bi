@@ -412,7 +412,7 @@ test("source fingerprint drift rejects apply before any catalog, ledger, reason,
   await db.query(
     "update public.daily_recruitment_breakdown set recruited_count=recruited_count+1",
   );
-  await assert.rejects(apply(db, planned.source_fingerprint), { code: "40001" });
+  await assert.rejects(apply(db, planned.source_fingerprint), { code: "PT409" });
   assert.deepEqual(await counts(db), {
     projects: 0, recruiters: 0, teams: 0, aliases: 0, providers: 0,
     team_memberships: 0, runs: 0, reasons: 0, audits: 0, banks: 0,

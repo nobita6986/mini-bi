@@ -631,7 +631,7 @@ test("6: update changes display_name and sort_order under OCC with one revision"
     p_display_name: "Stale Rename", p_sort_order: 66, p_reason: REASON,
     p_idempotency_key: KEY("08"),
   });
-  assert.equal(stale.code, "40001", "a stale expected_version is a conflict, never a silent write");
+  assert.equal(stale.code, "PT409", "a stale expected_version is a conflict, never a silent write");
 
   const unchanged = await rpcError(db, "direct_entry_update_labor_type", {
     p_auth_subject: OPERATOR_FULL_ADMIN.auth, p_app_user_id: OPERATOR_FULL_ADMIN.app,
@@ -736,7 +736,7 @@ test("8: set-active deactivates and re-activates without ever deleting the row",
   const stale = await setLaborTypeActiveError(db, OPERATOR_FULL_ADMIN, {
     laborTypeKey: "SEASONAL", active: true, expectedVersion: created.version, idempotencyKey: KEY("0e"),
   });
-  assert.equal(stale.code, "40001");
+  assert.equal(stale.code, "PT409");
   const missingFlag = await setLaborTypeActiveError(db, OPERATOR_FULL_ADMIN, {
     laborTypeKey: "SEASONAL", active: null, expectedVersion: off.version, idempotencyKey: KEY("0f"),
   });

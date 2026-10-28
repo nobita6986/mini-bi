@@ -889,26 +889,28 @@ test("PUT /api/admin/attendance/hq-location enforces CSRF, Full Admin-only autho
     assert.equal(replayedRes.status, 200);
     assert.equal((await replayedRes.json()).replayed, true);
 
-    const occConflictRes = await putAttendanceHqLocation(
-      makePutRequest({
-        latitude: 21.028511,
-        longitude: 105.804817,
-        expected_version: 0,
-        idempotency_key: IDEMPOTENCY_KEY,
-      }),
-      {
-        resolveSession: async () => makeSessionOk(FULL_ADMIN_CAPS, ALL_SCOPE),
-        repository: createRepo(async () => ({
-          data: null,
-          error: { code: "40001", message: "ATTENDANCE_HQ_VERSION_CONFLICT" },
-        })),
-      },
-    );
-    assert.equal(occConflictRes.status, 409);
-    assert.deepEqual(await occConflictRes.json(), {
-      ok: false,
-      code: "ATTENDANCE_HQ_VERSION_CONFLICT",
-    });
+    for (const sqlstate of ["40001", "PT409"]) {
+      const occConflictRes = await putAttendanceHqLocation(
+        makePutRequest({
+          latitude: 21.028511,
+          longitude: 105.804817,
+          expected_version: 0,
+          idempotency_key: IDEMPOTENCY_KEY,
+        }),
+        {
+          resolveSession: async () => makeSessionOk(FULL_ADMIN_CAPS, ALL_SCOPE),
+          repository: createRepo(async () => ({
+            data: null,
+            error: { code: sqlstate, message: "ATTENDANCE_HQ_VERSION_CONFLICT" },
+          })),
+        },
+      );
+      assert.equal(occConflictRes.status, 409);
+      assert.deepEqual(await occConflictRes.json(), {
+        ok: false,
+        code: "ATTENDANCE_HQ_VERSION_CONFLICT",
+      });
+    }
 
     const idemConflictRes = await putAttendanceHqLocation(
       makePutRequest({

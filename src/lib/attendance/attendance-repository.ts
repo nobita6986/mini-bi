@@ -104,7 +104,7 @@ function classifyRpcError(error: { code?: string; message?: string }): Attendanc
   if (error.code === "42501") {
     return "ACTOR_NOT_AVAILABLE";
   }
-  if (error.code === "40001") {
+  if (error.code === "PT409" || error.code === "40001") {
     return "IDEMPOTENCY_CONFLICT";
   }
   if (error.code === "22023" || error.code === "23514") {
