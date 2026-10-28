@@ -351,6 +351,7 @@ export async function handleGetLeaveAdminConfig(
     search: parsed.search,
     limit: parsed.limit,
     offset: parsed.offset,
+    account_status: parsed.account_status,
   });
   if (!outcome.ok) return leaveError(outcome.code);
   return leaveOk(outcome.data);

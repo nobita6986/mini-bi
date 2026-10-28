@@ -5,6 +5,7 @@ import type {
   ApplyOpeningBatchInput,
   CreateLeaveRequestInput,
   DecideLeaveRequestInput,
+  LeaveAdminAccountStatusFilter,
   LeaveErrorCode,
   LeaveRequestStatusFilter,
   PatchAdminConfigInput,
@@ -144,6 +145,7 @@ export type LeaveRepository = {
       search: string | null;
       limit: number;
       offset: number;
+      account_status: LeaveAdminAccountStatusFilter;
     },
   ): Promise<LeaveRepoResult>;
 
@@ -253,6 +255,7 @@ export function createLeaveRepository(
         p_search: input.search,
         p_limit: input.limit,
         p_offset: input.offset,
+        p_account_status: input.account_status,
       });
     },
 

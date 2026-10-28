@@ -247,6 +247,10 @@ export const LEAVE_MANAGEMENT_WP1_RPC_SIGNATURES = Object.freeze([
   "public.leave_management_apply_opening_batch(uuid, uuid, integer, jsonb, text, text, text)",
   "public.leave_management_monthly_report(uuid, uuid, text, text, text, integer, integer)",
 ]);
+export const LEAVE_ADMIN_ACCOUNT_STATUS_FILTER_MIGRATION_NAME =
+  "20261028130000_hf_leave_admin_account_status_filter.sql";
+export const LEAVE_ADMIN_ACCOUNT_STATUS_FILTER_RPC_SIGNATURE =
+  "public.leave_management_get_admin_overview(uuid, uuid, text, integer, integer, text)";
 export const F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES = Object.freeze([
   "public.work_report_list_templates(uuid, uuid)",
   "public.work_report_get_template(uuid, uuid, uuid)",
@@ -480,7 +484,8 @@ export async function verifyS0T1CHistoricalCompatibility(
     cccdReviewManualResolutionApplied = false,
     workReportsAndroidSyncAndUxApplied = false,
     adminLinkExistingPersonnelAccountApplied = false,
-    leaveManagementWp1Applied = false } = {},
+    leaveManagementWp1Applied = false,
+    leaveAdminAccountStatusFilterApplied = false } = {},
 ) {
   const baseAllowlist = extractS0T1CAllowlistSignatures(migrationSql);
   if (baseAllowlist.length === 0) {
@@ -541,6 +546,9 @@ export async function verifyS0T1CHistoricalCompatibility(
       : []),
     ...(leaveManagementWp1Applied
       ? LEAVE_MANAGEMENT_WP1_RPC_SIGNATURES
+      : []),
+    ...(leaveAdminAccountStatusFilterApplied
+      ? [LEAVE_ADMIN_ACCOUNT_STATUS_FILTER_RPC_SIGNATURE]
       : []),
   ];
 
@@ -780,6 +788,8 @@ export async function verifyAppliedMigrationChecksum(
           appliedMap.has(ADMIN_LINK_EXISTING_PERSONNEL_ACCOUNT_MIGRATION_NAME),
         leaveManagementWp1Applied:
           appliedMap.has(LEAVE_MANAGEMENT_WP1_MIGRATION_NAME),
+        leaveAdminAccountStatusFilterApplied:
+          appliedMap.has(LEAVE_ADMIN_ACCOUNT_STATUS_FILTER_MIGRATION_NAME),
       },
     );
     if (postconditions.ok) {

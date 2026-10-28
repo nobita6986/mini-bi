@@ -53,6 +53,7 @@ import { PGlite } from "@electric-sql/pglite";
 import {
   LEAVE_MANAGEMENT_WP1_MIGRATION_NAME,
   LEAVE_MANAGEMENT_WP1_RPC_SIGNATURES,
+  LEAVE_ADMIN_ACCOUNT_STATUS_FILTER_RPC_SIGNATURE,
 } from "./lib/migration-validation.mjs";
 import { AUTH_PROLOGUE } from "./lib/s04c-read-fixture.mjs";
 
@@ -150,6 +151,12 @@ const ACTORS = {
     email: "unconfigured@company.local",
     name: "Nhân Viên Chưa Cấu Hình Hồ Sơ",
   },
+  inactiveAccount: {
+    auth: "19000000-0000-4000-8000-000000000014",
+    app: "29000000-0000-4000-8000-000000000014",
+    email: "inactive@company.local",
+    name: "Tài Khoản Đã Ngừng",
+  },
 };
 
 async function loadMigrations() {
@@ -211,6 +218,10 @@ test("Leave Management WP1 full PGlite integration & business rule verification"
       [actor.app, actor.auth, actor.name],
     );
   }
+  await db.query(
+    "update public.direct_entry_app_users set enabled = false where app_user_id = $1",
+    [ACTORS.inactiveAccount.app],
+  );
 
   // Grant Full Admin capabilities + all scope
   for (const cap of [
@@ -323,6 +334,17 @@ test("Leave Management WP1 full PGlite integration & business rule verification"
     assert.equal(rows[0].auth, false, `${sig} must not be executable by authenticated`);
     assert.equal(rows[0].anon, false, `${sig} must not be executable by anon`);
   }
+  {
+    const { rows } = await db.query(
+      `select pg_catalog.has_function_privilege('service_role', $1::regprocedure, 'EXECUTE') as srv,
+              pg_catalog.has_function_privilege('authenticated', $1::regprocedure, 'EXECUTE') as auth,
+              pg_catalog.has_function_privilege('anon', $1::regprocedure, 'EXECUTE') as anon`,
+      [LEAVE_ADMIN_ACCOUNT_STATUS_FILTER_RPC_SIGNATURE],
+    );
+    assert.equal(rows[0].srv, true, "filtered leave admin overview is executable by service_role");
+    assert.equal(rows[0].auth, false, "filtered leave admin overview is not executable by authenticated");
+    assert.equal(rows[0].anon, false, "filtered leave admin overview is not executable by anon");
+  }
 
   // Set business date to 2026-03-15 (Month 3)
   await setBusinessDate(db, "2026-03-15");
@@ -341,6 +363,49 @@ test("Leave Management WP1 full PGlite integration & business rule verification"
       await db.exec("reset role");
     }
   }
+
+  const activeAccounts = await rpc("leave_management_get_admin_overview", [
+    ACTORS.fullAdmin.auth,
+    ACTORS.fullAdmin.app,
+    null,
+    1,
+    0,
+    "ACTIVE",
+  ]);
+  const inactiveAccounts = await rpc("leave_management_get_admin_overview", [
+    ACTORS.fullAdmin.auth,
+    ACTORS.fullAdmin.app,
+    null,
+    100,
+    0,
+    "INACTIVE",
+  ]);
+  const allAccounts = await rpc("leave_management_get_admin_overview", [
+    ACTORS.fullAdmin.auth,
+    ACTORS.fullAdmin.app,
+    null,
+    100,
+    0,
+    "ALL",
+  ]);
+  assert.ok(activeAccounts.total_employees > 0);
+  assert.equal(activeAccounts.employees.length, 1, "limit applies after the active-account filter");
+  assert.equal(
+    activeAccounts.total_employees + inactiveAccounts.total_employees,
+    allAccounts.total_employees,
+    "status-specific totals add up to the unfiltered total",
+  );
+  assert.deepEqual(
+    inactiveAccounts.employees.map((row) => row.account.app_user_id),
+    [ACTORS.inactiveAccount.app],
+    "inactive filter returns the disabled account",
+  );
+  assert.equal(inactiveAccounts.employees[0].account.account_enabled, false);
+  assert.equal(
+    allAccounts.employees.some((row) => row.account.app_user_id === ACTORS.inactiveAccount.app),
+    true,
+    "ALL filter retains disabled accounts for history and administration",
+  );
 
   // 2. Verify append-only immutability triggers on audit/revision tables
   await assert.rejects(

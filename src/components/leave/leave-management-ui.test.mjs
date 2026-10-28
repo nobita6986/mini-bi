@@ -91,6 +91,8 @@ test("WP2 Approver Inbox surface supports status filters and APPROVE / REJECT / 
 test("WP2 Admin & HR Config surface covers employee profiles, seniority milestone, department approvers, policy, and mandatory preview-before-apply opening balances", () => {
   assert.ok(workspaceSource.includes('data-testid="leave-tab-admin"'));
   assert.ok(workspaceSource.includes('data-testid="leave-admin-profiles-section"'));
+  assert.ok(workspaceSource.includes('data-testid="leave-admin-account-status-filter"'));
+  assert.ok(workspaceSource.includes('account_status: accountStatus'));
   assert.ok(workspaceSource.includes('data-testid="leave-admin-policy-section"'));
   assert.ok(workspaceSource.includes('data-testid="leave-admin-opening-section"'));
   assert.ok(workspaceSource.includes("UPSERT_EMPLOYEE_PROFILE"));

@@ -19,11 +19,12 @@ import {
   parseApplyOpeningBatchBody,
   parseCreateLeaveRequestBody,
   parseDecideLeaveRequestBody,
+  parseGetAdminOverviewQuery,
   parseMonthlyReportQuery,
   parseMyLeaveSummaryQuery,
   parsePatchAdminConfigBody,
 } from "./leave-contract.ts";
-import { mapLeaveRpcError } from "./leave-repository.ts";
+import { createLeaveRepository, mapLeaveRpcError } from "./leave-repository.ts";
 
 const ACTOR_AUTH = "00000000-0000-4000-8000-000000000101";
 const ACTOR_APP = "00000000-0000-4000-8000-000000000201";
@@ -159,6 +160,23 @@ test("leave-contract parsers validate inputs and build deterministic fingerprint
     new URL("https://bi.example.com/api/leave/me?actor=123"),
   );
   assert.deepEqual(badSummaryQuery, { ok: false, code: "INVALID_QUERY" });
+
+  assert.deepEqual(
+    parseGetAdminOverviewQuery(new URL("https://bi.example.com/api/leave/admin/config")),
+    { ok: true, search: null, limit: 100, offset: 0, account_status: "ACTIVE" },
+  );
+  assert.deepEqual(
+    parseGetAdminOverviewQuery(
+      new URL("https://bi.example.com/api/leave/admin/config?account_status=INACTIVE&limit=25"),
+    ),
+    { ok: true, search: null, limit: 25, offset: 0, account_status: "INACTIVE" },
+  );
+  assert.deepEqual(
+    parseGetAdminOverviewQuery(
+      new URL("https://bi.example.com/api/leave/admin/config?account_status=invalid"),
+    ),
+    { ok: false, code: "INVALID_QUERY" },
+  );
 
   const createParsed1 = parseCreateLeaveRequestBody({
     idempotency_key: "idem-001",
@@ -411,9 +429,38 @@ test("leave-api enforces feature gate, rejects disallowed authority headers, and
   assert.equal(csrfBody.code, "CSRF_ORIGIN_MISMATCH");
 });
 
+test("leave admin account status filter reaches the overview RPC", async () => {
+  let capturedRpc = null;
+  const repository = createLeaveRepository(async (fn, args) => {
+    capturedRpc = { fn, args };
+    return { data: { total_employees: 0, employees: [] }, error: null };
+  });
+
+  const result = await repository.getAdminOverview({
+    auth_subject: ACTOR_AUTH,
+    app_user_id: ACTOR_APP,
+    search: null,
+    limit: 25,
+    offset: 0,
+    account_status: "INACTIVE",
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(capturedRpc.fn, "leave_management_get_admin_overview");
+  assert.deepEqual(capturedRpc.args, {
+    p_actor_auth_subject: ACTOR_AUTH,
+    p_actor_app_user_id: ACTOR_APP,
+    p_search: null,
+    p_limit: 25,
+    p_offset: 0,
+    p_account_status: "INACTIVE",
+  });
+});
+
 test("leave-api passes session-resolved actor to repository and maps status codes accurately", async () => {
   let capturedSummaryInput = null;
   let capturedCreateInput = null;
+  const capturedAdminOverviewInputs = [];
 
   const deps = {
     resolveSession: mockActiveSession(),
@@ -428,6 +475,10 @@ test("leave-api passes session-resolved actor to repository and maps status code
           ok: true,
           data: { replayed: false, request: { request_id: REQ_ID } },
         };
+      },
+      async getAdminOverview(input) {
+        capturedAdminOverviewInputs.push(input);
+        return { ok: true, data: { total_employees: 0, employees: [] } };
       },
     }),
   };
@@ -464,6 +515,23 @@ test("leave-api passes session-resolved actor to repository and maps status code
   assert.equal(createRes.status, 201);
   assert.equal(capturedCreateInput.auth_subject, ACTOR_AUTH);
   assert.equal(capturedCreateInput.app_user_id, ACTOR_APP);
+
+  const adminGetRes = await handleGetLeaveAdminConfig(
+    new Request("https://bi.example.com/api/leave/admin/config"),
+    "true",
+    deps,
+  );
+  assert.equal(adminGetRes.status, 200);
+  const inactiveAdminGetRes = await handleGetLeaveAdminConfig(
+    new Request("https://bi.example.com/api/leave/admin/config?account_status=INACTIVE"),
+    "true",
+    deps,
+  );
+  assert.equal(inactiveAdminGetRes.status, 200);
+  assert.deepEqual(
+    capturedAdminOverviewInputs.map((input) => input.account_status),
+    ["ACTIVE", "INACTIVE"],
+  );
 
   assert.equal(
     mapLeaveRpcError({ code: "23505", message: "LEAVE_REQUEST_OVERLAP" }),
