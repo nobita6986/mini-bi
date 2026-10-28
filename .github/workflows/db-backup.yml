@@ -13,6 +13,9 @@ concurrency:
   group: bi-production-db-backup
   cancel-in-progress: false
 
+env:
+  SUPABASE_CLI_VERSION: "2.121.0"
+
 jobs:
   backup:
     name: Read-only backup to R2
@@ -20,6 +23,11 @@ jobs:
     timeout-minutes: 45
 
     steps:
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: 2.121.0
+
       - name: Create and validate PostgreSQL backup
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
@@ -32,31 +40,135 @@ jobs:
             exit 1
           fi
 
+          cli_version="$(supabase --version)"
+          if [[ "$cli_version" != "$SUPABASE_CLI_VERSION" ]]; then
+            echo "::error::Unexpected Supabase CLI version: expected ${SUPABASE_CLI_VERSION}, got ${cli_version}."
+            exit 1
+          fi
+
           timestamp="$(TZ=Asia/Bangkok date +'%Y-%m-%d_%H-%M-%S%z')"
-          backup_file="bi-db-${timestamp}.dump"
-          object_key="production/6h/${timestamp:0:10}/${backup_file}"
+          backup_timestamp="$(TZ=Asia/Bangkok date +'%Y-%m-%dT%H:%M:%S%:z')"
+          date_dir="${timestamp:0:10}"
+          object_prefix="production/6h/${date_dir}/${timestamp}"
 
-          docker run --rm \
-            -e DATABASE_URL="$SUPABASE_DB_URL" \
-            -e PGOPTIONS \
-            -v "$PWD:/backup" \
-            postgres:17 \
-            sh -ceu '
-              pg_dump "$DATABASE_URL" \
-                --format=custom \
-                --compress=6 \
-                --no-owner \
-                --no-privileges \
-                --lock-wait-timeout=10s \
-                --file="/backup/$1"
-              pg_restore --list "/backup/$1" >/dev/null
-            ' -- "$backup_file"
+          supabase db dump \
+            --db-url "$SUPABASE_DB_URL" \
+            -f roles.sql \
+            --role-only
 
-          test -s "$backup_file"
-          echo "BACKUP_FILE=$backup_file" >> "$GITHUB_ENV"
-          echo "R2_OBJECT_KEY=$object_key" >> "$GITHUB_ENV"
+          supabase db dump \
+            --db-url "$SUPABASE_DB_URL" \
+            -f schema.sql
 
-      - name: Upload backup and verify object size
+          supabase db dump \
+            --db-url "$SUPABASE_DB_URL" \
+            -f data.sql \
+            --use-copy \
+            --data-only \
+            -x "storage.buckets_vectors" \
+            -x "storage.vector_indexes"
+
+          for file in roles.sql schema.sql data.sql; do
+            if [[ ! -s "$file" ]]; then
+              echo "::error::Backup file ${file} is missing or empty."
+              exit 1
+            fi
+          done
+
+          if ! grep -Fq "direct_entry_catalog_bootstrap_executor" roles.sql; then
+            echo "::error::roles.sql is missing required custom role direct_entry_catalog_bootstrap_executor."
+            exit 1
+          fi
+
+          if ! grep -Eq '^(GRANT|REVOKE) ' schema.sql; then
+            echo "::error::schema.sql does not contain ACL/GRANT statements."
+            exit 1
+          fi
+
+          if ! grep -Eq '^COPY ("auth"\."users"|auth\.users)\b' data.sql && ! grep -Eq 'INTO ("auth"\."users"|auth\.users)\b' data.sql; then
+            echo "::error::data.sql does not contain data or COPY statement for auth.users."
+            exit 1
+          fi
+
+          sha256sum roles.sql schema.sql data.sql > SHA256SUMS
+          sha256sum --check --status SHA256SUMS
+
+          roles_size="$(stat -c %s roles.sql)"
+          schema_size="$(stat -c %s schema.sql)"
+          data_size="$(stat -c %s data.sql)"
+          sums_size="$(stat -c %s SHA256SUMS)"
+
+          roles_sha256="$(awk '$2 == "roles.sql" { print $1 }' SHA256SUMS)"
+          schema_sha256="$(awk '$2 == "schema.sql" { print $1 }' SHA256SUMS)"
+          data_sha256="$(awk '$2 == "data.sql" { print $1 }' SHA256SUMS)"
+          sums_sha256="$(sha256sum SHA256SUMS | awk '{ print $1 }')"
+
+          jq -n \
+            --arg backup_timestamp "$backup_timestamp" \
+            --arg timezone "Asia/Bangkok" \
+            --arg supabase_cli_version "$SUPABASE_CLI_VERSION" \
+            --arg object_prefix "$object_prefix" \
+            --argjson roles_size "$roles_size" \
+            --arg roles_sha256 "$roles_sha256" \
+            --argjson schema_size "$schema_size" \
+            --arg schema_sha256 "$schema_sha256" \
+            --argjson data_size "$data_size" \
+            --arg data_sha256 "$data_sha256" \
+            --argjson sums_size "$sums_size" \
+            --arg sums_sha256 "$sums_sha256" \
+            '{
+              backup_timestamp: $backup_timestamp,
+              timezone: $timezone,
+              supabase_cli_version: $supabase_cli_version,
+              object_prefix: $object_prefix,
+              restore_order: [
+                "roles.sql",
+                "schema.sql",
+                "data.sql"
+              ],
+              files: [
+                {
+                  name: "roles.sql",
+                  size_bytes: $roles_size,
+                  sha256: $roles_sha256
+                },
+                {
+                  name: "schema.sql",
+                  size_bytes: $schema_size,
+                  sha256: $schema_sha256
+                },
+                {
+                  name: "data.sql",
+                  size_bytes: $data_size,
+                  sha256: $data_sha256
+                },
+                {
+                  name: "SHA256SUMS",
+                  size_bytes: $sums_size,
+                  sha256: $sums_sha256
+                }
+              ]
+            }' > manifest.json
+
+          for file in roles.sql schema.sql data.sql SHA256SUMS manifest.json; do
+            if [[ ! -s "$file" ]]; then
+              echo "::error::Generated file ${file} is missing or empty."
+              exit 1
+            fi
+            if grep -Fq "$SUPABASE_DB_URL" "$file"; then
+              echo "::error::File ${file} unexpectedly contains the database connection string."
+              exit 1
+            fi
+          done
+
+          if grep -Eiq '(postgres(ql)?://|password|api[_-]?key|secret|token)' manifest.json; then
+            echo "::error::manifest.json contains forbidden credential patterns."
+            exit 1
+          fi
+
+          echo "R2_OBJECT_PREFIX=$object_prefix" >> "$GITHUB_ENV"
+
+      - name: Upload backup and verify object sizes
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -66,32 +178,48 @@ jobs:
         run: |
           set -Eeuo pipefail
 
-          for name in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY R2_ACCOUNT_ID R2_BUCKET_NAME; do
+          for name in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY R2_ACCOUNT_ID R2_BUCKET_NAME R2_OBJECT_PREFIX; do
             if [[ -z "${!name:-}" ]]; then
-              echo "::error::Repository secret $name is not configured."
+              echo "::error::Required configuration ${name} is not set."
               exit 1
             fi
           done
 
           endpoint="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
-          local_size="$(stat -c %s "$BACKUP_FILE")"
 
-          aws s3 cp \
-            "$BACKUP_FILE" \
-            "s3://${R2_BUCKET_NAME}/${R2_OBJECT_KEY}" \
-            --endpoint-url "$endpoint" \
-            --only-show-errors
+          upload_and_verify() {
+            local file="$1"
+            local object_key="${R2_OBJECT_PREFIX}/${file}"
+            local local_size
+            local remote_size
 
-          remote_size="$(aws s3api head-object \
-            --bucket "$R2_BUCKET_NAME" \
-            --key "$R2_OBJECT_KEY" \
-            --endpoint-url "$endpoint" \
-            --query ContentLength \
-            --output text)"
+            local_size="$(stat -c %s "$file")"
 
-          if [[ "$local_size" != "$remote_size" ]]; then
-            echo "::error::Uploaded object size does not match the local backup."
-            exit 1
-          fi
+            aws s3 cp \
+              "$file" \
+              "s3://${R2_BUCKET_NAME}/${object_key}" \
+              --endpoint-url "$endpoint" \
+              --only-show-errors
 
-          echo "Backup uploaded and verified: s3://${R2_BUCKET_NAME}/${R2_OBJECT_KEY}"
+            remote_size="$(aws s3api head-object \
+              --bucket "$R2_BUCKET_NAME" \
+              --key "$object_key" \
+              --endpoint-url "$endpoint" \
+              --query ContentLength \
+              --output text)"
+
+            if [[ "$local_size" != "$remote_size" ]]; then
+              echo "::error::Uploaded object size mismatch for ${object_key} (local=${local_size}, remote=${remote_size})."
+              exit 1
+            fi
+
+            echo "Uploaded and verified: ${object_key} (${local_size} bytes)"
+          }
+
+          for file in roles.sql schema.sql data.sql SHA256SUMS; do
+            upload_and_verify "$file"
+          done
+
+          upload_and_verify "manifest.json"
+
+          echo "Backup completed and verified: prefix=${R2_OBJECT_PREFIX}/ (5 objects)"
