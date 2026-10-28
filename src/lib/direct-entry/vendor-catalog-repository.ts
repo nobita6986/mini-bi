@@ -63,7 +63,7 @@ function serviceRoleRpc(): Rpc {
 
 /**
  * SQLSTATE -> kind. Chi nhan cac ma RPC #75 thuc su dung:
- *   40001 OCC stale (vendor version)
+ *   PT409/40001 OCC stale (vendor version)
  *   23505 vendor_id trung (unique) hoac idempotency key
  *   42501 catalog operator / all scope denied
  *   P0002 vendor not found hoac reserved __system_vendor__
@@ -74,7 +74,7 @@ function serviceRoleRpc(): Rpc {
 export function classifyVendorCatalogError(
   error: { code?: string; message?: string },
 ): VendorCatalogErrorKind {
-  if (error.code === "40001" || error.code === "23505") return "conflict";
+  if (error.code === "PT409" || error.code === "40001" || error.code === "23505") return "conflict";
   if (error.code === "42501") return "denied";
   if (error.code === "P0002") return "not-found";
   if (error.code === "23514") return "invalid";

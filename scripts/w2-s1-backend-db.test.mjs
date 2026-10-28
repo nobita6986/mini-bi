@@ -365,7 +365,7 @@ test("portrait enrollment stages enforce owner, MIME, replay, cancellation and a
       "retry after losing the original response returns the same stage");
     await assert.rejects(
       rpc(uploadActor, "b7000000-0000-4000-8000-000000000004", "d".repeat(64)),
-      (error) => error.code === "40001",
+      (error) => error.code === "PT409",
       "reusing a key with a different checksum conflicts");
 
     const otherActor = {
@@ -410,7 +410,7 @@ test("portrait enrollment stages enforce owner, MIME, replay, cancellation and a
       "select public.direct_entry_claim_worker_portrait_stage($1::uuid,$2::uuid,$3::uuid,'different-key')",
       [ACTORS.owner.auth_subject, ACTORS.owner.app_user_id, stageId],
     ),
-    (error) => error.code === "40001",
+    (error) => error.code === "PT409",
     "a stage cannot be replayed into a second batch",
   );
   assert.equal((await db.query(
@@ -476,7 +476,7 @@ test("portrait enrollment stages enforce owner, MIME, replay, cancellation and a
       "select public.direct_entry_cancel_worker_portrait_stage($1::uuid,$2::uuid,$3::uuid)",
       [ACTORS.owner.auth_subject, ACTORS.owner.app_user_id, attachmentStageId],
     ),
-    (error) => error.code === "40001",
+    (error) => error.code === "PT409",
     "an attached portrait cannot be cancelled as an orphan",
   );
   assert.equal((await db.query(
@@ -559,7 +559,7 @@ test("portrait enrollment stages enforce owner, MIME, replay, cancellation and a
       "select public.direct_entry_recover_worker_portrait_stage($1::uuid,$2::uuid,$3::uuid)",
       [ACTORS.owner.auth_subject, ACTORS.owner.app_user_id, incompleteStage],
     ),
-    (error) => error.code === "40001",
+    (error) => error.code === "PT409",
     "an idempotency record with an incomplete result fails closed",
   );
   assert.equal((await db.query(
@@ -644,7 +644,7 @@ test("portrait enrollment stages enforce owner, MIME, replay, cancellation and a
         entryId, existingPortrait.document_id,
       ],
     ),
-    (error) => error.code === "40001",
+    (error) => error.code === "PT409",
     "completion rejects a document whose size differs from the staged object",
   );
 
@@ -670,7 +670,7 @@ test("portrait enrollment stages enforce owner, MIME, replay, cancellation and a
         entryId, existingPortrait.document_id,
       ],
     ),
-    (error) => error.code === "40001",
+    (error) => error.code === "PT409",
     "completion rejects a document whose checksum differs from the staged object",
   );
 
@@ -696,7 +696,7 @@ test("portrait enrollment stages enforce owner, MIME, replay, cancellation and a
         fixture.submitted.entryIds[0], existingPortrait.document_id,
       ],
     ),
-    (error) => error.code === "40001",
+    (error) => error.code === "PT409",
     "completion rejects a portrait document attached to a different entry",
   );
 });

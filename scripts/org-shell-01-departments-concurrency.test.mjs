@@ -4,15 +4,15 @@
  * Proves against isolated local PostgreSQL (`initdb` + `pg_ctl`, zero remote DB):
  *   1. Deterministic lock-hold race: two Full Admins concurrently assigning the same
  *      user to `ACCOUNTING` serialize cleanly; strictly 1 wins (`version = 1`), the
- *      contender rejects with `40001` (`DEPARTMENT_MEMBERSHIP_VERSION_CONFLICT`), and
+ *      contender rejects with `PT409` (`DEPARTMENT_MEMBERSHIP_VERSION_CONFLICT`), and
  *      active row count never exceeds 1.
  *   2. Parallel burst race: 4 concurrent connections racing `assign` on a fresh user
- *      produce strictly 1 winner and 3 `40001` conflicts, 1 active row, 1 audit row.
+ *      produce strictly 1 winner and 3 `PT409` conflicts, 1 active row, 1 audit row.
  *   3. Concurrent idempotent retry: 2 concurrent calls with the same `(actor, key, fp)`
  *      serialize cleanly, create 1 membership + 1 audit row, and replay the identical
  *      `membership_id` (`replayed: true`).
  *   4. Concurrent `end` race & `end` vs `assign` race: strictly 1 `end` wins (`version = 2`),
- *      contender rejects (`40001`), zero deadlocks, and active rows per user <= 1 at all times.
+ *      contender rejects (`PT409`), zero deadlocks, and active rows per user <= 1 at all times.
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -282,8 +282,8 @@ test("ORG-SHELL-01 real PostgreSQL concurrency: concurrent assign, burst, idempo
 
     await assert.rejects(
       blockedAssign,
-      (err) => err.code === "40001",
-      "contending assign must reject with 40001 once winner commits",
+      (err) => err.code === "PT409",
+      "contending assign must reject with PT409 once winner commits",
     );
     await worker2.query("rollback");
 
@@ -326,7 +326,7 @@ test("ORG-SHELL-01 real PostgreSQL concurrency: concurrent assign, burst, idempo
     assert.equal(burstFulfilled.length, 1, "strictly 1 parallel assign must win");
     assert.equal(burstRejected.length, 3, "other 3 parallel assigns must reject");
     for (const r of burstRejected) {
-      assert.equal(r.reason.code, "40001");
+      assert.equal(r.reason.code, "PT409");
     }
 
     // -------------------------------------------------------------------------
@@ -433,8 +433,8 @@ test("ORG-SHELL-01 real PostgreSQL concurrency: concurrent assign, burst, idempo
 
     await assert.rejects(
       blockedEnd,
-      (err) => err.code === "40001",
-      "losing concurrent end must reject with 40001",
+      (err) => err.code === "PT409",
+      "losing concurrent end must reject with PT409",
     );
     await worker2.query("rollback");
 

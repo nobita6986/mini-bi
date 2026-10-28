@@ -1452,7 +1452,7 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
           const rejected = settled.filter((r) => r.status === "rejected");
           assert.equal(fulfilled.length, 1, "exactly one concurrent self-withdraw succeeds on a 2-row duplicate pair");
           assert.equal(rejected.length, 1, "the second concurrent self-withdraw fails closed");
-          assert.equal(rejected[0].reason?.code, "40001");
+          assert.equal(rejected[0].reason?.code, "PT409");
           assert.match(String(rejected[0].reason?.message), /not an active duplicate/i);
 
           const { rows: survivors } = await client.query(

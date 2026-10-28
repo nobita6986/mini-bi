@@ -85,7 +85,7 @@ function classifyReviewError(error: { code?: string; message?: string }): {
 } {
   if (error.code === "42501") return { kind: "denied" };
   if (error.code === "P0002") return { kind: "not-found" };
-  if (error.code === "40001") return { kind: "conflict" };
+  if (error.code === "PT409" || error.code === "40001") return { kind: "conflict" };
   if (error.code === "23505") {
     if (error.message === "worker_active_episode_exists") {
       return { kind: "invalid", error_code: "WORKER_ACTIVE_EPISODE_EXISTS" };

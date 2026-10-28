@@ -139,6 +139,6 @@ test("R2 mutation reuses W03A lifecycle, returns replay-safe state and does not 
   assert.equal(enabled.change, "enable");
   const replay = (await rows(database, "select public.direct_entry_enable_app_user($1::uuid,$2::uuid,$3::uuid,$4::integer,$5::text,$6::text) as result", [ADMIN_AUTH, ADMIN_APP, DISABLED_ADMIN_APP, 1, REASON, "r2-enable"]))[0].result;
   assert.deepEqual(replay, enabled);
-  await denied(rows(database, "select public.direct_entry_disable_app_user($1::uuid,$2::uuid,$3::uuid,$4::integer,$5::text,$6::text)", [ADMIN_AUTH, ADMIN_APP, DISABLED_ADMIN_APP, 1, REASON, "r2-stale"]), "40001");
+  await denied(rows(database, "select public.direct_entry_disable_app_user($1::uuid,$2::uuid,$3::uuid,$4::integer,$5::text,$6::text)", [ADMIN_AUTH, ADMIN_APP, DISABLED_ADMIN_APP, 1, REASON, "r2-stale"]), "PT409");
   await database.close();
 });

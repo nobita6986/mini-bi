@@ -885,7 +885,7 @@ test("Attendance Admin Report SQL enforces ACL/immutability, role matrix, HQ rev
           longitude: HQ_HANOI.longitude,
           expected_version: 1,
         }),
-      (err) => err.code === "40001" && String(err.message).includes("ATTENDANCE_HQ_VERSION_CONFLICT"),
+      (err) => err.code === "PT409" && String(err.message).includes("ATTENDANCE_HQ_VERSION_CONFLICT"),
     );
 
     // Phase 1: Full Admin configures HQ v1 (Hanoi)
@@ -966,7 +966,7 @@ test("Attendance Admin Report SQL enforces ACL/immutability, role matrix, HQ rev
 
     await sleep(50);
 
-    // Stale expected_version = 0 when current is 1 -> 40001 ATTENDANCE_HQ_VERSION_CONFLICT
+    // Stale expected_version = 0 when current is 1 -> PT409 ATTENDANCE_HQ_VERSION_CONFLICT
     await assert.rejects(
       () =>
         callSetHqAsServiceRole(db, {
@@ -976,7 +976,7 @@ test("Attendance Admin Report SQL enforces ACL/immutability, role matrix, HQ rev
           longitude: HQ_HCMC.longitude,
           expected_version: 0,
         }),
-      (err) => err.code === "40001" && String(err.message).includes("ATTENDANCE_HQ_VERSION_CONFLICT"),
+      (err) => err.code === "PT409" && String(err.message).includes("ATTENDANCE_HQ_VERSION_CONFLICT"),
     );
 
     // Phase 2: Full Admin updates HQ to v2 (Ho Chi Minh City, ~1,140 km away)

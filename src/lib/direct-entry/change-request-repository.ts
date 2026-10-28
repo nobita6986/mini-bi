@@ -36,7 +36,7 @@ export type ChangeRequestOutcome<T> =
   | { ok: false; kind: "conflict" | "denied" | "invalid" | "not-found" | "unavailable" };
 
 /**
- * Cung mot bang phan loai SQLSTATE voi S01A (40001/23505 conflict, 42501 denied, P0002 not-found,
+ * Cung mot bang phan loai SQLSTATE voi S01A (PT409/40001/23505 conflict, 42501 denied, P0002 not-found,
  * 23514/22023 invalid tru khi message la idempotency reuse-khac-payload). Tai su dung thay vi
  * viet bang thu hai de hai boundary khong the lech nhau.
  */

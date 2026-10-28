@@ -469,6 +469,8 @@ test("leave-api passes session-resolved actor to repository and maps status code
     mapLeaveRpcError({ code: "23505", message: "LEAVE_REQUEST_OVERLAP" }),
     "LEAVE_REQUEST_OVERLAP",
   );
+  assert.equal(mapLeaveRpcError({ code: "40001" }), "LEAVE_ROW_VERSION_CONFLICT");
+  assert.equal(mapLeaveRpcError({ code: "PT409" }), "LEAVE_ROW_VERSION_CONFLICT");
   assert.equal(leaveHttpStatusForError("LEAVE_REQUEST_OVERLAP"), 409);
   assert.equal(leaveHttpStatusForError("LEAVE_ROW_VERSION_CONFLICT"), 409);
   assert.equal(leaveHttpStatusForError("LEAVE_INSUFFICIENT_BALANCE"), 422);

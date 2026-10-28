@@ -7,6 +7,7 @@ import {
   postWorkerPortraitStage,
   recoverWorkerPortraitStage,
 } from "./worker-portrait-stage-api.ts";
+import { createWorkerPortraitStageRepository } from "./worker-portrait-stage-repository.ts";
 
 const actor = {
   auth_subject: "91000000-0000-4000-8000-000000000001",
@@ -14,6 +15,17 @@ const actor = {
 };
 const stageId = "b2000000-0000-4000-8000-000000000001";
 const key = "b3000000-0000-4000-8000-000000000001";
+
+test("portrait stage claim treats PT409 as a conflict", async () => {
+  const repository = createWorkerPortraitStageRepository(async () => ({
+    data: null,
+    error: { code: "PT409" },
+  }));
+  assert.deepEqual(await repository.claim({ ...actor, stage_id: stageId, idempotency_key: key }), {
+    ok: false,
+    kind: "conflict",
+  });
+});
 
 async function portraitWithExif() {
   return new Uint8Array(await sharp({

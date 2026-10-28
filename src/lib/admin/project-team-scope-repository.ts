@@ -45,7 +45,7 @@ export type ProjectTeamScopeRepository = {
 export function classifyProjectTeamScopeError(
   error: { code?: string; message?: string },
 ): ProjectTeamScopeErrorKind {
-  if (error.code === "40001" || error.code === "23505" || error.code === "23P01") return "conflict";
+  if (error.code === "PT409" || error.code === "40001" || error.code === "23505" || error.code === "23P01") return "conflict";
   if (error.code === "42501" || error.code === "55000") return "denied";
   if (error.code === "P0002") return "not-found";
   if (error.code === "22023" || error.code === "23514") return "invalid";

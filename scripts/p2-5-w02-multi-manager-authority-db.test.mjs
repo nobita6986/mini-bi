@@ -636,12 +636,12 @@ test("P2.5-W02: admin RPCs require capability and all scope; action reason is op
       () => assign(db, {
         manager: REC_C, expectedProjectVersion: 5, key: "assign-key-occ",
       }),
-      (error) => error.code === "40001",
+      (error) => error.code === "PT409",
       "a stale expected project version is a conflict");
     // OCC on revocation.
     await assert.rejects(
       () => unassign(db, { assignmentId: created.assignment_id, expectedVersion: 9 }),
-      (error) => error.code === "40001",
+      (error) => error.code === "PT409",
       "a stale assignment version is a conflict");
     // Reason + audit rows exist for the accepted mutation.
     assert.equal(await countOf(db,

@@ -67,7 +67,7 @@ function serviceRoleRpc(): Rpc {
 
 /**
  * SQLSTATE -> kind. Chi nhan cac ma RPC #68 thuc su dung:
- *   40001 OCC stale (personnel version)
+ *   PT409/40001 OCC stale (personnel version)
  *   23505 personnel_code trung (unique canonical index) hoac idempotency key
  *   42501 catalog operator / all scope denied
  *   P0002 personnel not found
@@ -78,7 +78,7 @@ function serviceRoleRpc(): Rpc {
 export function classifyPersonnelCatalogError(
   error: { code?: string; message?: string },
 ): PersonnelCatalogErrorKind {
-  if (error.code === "40001" || error.code === "23505") return "conflict";
+  if (error.code === "PT409" || error.code === "40001" || error.code === "23505") return "conflict";
   if (error.code === "42501") return "denied";
   if (error.code === "P0002") return "not-found";
   if (error.code === "23514") return "invalid";

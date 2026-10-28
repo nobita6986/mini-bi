@@ -719,7 +719,7 @@ test("own DRAFT wrapper preserves omitted payments and explicit updates, OCC, au
           $1::uuid, $2::uuid, $3::uuid, 1, $4::jsonb, $5::text)`,
         [ownerAuth, ownerApp, entryId, JSON.stringify({ general_note: "stale" }), "r1-own-draft-stale"],
       ),
-      (error) => error.code === "40001",
+      (error) => error.code === "PT409",
       "the owner wrapper preserves strict entry OCC",
     );
 
@@ -987,7 +987,7 @@ test("R1.1 projects team edit scope and preserves strict current-team direct-edi
           $1, $2, $3, 3, $4::jsonb, 'Stale edit', 'r1-1-team-stale')`,
         [leader.auth, leader.app, inTeamEntry, JSON.stringify({ employee_code: "stale" })],
       ),
-      (error) => error.code === "40001",
+      (error) => error.code === "PT409",
       "direct Team Leader edits keep strict OCC after the scoped authorization path",
     );
     assert.equal((await db.query(
@@ -1454,7 +1454,7 @@ test("R1.1 Team Leader request review uses the same current team for WORK_STATUS
           $1, $2, $3, 1, 'APPROVED', 'Approve stale proposal', 'r1-1-stale-approve')`,
         [leader.auth, leader.app, staleRequest],
       ),
-      (error) => error.code === "40001",
+      (error) => error.code === "PT409",
       "a stale WORK_STATUS proposal cannot be applied by the Team Leader",
     );
     const rejected = (await db.query(

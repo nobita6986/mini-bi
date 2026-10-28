@@ -183,7 +183,7 @@ function serviceRoleRpc(): Rpc {
 }
 
 function classify(error: { code?: string }): "conflict" | "denied" | "invalid" | "not-found" | "unavailable" {
-  if (error.code === "40001" || error.code === "23505") return "conflict";
+  if (error.code === "PT409" || error.code === "40001" || error.code === "23505") return "conflict";
   if (error.code === "42501") return "denied";
   if (error.code === "P0002") return "not-found";
   if (error.code === "22023") return "invalid";

@@ -198,4 +198,11 @@ test("write repository calls the DRAFT-only employment status RPC with mapped er
   assert.deepEqual(await conflict.applyDraftEmploymentStatus(input), {
     ok: false, kind: "conflict",
   });
+  const pt409Conflict = createDirectEntryWriteRepository(async () => ({
+    data: null,
+    error: { code: "PT409" },
+  }));
+  assert.deepEqual(await pt409Conflict.applyDraftEmploymentStatus(input), {
+    ok: false, kind: "conflict",
+  });
 });

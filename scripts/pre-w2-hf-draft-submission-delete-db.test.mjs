@@ -107,7 +107,7 @@ test("draft submission deletion is owned, versioned, atomic, idempotent and clea
     const stale = await deleteSubmission(
       db, ACTORS.proposer, fixture.submissionId, 2, "s122_stale_version",
     );
-    assert.equal(stale.error?.code, "40001");
+    assert.equal(stale.error?.code, "PT409");
     assert.equal((await db.query(
       "select count(*)::int n from public.direct_entry_rpc_idempotency" +
       " where app_user_id=$1 and action='draft_submission_delete' and idempotency_key=$2",

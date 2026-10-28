@@ -384,7 +384,7 @@ test("R3: the direct correction actor matrix fails closed with zero residue", as
     await assert.rejects(
       () => edit(db, { auth: ADMIN_AUTH, app: ADMIN_APP, entryId: seeded.entryId,
         version: version + 5, patch }),
-      (error) => error.code === "40001");
+      (error) => error.code === "PT409");
     assert.deepEqual(await residue(db), before);
     // Unsupported/authority keys are refused: no status change and no forged authority.
     for (const bad of [{ employment_status: "OFF" }, { version: 99 }, { deleted_at: null },

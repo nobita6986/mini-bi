@@ -511,7 +511,7 @@ test("update fails closed on stale versions, no-ops, unknown and reserved vendor
   });
 
   const stale = await update({ id: "W02B_BETA", expected: 1, name: "Stale Rename", key: KEY("52") });
-  assert.equal(stale.code, "40001", "a stale expected_version is a conflict, never a silent overwrite");
+  assert.equal(stale.code, "PT409", "a stale expected_version is a conflict, never a silent overwrite");
 
   const noop = await update({ id: "W02B_BETA", expected: 2, name: "Beta Vendor Renamed", key: KEY("53") });
   assert.equal(noop.code, "22023");
@@ -710,7 +710,7 @@ test("set-active rejects stale versions, no-ops and the reserved namespace with 
 
   const stale = await setActive({ id: "W02B_EPSILON", active: true, expected: created.version,
     key: KEY("63") });
-  assert.equal(stale.code, "40001", "a stale expected_version is a conflict");
+  assert.equal(stale.code, "PT409", "a stale expected_version is a conflict");
 
   const noop = await setActive({ id: "W02B_EPSILON", active: false, expected: off.version,
     key: KEY("64") });
@@ -1048,6 +1048,7 @@ test("the vendor slot remains append-only and no earlier migration is touched", 
     !line.endsWith(wf03Migration) &&
     !line.endsWith(wf04Migration) &&
     !line.endsWith(wf04HotfixMigration) &&
+    !line.endsWith("20261028100000_hf_postgrest_conflict_sqlstate_pt409.sql") &&
     !line.endsWith("20261025120000_vfin_01_vendor_finance_backend.sql") &&
     !line.endsWith("20261025150000_hf_work_reports_groups_and_analytics_options.sql") &&
     !line.endsWith("20261026090000_vfin_02_project_accountant_ledgers.sql")), [],

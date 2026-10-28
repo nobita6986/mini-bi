@@ -82,6 +82,7 @@ test("database codes map to sanitized repository error kinds", () => {
   assert.equal(classifyTeamLeaderError({ code: "P0002" }), "not-found");
   assert.equal(classifyTeamLeaderError({ code: "23514" }), "invalid");
   assert.equal(classifyTeamLeaderError({ code: "40001" }), "conflict");
+  assert.equal(classifyTeamLeaderError({ code: "PT409" }), "conflict");
   assert.equal(classifyTeamLeaderError({ code: "23P01" }), "conflict");
   assert.equal(classifyTeamLeaderError({ code: "22023",
     message: "idempotency key reused with different input" }), "invalid");

@@ -93,6 +93,7 @@ test("withdraw, approve and reject call their own wrapper RPC and never the help
 
 test("database denial codes are classified consistently with the S01A boundary", async () => {
   assert.equal(classifyChangeRequestError({ code: "40001" }), "conflict");
+  assert.equal(classifyChangeRequestError({ code: "PT409" }), "conflict");
   assert.equal(classifyChangeRequestError({ code: "23505" }), "conflict");
   assert.equal(classifyChangeRequestError({ code: "42501" }), "denied");
   assert.equal(classifyChangeRequestError({ code: "P0002" }), "not-found");
@@ -106,6 +107,7 @@ test("database denial codes are classified consistently with the S01A boundary",
   for (const [error, kind] of [
     [{ code: "42501" }, "denied"],
     [{ code: "40001" }, "conflict"],
+    [{ code: "PT409" }, "conflict"],
     [{ code: "P0002" }, "not-found"],
   ]) {
     const repository = createChangeRequestRepository(async () => ({ data: null, error }));

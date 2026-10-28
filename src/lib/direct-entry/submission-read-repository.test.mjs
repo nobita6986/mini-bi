@@ -91,6 +91,7 @@ test("SQLSTATE classification stays fail-closed for reads", async () => {
     [{ code: "P0002" }, "not-found"],
     [{ code: "22023" }, "invalid"],
     [{ code: "40001" }, "unavailable"],
+    [{ code: "PT409" }, "unavailable"],
     [{ code: "23505" }, "unavailable"],
     [{ code: "XX000", message: "boom" }, "unavailable"],
   ]) {

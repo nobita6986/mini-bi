@@ -30,6 +30,25 @@ const MEMBERSHIP_ID = "50000000-0000-4000-8000-000000000005";
 const IDEM_KEY = "60000000-0000-4000-8000-000000000006";
 const TEAM_ID = "70000000-0000-4000-8000-000000000007";
 
+test("department OCC conflicts accept both legacy 40001 and PostgREST-safe PT409", async () => {
+  for (const code of ["40001", "PT409"]) {
+    const repository = createServiceDepartmentRepository(async () => ({
+      data: null,
+      error: { code },
+    }));
+    assert.deepEqual(await repository.assignAccountingMember({
+      auth_subject: ADMIN_AUTH,
+      app_user_id: ADMIN_APP,
+      account_ref: USER_REF,
+      expected_pair_version: 1,
+      effective_from: null,
+      reason: "test",
+      idempotency_key: IDEM_KEY,
+      request_fingerprint: "test",
+    }), { ok: false, code: "DEPARTMENT_MEMBERSHIP_VERSION_CONFLICT" });
+  }
+});
+
 const HTTP_VERBS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
 
 const DEPARTMENT_ROUTE_REGISTRY = Object.freeze({

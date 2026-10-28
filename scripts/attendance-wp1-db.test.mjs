@@ -410,13 +410,13 @@ test("SERVER_ANCHORED, DEVICE_CLOCK_UNVERIFIED, Asia/Ho_Chi_Minh business_date b
     );
     assert.equal(rowCountAfterReplay[0].cnt, 2);
 
-    // 5. Reusing idempotency_key with a different request_fingerprint fails with 40001 IDEMPOTENCY_CONFLICT
+    // 5. Reusing idempotency_key with a different request_fingerprint fails with PT409 IDEMPOTENCY_CONFLICT
     await assert.rejects(
       callCheckInAsServiceRole(db, {
         ...hcmAfterMidnightArgs,
         request_fingerprint: "9".repeat(64),
       }),
-      (err) => err.code === "40001" && err.message.includes("IDEMPOTENCY_CONFLICT"),
+      (err) => err.code === "PT409" && err.message.includes("IDEMPOTENCY_CONFLICT"),
     );
 
     // 6. Client skew > 5 seconds in SQL RPC is also blocked fail-closed
@@ -519,20 +519,20 @@ test("SERVER_ANCHORED, DEVICE_CLOCK_UNVERIFIED, Asia/Ho_Chi_Minh business_date b
       replayed: true,
     });
 
-    //      (c) Retry > 7 days later with same key + different fingerprint fails with 40001 IDEMPOTENCY_CONFLICT
+    //      (c) Retry > 7 days later with same key + different fingerprint fails with PT409 IDEMPOTENCY_CONFLICT
     await assert.rejects(
       callLookupAsServiceRole(db, {
         ...exact7dSavedArgs,
         request_fingerprint: "8".repeat(64),
       }),
-      (err) => err.code === "40001" && err.message.includes("IDEMPOTENCY_CONFLICT"),
+      (err) => err.code === "PT409" && err.message.includes("IDEMPOTENCY_CONFLICT"),
     );
     await assert.rejects(
       callCheckInAsServiceRole(db, {
         ...exact7dSavedArgs,
         request_fingerprint: "8".repeat(64),
       }),
-      (err) => err.code === "40001" && err.message.includes("IDEMPOTENCY_CONFLICT"),
+      (err) => err.code === "PT409" && err.message.includes("IDEMPOTENCY_CONFLICT"),
     );
 
     //    - elapsed_since_anchor_ms > 24h (86,400,001 ms) rejected even when received_at - captured_at <= 7d

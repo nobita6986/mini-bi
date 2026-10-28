@@ -92,7 +92,7 @@ export function mapLeaveRpcError(error: {
   if (error.code === "23505") {
     return "LEAVE_REQUEST_OVERLAP";
   }
-  if (error.code === "40001") {
+  if (error.code === "PT409" || error.code === "40001") {
     return "LEAVE_ROW_VERSION_CONFLICT";
   }
   if (error.code === "P0002") {

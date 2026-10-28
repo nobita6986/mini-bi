@@ -525,7 +525,7 @@ test("PRE-W2-HF-D3-A: update display name honours OCC and idempotency", async ()
 
     await assert.rejects(
       () => updateName(db, [ADMIN_AUTH, ADMIN_APP, TARGET_APP, "Stale", 1, "rename", idemKey()]),
-      (error) => error.code === "40001");
+      (error) => error.code === "PT409");
   } finally {
     await db.close();
   }
@@ -1083,14 +1083,14 @@ test("Admin link existing personnel to existing account: enforces Full Admin, co
       (error) => error.code === "22023",
     );
 
-    // 4. Stale recruiter version or stale account version rejected with 40001.
+    // 4. Stale recruiter version or stale account version rejected with PT409.
     await assert.rejects(
       () => linkRecruiter(db, [ADMIN_AUTH, ADMIN_APP, recId, 99, matchApp, 1, null, idemKey()]),
-      (error) => error.code === "40001",
+      (error) => error.code === "PT409",
     );
     await assert.rejects(
       () => linkRecruiter(db, [ADMIN_AUTH, ADMIN_APP, recId, 1, matchApp, 99, null, idemKey()]),
-      (error) => error.code === "40001",
+      (error) => error.code === "PT409",
     );
 
     // 5. Disabled account rejected with 23514.

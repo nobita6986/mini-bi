@@ -60,7 +60,7 @@ export function classifyDuplicateCccdSelfWithdrawError(
   if (error.code === "P0002") {
     return { ok: false, kind: "not-found", code: "ENTRY_NOT_FOUND" };
   }
-  if (error.code === "40001") {
+  if (error.code === "PT409" || error.code === "40001") {
     const msg = typeof error.message === "string" ? error.message.toLowerCase() : "";
     if (msg.includes("already voided")) {
       return { ok: false, kind: "conflict", code: "ENTRY_ALREADY_VOIDED" };

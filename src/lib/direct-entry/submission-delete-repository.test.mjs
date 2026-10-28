@@ -47,6 +47,7 @@ test("repository calls only the atomic delete RPC with server actor and strict p
 test("SQL state, ownership, version and processing errors are not conflated", async () => {
   for (const [code, message, kind] of [
     ["40001", "stale", "conflict"],
+    ["PT409", "stale", "conflict"],
     ["55000", "not a draft", "conflict"],
     ["55P03", "document processing", "processing"],
     ["42501", "scope", "denied"],

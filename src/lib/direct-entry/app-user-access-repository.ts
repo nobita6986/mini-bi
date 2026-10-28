@@ -36,7 +36,7 @@ function serviceRoleRpc(): Rpc {
 export function classifyAccountAccessError(
   error: { code?: string; message?: string },
 ): AccountAccessErrorKind {
-  if (error.code === "40001" || error.code === "23505") return "conflict";
+  if (error.code === "PT409" || error.code === "40001" || error.code === "23505") return "conflict";
   if (error.code === "42501") return "denied";
   if (error.code === "P0002") return "not-found";
   if (error.code === "22023" || error.code === "23514") return "invalid";

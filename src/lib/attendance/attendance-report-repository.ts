@@ -111,7 +111,7 @@ function classifyReportRpcError(
       ? "ATTENDANCE_HQ_MANAGE_DENIED"
       : "ATTENDANCE_REPORT_ACCESS_DENIED";
   }
-  if (error.code === "40001") {
+  if (error.code === "PT409" || error.code === "40001") {
     return "ATTENDANCE_HQ_VERSION_CONFLICT";
   }
   if (error.code === "23505") {

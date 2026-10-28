@@ -148,6 +148,7 @@ test("R3: repository classification and API mapping never forward the raw DB mes
   const cases = [
     ["42501", "PRIVILEGED_EDIT_DENIED", 403],
     ["40001", "VERSION_CONFLICT", 409],
+    ["PT409", "VERSION_CONFLICT", 409],
     ["22023", "PRIVILEGED_EDIT_INVALID", 400],
     ["23514", "PRIVILEGED_EDIT_INVALID", 400],
     ["P0002", "ENTRY_NOT_FOUND", 404],

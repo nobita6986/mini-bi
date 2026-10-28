@@ -85,7 +85,7 @@ function mutation(value: unknown): TemplateMutation | null {
 }
 
 function classify(error: { code?: string; message?: string }): TemplateResult<never> {
-  if (error.code === "40001" || error.code === "23505") return { ok: false, kind: "conflict" };
+  if (error.code === "PT409" || error.code === "40001" || error.code === "23505") return { ok: false, kind: "conflict" };
   if (error.code === "42501") return { ok: false, kind: "denied" };
   if (error.code === "P0002") return { ok: false, kind: "not-found" };
   if (error.code === "22023" || error.code === "23514") return { ok: false, kind: "invalid" };

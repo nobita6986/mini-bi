@@ -956,14 +956,14 @@ test("HF: can_mark_off matches canonical direct-edit authority and ON -> OFF rem
       (err) => err.code === "22023" || err.code === "23514",
     );
 
-    // Stale expected_version is rejected with 40001:
+    // Stale expected_version is rejected with PT409:
     await assert.rejects(
       () => db.query(
         "select public.direct_entry_privileged_edit($1::uuid,$2::uuid,$3::uuid,99,$4::jsonb,null,$5::text)",
         [PM_AUTH, PM_APP, epA.entryId, JSON.stringify({
           employment_status: { status: "OFF", effective_date: "2026-02-15", leave_reason: "Nghỉ việc tự nguyện" },
         }), idemKey()]),
-      (err) => err.code === "40001",
+      (err) => err.code === "PT409",
     );
 
     // PM marks epA OFF with valid leave_reason -> epA leaves the active ON duplicate group:
@@ -1075,12 +1075,12 @@ test("HF: self-withdraw enforces strict creator ownership, idempotency, active-d
       (err) => err.code === "42501",
     );
 
-    // OCC mismatch fails closed with 40001:
+    // OCC mismatch fails closed with PT409:
     await assert.rejects(
       () => db.query(
         "select public.direct_entry_self_withdraw_duplicate_cccd($1::uuid,$2::uuid,$3::uuid,9,$4::text,$5::text)",
         [CREATOR_AUTH, CREATOR_APP, ownEp.entryId, "OCC mismatch", idemKey()]),
-      (err) => err.code === "40001" && /version conflict/i.test(err.message),
+      (err) => err.code === "PT409" && /version conflict/i.test(err.message),
     );
 
     // Reporting new-hire facts count BEFORE self-withdraw is 2:
@@ -1154,7 +1154,7 @@ test("HF: self-withdraw enforces strict creator ownership, idempotency, active-d
       () => db.query(
         "select public.direct_entry_self_withdraw_duplicate_cccd($1::uuid,$2::uuid,$3::uuid,1,$4::text,$5::text)",
         [OTHER_AUTH, OTHER_APP, counterpartEp.entryId, "Late withdraw", idemKey()]),
-      (err) => err.code === "40001" && /not an active duplicate/i.test(err.message),
+      (err) => err.code === "PT409" && /not an active duplicate/i.test(err.message),
     );
   } finally {
     await db.close();

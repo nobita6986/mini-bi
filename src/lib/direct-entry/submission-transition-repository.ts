@@ -56,7 +56,7 @@ function serviceRoleRpc(): Rpc {
 
 /**
  * SQLSTATE -> kind. Chi nhan cac ma RPC thuc su dung:
- *   40001 stale OCC, mutation khong hop le hoac SUBMITTED terminal
+ *   PT409/40001 stale OCC, mutation khong hop le hoac SUBMITTED terminal
  *   23505 idempotency unique
  *   42501 capability/scope/submission scope denied
  *   P0002 submission not found
@@ -67,7 +67,7 @@ function serviceRoleRpc(): Rpc {
 export function classifySubmissionTransitionError(
   error: { code?: string; message?: string },
 ): "conflict" | "denied" | "invalid" | "not-found" | "unavailable" {
-  if (error.code === "40001") return "conflict";
+  if (error.code === "PT409" || error.code === "40001") return "conflict";
   if (error.code === "23505") return "conflict";
   if (error.code === "42501") return "denied";
   if (error.code === "P0002") return "not-found";

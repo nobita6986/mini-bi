@@ -225,7 +225,7 @@ test("change_review plus all scope can review payment without payment-specific c
 test("OCC va idempotency khong hoi quy", async () => {
   const conflict = await decide(db, POLICY_ACTORS.reviewerAll, requests.occ,
     "approve", 99, "S03B3R1 occ conflict", "s03b3r1_occ_conflict");
-  assert.equal(conflict.error.code, "40001");
+  assert.equal(conflict.error.code, "PT409");
   const approved = await decide(db, POLICY_ACTORS.reviewerAll, requests.occ,
     "approve", 1, "S03B3R1 occ approved", "s03b3r1_occ_approved");
   assert.equal(approved.error, null, json(approved.error));
@@ -235,7 +235,7 @@ test("OCC va idempotency khong hoi quy", async () => {
   assert.deepEqual(replay.data, approved.data);
   const decided = await decide(db, POLICY_ACTORS.reviewerAll, requests.occ,
     "approve", 1, "S03B3R1 occ approved", "s03b3r1_occ_second_key");
-  assert.equal(decided.error.code, "40001");
+  assert.equal(decided.error.code, "PT409");
 });
 
 test("audit event chi ghi field name, khong ghi gia tri nhay cam", async () => {

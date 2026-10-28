@@ -40,7 +40,7 @@ export function classifyPrivilegedEditError(
     return { ok: false, kind: "denied",
       code: stateLock ? "PRIVILEGED_EDIT_STATE_LOCKED" : "PRIVILEGED_EDIT_DENIED" };
   }
-  if (error.code === "40001") return { ok: false, kind: "conflict", code: "VERSION_CONFLICT" };
+  if (error.code === "PT409" || error.code === "40001") return { ok: false, kind: "conflict", code: "VERSION_CONFLICT" };
   if (error.code === "22023" || error.code === "23514" || error.code === "22008") {
     return { ok: false, kind: "invalid", code: "PRIVILEGED_EDIT_INVALID" };
   }

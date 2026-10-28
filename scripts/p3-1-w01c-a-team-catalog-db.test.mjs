@@ -293,7 +293,7 @@ test("generic update is field-scoped: only display_name changes", async () => {
     p_expected_version: created.version + 5, p_display_name: "Stale", p_reason: REASON,
     p_idempotency_key: KEY("11"),
   });
-  assert.equal(stale.code, "40001");
+  assert.equal(stale.code, "PT409");
   assert.deepEqual(await counts(db), before, "stale version leaves zero residue");
 
   const updated = await rpc(db, "direct_entry_update_team", {

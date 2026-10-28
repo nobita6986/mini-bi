@@ -87,7 +87,7 @@ function serviceRoleRpc(): Rpc {
 
 /**
  * SQLSTATE -> kind. Chi nhan cac ma RPC thuc su dung:
- *   40001 OCC stale (project_version hoac assignment version)
+ *   PT409/40001 OCC stale (project_version hoac assignment version)
  *   23505 idempotency key unique / already assigned
  *   42501 capability/scope denied (thieu entry_admin hoac khong @all)
  *   P0002 project/assignment not found
@@ -98,7 +98,7 @@ function serviceRoleRpc(): Rpc {
 export function classifyProjectAdminError(
   error: { code?: string; message?: string },
 ): ProjectAdminErrorKind {
-  if (error.code === "40001" || error.code === "23505") return "conflict";
+  if (error.code === "PT409" || error.code === "40001" || error.code === "23505") return "conflict";
   if (error.code === "42501") return "denied";
   if (error.code === "P0002") return "not-found";
   if (error.code === "23514") return "invalid";

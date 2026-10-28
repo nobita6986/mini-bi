@@ -184,7 +184,7 @@ function classify(error: { code?: string; message?: string }): WorkReportDelegat
     }
     return { ok: false, kind: "denied" };
   }
-  if (error.code === "40001" || error.code === "23505" || error.code === "23P01") {
+  if (error.code === "PT409" || error.code === "40001" || error.code === "23505" || error.code === "23P01") {
     return { ok: false, kind: "conflict" };
   }
   if (error.code === "P0002") {
