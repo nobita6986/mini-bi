@@ -315,12 +315,22 @@ test("malformed RPC payloads fail closed", () => {
         ],
       }],
     }),
-    "can_self_withdraw=true when active_profile_count < 2": rpcPayload({
+    "ON can_self_withdraw=true when active_profile_count < 2": rpcPayload({
       groups: [{
         ...rpcPayload().groups[0],
         active_profile_count: 1,
         episodes: [
           episode({ latest_status: "ON", active: true, can_self_withdraw: true }),
+          episode({ entry_id: ENTRY_B, latest_status: "OFF", active: false, can_mark_off: false, can_self_withdraw: false }),
+        ],
+      }],
+    }),
+    "OFF can_self_withdraw=true without an active counterpart": rpcPayload({
+      groups: [{
+        ...rpcPayload().groups[0],
+        active_profile_count: 0,
+        episodes: [
+          episode({ latest_status: "OFF", active: false, can_mark_off: false, can_self_withdraw: true }),
           episode({ entry_id: ENTRY_B, latest_status: "OFF", active: false, can_mark_off: false, can_self_withdraw: false }),
         ],
       }],
@@ -353,7 +363,7 @@ test("projection accepts valid ON+OFF, OFF+OFF, ON+UNCONFIRMED, and UNCONFIRMED+
       active_profile_count: 1,
       episodes: [
         episode({ entry_id: ENTRY_A, latest_status: "ON", active: true, can_mark_off: true, can_self_withdraw: false }),
-        episode({ entry_id: ENTRY_B, latest_status: "OFF", active: false, can_mark_off: false, can_self_withdraw: false }),
+        episode({ entry_id: ENTRY_B, latest_status: "OFF", active: false, can_mark_off: false, can_self_withdraw: true }),
       ],
     },
     {
