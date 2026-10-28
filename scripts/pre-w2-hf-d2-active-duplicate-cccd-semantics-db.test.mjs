@@ -2,12 +2,9 @@
  * PRE-W2-HF-D2 - Active duplicate-CCCD reporting semantics (DB regression, PGlite over the
  * migration ledger).
  *
- * Historical HF-D2 excludes cross-project/cross-day OFF (resigned) episodes from forming or
- * appearing in a duplicate group, while subsequent forward-only migrations (#145 and #157)
- * include live UNCONFIRMED ("Dang cho viec", with active=false) episodes and retain >= 2
- * non-deleted, non-voided same-(CCCD, project_id, first_work_date) clusters even after OFF.
- * For distinct-project episodes, closing one of two ON episodes still drops the group on the
- * next read once fewer than two live episodes remain.
+ * Duplicate reporting is limited to the same canonical CCCD, project and first-work date.
+ * Subsequent forward-only migrations include live UNCONFIRMED episodes and retain matching
+ * non-deleted, non-voided clusters after OFF transitions; unrelated rehires stay excluded.
  */
 import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
@@ -218,12 +215,12 @@ test("PRE-W2-HF-D2: one active plus one resigned episode is not reported", async
 // ---------------------------------------------------------------------------
 // 3. Two active episodes are reported, and only those ON episodes are returned.
 // ---------------------------------------------------------------------------
-test("PRE-W2-HF-D2: two active episodes are reported as one group of two", async () => {
+test("PRE-W2-HF-D2: two active episodes in the same project/day are reported as one group", async () => {
   const db = await buildDb();
   try {
     await seed(db);
     await seedProfile(db, { cccd: "012345678901", name: "HFD2 Active A", project: PROJ_A, date: "2026-01-05" });
-    await seedProfile(db, { cccd: "012345678901", name: "HFD2 Active B", project: PROJ_B, date: "2026-02-10" });
+    await seedProfile(db, { cccd: "012345678901", name: "HFD2 Active B", project: PROJ_A, date: "2026-01-05" });
 
     const payload = await report(db);
     assert.equal(payload.total_groups, 1);
@@ -232,7 +229,7 @@ test("PRE-W2-HF-D2: two active episodes are reported as one group of two", async
     const [group] = payload.groups;
     assert.equal(group.cccd_last4, "8901");
     assert.equal(group.profile_count, 2);
-    assert.equal(group.project_count, 2);
+    assert.equal(group.project_count, 1);
     assert.equal(group.active_profile_count, 2);
     assert.deepEqual(group.episodes.map((e) => e.latest_status), ["ON", "ON"]);
     assert.deepEqual(group.episodes.map((e) => e.active), [true, true]);
@@ -242,14 +239,14 @@ test("PRE-W2-HF-D2: two active episodes are reported as one group of two", async
 });
 
 // ---------------------------------------------------------------------------
-// 4. After a PM closes one episode, the next read drops the group.
+// 4. After a PM closes one episode, the matching duplicate cluster remains visible as history.
 // ---------------------------------------------------------------------------
-test("PRE-W2-HF-D2: closing one episode removes the group on the next read", async () => {
+test("PRE-W2-HF-D2: closing one episode retains the same-project/day group on the next read", async () => {
   const db = await buildDb();
   try {
     await seed(db);
     const a = await seedProfile(db, { cccd: "012345678901", name: "HFD2 Active A", project: PROJ_A });
-    await seedProfile(db, { cccd: "012345678901", name: "HFD2 Active B", project: PROJ_B });
+    await seedProfile(db, { cccd: "012345678901", name: "HFD2 Active B", project: PROJ_A });
 
     const before = await report(db);
     assert.equal(before.total_groups, 1);
@@ -258,23 +255,25 @@ test("PRE-W2-HF-D2: closing one episode removes the group on the next read", asy
     await closeEpisode(db, a.entryId);
 
     const after = await report(db);
-    assert.equal(after.total_groups, 0, "the remaining active count is one, below two");
-    assert.equal(after.total_entries, 0);
-    assert.deepEqual(after.groups, []);
+    assert.equal(after.total_groups, 1);
+    assert.equal(after.total_entries, 2);
+    assert.equal(after.groups[0].profile_count, 2);
+    assert.equal(after.groups[0].active_profile_count, 1);
+    assert.deepEqual(after.groups[0].episodes.map((episode) => episode.latest_status), ["OFF", "ON"]);
   } finally {
     await db.close();
   }
 });
 
 // ---------------------------------------------------------------------------
-// 5. Three episodes, only two active: the group shows only the two ON episodes.
+// 5. Two active matching episodes form the group; an unrelated resigned rehire is excluded.
 // ---------------------------------------------------------------------------
 test("PRE-W2-HF-D2: three episodes with two active return only the active ones", async () => {
   const db = await buildDb();
   try {
     await seed(db);
     await seedProfile(db, { cccd: "012345678901", name: "HFD2 Active A", project: PROJ_A, date: "2026-01-05" });
-    await seedProfile(db, { cccd: "012345678901", name: "HFD2 Active B", project: PROJ_B, date: "2026-02-10" });
+    await seedProfile(db, { cccd: "012345678901", name: "HFD2 Active B", project: PROJ_A, date: "2026-01-05" });
     await seedProfile(db, { cccd: "012345678901", name: "HFD2 Resigned", project: PROJ_C, date: "2026-03-01", status: "OFF" });
 
     const payload = await report(db);
@@ -282,12 +281,12 @@ test("PRE-W2-HF-D2: three episodes with two active return only the active ones",
     assert.equal(payload.total_entries, 2, "the resigned episode is not counted or returned");
     const [group] = payload.groups;
     assert.equal(group.profile_count, 2);
-    assert.equal(group.project_count, 2);
+    assert.equal(group.project_count, 1);
     assert.equal(group.active_profile_count, 2);
     assert.equal(group.episodes.length, 2);
     assert.deepEqual(group.episodes.map((e) => e.latest_status), ["ON", "ON"]);
-    assert.deepEqual(group.episodes.map((e) => e.project_id), [PROJ_A, PROJ_B]);
-    assert.deepEqual(group.episodes.map((e) => e.project_display), ["Project HFD2 A", "Project HFD2 B"]);
+    assert.deepEqual(group.episodes.map((e) => e.project_id), [PROJ_A, PROJ_A]);
+    assert.deepEqual(group.episodes.map((e) => e.project_display), ["Project HFD2 A", "Project HFD2 A"]);
   } finally {
     await db.close();
   }
@@ -302,11 +301,11 @@ test("PRE-W2-HF-D2: pagination and counts are computed after the active filter",
     await seed(db);
     // Three eligible groups (2 active each) and one ineligible group (1 active + 1 OFF).
     await seedProfile(db, { cccd: "111111111", name: "G1 A", project: PROJ_A });
-    await seedProfile(db, { cccd: "111111111", name: "G1 B", project: PROJ_B });
+    await seedProfile(db, { cccd: "111111111", name: "G1 B", project: PROJ_A });
     await seedProfile(db, { cccd: "222222222", name: "G2 A", project: PROJ_A });
-    await seedProfile(db, { cccd: "222222222", name: "G2 B", project: PROJ_B });
+    await seedProfile(db, { cccd: "222222222", name: "G2 B", project: PROJ_A });
     await seedProfile(db, { cccd: "333333333", name: "G3 A", project: PROJ_A });
-    await seedProfile(db, { cccd: "333333333", name: "G3 B", project: PROJ_B });
+    await seedProfile(db, { cccd: "333333333", name: "G3 B", project: PROJ_A });
     await seedProfile(db, { cccd: "444444444", name: "G4 Active", project: PROJ_A });
     await seedProfile(db, { cccd: "444444444", name: "G4 Resigned", project: PROJ_B, status: "OFF" });
 
@@ -335,7 +334,7 @@ test("PRE-W2-HF-D2: the report never leaks the raw CCCD or internal identifiers"
   try {
     await seed(db);
     const a = await seedProfile(db, { cccd: "012345678901", name: "HFD2 Active A", project: PROJ_A });
-    const b = await seedProfile(db, { cccd: "012345678901", name: "HFD2 Active B", project: PROJ_B });
+    const b = await seedProfile(db, { cccd: "012345678901", name: "HFD2 Active B", project: PROJ_A });
 
     const payload = await report(db, { auth: PM_AUTH, app: PM_APP });
     assert.equal(payload.authority, "business_actor");
