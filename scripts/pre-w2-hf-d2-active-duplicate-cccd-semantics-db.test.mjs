@@ -1,12 +1,13 @@
 /**
  * PRE-W2-HF-D2 - Active duplicate-CCCD reporting semantics (DB regression, PGlite over the
- * 93-migration ledger).
+ * migration ledger).
  *
- * The report now only groups a canonical CCCD that has at least two episodes whose canonical
- * latest employment status is ON ("Dang lam viec"), and returns only those ON episodes. An
- * OFF (resigned) or UNCONFIRMED episode never makes a group eligible and never appears in the
- * projection. After a PM closes one episode, the next read drops the group when the remaining
- * ON count falls below two.
+ * Historical HF-D2 excludes cross-project/cross-day OFF (resigned) episodes from forming or
+ * appearing in a duplicate group, while subsequent forward-only migrations (#145 and #157)
+ * include live UNCONFIRMED ("Dang cho viec", with active=false) episodes and retain >= 2
+ * non-deleted, non-voided same-(CCCD, project_id, first_work_date) clusters even after OFF.
+ * For distinct-project episodes, closing one of two ON episodes still drops the group on the
+ * next read once fewer than two live episodes remain.
  */
 import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";

@@ -268,7 +268,7 @@ test("malformed RPC payloads fail closed", () => {
         episodes: [episode({ latest_status: "MAYBE" }), episode({ entry_id: ENTRY_B })],
       }],
     }),
-    "episode active disagrees with status": rpcPayload({
+    "episode active disagrees with status (ON with active=false)": rpcPayload({
       groups: [{
         ...rpcPayload().groups[0],
         episodes: [
@@ -277,13 +277,61 @@ test("malformed RPC payloads fail closed", () => {
         ],
       }],
     }),
-    "group with a resigned episode (ON + OFF)": rpcPayload({
+    "episode active disagrees with status (UNCONFIRMED with active=true)": rpcPayload({
+      groups: [{
+        ...rpcPayload().groups[0],
+        episodes: [
+          episode({ latest_status: "ON", active: true }),
+          episode({ entry_id: ENTRY_B, latest_status: "UNCONFIRMED", active: true, can_mark_off: false, can_self_withdraw: false }),
+        ],
+      }],
+    }),
+    "episode active disagrees with status (OFF with active=true)": rpcPayload({
+      groups: [{
+        ...rpcPayload().groups[0],
+        episodes: [
+          episode({ latest_status: "ON", active: true }),
+          episode({ entry_id: ENTRY_B, latest_status: "OFF", active: true, can_mark_off: false, can_self_withdraw: false }),
+        ],
+      }],
+    }),
+    "non-ON episode with can_mark_off=true": rpcPayload({
       groups: [{
         ...rpcPayload().groups[0],
         active_profile_count: 1,
         episodes: [
-          episode({ latest_status: "ON", active: true }),
-          episode({ entry_id: ENTRY_B, latest_status: "OFF", active: false }),
+          episode({ latest_status: "ON", active: true, can_self_withdraw: false }),
+          episode({ entry_id: ENTRY_B, latest_status: "OFF", active: false, can_mark_off: true, can_self_withdraw: false }),
+        ],
+      }],
+    }),
+    "non-ON episode with can_self_withdraw=true": rpcPayload({
+      groups: [{
+        ...rpcPayload().groups[0],
+        active_profile_count: 1,
+        episodes: [
+          episode({ latest_status: "ON", active: true, can_self_withdraw: false }),
+          episode({ entry_id: ENTRY_B, latest_status: "UNCONFIRMED", active: false, can_mark_off: false, can_self_withdraw: true }),
+        ],
+      }],
+    }),
+    "can_self_withdraw=true when active_profile_count < 2": rpcPayload({
+      groups: [{
+        ...rpcPayload().groups[0],
+        active_profile_count: 1,
+        episodes: [
+          episode({ latest_status: "ON", active: true, can_self_withdraw: true }),
+          episode({ entry_id: ENTRY_B, latest_status: "OFF", active: false, can_mark_off: false, can_self_withdraw: false }),
+        ],
+      }],
+    }),
+    "active_profile_count disagrees with ON episode count": rpcPayload({
+      groups: [{
+        ...rpcPayload().groups[0],
+        active_profile_count: 2,
+        episodes: [
+          episode({ latest_status: "ON", active: true, can_self_withdraw: false }),
+          episode({ entry_id: ENTRY_B, latest_status: "OFF", active: false, can_mark_off: false, can_self_withdraw: false }),
         ],
       }],
     }),
@@ -295,6 +343,64 @@ test("malformed RPC payloads fail closed", () => {
   };
   for (const [label, payload] of Object.entries(cases)) {
     assert.equal(projectDuplicateCccdReportRpcPage(payload, { page: 1, page_size: 25 }), null, label);
+  }
+});
+
+test("projection accepts valid ON+OFF, OFF+OFF, ON+UNCONFIRMED, and UNCONFIRMED+UNCONFIRMED groups", () => {
+  const combinations = [
+    {
+      label: "ON + OFF",
+      active_profile_count: 1,
+      episodes: [
+        episode({ entry_id: ENTRY_A, latest_status: "ON", active: true, can_mark_off: true, can_self_withdraw: false }),
+        episode({ entry_id: ENTRY_B, latest_status: "OFF", active: false, can_mark_off: false, can_self_withdraw: false }),
+      ],
+    },
+    {
+      label: "OFF + OFF",
+      active_profile_count: 0,
+      episodes: [
+        episode({ entry_id: ENTRY_A, latest_status: "OFF", active: false, can_mark_off: false, can_self_withdraw: false }),
+        episode({ entry_id: ENTRY_B, latest_status: "OFF", active: false, can_mark_off: false, can_self_withdraw: false }),
+      ],
+    },
+    {
+      label: "ON + UNCONFIRMED",
+      active_profile_count: 1,
+      episodes: [
+        episode({ entry_id: ENTRY_A, latest_status: "ON", active: true, can_mark_off: true, can_self_withdraw: false }),
+        episode({ entry_id: ENTRY_B, latest_status: "UNCONFIRMED", active: false, can_mark_off: false, can_self_withdraw: false }),
+      ],
+    },
+    {
+      label: "UNCONFIRMED + UNCONFIRMED",
+      active_profile_count: 0,
+      episodes: [
+        episode({ entry_id: ENTRY_A, latest_status: "UNCONFIRMED", active: false, can_mark_off: false, can_self_withdraw: false }),
+        episode({ entry_id: ENTRY_B, latest_status: "UNCONFIRMED", active: false, can_mark_off: false, can_self_withdraw: false }),
+      ],
+    },
+  ];
+
+  for (const combo of combinations) {
+    const raw = rpcPayload({
+      groups: [{
+        ...rpcPayload().groups[0],
+        project_count: 1,
+        active_profile_count: combo.active_profile_count,
+        episodes: combo.episodes,
+      }],
+    });
+    const page = projectDuplicateCccdReportRpcPage(raw, { page: 1, page_size: 25 });
+    assert.ok(page, combo.label);
+    assert.equal(page.groups[0].active_profile_count, combo.active_profile_count, combo.label);
+    assert.deepEqual(
+      page.groups[0].episodes.map((e) => ({ status: e.latest_status, active: e.active })),
+      combo.episodes.map((e) => ({ status: e.latest_status, active: e.active })),
+      combo.label,
+    );
+    const wrapped = projectDuplicateCccdReportResponse({ ok: true, ...page }, { page: 1, page_size: 25 });
+    assert.ok(wrapped, `${combo.label} response wrapper`);
   }
 });
 

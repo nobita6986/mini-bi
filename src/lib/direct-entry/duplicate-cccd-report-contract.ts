@@ -272,9 +272,10 @@ function projectEpisodeFields(value: Record<string, unknown>): DuplicateCccdRepo
   if (!isNullableIsoDate(value.first_work_date)) return null;
   if (!isEmploymentStatus(value.latest_status)) return null;
   if (typeof value.active !== "boolean") return null;
-  if (value.latest_status !== "ON" || value.active !== true) return null;
+  if (value.active !== (value.latest_status === "ON")) return null;
   if (typeof value.can_mark_off !== "boolean") return null;
   if (typeof value.can_self_withdraw !== "boolean") return null;
+  if (value.latest_status !== "ON" && (value.can_mark_off || value.can_self_withdraw)) return null;
   return {
     entry_id: value.entry_id,
     entry_version: value.entry_version,
@@ -313,17 +314,21 @@ function projectGroup(
   if (!isCount(value.project_count)) return null;
   if (!isCount(value.active_profile_count)) return null;
   if (value.project_count > value.profile_count) return null;
-  if (value.active_profile_count !== value.profile_count) return null;
+  if (value.active_profile_count > value.profile_count) return null;
   if (!isNullableIsoDate(value.first_work_date)) return null;
   if (!isNullableIsoDate(value.latest_first_work_date)) return null;
   if (!Array.isArray(value.episodes)) return null;
   const episodes: DuplicateCccdReportEpisode[] = [];
+  let activeCount = 0;
   for (const raw of value.episodes) {
     const episode = projectEpisode(raw);
     if (episode === null) return null;
+    if (episode.active) activeCount += 1;
+    if (value.active_profile_count < 2 && episode.can_self_withdraw) return null;
     episodes.push(episode);
   }
   if (episodes.length !== value.profile_count) return null;
+  if (activeCount !== value.active_profile_count) return null;
   return {
     cccd_last4: value.cccd_last4,
     cccd_length: value.cccd_length,
