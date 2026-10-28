@@ -275,7 +275,8 @@ function projectEpisodeFields(value: Record<string, unknown>): DuplicateCccdRepo
   if (value.active !== (value.latest_status === "ON")) return null;
   if (typeof value.can_mark_off !== "boolean") return null;
   if (typeof value.can_self_withdraw !== "boolean") return null;
-  if (value.latest_status !== "ON" && (value.can_mark_off || value.can_self_withdraw)) return null;
+  if (value.latest_status !== "ON" && value.can_mark_off) return null;
+  if (value.latest_status === "UNCONFIRMED" && value.can_self_withdraw) return null;
   return {
     entry_id: value.entry_id,
     entry_version: value.entry_version,
@@ -324,7 +325,10 @@ function projectGroup(
     const episode = projectEpisode(raw);
     if (episode === null) return null;
     if (episode.active) activeCount += 1;
-    if (value.active_profile_count < 2 && episode.can_self_withdraw) return null;
+    if (episode.can_self_withdraw &&
+        (episode.latest_status === "ON"
+          ? value.active_profile_count < 2
+          : value.active_profile_count < 1)) return null;
     episodes.push(episode);
   }
   if (episodes.length !== value.profile_count) return null;

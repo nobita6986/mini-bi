@@ -1313,20 +1313,26 @@ test("HF same-project-same-day: ON+OFF and OFF+OFF stay reported, cross-day/cros
           latest_status: "OFF",
           active: false,
           can_mark_off: false,
-          can_self_withdraw: false,
+          can_self_withdraw: true,
         },
       ],
-      "ON episode keeps can_mark_off=true but can_self_withdraw=false when active_profile_count < 2; OFF episode has both false",
+      "the sole ON episode cannot be withdrawn; its OFF same-project-day duplicate can be withdrawn",
     );
 
-    // Delegate with duplicate_cccd_withdraw also gets can_self_withdraw=false when active_profile_count < 2,
-    // matching the RPC rejection:
+    // A delegated actor may withdraw only the OFF row while its ON counterpart remains.
     const delegateOnOff = await report(db, { auth: DELEGATE_AUTH, app: DELEGATE_APP, managedOnly: false });
-    assert.ok(delegateOnOff.groups[0].episodes.every((e) => !e.can_self_withdraw));
+    assert.equal(
+      delegateOnOff.groups[0].episodes.find((e) => e.entry_id === ep1.entryId).can_self_withdraw,
+      false,
+    );
+    assert.equal(
+      delegateOnOff.groups[0].episodes.find((e) => e.entry_id === ep2.entryId).can_self_withdraw,
+      true,
+    );
     await assert.rejects(
       () => db.query(
         "select public.direct_entry_self_withdraw_duplicate_cccd($1::uuid,$2::uuid,$3::uuid,1,$4::text,$5::text)",
-        [ADMIN_AUTH, ADMIN_APP, ep1.entryId, "Reject when counterpart is OFF", idemKey()],
+        [ADMIN_AUTH, ADMIN_APP, ep1.entryId, "Keep the only ON profile", idemKey()],
       ),
       (err) => err.code === "PT409" && /not an active duplicate/i.test(err.message),
     );
@@ -1416,6 +1422,66 @@ test("HF same-project-same-day: ON+OFF and OFF+OFF stay reported, cross-day/cros
     assert.equal(afterVoid.total_groups, 0, "group disappears once < 2 non-deleted, non-voided rows remain");
     assert.equal(afterVoid.total_entries, 0);
     assert.deepEqual(afterVoid.groups, []);
+
+    // An OFF target cannot be withdrawn against an unrelated rehire on another date.
+    const offRehire = await seedEpisode(db, {
+      cccd: "079200004444", name: "OFF duplicate from another date", project: PROJ_A,
+      date: "2026-10-05", status: "ON", createdBy: ADMIN_APP,
+    });
+    const onRehire = await seedEpisode(db, {
+      cccd: "079200004444", name: "Different-date active rehire", project: PROJ_A,
+      date: "2026-11-05", status: "ON", createdBy: ADMIN_APP,
+    });
+    await appendStatus(db, offRehire.entryId, "OFF", "2026-10-10", 2, null);
+    await assert.rejects(
+      () => db.query(
+        "select public.direct_entry_self_withdraw_duplicate_cccd($1::uuid,$2::uuid,$3::uuid,1,$4::text,$5::text)",
+        [DELEGATE_AUTH, DELEGATE_APP, offRehire.entryId, "Do not conflate a rehire", idemKey()],
+      ),
+      (err) => err.code === "PT409" && /not an active duplicate/i.test(err.message),
+    );
+
+    // Same-project-same-day ON + OFF: withdraw the OFF duplicate, preserve the ON employee,
+    // and keep the narrow delegated audit attribution.
+    const retained = await seedEpisode(db, {
+      cccd: "079200005555", name: "Retained active employee", project: PROJ_A,
+      date: "2026-10-05", status: "ON", createdBy: ADMIN_APP,
+    });
+    const resignedDuplicate = await seedEpisode(db, {
+      cccd: "079200005555", name: "Resigned duplicate", project: PROJ_A,
+      date: "2026-10-05", status: "ON", createdBy: ADMIN_APP,
+    });
+    await appendStatus(db, resignedDuplicate.entryId, "OFF", "2026-10-10", 2, null);
+
+    const eligibleView = await report(db, { auth: DELEGATE_AUTH, app: DELEGATE_APP, managedOnly: false });
+    const eligibleGroup = eligibleView.groups.find((g) => g.cccd_last4 === "5555");
+    assert.ok(eligibleGroup);
+    const offAction = eligibleGroup.episodes.find((e) => e.entry_id === resignedDuplicate.entryId);
+    const retainedAction = eligibleGroup.episodes.find((e) => e.entry_id === retained.entryId);
+    assert.equal(offAction.can_self_withdraw, true);
+    assert.equal(retainedAction.can_self_withdraw, false);
+
+    const withdrawnOff = (await db.query(
+      "select public.direct_entry_self_withdraw_duplicate_cccd($1::uuid,$2::uuid,$3::uuid,$4::integer,$5::text,$6::text) as data",
+      [DELEGATE_AUTH, DELEGATE_APP, resignedDuplicate.entryId, offAction.entry_version, "Remove resigned duplicate", idemKey()],
+    )).rows[0].data;
+    assert.deepEqual(withdrawnOff, { entry_id: resignedDuplicate.entryId, version: 2 });
+    const withdrawnRow = (await db.query(
+      "select voided_at, voided_by_user_id from public.direct_entries where entry_id=$1",
+      [resignedDuplicate.entryId],
+    )).rows[0];
+    assert.notEqual(withdrawnRow.voided_at, null);
+    assert.equal(withdrawnRow.voided_by_user_id, DELEGATE_APP);
+    const delegatedAudit = (await db.query(
+      "select capability, scope_kind from public.direct_entry_audit_events " +
+      "where resource_ref=$1 and action='entry_self_withdraw_duplicate_cccd' and outcome='APPLIED'",
+      [resignedDuplicate.entryId],
+    )).rows[0];
+    assert.deepEqual(delegatedAudit, { capability: "duplicate_cccd_withdraw", scope_kind: "all" });
+    const afterOffWithdraw = await report(db, { auth: DELEGATE_AUTH, app: DELEGATE_APP, managedOnly: false });
+    assert.equal(afterOffWithdraw.groups.some((g) => g.cccd_last4 === "5555"), false);
+    assert.equal(await count(db, "select count(*) from public.direct_entries where entry_id=$1 and voided_at is null", [retained.entryId]), 1);
+    assert.equal(await count(db, "select count(*) from public.direct_entries where entry_id=$1 and voided_at is null", [onRehire.entryId]), 1);
   } finally {
     await db.close();
   }
@@ -1527,9 +1593,9 @@ test("HF UNCONFIRMED contract + action flag consistency + mixed live/historical 
       [
         { entry_id: g3On1.entryId, status: "ON", active: true, can_mark_off: true, can_self_withdraw: true },
         { entry_id: g3On2.entryId, status: "ON", active: true, can_mark_off: true, can_self_withdraw: true },
-        { entry_id: g3OffSame.entryId, status: "OFF", active: false, can_mark_off: false, can_self_withdraw: false },
+        { entry_id: g3OffSame.entryId, status: "OFF", active: false, can_mark_off: false, can_self_withdraw: true },
       ],
-      "when active_profile_count >= 2, ON episodes allow self-withdraw and mark-off while OFF episode allows neither",
+      "ON episodes allow withdrawal with another active row; OFF same-project-day rows can be withdrawn while an active sibling remains",
     );
 
     // Verify pagination across the 3 mixed groups (pageSize = 2):
