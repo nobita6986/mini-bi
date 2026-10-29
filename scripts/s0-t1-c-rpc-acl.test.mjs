@@ -71,6 +71,8 @@ import {
   LEAVE_ADMIN_ACCOUNT_STATUS_FILTER_RPC_SIGNATURE,
   SALARY_ADVANCE_WP1_MIGRATION_NAME,
   SALARY_ADVANCE_WP1_RPC_SIGNATURES,
+  HF_SALARY_ADVANCE_ACTOR_DISPLAY_NAME_MIGRATION_NAME,
+  HF_SALARY_ADVANCE_ACTOR_DISPLAY_NAME_RPC_SIGNATURE,
   OFFBOARDING_REPORT_MIGRATION_NAME,
   OFFBOARDING_REPORT_RPC_SIGNATURES,
   migrationChecksum,
@@ -1023,7 +1025,8 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
         ...ADMIN_LINK_EXISTING_PERSONNEL_ACCOUNT_RPC_SIGNATURES,
         ...LEAVE_MANAGEMENT_WP1_RPC_SIGNATURES,
         LEAVE_ADMIN_ACCOUNT_STATUS_FILTER_RPC_SIGNATURE,
-        ...SALARY_ADVANCE_WP1_RPC_SIGNATURES);
+        ...SALARY_ADVANCE_WP1_RPC_SIGNATURES,
+        HF_SALARY_ADVANCE_ACTOR_DISPLAY_NAME_RPC_SIGNATURE);
       assert.ok(expectedSignatures.length > 0, "the explicit server/invoker allowlist is not empty");
       assert.equal(new Set(expectedSignatures).size, expectedSignatures.length, "the allowlist has no duplicates");
       const { rows: resolvedExpected } = await client.query(
@@ -1064,8 +1067,23 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
           ...ADMIN_LINK_EXISTING_PERSONNEL_ACCOUNT_RPC_SIGNATURES,
           ...LEAVE_MANAGEMENT_WP1_RPC_SIGNATURES,
           LEAVE_ADMIN_ACCOUNT_STATUS_FILTER_RPC_SIGNATURE,
-          ...SALARY_ADVANCE_WP1_RPC_SIGNATURES].sort(),
+          ...SALARY_ADVANCE_WP1_RPC_SIGNATURES,
+          HF_SALARY_ADVANCE_ACTOR_DISPLAY_NAME_RPC_SIGNATURE].sort(),
         "only explicitly reviewed post-S0 RPCs add service_role grants after the S0 baseline",
+      );
+      const hfSalaryAdvanceActorMigration = await readFile(
+        path.join(MIGRATION_DIR, HF_SALARY_ADVANCE_ACTOR_DISPLAY_NAME_MIGRATION_NAME),
+        "utf8",
+      );
+      assert.match(
+        hfSalaryAdvanceActorMigration,
+        /revoke all on function[\s\S]*public\.salary_advance_create_request\(uuid, uuid, text, uuid, text, text, text, text, text\)[\s\S]*from public, anon, authenticated, service_role;/i,
+        "salary advance hotfix migration revokes inherited RPC grants before granting service_role",
+      );
+      assert.match(
+        hfSalaryAdvanceActorMigration,
+        /grant execute on function[\s\S]*public\.salary_advance_create_request\(uuid, uuid, text, uuid, text, text, text, text, text\)[\s\S]*to service_role;/i,
+        "salary advance hotfix migration grants RPC execution only to service_role",
       );
       const salaryAdvanceWp1Migration = await readFile(
         path.join(MIGRATION_DIR, SALARY_ADVANCE_WP1_MIGRATION_NAME),

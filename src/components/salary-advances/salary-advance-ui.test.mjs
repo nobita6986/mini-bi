@@ -211,17 +211,91 @@ test("SalaryAdvanceWorkspace renders a compact single-row desktop filter bar wit
   );
 
   // Preserved filter state bindings and query params
-  assert.match(workspaceSource, /params\.set\("project_id",\s*projectFilter\)/);
+  assert.match(workspaceSource, /fetchSalaryAdvanceRequestListPage/);
+  assert.match(uiModelSource, /queryParams\.set\("project_id",\s*params\.projectFilter\)/);
+  assert.match(
+    uiModelSource,
+    /queryParams\.set\("request_state",\s*params\.requestStateFilter\)/
+  );
+  assert.match(
+    uiModelSource,
+    /queryParams\.set\("evidence_review_state",\s*params\.evidenceStateFilter\)/
+  );
+  assert.match(
+    uiModelSource,
+    /queryParams\.set\("search",\s*params\.appliedSearch\.trim\(\)\)/
+  );
+});
+
+test("SalaryAdvanceWorkspace prevents infinite request list loading by keying loadRequests on primitive tab identifiers and referentially stable badge counts", () => {
   assert.match(
     workspaceSource,
-    /params\.set\("request_state",\s*requestStateFilter\)/
+    /const\s+currentTabId\s*=\s*currentTabConfig\?\.id\s*\?\?\s*null/
   );
   assert.match(
     workspaceSource,
-    /params\.set\("evidence_review_state",\s*evidenceStateFilter\)/
+    /const\s+currentTabQueue\s*=\s*currentTabConfig\?\.queue\s*\?\?\s*null/
   );
   assert.match(
     workspaceSource,
-    /params\.set\("search",\s*appliedSearch\.trim\(\)\)/
+    /},\s*\[\s*currentTabId\s*,\s*currentTabQueue\s*,\s*loadRequests\s*\]\s*\)/,
+    "loadRequests effect must depend on primitive currentTabId and currentTabQueue instead of currentTabConfig object reference"
   );
+  assert.match(workspaceSource, /updateTabBadgeCountsForTab/);
+  assert.equal(
+    workspaceSource.includes("[currentTabConfig, loadRequests]"),
+    false,
+    "loadRequests effect must not depend on currentTabConfig object reference"
+  );
+});
+
+test("SalaryAdvanceWorkspace applies resolveSalaryAdvanceActorDisplayName consistently and never falls back to raw actor UUIDs", () => {
+  assert.match(workspaceSource, /resolveSalaryAdvanceActorDisplayName/);
+  for (const forbiddenUuidFallback of [
+    "activeDetail.request.created_by_user_id",
+    "comparisonModel.selectedEvidence.uploadedByUserId",
+    "comparisonModel.selectedEvidence.reviewedByUserId",
+    "ev.actor_user_id",
+  ]) {
+    assert.equal(
+      workspaceSource.includes(forbiddenUuidFallback),
+      false,
+      `Workspace must not fall back to raw UUID field: ${forbiddenUuidFallback}`
+    );
+  }
+});
+
+test("SalaryAdvanceWorkspace renders mandatory payment method selection, self-owned bank account details, worker eligibility blocking banners, and BANK_TRANSFER receipt comparison", () => {
+  // Mandatory payment method selector in Create Request dialog
+  assert.match(workspaceSource, /data-testid="salary-advance-create-payment-method"/);
+  assert.match(workspaceSource, /data-testid="salary-advance-payment-method-cash"/);
+  assert.match(
+    workspaceSource,
+    /data-testid="salary-advance-payment-method-bank-transfer"/
+  );
+  assert.match(workspaceSource, /data-testid="salary-advance-worker-bank-info"/);
+
+  // Worker eligibility blocking in Create Request dialog and Detail view
+  assert.match(
+    workspaceSource,
+    /data-testid="salary-advance-worker-eligibility-banner"/
+  );
+  assert.match(
+    workspaceSource,
+    /data-testid="salary-advance-detail-worker-ineligible-banner"/
+  );
+  assert.match(workspaceSource, /data-testid="salary-advance-detail-payment-method"/);
+  assert.match(workspaceSource, /data-testid="salary-advance-detail-bank-destination"/);
+
+  // Comparison panel supports both CASH (worker portrait) and BANK_TRANSFER (bank destination + transfer receipt)
+  assert.match(
+    workspaceSource,
+    /comparisonModel\.requiresWorkerPortraitComparison/
+  );
+  assert.match(
+    workspaceSource,
+    /data-testid="salary-advance-bank-destination-card"/
+  );
+  assert.match(workspaceSource, /Đối chiếu chứng từ chuyển khoản/);
+  assert.match(workspaceSource, /2\. Chứng từ chuyển khoản \(Bill\)/);
 });

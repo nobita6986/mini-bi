@@ -20,6 +20,8 @@ import {
   computeReserveEvidenceFingerprint,
   computeReviewEvidenceFingerprint,
   computeTransitionRequestFingerprint,
+  isSelfOwnedBankAccountNameMatch,
+  normalizeSalaryAdvancePersonName,
   parseCreateSalaryAdvanceRequestBody,
   parseEvidenceVersionParam,
   parseFinalizeSalaryAdvanceEvidenceBody,
@@ -108,6 +110,7 @@ test("parseCreateSalaryAdvanceRequestBody and parseTransitionSalaryAdvanceReques
       project_id: "PRJ_ALPHA",
       worker_entry_id: WORKER_ID,
       requested_amount_vnd: "150000000",
+      payment_method: "CASH",
       initial_content: "Ứng lương đợt 1 cho tổ thi công",
     },
     IDEM_KEY,
@@ -117,8 +120,38 @@ test("parseCreateSalaryAdvanceRequestBody and parseTransitionSalaryAdvanceReques
     assert.equal(created.value.project_id, "PRJ_ALPHA");
     assert.equal(created.value.worker_entry_id, WORKER_ID);
     assert.equal(created.value.requested_amount_vnd, "150000000");
+    assert.equal(created.value.payment_method, "CASH");
     assert.equal(created.value.idempotency_key, IDEM_KEY);
   }
+
+  const createdBankTransfer = parseCreateSalaryAdvanceRequestBody(
+    {
+      project_id: "PRJ_ALPHA",
+      worker_entry_id: WORKER_ID,
+      requested_amount_vnd: "3000000",
+      payment_method: "BANK_TRANSFER",
+      initial_content: "Ứng lương chuyển khoản",
+    },
+    IDEM_KEY,
+  );
+  assert.equal(createdBankTransfer.ok, true);
+  if (createdBankTransfer.ok) {
+    assert.equal(createdBankTransfer.value.payment_method, "BANK_TRANSFER");
+  }
+
+  const missingPaymentMethod = parseCreateSalaryAdvanceRequestBody(
+    {
+      project_id: "PRJ_ALPHA",
+      worker_entry_id: WORKER_ID,
+      requested_amount_vnd: "3000000",
+      initial_content: "Ứng lương thiếu phương thức",
+    },
+    IDEM_KEY,
+  );
+  assert.deepEqual(missingPaymentMethod, {
+    ok: false,
+    code: "SALARY_ADVANCE_PAYMENT_METHOD_INVALID",
+  });
 
   // Extra unknown field rejected
   const unknownField = parseCreateSalaryAdvanceRequestBody(
@@ -126,6 +159,7 @@ test("parseCreateSalaryAdvanceRequestBody and parseTransitionSalaryAdvanceReques
       project_id: "PRJ_ALPHA",
       worker_entry_id: WORKER_ID,
       requested_amount_vnd: "1500000",
+      payment_method: "CASH",
       initial_content: "Ứng lương",
       worker_display_name: "Injected Name",
     },
@@ -178,7 +212,7 @@ test("parseCreateSalaryAdvanceRequestBody and parseTransitionSalaryAdvanceReques
   }
 });
 
-test("parseReviewSalaryAdvanceEvidenceBody enforces 4-way portrait lock on REVIEWED and optional note on both decisions", () => {
+test("parseReviewSalaryAdvanceEvidenceBody enforces 4-way portrait lock on REVIEWED for CASH_HANDOVER_PHOTO and allows BANK_TRANSFER_RECEIPT without portrait lock", () => {
   const reviewedMissingLock = parseReviewSalaryAdvanceEvidenceBody(
     {
       expected_version: 3,
@@ -212,6 +246,33 @@ test("parseReviewSalaryAdvanceEvidenceBody enforces 4-way portrait lock on REVIE
     assert.equal(reviewedOk.value.expected_worker_portrait_version, 2);
   }
 
+  // BANK_TRANSFER_RECEIPT does not require portrait lock on REVIEWED
+  const reviewedBankReceiptOk = parseReviewSalaryAdvanceEvidenceBody(
+    {
+      expected_version: 3,
+      evidence_version: 1,
+      evidence_kind: "BANK_TRANSFER_RECEIPT",
+      decision: "REVIEWED",
+      note: "Đã đối chiếu bill chuyển khoản khớp số tài khoản",
+    },
+    IDEM_KEY,
+  );
+  assert.equal(reviewedBankReceiptOk.ok, true);
+  if (reviewedBankReceiptOk.ok) {
+    assert.equal(
+      reviewedBankReceiptOk.value.expected_worker_portrait_document_id,
+      null,
+    );
+    assert.equal(
+      reviewedBankReceiptOk.value.expected_worker_portrait_version,
+      null,
+    );
+    assert.equal(
+      reviewedBankReceiptOk.value.note,
+      "Đã đối chiếu bill chuyển khoản khớp số tài khoản",
+    );
+  }
+
   // RETAKE_REQUIRED does not require portrait lock or note
   const retakeOk = parseReviewSalaryAdvanceEvidenceBody(
     {
@@ -227,6 +288,21 @@ test("parseReviewSalaryAdvanceEvidenceBody enforces 4-way portrait lock on REVIE
     assert.equal(retakeOk.value.expected_worker_portrait_document_id, null);
     assert.equal(retakeOk.value.expected_worker_portrait_version, null);
   }
+});
+
+test("normalizeSalaryAdvancePersonName and isSelfOwnedBankAccountNameMatch normalize Vietnamese diacritics and enforce self-owned account matching", () => {
+  assert.equal(
+    normalizeSalaryAdvancePersonName("  Đặng   Thị  Hồng   Nhung "),
+    "DANG THI HONG NHUNG",
+  );
+  assert.equal(
+    isSelfOwnedBankAccountNameMatch("Đặng Thị Hồng Nhung", "DANG THI HONG NHUNG"),
+    true,
+  );
+  assert.equal(
+    isSelfOwnedBankAccountNameMatch("Nguyễn Văn A", "NGUYEN VAN B"),
+    false,
+  );
 });
 
 test("query and parameter parsers validate inputs strictly", () => {
@@ -391,15 +467,25 @@ test("fingerprints and HTTP status mapping are deterministic", () => {
     project_id: "PRJ_1",
     worker_entry_id: WORKER_ID,
     requested_amount_vnd: "1000000",
+    payment_method: "CASH",
     initial_content: "Tạm ứng",
   });
   const fp2 = computeCreateRequestFingerprint({
     project_id: "PRJ_1",
     worker_entry_id: WORKER_ID,
     requested_amount_vnd: "2000000",
+    payment_method: "CASH",
+    initial_content: "Tạm ứng",
+  });
+  const fp3 = computeCreateRequestFingerprint({
+    project_id: "PRJ_1",
+    worker_entry_id: WORKER_ID,
+    requested_amount_vnd: "1000000",
+    payment_method: "BANK_TRANSFER",
     initial_content: "Tạm ứng",
   });
   assert.notEqual(fp1, fp2);
+  assert.notEqual(fp1, fp3);
   assert.equal(fp1.length, 64);
 
   assert.equal(
@@ -457,6 +543,12 @@ test("fingerprints and HTTP status mapping are deterministic", () => {
   assert.equal(salaryAdvanceHttpStatusForError("SALARY_ADVANCE_VERSION_CONFLICT"), 409);
   assert.equal(salaryAdvanceHttpStatusForError("SALARY_ADVANCE_UPLOAD_SUPERSEDED"), 409);
   assert.equal(salaryAdvanceHttpStatusForError("SALARY_ADVANCE_WORKER_PORTRAIT_VERSION_CONFLICT"), 409);
+  assert.equal(salaryAdvanceHttpStatusForError("SALARY_ADVANCE_WORKER_INELIGIBLE_STATUS"), 409);
+  assert.equal(salaryAdvanceHttpStatusForError("SALARY_ADVANCE_WORKER_MULTI_PROJECT_ON"), 409);
+  assert.equal(salaryAdvanceHttpStatusForError("SALARY_ADVANCE_WORKER_DUPLICATE_CCCD"), 409);
+  assert.equal(salaryAdvanceHttpStatusForError("SALARY_ADVANCE_BANK_ACCOUNT_MISSING"), 409);
+  assert.equal(salaryAdvanceHttpStatusForError("SALARY_ADVANCE_BANK_ACCOUNT_NOT_SELF_OWNED"), 409);
+  assert.equal(salaryAdvanceHttpStatusForError("SALARY_ADVANCE_PAYMENT_METHOD_INVALID"), 400);
   assert.equal(salaryAdvanceHttpStatusForError("SALARY_ADVANCE_EVIDENCE_CONTENT_INVALID"), 422);
   assert.equal(salaryAdvanceHttpStatusForError("SALARY_ADVANCE_STORAGE_UNAVAILABLE"), 503);
   assert.equal(

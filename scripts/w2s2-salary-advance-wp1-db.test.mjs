@@ -192,6 +192,7 @@ const SALARY_ADVANCE_RPC_BINDINGS = {
     ["p_initial_content", "text"],
     ["p_idempotency_key", "text"],
     ["p_request_fingerprint", "text"],
+    ["p_payment_method", "text"],
   ],
   salary_advance_post_message: [
     ["p_auth_subject", "uuid"],
@@ -1806,6 +1807,535 @@ test("(#2) Full W2S2 Salary Advance WP1 acceptance across all 7 mandatory verifi
     });
     assert.equal(pmWithdraw.ok, true);
     assert.equal(pmWithdraw.data.request.request_state, "WITHDRAWN");
+
+    // =========================================================================
+    // HOTFIX VERIFICATION: Unified Actor Display Name Resolution
+    //   1. Verified current linked recruiter display_name wins over login-id in
+    //      direct_entry_app_users.display_name (e.g. 'yenlh.td' -> 'QLDA Dự Án Bắc 01').
+    //   2. Unlinked account falls back to direct_entry_app_users.display_name.
+    //   3. Blank or UUID direct_entry_app_users.display_name falls back to
+    //      auth.users email local-part login_id (and never raw UUID).
+    // =========================================================================
+    await db.exec("alter table auth.users add column if not exists email text;");
+    await db.query(
+      "update auth.users set email = 'yenlh.td@hrpvietnam.com' where id = $1::uuid",
+      [PM_1.auth],
+    );
+    await db.query(
+      "update public.direct_entry_app_users set display_name = 'yenlh.td' where app_user_id = $1::uuid",
+      [PM_1.app],
+    );
+    await db.query(
+      "update auth.users set email = 'ketoan.b@hrpvietnam.com' where id = $1::uuid",
+      [ACCT_B.auth],
+    );
+    await db.query(
+      "update public.direct_entry_app_users set display_name = 'ketoan.b' where app_user_id = $1::uuid",
+      [ACCT_B.app],
+    );
+
+    const pm1ContextAfterLoginId = await repo.getActorContext({
+      auth_subject: PM_1.auth,
+      app_user_id: PM_1.app,
+    });
+    assert.equal(pm1ContextAfterLoginId.ok, true);
+    assert.equal(
+      pm1ContextAfterLoginId.data.display_name,
+      PM_1.name,
+      "Actor context must resolve verified current linked recruiter name instead of account login-id display_name",
+    );
+    const prj1InContext = pm1ContextAfterLoginId.data.managed_projects.find(
+      (p) => p.project_id === PRJ_1,
+    );
+    assert.equal(
+      prj1InContext?.accountant_display_name,
+      ACCT_B.name,
+      "Managed project accountant_display_name must resolve verified current linked recruiter name",
+    );
+
+    const detailAfterLoginId = await repo.getRequestDetail({
+      auth_subject: PM_1.auth,
+      app_user_id: PM_1.app,
+      request_id: req1Id,
+    });
+    assert.equal(detailAfterLoginId.ok, true);
+    assert.equal(
+      detailAfterLoginId.data.request.created_by_display_name,
+      PM_1.name,
+      "Request created_by_display_name must resolve verified current linked recruiter name instead of 'yenlh.td'",
+    );
+    assert.equal(
+      detailAfterLoginId.data.request.current_project_accountant?.display_name,
+      ACCT_B.name,
+      "Request current_project_accountant.display_name must resolve verified current linked recruiter name",
+    );
+    assert.equal(
+      detailAfterLoginId.data.request.current_evidence?.uploaded_by_display_name,
+      PM_1.name,
+      "Evidence uploaded_by_display_name must resolve verified current linked recruiter name",
+    );
+    assert.equal(
+      detailAfterLoginId.data.request.current_evidence?.reviewed_by_display_name,
+      ACCT_B.name,
+      "Evidence reviewed_by_display_name must resolve verified current linked recruiter name",
+    );
+    assert.ok(
+      detailAfterLoginId.data.events.every(
+        (ev) =>
+          ev.actor_display_name === PM_1.name ||
+          ev.actor_display_name === ACCT_A.name ||
+          ev.actor_display_name === ACCT_B.name,
+      ),
+      "Timeline events must resolve verified current linked recruiter names consistently",
+    );
+
+    // Fallback tier 2 & 3 check on unlinked account (FULL_ADMIN has no recruiter link)
+    await db.query(
+      "update auth.users set email = 'admin.bi@hrpvietnam.com' where id = $1::uuid",
+      [FULL_ADMIN.auth],
+    );
+    await db.query(
+      "update public.direct_entry_app_users set display_name = $1 where app_user_id = $1::uuid",
+      [FULL_ADMIN.app],
+    );
+    const adminCtxWithUuidDisplayName = await repo.getActorContext({
+      auth_subject: FULL_ADMIN.auth,
+      app_user_id: FULL_ADMIN.app,
+    });
+    assert.equal(adminCtxWithUuidDisplayName.ok, true);
+    assert.equal(
+      adminCtxWithUuidDisplayName.data.display_name,
+      "admin.bi",
+      "When unlinked and u.display_name is a raw UUID, actor display name must fall back to auth.users login_id ('admin.bi')",
+    );
+
+    // =========================================================================
+    // HOTFIX VERIFICATION: Payment Method (CASH vs BANK_TRANSFER), Self-Owned
+    // Bank Account Validation, Snapshot Immutability & Receipt Review
+    // =========================================================================
+    await db.query(
+      `insert into public.direct_entry_banks (bank_id, display_name, active)
+       values ('VCB_SAL_ADV', 'Vietcombank', true)
+       on conflict (bank_id) do nothing`,
+    );
+
+    // 1. Creating BANK_TRANSFER when worker has no bank account fails with SALARY_ADVANCE_BANK_ACCOUNT_MISSING
+    const bankMissingRes = await repo.createRequest({
+      auth_subject: PM_1.auth,
+      app_user_id: PM_1.app,
+      project_id: PRJ_1,
+      worker_entry_id: workerPrj1B,
+      requested_amount_vnd: "2000000",
+      payment_method: "BANK_TRANSFER",
+      initial_content: "Ứng lương chuyển khoản khi chưa có TK",
+      idempotency_key: "idem-bank-missing-001",
+      request_fingerprint: computeCreateRequestFingerprint({
+        project_id: PRJ_1,
+        worker_entry_id: workerPrj1B,
+        requested_amount_vnd: "2000000",
+        payment_method: "BANK_TRANSFER",
+        initial_content: "Ứng lương chuyển khoản khi chưa có TK",
+      }),
+    });
+    assert.deepEqual(bankMissingRes, {
+      ok: false,
+      code: "SALARY_ADVANCE_BANK_ACCOUNT_MISSING",
+    });
+
+    // 2. Non-self-owned bank account (holder name != worker display_name) fails with SALARY_ADVANCE_BANK_ACCOUNT_NOT_SELF_OWNED
+    await db.query(
+      `insert into public.direct_entry_payments (entry_id, state, account_number, bank_id, account_holder_name, version)
+       values ($1::uuid, 'provided', '0123456789', 'VCB_SAL_ADV', 'NGUYEN VAN NGUOI KHAC', 1)
+       on conflict (entry_id) do update
+         set state = 'provided',
+             account_number = excluded.account_number,
+             bank_id = excluded.bank_id,
+             account_holder_name = excluded.account_holder_name,
+             version = public.direct_entry_payments.version + 1`,
+      [workerPrj1B],
+    );
+
+    const bankNotSelfOwnedRes = await repo.createRequest({
+      auth_subject: PM_1.auth,
+      app_user_id: PM_1.app,
+      project_id: PRJ_1,
+      worker_entry_id: workerPrj1B,
+      requested_amount_vnd: "2000000",
+      payment_method: "BANK_TRANSFER",
+      initial_content: "Ứng lương chuyển khoản không chính chủ",
+      idempotency_key: "idem-bank-not-self-owned-001",
+      request_fingerprint: computeCreateRequestFingerprint({
+        project_id: PRJ_1,
+        worker_entry_id: workerPrj1B,
+        requested_amount_vnd: "2000000",
+        payment_method: "BANK_TRANSFER",
+        initial_content: "Ứng lương chuyển khoản không chính chủ",
+      }),
+    });
+    assert.deepEqual(bankNotSelfOwnedRes, {
+      ok: false,
+      code: "SALARY_ADVANCE_BANK_ACCOUNT_NOT_SELF_OWNED",
+    });
+
+    // 3. Self-owned bank account (normalized 'TRAN CONG NHAN BAC 2' matches 'Trần Công Nhân Bắc 2') succeeds
+    await db.query(
+      `update public.direct_entry_payments
+          set account_holder_name = '  tran   cong nhan bac 2 ',
+              version = version + 1
+        where entry_id = $1::uuid`,
+      [workerPrj1B],
+    );
+
+    const bankCreateOk = await repo.createRequest({
+      auth_subject: PM_1.auth,
+      app_user_id: PM_1.app,
+      project_id: PRJ_1,
+      worker_entry_id: workerPrj1B,
+      requested_amount_vnd: "4500000",
+      payment_method: "BANK_TRANSFER",
+      initial_content: "Ứng lương chuyển khoản chính chủ",
+      idempotency_key: "idem-bank-ok-001",
+      request_fingerprint: computeCreateRequestFingerprint({
+        project_id: PRJ_1,
+        worker_entry_id: workerPrj1B,
+        requested_amount_vnd: "4500000",
+        payment_method: "BANK_TRANSFER",
+        initial_content: "Ứng lương chuyển khoản chính chủ",
+      }),
+    });
+    assert.equal(bankCreateOk.ok, true);
+    assert.equal(bankCreateOk.data.request.payment_method, "BANK_TRANSFER");
+    assert.equal(
+      bankCreateOk.data.request.payment_destination_snapshot?.institution_name,
+      "Vietcombank",
+    );
+    assert.equal(
+      bankCreateOk.data.request.payment_destination_snapshot?.account_number,
+      "0123456789",
+    );
+    const bankReqId = bankCreateOk.data.request.request_id;
+
+    // Modify worker's bank account in direct_entry_payments afterwards -> existing request snapshot remains intact!
+    await db.query(
+      `update public.direct_entry_payments
+          set account_number = '9999999999',
+              version = version + 1
+        where entry_id = $1::uuid`,
+      [workerPrj1B],
+    );
+    const bankDetailAfterProfileChange = await repo.getRequestDetail({
+      auth_subject: PM_1.auth,
+      app_user_id: PM_1.app,
+      request_id: bankReqId,
+    });
+    assert.equal(bankDetailAfterProfileChange.ok, true);
+    assert.equal(
+      bankDetailAfterProfileChange.data.request.payment_destination_snapshot
+        ?.account_number,
+      "0123456789",
+      "Existing BANK_TRANSFER request must preserve immutable payment_destination_snapshot when worker profile bank account changes",
+    );
+
+    // Approve BANK_TRANSFER request, upload transfer receipt, and review WITHOUT worker portrait (workerPrj1B has no portrait!)
+    const approveBankReq = await repo.transitionRequest({
+      auth_subject: ACCT_B.auth,
+      app_user_id: ACCT_B.app,
+      request_id: bankReqId,
+      action: "APPROVE",
+      expected_version: 1,
+      message_text: "Chấp thuận chuyển khoản",
+      idempotency_key: "idem-approve-bank-001",
+      request_fingerprint: computeTransitionRequestFingerprint({
+        request_id: bankReqId,
+        action: "APPROVE",
+        expected_version: 1,
+        message_text: "Chấp thuận chuyển khoản",
+      }),
+    });
+    assert.equal(approveBankReq.ok, true);
+    assert.equal(approveBankReq.data.request.request_state, "APPROVED");
+
+    const bankReceiptSha = "e".repeat(64);
+    const reserveBankReceipt = await repo.reserveEvidence({
+      auth_subject: PM_1.auth,
+      app_user_id: PM_1.app,
+      request_id: bankReqId,
+      expected_version: 2,
+      mime_type: "image/png",
+      size_bytes: 2048,
+      checksum_sha256: bankReceiptSha,
+      caption_note: "Bill chuyển khoản VCB FT123456",
+      idempotency_key: "idem-reserve-bank-receipt-001",
+      request_fingerprint: computeReserveEvidenceFingerprint({
+        request_id: bankReqId,
+        expected_version: 2,
+        mime_type: "image/png",
+        size_bytes: 2048,
+        checksum_sha256: bankReceiptSha,
+        caption_note: "Bill chuyển khoản VCB FT123456",
+      }),
+    });
+    assert.equal(reserveBankReceipt.ok, true);
+
+    const finalizeBankReceipt = await repo.finalizeEvidence({
+      auth_subject: PM_1.auth,
+      app_user_id: PM_1.app,
+      request_id: bankReqId,
+      upload_id: reserveBankReceipt.data.upload_id,
+      expected_version: 2,
+      idempotency_key: "idem-finalize-bank-receipt-001",
+      request_fingerprint: computeFinalizeEvidenceFingerprint({
+        request_id: bankReqId,
+        upload_id: reserveBankReceipt.data.upload_id,
+        expected_version: 2,
+      }),
+    });
+    assert.equal(finalizeBankReceipt.ok, true);
+    assert.equal(
+      finalizeBankReceipt.data.request.current_evidence?.evidence_kind,
+      "BANK_TRANSFER_RECEIPT",
+    );
+
+    const reviewBankReceipt = await repo.reviewEvidence({
+      auth_subject: ACCT_B.auth,
+      app_user_id: ACCT_B.app,
+      request_id: bankReqId,
+      expected_version: 3,
+      evidence_version: 1,
+      decision: "REVIEWED",
+      expected_worker_portrait_document_id: null,
+      expected_worker_portrait_version: null,
+      note: "Đã đối chiếu bill chuyển khoản khớp số tài khoản chính chủ",
+      idempotency_key: "idem-review-bank-receipt-001",
+      request_fingerprint: computeReviewEvidenceFingerprint({
+        request_id: bankReqId,
+        expected_version: 3,
+        evidence_version: 1,
+        decision: "REVIEWED",
+        expected_worker_portrait_document_id: null,
+        expected_worker_portrait_version: null,
+        note: "Đã đối chiếu bill chuyển khoản khớp số tài khoản chính chủ",
+      }),
+    });
+    assert.equal(reviewBankReceipt.ok, true);
+    assert.equal(
+      reviewBankReceipt.data.request.evidence_review_state,
+      "REVIEWED",
+      "BANK_TRANSFER_RECEIPT must allow REVIEWED confirmation without worker portrait lock",
+    );
+
+    // =========================================================================
+    // HOTFIX VERIFICATION: Worker Eligibility Blocking in Picker, Create & Approve
+    //   - OFF / UNCONFIRMED blocked
+    //   - Active ON in >= 2 distinct projects blocked
+    //   - Duplicate CCCD cluster (same_project_day_count >= 2) blocked
+    //   - Raw CCCD never returned in worker picker or request projections
+    //   - Existing requests never auto-deleted/cancelled when worker becomes ineligible,
+    //     but APPROVE is blocked with clear error code
+    // =========================================================================
+    // Create an OPEN request for workerPrj1B while still eligible
+    const openBeforeIneligible = await repo.createRequest({
+      auth_subject: PM_1.auth,
+      app_user_id: PM_1.app,
+      project_id: PRJ_1,
+      worker_entry_id: workerPrj1B,
+      requested_amount_vnd: "1200000",
+      payment_method: "CASH",
+      initial_content: "Yêu cầu tạo khi NLĐ đang đủ điều kiện",
+      idempotency_key: "idem-open-before-ineligible-001",
+      request_fingerprint: computeCreateRequestFingerprint({
+        project_id: PRJ_1,
+        worker_entry_id: workerPrj1B,
+        requested_amount_vnd: "1200000",
+        payment_method: "CASH",
+        initial_content: "Yêu cầu tạo khi NLĐ đang đủ điều kiện",
+      }),
+    });
+    assert.equal(openBeforeIneligible.ok, true);
+    const openReqBeforeIneligibleId =
+      openBeforeIneligible.data.request.request_id;
+
+    // Case A: Transition workerPrj1B to OFF -> blocked in picker, create, and APPROVE of existing request
+    await db.query(
+      `insert into public.direct_entry_employment_status_events
+         (entry_id, status, effective_date, leave_date, leave_reason_text, version, actor_user_id, reason_id)
+       select entry_id, 'OFF', '2026-10-20'::date, '2026-10-20'::date, 'Nghỉ việc tự nguyện',
+              version + 1, $2::uuid, reason_id
+         from public.direct_entry_employment_status_events
+        where entry_id = $1::uuid
+        order by version desc
+        limit 1`,
+      [workerPrj1B, PM_1.app],
+    );
+
+    const pickerAfterOff = await repo.listProjectWorkers({
+      auth_subject: PM_1.auth,
+      app_user_id: PM_1.app,
+      project_id: PRJ_1,
+      search: "hrp-2026-800002",
+      cursor: null,
+      page_size: 20,
+    });
+    assert.equal(pickerAfterOff.ok, true);
+    const pickedOffWorker = pickerAfterOff.data.workers.find(
+      (w) => w.worker_entry_id === workerPrj1B,
+    );
+    assert.equal(pickedOffWorker?.employment_status, "OFF");
+    assert.equal(pickedOffWorker?.is_eligible, false);
+    assert.ok(
+      pickedOffWorker?.ineligible_reasons?.includes("WORKER_STATUS_OFF"),
+    );
+
+    const createWhenOff = await repo.createRequest({
+      auth_subject: PM_1.auth,
+      app_user_id: PM_1.app,
+      project_id: PRJ_1,
+      worker_entry_id: workerPrj1B,
+      requested_amount_vnd: "1000000",
+      payment_method: "CASH",
+      initial_content: "Thử tạo khi NLĐ đã OFF",
+      idempotency_key: "idem-create-when-off-001",
+      request_fingerprint: computeCreateRequestFingerprint({
+        project_id: PRJ_1,
+        worker_entry_id: workerPrj1B,
+        requested_amount_vnd: "1000000",
+        payment_method: "CASH",
+        initial_content: "Thử tạo khi NLĐ đã OFF",
+      }),
+    });
+    assert.deepEqual(createWhenOff, {
+      ok: false,
+      code: "SALARY_ADVANCE_WORKER_INELIGIBLE_STATUS",
+    });
+
+    // Existing OPEN request is NOT auto-deleted or auto-cancelled, but APPROVE is blocked!
+    const approveWhenOff = await repo.transitionRequest({
+      auth_subject: ACCT_B.auth,
+      app_user_id: ACCT_B.app,
+      request_id: openReqBeforeIneligibleId,
+      action: "APPROVE",
+      expected_version: 1,
+      message_text: null,
+      idempotency_key: "idem-approve-when-off-001",
+      request_fingerprint: computeTransitionRequestFingerprint({
+        request_id: openReqBeforeIneligibleId,
+        action: "APPROVE",
+        expected_version: 1,
+        message_text: null,
+      }),
+    });
+    assert.deepEqual(approveWhenOff, {
+      ok: false,
+      code: "SALARY_ADVANCE_WORKER_INELIGIBLE_STATUS",
+    });
+
+    // Case B: Multi-project ON (worker active ON in >= 2 distinct projects)
+    const multiCccd = "079099009911";
+    await db.query(
+      `update public.direct_entries
+          set worker_details = jsonb_set(
+                worker_details,
+                '{national_id}',
+                jsonb_build_object('state', 'provided', 'value', $1::text)
+              ),
+              version = version + 1
+        where entry_id in ($2::uuid, $3::uuid)`,
+      [multiCccd, workerPrj1A, workerPrj2],
+    );
+
+    const createWhenMultiProjectOn = await repo.createRequest({
+      auth_subject: PM_1.auth,
+      app_user_id: PM_1.app,
+      project_id: PRJ_1,
+      worker_entry_id: workerPrj1A,
+      requested_amount_vnd: "1000000",
+      payment_method: "CASH",
+      initial_content: "Thử tạo khi NLĐ đang ON ở 2 dự án",
+      idempotency_key: "idem-create-multi-prj-001",
+      request_fingerprint: computeCreateRequestFingerprint({
+        project_id: PRJ_1,
+        worker_entry_id: workerPrj1A,
+        requested_amount_vnd: "1000000",
+        payment_method: "CASH",
+        initial_content: "Thử tạo khi NLĐ đang ON ở 2 dự án",
+      }),
+    });
+    assert.deepEqual(createWhenMultiProjectOn, {
+      ok: false,
+      code: "SALARY_ADVANCE_WORKER_MULTI_PROJECT_ON",
+    });
+
+    // Set workerPrj2 to OFF so workerPrj1A is only ON in 1 project, then test Case C: Duplicate CCCD cluster (same_project_day_count >= 2)
+    await db.query(
+      `insert into public.direct_entry_employment_status_events
+         (entry_id, status, effective_date, leave_date, leave_reason_text, version, actor_user_id, reason_id)
+       select entry_id, 'OFF', '2026-10-21'::date, '2026-10-21'::date, 'Kết thúc đợt',
+              version + 1, $2::uuid, reason_id
+         from public.direct_entry_employment_status_events
+        where entry_id = $1::uuid
+        order by version desc
+        limit 1`,
+      [workerPrj2, PM_2.app],
+    );
+
+    // Put draftWorkerPrj1 on the same project + same first_work_date ('2026-10-01') + same CCCD as workerPrj1A
+    await db.query(
+      `update public.direct_entries
+          set first_work_date = '2026-10-01'::date,
+              worker_details = jsonb_set(
+                worker_details,
+                '{national_id}',
+                jsonb_build_object('state', 'provided', 'value', $1::text)
+              ),
+              version = version + 1
+        where entry_id = $2::uuid`,
+      [multiCccd, draftWorkerPrj1],
+    );
+
+    const pickerWithDupCccd = await repo.listProjectWorkers({
+      auth_subject: PM_1.auth,
+      app_user_id: PM_1.app,
+      project_id: PRJ_1,
+      search: "hrp-2026-800001",
+      cursor: null,
+      page_size: 20,
+    });
+    assert.equal(pickerWithDupCccd.ok, true);
+    assert.equal(
+      JSON.stringify(pickerWithDupCccd.data).includes(multiCccd),
+      false,
+      "Worker picker response must NEVER expose raw CCCD",
+    );
+    const pickedDupWorker = pickerWithDupCccd.data.workers.find(
+      (w) => w.worker_entry_id === workerPrj1A,
+    );
+    assert.equal(pickedDupWorker?.has_duplicate_cccd, true);
+    assert.equal(pickedDupWorker?.is_eligible, false);
+    assert.ok(
+      pickedDupWorker?.ineligible_reasons?.includes("WORKER_DUPLICATE_CCCD"),
+    );
+
+    const createWhenDupCccd = await repo.createRequest({
+      auth_subject: PM_1.auth,
+      app_user_id: PM_1.app,
+      project_id: PRJ_1,
+      worker_entry_id: workerPrj1A,
+      requested_amount_vnd: "1000000",
+      payment_method: "CASH",
+      initial_content: "Thử tạo khi NLĐ thuộc nhóm trùng CCCD",
+      idempotency_key: "idem-create-dup-cccd-001",
+      request_fingerprint: computeCreateRequestFingerprint({
+        project_id: PRJ_1,
+        worker_entry_id: workerPrj1A,
+        requested_amount_vnd: "1000000",
+        payment_method: "CASH",
+        initial_content: "Thử tạo khi NLĐ thuộc nhóm trùng CCCD",
+      }),
+    });
+    assert.deepEqual(createWhenDupCccd, {
+      ok: false,
+      code: "SALARY_ADVANCE_WORKER_DUPLICATE_CCCD",
+    });
 
     // Append-only trigger on salary_advance_events blocks UPDATE and DELETE even with write_marker
     await assert.rejects(

@@ -10,11 +10,16 @@ import {
   countActionableRequestsForTab,
   createLatestRequestTracker,
   decideSalaryAdvancePageAccess,
+  describeWorkerBankTransferEligibility,
+  describeWorkerEligibility,
   evaluateEvidenceComparisonPanel,
   evaluateRequestAttentionForTab,
+  fetchSalaryAdvanceRequestListPage,
   formatFileSizeBytes,
   formatVndAmount,
+  getEvidenceKindLabel,
   getEvidenceReviewStateMeta,
+  getPaymentMethodMeta,
   getRequestStateMeta,
   getSalaryAdvanceActorRoleLabel,
   getSalaryAdvanceEventTone,
@@ -22,14 +27,17 @@ import {
   isSalaryAdvanceConflictError,
   newSalaryAdvanceIdempotencyKey,
   normalizePositiveVndInput,
+  parseSalaryAdvanceRequestListPayload,
   reconcileSelectedRequestIdFromList,
   reconcileSelectedWorkerEntryId,
   resolveActiveRequestDetail,
   resolveAvailableRequestActions,
+  resolveSalaryAdvanceActorDisplayName,
   resolveScopedMutationFailureOutcome,
   resolveVisibleSalaryAdvanceTabs,
   salaryAdvanceErrorMessage,
   sortEventsChronologically,
+  updateTabBadgeCountsForTab,
   uploadSalaryAdvanceEvidence,
   validateCreateSalaryAdvanceDraft,
   validateEvidenceFilePreflight,
@@ -898,4 +906,550 @@ test("late mutation failure or 409 conflict for request A after switching select
   assert.equal(errorSameRequest.conflictBannerMessage, null);
   assert.match(errorSameRequest.errorMessage ?? "", /nội dung trao đổi/);
   assert.equal(errorSameRequest.shouldReloadSelectedDetail, false);
+});
+
+test("resolveSalaryAdvanceActorDisplayName enforces unified priority (verified current recruiter -> account display name -> login ID -> fallback without raw UUID)", () => {
+  // Priority 1: verified current linked recruiter name wins over login-id display_name
+  assert.equal(
+    resolveSalaryAdvanceActorDisplayName({
+      recruiterDisplayName: "Lê Hoàng Yến",
+      verifiedCurrentRecruiterLink: true,
+      displayName: "yenlh.td",
+      loginId: "yenlh.td@hrpvietnam.com",
+    }),
+    "Lê Hoàng Yến"
+  );
+
+  // Unverified or inactive recruiter link is ignored; falls back to Priority 2 (account displayName)
+  assert.equal(
+    resolveSalaryAdvanceActorDisplayName({
+      recruiterDisplayName: "Lê Hoàng Yến",
+      verifiedCurrentRecruiterLink: false,
+      displayName: "Yến Tuyển Dụng",
+      loginId: "yenlh.td@hrpvietnam.com",
+    }),
+    "Yến Tuyển Dụng"
+  );
+
+  // Priority 3: when recruiter link is missing and displayName is blank or raw UUID, falls back to loginId
+  assert.equal(
+    resolveSalaryAdvanceActorDisplayName({
+      recruiterDisplayName: null,
+      displayName: "44444444-4444-4444-8444-444444444444",
+      loginId: "YenLH.TD@hrpvietnam.com",
+    }),
+    "yenlh.td"
+  );
+
+  // Priority 4: when all candidates are blank or raw UUIDs, falls back to Vietnamese placeholder (never raw UUID)
+  assert.equal(
+    resolveSalaryAdvanceActorDisplayName({
+      recruiterDisplayName: "   ",
+      displayName: "44444444-4444-4444-8444-444444444444",
+      loginId: "55555555-5555-4555-8555-555555555555",
+    }),
+    "Chưa cập nhật tên"
+  );
+  assert.equal(
+    resolveSalaryAdvanceActorDisplayName(
+      "44444444-4444-4444-8444-444444444444"
+    ),
+    "Chưa cập nhật tên"
+  );
+  assert.equal(resolveSalaryAdvanceActorDisplayName("   "), "Chưa cập nhật tên");
+  assert.equal(resolveSalaryAdvanceActorDisplayName(null), "Chưa cập nhật tên");
+  assert.equal(
+    resolveSalaryAdvanceActorDisplayName("Lê Hoàng Yến"),
+    "Lê Hoàng Yến"
+  );
+
+  // evaluateEvidenceComparisonPanel sanitizes UUID/blank uploader and reviewer display names
+  const detailWithUuidNames = {
+    request: makeRequestSummary({
+      request_state: "APPROVED",
+      evidence_review_state: "REVIEWED",
+      current_evidence: {
+        evidence_version: 1,
+        mime_type: "image/jpeg",
+        size_bytes: 120000,
+        checksum_sha256: "c".repeat(64),
+        uploaded_by_user_id: "44444444-4444-4444-8444-444444444444",
+        uploaded_by_display_name: "44444444-4444-4444-8444-444444444444",
+        uploaded_at: "2026-10-29T09:00:00.000Z",
+        reviewed_by_user_id: "55555555-5555-4555-8555-555555555555",
+        reviewed_by_display_name: "",
+        reviewed_at: "2026-10-29T09:15:00.000Z",
+        review_note: "Đã đối chiếu",
+        reviewed_worker_portrait_document_id:
+          "66666666-6666-4666-8666-666666666666",
+        reviewed_worker_portrait_version: 2,
+      },
+    }),
+    events: [],
+    evidence_versions: [],
+  };
+
+  const panelModel = evaluateEvidenceComparisonPanel(detailWithUuidNames);
+  assert.equal(
+    panelModel.selectedEvidence?.uploadedByDisplayName,
+    "Chưa cập nhật tên"
+  );
+  assert.equal(
+    panelModel.selectedEvidence?.reviewedByDisplayName,
+    "Chưa cập nhật tên"
+  );
+});
+
+test("updateTabBadgeCountsForTab preserves object reference when badge count is unchanged so loadRequests never loops infinitely", () => {
+  const actionableRow = makeRequestSummary({
+    request_state: "OPEN",
+    allowed_actions: makeAllowedActions({ can_approve: true }),
+  });
+
+  const initialCounts = { accountant: 1 };
+  const sameCounts = updateTabBadgeCountsForTab(
+    initialCounts,
+    "accountant",
+    [actionableRow]
+  );
+  assert.equal(
+    sameCounts,
+    initialCounts,
+    "Must return the exact same object reference when badge count is unchanged"
+  );
+
+  const updatedCounts = updateTabBadgeCountsForTab(
+    initialCounts,
+    "accountant",
+    [actionableRow, { ...actionableRow, request_id: "99999999-9999-4999-8999-999999999999" }]
+  );
+  assert.notEqual(updatedCounts, initialCounts);
+  assert.equal(updatedCounts.accountant, 2);
+});
+
+test("fetchSalaryAdvanceRequestListPage and parseSalaryAdvanceRequestListPayload settle cleanly across success, empty, API/shape error, and stale/cancelled request branches", async () => {
+  const row1 = makeRequestSummary({
+    request_id: "11111111-1111-4111-8111-111111111111",
+    request_state: "OPEN",
+    allowed_actions: makeAllowedActions({ can_approve: true }),
+  });
+
+  // 1. Success with data
+  const tracker1 = createLatestRequestTracker();
+  const ticket1 = tracker1.begin();
+  const successOutcome = await fetchSalaryAdvanceRequestListPage({
+    queue: "ACCOUNTANT",
+    projectFilter: "ALL",
+    requestStateFilter: "ALL",
+    evidenceStateFilter: "ALL",
+    appliedSearch: "",
+    ticket: ticket1,
+    fetchImpl: async () =>
+      new Response(
+        JSON.stringify({
+          ok: true,
+          data: {
+            queue: "ACCOUNTANT",
+            page_size: 25,
+            has_more: false,
+            next_cursor: null,
+            requests: [row1],
+          },
+        }),
+        { status: 200 }
+      ),
+  });
+  assert.equal(successOutcome.status, "success");
+  if (successOutcome.status === "success") {
+    assert.equal(successOutcome.isEmpty, false);
+    assert.equal(successOutcome.data.requests.length, 1);
+    assert.equal(successOutcome.data.requests[0].request_id, row1.request_id);
+  }
+
+  // 2. Success with empty list
+  const tracker2 = createLatestRequestTracker();
+  const ticket2 = tracker2.begin();
+  const emptyOutcome = await fetchSalaryAdvanceRequestListPage({
+    queue: "ACCOUNTANT",
+    projectFilter: "ALL",
+    requestStateFilter: "APPROVED",
+    evidenceStateFilter: "ALL",
+    appliedSearch: "NV999",
+    ticket: ticket2,
+    fetchImpl: async () =>
+      new Response(
+        JSON.stringify({
+          ok: true,
+          data: {
+            queue: "ACCOUNTANT",
+            page_size: 25,
+            has_more: false,
+            next_cursor: null,
+            requests: [],
+          },
+        }),
+        { status: 200 }
+      ),
+  });
+  assert.equal(emptyOutcome.status, "success");
+  if (emptyOutcome.status === "success") {
+    assert.equal(emptyOutcome.isEmpty, true);
+    assert.deepEqual(emptyOutcome.data.requests, []);
+  }
+
+  // 3a. API error response (HTTP 500 or ok: false) -> status: "error" (never empty list)
+  const tracker3 = createLatestRequestTracker();
+  const ticket3 = tracker3.begin();
+  const apiErrorOutcome = await fetchSalaryAdvanceRequestListPage({
+    queue: "ACCOUNTANT",
+    projectFilter: "ALL",
+    requestStateFilter: "ALL",
+    evidenceStateFilter: "ALL",
+    appliedSearch: "",
+    ticket: ticket3,
+    fetchImpl: async () =>
+      new Response(
+        JSON.stringify({
+          ok: false,
+          code: "SALARY_ADVANCE_ACCESS_DENIED",
+        }),
+        { status: 403 }
+      ),
+  });
+  assert.equal(apiErrorOutcome.status, "error");
+  if (apiErrorOutcome.status === "error") {
+    assert.equal(apiErrorOutcome.code, "SALARY_ADVANCE_ACCESS_DENIED");
+    assert.match(apiErrorOutcome.message, /quyền/);
+  }
+
+  // 3b. Malformed payload shape (e.g. requests is null or missing has_more) -> status: "error" (never masked as empty list)
+  assert.equal(
+    parseSalaryAdvanceRequestListPayload({
+      queue: "ACCOUNTANT",
+      page_size: 25,
+      has_more: false,
+      next_cursor: null,
+      requests: null,
+    }).ok,
+    false
+  );
+  assert.equal(
+    parseSalaryAdvanceRequestListPayload({
+      queue: "ACCOUNTANT",
+      page_size: 25,
+      requests: [],
+    }).ok,
+    false
+  );
+
+  const ticket3b = tracker3.begin();
+  const shapeErrorOutcome = await fetchSalaryAdvanceRequestListPage({
+    queue: "ACCOUNTANT",
+    projectFilter: "ALL",
+    requestStateFilter: "ALL",
+    evidenceStateFilter: "ALL",
+    appliedSearch: "",
+    ticket: ticket3b,
+    fetchImpl: async () =>
+      new Response(
+        JSON.stringify({
+          ok: true,
+          data: {
+            queue: "ACCOUNTANT",
+            page_size: 25,
+            has_more: false,
+            next_cursor: null,
+            requests: [{ invalid_item: true }],
+          },
+        }),
+        { status: 200 }
+      ),
+  });
+  assert.equal(shapeErrorOutcome.status, "error");
+  if (shapeErrorOutcome.status === "error") {
+    assert.equal(shapeErrorOutcome.code, "SALARY_ADVANCE_PAYLOAD_INVALID");
+    assert.match(shapeErrorOutcome.message, /không hợp lệ/);
+  }
+
+  // 4. Stale / cancelled request when user changes filter or switches tab before response arrives
+  const tracker4 = createLatestRequestTracker();
+  const staleTicket = tracker4.begin();
+  const newerTicket = tracker4.begin();
+  assert.equal(staleTicket.isCurrent(), false);
+  assert.equal(newerTicket.isCurrent(), true);
+
+  const staleOutcome = await fetchSalaryAdvanceRequestListPage({
+    queue: "PM",
+    projectFilter: "ALL",
+    requestStateFilter: "ALL",
+    evidenceStateFilter: "ALL",
+    appliedSearch: "",
+    ticket: staleTicket,
+    fetchImpl: async () =>
+      new Response(
+        JSON.stringify({
+          ok: true,
+          data: {
+            queue: "PM",
+            page_size: 25,
+            has_more: false,
+            next_cursor: null,
+            requests: [row1],
+          },
+        }),
+        { status: 200 }
+      ),
+  });
+  assert.deepEqual(staleOutcome, { status: "stale" });
+});
+
+test("describeWorkerEligibility, reconcileSelectedWorkerEntryId, and validateCreateSalaryAdvanceDraft block OFF/UNCONFIRMED, multi-project ON, and duplicate CCCD workers", () => {
+  const eligibleWorker = {
+    worker_entry_id: "33333333-3333-4333-8333-333333333333",
+    employee_code: "NV001",
+    display_name: "Nguyễn Văn An",
+    first_work_date: "2026-01-10",
+    has_portrait: true,
+    employment_status: "ON",
+    active_on_project_count: 1,
+    has_duplicate_cccd: false,
+    is_eligible: true,
+    ineligible_reasons: [],
+  };
+  const eligView = describeWorkerEligibility(eligibleWorker);
+  assert.equal(eligView.isEligible, true);
+  assert.equal(eligView.blockingMessage, null);
+
+  const offWorker = {
+    ...eligibleWorker,
+    worker_entry_id: "33333333-3333-4333-8333-333333333334",
+    employment_status: "OFF",
+    active_on_project_count: 0,
+    is_eligible: false,
+    ineligible_reasons: ["WORKER_STATUS_OFF"],
+  };
+  const offView = describeWorkerEligibility(offWorker);
+  assert.equal(offView.isEligible, false);
+  assert.deepEqual(offView.reasonCodes, ["WORKER_STATUS_OFF"]);
+  assert.match(offView.blockingMessage ?? "", /nghỉ việc \(OFF\)/);
+
+  const unconfirmedWorker = {
+    ...eligibleWorker,
+    worker_entry_id: "33333333-3333-4333-8333-333333333335",
+    employment_status: "UNCONFIRMED",
+    active_on_project_count: 0,
+    is_eligible: false,
+    ineligible_reasons: ["WORKER_STATUS_UNCONFIRMED"],
+  };
+  const unconfirmedView = describeWorkerEligibility(unconfirmedWorker);
+  assert.equal(unconfirmedView.isEligible, false);
+  assert.match(unconfirmedView.blockingMessage ?? "", /UNCONFIRMED/);
+
+  const multiProjectAndDupWorker = {
+    ...eligibleWorker,
+    worker_entry_id: "33333333-3333-4333-8333-333333333336",
+    employment_status: "ON",
+    active_on_project_count: 2,
+    has_duplicate_cccd: true,
+    is_eligible: false,
+    ineligible_reasons: ["WORKER_MULTI_PROJECT_ON", "WORKER_DUPLICATE_CCCD"],
+  };
+  const multiView = describeWorkerEligibility(multiProjectAndDupWorker);
+  assert.equal(multiView.isEligible, false);
+  assert.match(multiView.blockingMessage ?? "", /2 dự án/);
+  assert.match(multiView.blockingMessage ?? "", /trùng CCCD/);
+
+  // reconcileSelectedWorkerEntryId clears selection if selected worker becomes ineligible
+  assert.equal(
+    reconcileSelectedWorkerEntryId(offWorker.worker_entry_id, [
+      eligibleWorker,
+      offWorker,
+    ]),
+    ""
+  );
+  assert.equal(
+    reconcileSelectedWorkerEntryId(eligibleWorker.worker_entry_id, [
+      eligibleWorker,
+      offWorker,
+    ]),
+    eligibleWorker.worker_entry_id
+  );
+
+  // validateCreateSalaryAdvanceDraft blocks ineligible workers
+  const blockedDraft = validateCreateSalaryAdvanceDraft({
+    projectId: "PRJ_NORTH",
+    hasActiveAccountant: true,
+    workerEntryId: multiProjectAndDupWorker.worker_entry_id,
+    selectedWorker: multiProjectAndDupWorker,
+    requestedAmountRaw: "2000000",
+    paymentMethod: "CASH",
+    initialContent: "Đề nghị ứng lương",
+  });
+  assert.equal(blockedDraft.ok, false);
+  if (!blockedDraft.ok) {
+    assert.ok(blockedDraft.fieldErrors.workerEntryId);
+    assert.match(blockedDraft.message, /trùng CCCD/);
+  }
+});
+
+test("describeWorkerBankTransferEligibility, validateCreateSalaryAdvanceDraft, and evaluateEvidenceComparisonPanel enforce CASH vs BANK_TRANSFER rules", () => {
+  const selfOwnedWorker = {
+    worker_entry_id: "33333333-3333-4333-8333-333333333333",
+    employee_code: "NV001",
+    display_name: "Đặng Thị Hồng Nhung",
+    first_work_date: "2026-01-10",
+    has_portrait: false,
+    employment_status: "ON",
+    active_on_project_count: 1,
+    has_duplicate_cccd: false,
+    is_eligible: true,
+    bank_transfer_eligible: true,
+    bank_account: {
+      has_bank_account: true,
+      bank_id: "VCB",
+      institution_name: "Vietcombank",
+      account_number: "0123456789",
+      account_number_masked: "******6789",
+      account_holder_name: "DANG THI HONG NHUNG",
+      is_self_owned: true,
+    },
+  };
+  const selfOwnedBankView = describeWorkerBankTransferEligibility(selfOwnedWorker);
+  assert.equal(selfOwnedBankView.canUseBankTransfer, true);
+  assert.equal(selfOwnedBankView.isSelfOwned, true);
+
+  const nonSelfOwnedWorker = {
+    ...selfOwnedWorker,
+    bank_transfer_eligible: false,
+    bank_ineligible_reason: "BANK_ACCOUNT_NOT_SELF_OWNED",
+    bank_account: {
+      ...selfOwnedWorker.bank_account,
+      account_holder_name: "NGUYEN VAN KHAC",
+      is_self_owned: false,
+    },
+  };
+  const nonSelfOwnedBankView =
+    describeWorkerBankTransferEligibility(nonSelfOwnedWorker);
+  assert.equal(nonSelfOwnedBankView.canUseBankTransfer, false);
+  assert.equal(
+    nonSelfOwnedBankView.reasonCode,
+    "BANK_ACCOUNT_NOT_SELF_OWNED"
+  );
+  assert.match(nonSelfOwnedBankView.blockingMessage ?? "", /không chính chủ/);
+
+  // Draft validation rejects BANK_TRANSFER when worker's bank account is not self-owned
+  const invalidBankDraft = validateCreateSalaryAdvanceDraft({
+    projectId: "PRJ_NORTH",
+    hasActiveAccountant: true,
+    workerEntryId: nonSelfOwnedWorker.worker_entry_id,
+    selectedWorker: nonSelfOwnedWorker,
+    requestedAmountRaw: "3000000",
+    paymentMethod: "BANK_TRANSFER",
+    initialContent: "Ứng lương chuyển khoản",
+  });
+  assert.equal(invalidBankDraft.ok, false);
+  if (!invalidBankDraft.ok) {
+    assert.ok(invalidBankDraft.fieldErrors.paymentMethod);
+  }
+
+  // Draft validation accepts BANK_TRANSFER when worker's bank account is self-owned
+  const validBankDraft = validateCreateSalaryAdvanceDraft({
+    projectId: "PRJ_NORTH",
+    hasActiveAccountant: true,
+    workerEntryId: selfOwnedWorker.worker_entry_id,
+    selectedWorker: selfOwnedWorker,
+    requestedAmountRaw: "3000000",
+    paymentMethod: "BANK_TRANSFER",
+    initialContent: "Ứng lương chuyển khoản",
+  });
+  assert.equal(validBankDraft.ok, true);
+  if (validBankDraft.ok) {
+    assert.equal(validBankDraft.payload.payment_method, "BANK_TRANSFER");
+  }
+
+  // evaluateEvidenceComparisonPanel for BANK_TRANSFER does NOT lock REVIEWED when worker portrait is missing
+  const bankTransferDetailNoPortrait = {
+    request: makeRequestSummary({
+      payment_method: "BANK_TRANSFER",
+      payment_destination_snapshot: {
+        bank_id: "VCB",
+        institution_name: "Vietcombank",
+        account_number: "0123456789",
+        account_number_masked: "******6789",
+        account_holder_name: "DANG THI HONG NHUNG",
+      },
+      request_state: "APPROVED",
+      evidence_review_state: "PENDING_REVIEW",
+      worker_portrait: null,
+      current_evidence: {
+        evidence_version: 1,
+        evidence_kind: "BANK_TRANSFER_RECEIPT",
+        mime_type: "image/png",
+        size_bytes: 95000,
+        checksum_sha256: "d".repeat(64),
+        uploaded_by_user_id: "44444444-4444-4444-8444-444444444444",
+        uploaded_by_display_name: "Lê Hoàng Yến",
+        uploaded_at: "2026-10-29T10:00:00.000Z",
+        reviewed_by_user_id: null,
+        reviewed_by_display_name: null,
+        reviewed_at: null,
+        review_note: null,
+        reviewed_worker_portrait_document_id: null,
+        reviewed_worker_portrait_version: null,
+      },
+      allowed_actions: makeAllowedActions({ can_review_evidence: true }),
+    }),
+    events: [],
+    evidence_versions: [],
+  };
+
+  const bankPanel = evaluateEvidenceComparisonPanel(bankTransferDetailNoPortrait);
+  assert.equal(bankPanel.paymentMethod, "BANK_TRANSFER");
+  assert.equal(bankPanel.evidenceKind, "BANK_TRANSFER_RECEIPT");
+  assert.equal(bankPanel.requiresWorkerPortraitComparison, false);
+  assert.equal(bankPanel.missingPortraitWarning, null);
+  assert.equal(bankPanel.canConfirmReviewed, true);
+  assert.equal(bankPanel.confirmReviewedLockReason, null);
+  assert.equal(
+    bankPanel.paymentDestinationSnapshot?.institution_name,
+    "Vietcombank"
+  );
+
+  // validateEvidenceReviewInput allows REVIEWED for BANK_TRANSFER_RECEIPT without workerPortrait
+  const bankReviewValidation = validateEvidenceReviewInput({
+    expectedVersion: 3,
+    evidenceVersion: 1,
+    evidenceKind: "BANK_TRANSFER_RECEIPT",
+    decision: "REVIEWED",
+    workerPortrait: null,
+    note: "Đã đối chiếu bill chuyển khoản",
+  });
+  assert.equal(bankReviewValidation.ok, true);
+  if (bankReviewValidation.ok) {
+    assert.equal(bankReviewValidation.evidenceKind, "BANK_TRANSFER_RECEIPT");
+    assert.equal(
+      bankReviewValidation.expectedWorkerPortraitDocumentId,
+      null
+    );
+  }
+
+  // Event & metadata helpers reflect evidence_kind
+  assert.equal(getPaymentMethodMeta("BANK_TRANSFER").shortLabel, "Chuyển khoản");
+  assert.equal(getEvidenceKindLabel("BANK_TRANSFER_RECEIPT"), "Chứng từ chuyển khoản");
+  assert.equal(
+    getSalaryAdvanceEventTypeLabel("EVIDENCE_UPLOADED", "BANK_TRANSFER_RECEIPT"),
+    "Tải lên chứng từ chuyển khoản"
+  );
+  assert.equal(
+    getSalaryAdvanceEventTypeLabel("EVIDENCE_REVIEWED", "BANK_TRANSFER_RECEIPT"),
+    "Xác nhận đã đối chiếu chứng từ chuyển khoản"
+  );
+  assert.match(
+    salaryAdvanceErrorMessage("SALARY_ADVANCE_WORKER_MULTI_PROJECT_ON"),
+    /2 dự án/
+  );
+  assert.match(
+    salaryAdvanceErrorMessage("SALARY_ADVANCE_BANK_ACCOUNT_NOT_SELF_OWNED"),
+    /không chính chủ/
+  );
 });
