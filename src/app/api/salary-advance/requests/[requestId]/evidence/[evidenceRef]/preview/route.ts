@@ -16,12 +16,12 @@ const resolveSession = () =>
 
 export async function GET(
   request: Request,
-  context: { params: Promise<{ requestId: string; version: string }> },
+  context: { params: Promise<{ requestId: string; evidenceRef: string }> },
 ): Promise<Response> {
   if (process.env.DIRECT_ENTRY_API_ENABLED !== "true") {
     return failJson("NOT_FOUND", 404);
   }
-  const { requestId, version } = await context.params;
+  const { requestId, evidenceRef: version } = await context.params;
   return handleGetPreviewSalaryAdvanceEvidence(
     request,
     requestId,

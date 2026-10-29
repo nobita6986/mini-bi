@@ -6,6 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "test:production-start": "node scripts/production-start-smoke.mjs",
     "lint": "eslint",
     "typecheck": "next typegen && tsc --noEmit",
     "db:migrate": "node scripts/apply-migrations.mjs",

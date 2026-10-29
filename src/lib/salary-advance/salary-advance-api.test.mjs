@@ -722,9 +722,9 @@ test("all Next.js salary-advance API route files enforce nodejs runtime, force-d
     "src/app/api/salary-advance/requests/[requestId]/messages/route.ts",
     "src/app/api/salary-advance/requests/[requestId]/actions/route.ts",
     "src/app/api/salary-advance/requests/[requestId]/evidence/reserve/route.ts",
-    "src/app/api/salary-advance/requests/[requestId]/evidence/[uploadId]/finalize/route.ts",
+    "src/app/api/salary-advance/requests/[requestId]/evidence/[evidenceRef]/finalize/route.ts",
     "src/app/api/salary-advance/requests/[requestId]/evidence/review/route.ts",
-    "src/app/api/salary-advance/requests/[requestId]/evidence/[version]/preview/route.ts",
+    "src/app/api/salary-advance/requests/[requestId]/evidence/[evidenceRef]/preview/route.ts",
     "src/app/api/salary-advance/requests/[requestId]/worker-portrait/route.ts",
   ];
 
@@ -747,4 +747,22 @@ test("all Next.js salary-advance API route files enforce nodejs runtime, force-d
       `${rel} missing feature gate check`,
     );
   }
+
+  const finalizeRoute = await readFile(
+    path.resolve(
+      process.cwd(),
+      "src/app/api/salary-advance/requests/[requestId]/evidence/[evidenceRef]/finalize/route.ts",
+    ),
+    "utf8",
+  );
+  assert.match(finalizeRoute, /evidenceRef: uploadId/);
+
+  const previewRoute = await readFile(
+    path.resolve(
+      process.cwd(),
+      "src/app/api/salary-advance/requests/[requestId]/evidence/[evidenceRef]/preview/route.ts",
+    ),
+    "utf8",
+  );
+  assert.match(previewRoute, /evidenceRef: version/);
 });
