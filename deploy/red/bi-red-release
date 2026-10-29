@@ -163,7 +163,7 @@ docker compose --env-file "$RELEASE_FILE" -f "$COMPOSE_FILE" exec -T app \
   node --input-type=module - <<'NODE'
 const checks = [
   ["/login", undefined, 200],
-  ["/api/auth/session", undefined, 401, "UNAUTHENTICATED"],
+  ["/api/auth/session", undefined, 401, "AUTH_UNAUTHENTICATED"],
   ["/api/attendance/time", undefined, 401, "UNAUTHENTICATED"],
 ];
 for (const [path, init, expectedStatus, expectedCode] of checks) {
