@@ -13,6 +13,7 @@ import {
   type SalaryAdvanceEvidenceReviewDecision,
   type SalaryAdvanceEvidenceReviewState,
   type SalaryAdvanceMutationDetailResponse,
+  type SalaryAdvancePaymentMethod,
   type SalaryAdvanceQueue,
   type SalaryAdvanceRequestDetail,
   type SalaryAdvanceRequestListResponse,
@@ -124,6 +125,7 @@ export type SalaryAdvanceRepository = {
       project_id: string;
       worker_entry_id: string;
       requested_amount_vnd: string;
+      payment_method?: SalaryAdvancePaymentMethod;
       initial_content: string;
       idempotency_key: string;
       request_fingerprint: string;
@@ -225,6 +227,12 @@ const KNOWN_ERROR_MESSAGES: ReadonlySet<SalaryAdvanceErrorCode> = new Set([
   "SALARY_ADVANCE_WORKER_INVALID",
   "SALARY_ADVANCE_WORKER_NOT_FOUND",
   "SALARY_ADVANCE_WORKER_PROJECT_MISMATCH",
+  "SALARY_ADVANCE_WORKER_INELIGIBLE_STATUS",
+  "SALARY_ADVANCE_WORKER_MULTI_PROJECT_ON",
+  "SALARY_ADVANCE_WORKER_DUPLICATE_CCCD",
+  "SALARY_ADVANCE_PAYMENT_METHOD_INVALID",
+  "SALARY_ADVANCE_BANK_ACCOUNT_MISSING",
+  "SALARY_ADVANCE_BANK_ACCOUNT_NOT_SELF_OWNED",
   "SALARY_ADVANCE_AMOUNT_INVALID",
   "SALARY_ADVANCE_CONTENT_INVALID",
   "SALARY_ADVANCE_MESSAGE_REQUIRED",
@@ -443,6 +451,7 @@ export function createSalaryAdvanceRepository(
           p_initial_content: input.initial_content,
           p_idempotency_key: input.idempotency_key,
           p_request_fingerprint: input.request_fingerprint,
+          p_payment_method: input.payment_method ?? "CASH",
         },
         (raw) => {
           if (

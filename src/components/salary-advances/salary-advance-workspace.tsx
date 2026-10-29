@@ -20,8 +20,8 @@ import type {
   SalaryAdvanceEvidenceReviewDecision,
   SalaryAdvanceEvidenceReviewState,
   SalaryAdvanceMutationDetailResponse,
+  SalaryAdvancePaymentMethod,
   SalaryAdvanceRequestDetail,
-  SalaryAdvanceRequestListResponse,
   SalaryAdvanceRequestState,
   SalaryAdvanceRequestSummary,
   SalaryAdvanceTransitionAction,
@@ -31,14 +31,17 @@ import type {
 import {
   SALARY_ADVANCE_NON_ACCOUNTING_NOTICE,
   canAccessSalaryAdvanceContext,
-  countActionableRequestsForTab,
   createLatestRequestTracker,
+  describeWorkerBankTransferEligibility,
+  describeWorkerEligibility,
   evaluateEvidenceComparisonPanel,
   evaluateRequestAttentionForTab,
+  fetchSalaryAdvanceRequestListPage,
   formatDateTimeVi,
   formatFileSizeBytes,
   formatVndAmount,
   getEvidenceReviewStateMeta,
+  getPaymentMethodMeta,
   getRequestStateMeta,
   getSalaryAdvanceActorRoleLabel,
   getSalaryAdvanceEventTone,
@@ -50,10 +53,12 @@ import {
   reconcileSelectedWorkerEntryId,
   resolveActiveRequestDetail,
   resolveAvailableRequestActions,
+  resolveSalaryAdvanceActorDisplayName,
   resolveScopedMutationFailureOutcome,
   resolveVisibleSalaryAdvanceTabs,
   salaryAdvanceErrorMessage,
   sortEventsChronologically,
+  updateTabBadgeCountsForTab,
   uploadSalaryAdvanceEvidence,
   validateCreateSalaryAdvanceDraft,
   validateEvidenceFilePreflight,
@@ -64,28 +69,28 @@ import {
   type SalaryAdvanceWorkspaceTabId,
 } from "@/lib/salary-advance/salary-advance-ui-model";
 
-const REQUEST_STATE_FILTER_OPTIONS: ReadonlyArray<{
+export const REQUEST_STATE_FILTER_OPTIONS: ReadonlyArray<{
   value: "ALL" | SalaryAdvanceRequestState;
   label: string;
 }> = [
-  { value: "ALL", label: "Tất cả trạng thái yêu cầu" },
-  { value: "OPEN", label: "Đang chờ Kế toán xử lý" },
-  { value: "NEEDS_INFO", label: "Cần QLDA bổ sung thông tin" },
-  { value: "APPROVED", label: "Đã chấp thuận ứng lương" },
+  { value: "ALL", label: "Tất cả trạng thái" },
+  { value: "OPEN", label: "Chờ Kế toán xử lý" },
+  { value: "NEEDS_INFO", label: "Cần bổ sung" },
+  { value: "APPROVED", label: "Đã chấp thuận" },
   { value: "REJECTED", label: "Đã từ chối" },
-  { value: "WITHDRAWN", label: "QLDA đã rút yêu cầu" },
-  { value: "HANDLED_EXTERNALLY", label: "Đã xử lý ngoài BI" },
+  { value: "WITHDRAWN", label: "Đã rút" },
+  { value: "HANDLED_EXTERNALLY", label: "Xử lý ngoài BI" },
 ];
 
-const EVIDENCE_STATE_FILTER_OPTIONS: ReadonlyArray<{
+export const EVIDENCE_STATE_FILTER_OPTIONS: ReadonlyArray<{
   value: "ALL" | SalaryAdvanceEvidenceReviewState;
   label: string;
 }> = [
-  { value: "ALL", label: "Tất cả trạng thái ảnh nhận tiền" },
-  { value: "NOT_UPLOADED", label: "Chưa tải ảnh nhận tiền" },
-  { value: "PENDING_REVIEW", label: "Chờ Kế toán đối chiếu ảnh" },
-  { value: "REVIEWED", label: "Đã đối chiếu ảnh nhận tiền" },
-  { value: "RETAKE_REQUIRED", label: "Yêu cầu chụp/gửi lại ảnh" },
+  { value: "ALL", label: "Tất cả ảnh" },
+  { value: "NOT_UPLOADED", label: "Chưa tải ảnh" },
+  { value: "PENDING_REVIEW", label: "Chờ đối chiếu" },
+  { value: "REVIEWED", label: "Đã đối chiếu" },
+  { value: "RETAKE_REQUIRED", label: "Cần gửi lại ảnh" },
 ];
 
 type TransitionDialogState = {
@@ -174,6 +179,9 @@ export function SalaryAdvanceWorkspace() {
     null
   );
   const [createWorkerEntryId, setCreateWorkerEntryId] = useState<string>("");
+  const [createPaymentMethod, setCreatePaymentMethod] = useState<
+    "" | SalaryAdvancePaymentMethod
+  >("");
   const [createAmountRaw, setCreateAmountRaw] = useState<string>("");
   const [createInitialContent, setCreateInitialContent] = useState<string>("");
   const [createError, setCreateError] = useState<string | null>(null);
@@ -232,6 +240,7 @@ export function SalaryAdvanceWorkspace() {
   const detailTrackerRef = useRef<LatestRequestTracker | null>(null);
   const workersTrackerRef = useRef<LatestRequestTracker | null>(null);
   const selectedRequestIdRef = useRef<string | null>(null);
+  const requestsRef = useRef<SalaryAdvanceRequestSummary[]>([]);
 
   const activeDetail = resolveActiveRequestDetail(detail, selectedRequestId);
 
@@ -280,16 +289,19 @@ export function SalaryAdvanceWorkspace() {
     );
   }, [visibleTabs, activeTab]);
 
+  const currentTabId = currentTabConfig?.id ?? null;
+  const currentTabQueue = currentTabConfig?.queue ?? null;
+
   const availableProjectsForCurrentTab = useMemo(() => {
-    if (!context || !currentTabConfig) return [];
-    if (currentTabConfig.id === "pm") {
+    if (!context || !currentTabId) return [];
+    if (currentTabId === "pm") {
       return context.managed_projects;
     }
-    if (currentTabConfig.id === "accountant") {
+    if (currentTabId === "accountant") {
       return context.accountant_projects;
     }
     return context.supervisory_projects;
-  }, [context, currentTabConfig]);
+  }, [context, currentTabId]);
 
   const activeManagedProjects = useMemo(() => {
     if (!context) return [];
@@ -303,6 +315,25 @@ export function SalaryAdvanceWorkspace() {
       ) ?? null
     );
   }, [activeManagedProjects, createProjectId]);
+
+  const selectedCreateWorker = useMemo(() => {
+    if (!createWorkerEntryId) return null;
+    return (
+      workers.find(
+        (worker) => worker.worker_entry_id === createWorkerEntryId
+      ) ?? null
+    );
+  }, [workers, createWorkerEntryId]);
+
+  const selectedCreateWorkerEligibility = useMemo(() => {
+    if (!selectedCreateWorker) return null;
+    return describeWorkerEligibility(selectedCreateWorker);
+  }, [selectedCreateWorker]);
+
+  const selectedCreateWorkerBankEligibility = useMemo(() => {
+    if (!selectedCreateWorker) return null;
+    return describeWorkerBankTransferEligibility(selectedCreateWorker);
+  }, [selectedCreateWorker]);
 
   const loadContext = useCallback(async () => {
     setContextLoading(true);
@@ -350,14 +381,20 @@ export function SalaryAdvanceWorkspace() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
     queueMicrotask(() => {
-      void loadContext();
+      if (!cancelled) {
+        void loadContext();
+      }
     });
+    return () => {
+      cancelled = true;
+    };
   }, [loadContext]);
 
   const loadRequests = useCallback(
     async (options?: { cursor?: string | null; append?: boolean }) => {
-      if (!currentTabConfig) return;
+      if (!currentTabId || !currentTabQueue) return;
 
       const req = getRequestTracker(requestsTrackerRef).begin();
       const isAppend = Boolean(options?.append && options?.cursor);
@@ -369,68 +406,38 @@ export function SalaryAdvanceWorkspace() {
       }
 
       try {
-        const params = new URLSearchParams();
-        params.set("queue", currentTabConfig.queue);
-        params.set("page_size", "25");
-
-        if (projectFilter !== "ALL") {
-          params.set("project_id", projectFilter);
-        }
-        if (requestStateFilter !== "ALL") {
-          params.set("request_state", requestStateFilter);
-        }
-        if (evidenceStateFilter !== "ALL") {
-          params.set("evidence_review_state", evidenceStateFilter);
-        }
-        if (appliedSearch.trim().length > 0) {
-          params.set("search", appliedSearch.trim());
-        }
-        if (isAppend && options?.cursor) {
-          params.set("cursor", options.cursor);
-        }
-
-        const response = await fetch(
-          `/api/salary-advance/requests?${params.toString()}`,
-          {
-            method: "GET",
-            cache: "no-store",
-            signal: req.signal,
-          }
-        );
-
-        const json = (await response.json().catch(() => null)) as
-          | {
-              ok?: boolean;
-              data?: SalaryAdvanceRequestListResponse;
-              code?: string;
-            }
-          | null;
-
-        if (!req.isCurrent()) {
-          return;
-        }
-
-        if (!response.ok || !json?.ok || !json.data) {
-          const code = json?.code ?? "SALARY_ADVANCE_UNAVAILABLE";
-          setRequestsError(salaryAdvanceErrorMessage(code));
-          return;
-        }
-
-        const nextRows = json.data.requests ?? [];
-        setRequests((prev) => {
-          const combined = isAppend ? [...prev, ...nextRows] : nextRows;
-          const actionableCount = countActionableRequestsForTab(
-            combined,
-            currentTabConfig.id
-          );
-          setTabBadgeCounts((counts) => ({
-            ...counts,
-            [currentTabConfig.id]: actionableCount,
-          }));
-          return combined;
+        const outcome = await fetchSalaryAdvanceRequestListPage({
+          queue: currentTabQueue,
+          projectFilter,
+          requestStateFilter,
+          evidenceStateFilter,
+          appliedSearch,
+          cursor: options?.cursor ?? null,
+          append: isAppend,
+          pageSize: 25,
+          ticket: req,
         });
-        setRequestsHasMore(Boolean(json.data.has_more));
-        setRequestsNextCursor(json.data.next_cursor ?? null);
+
+        if (outcome.status === "stale") {
+          return;
+        }
+
+        if (outcome.status === "error") {
+          setRequestsError(outcome.message);
+          return;
+        }
+
+        const nextRows = outcome.data.requests;
+        const combined = isAppend
+          ? [...requestsRef.current, ...nextRows]
+          : nextRows;
+        requestsRef.current = combined;
+        setRequests(combined);
+        setTabBadgeCounts((counts) =>
+          updateTabBadgeCountsForTab(counts, currentTabId, combined)
+        );
+        setRequestsHasMore(outcome.data.has_more);
+        setRequestsNextCursor(outcome.data.next_cursor ?? null);
 
         if (!isAppend) {
           const nextSelectedId = reconcileSelectedRequestIdFromList(
@@ -444,13 +451,6 @@ export function SalaryAdvanceWorkspace() {
             setDetailLoading(false);
           }
         }
-      } catch {
-        if (!req.isCurrent()) {
-          return;
-        }
-        setRequestsError(
-          salaryAdvanceErrorMessage("SALARY_ADVANCE_UNAVAILABLE")
-        );
       } finally {
         if (req.isCurrent()) {
           setRequestsLoading(false);
@@ -459,7 +459,8 @@ export function SalaryAdvanceWorkspace() {
       }
     },
     [
-      currentTabConfig,
+      currentTabId,
+      currentTabQueue,
       projectFilter,
       requestStateFilter,
       evidenceStateFilter,
@@ -469,14 +470,18 @@ export function SalaryAdvanceWorkspace() {
   );
 
   useEffect(() => {
-    if (!currentTabConfig) return;
+    if (!currentTabId || !currentTabQueue) return;
+    let cancelled = false;
     queueMicrotask(() => {
-      void loadRequests();
+      if (!cancelled) {
+        void loadRequests();
+      }
     });
     return () => {
+      cancelled = true;
       getRequestTracker(requestsTrackerRef).cancelAll();
     };
-  }, [currentTabConfig, loadRequests]);
+  }, [currentTabId, currentTabQueue, loadRequests]);
 
   const loadRequestDetail = useCallback(
     async (
@@ -531,13 +536,15 @@ export function SalaryAdvanceWorkspace() {
         setPortraitImgError(false);
         setEvidenceImgError(false);
 
-        setRequests((prev) =>
-          prev.map((row) =>
+        setRequests((prev) => {
+          const updated = prev.map((row) =>
             row.request_id === loadedDetail.request.request_id
               ? loadedDetail.request
               : row
-          )
-        );
+          );
+          requestsRef.current = updated;
+          return updated;
+        });
       } catch {
         if (!req.isCurrent() || selectedRequestIdRef.current !== requestId) {
           return;
@@ -554,7 +561,9 @@ export function SalaryAdvanceWorkspace() {
 
   useEffect(() => {
     selectedRequestIdRef.current = selectedRequestId;
+    let cancelled = false;
     queueMicrotask(() => {
+      if (cancelled) return;
       if (!selectedRequestId) {
         getRequestTracker(detailTrackerRef).cancelAll();
         setDetail(null);
@@ -565,6 +574,7 @@ export function SalaryAdvanceWorkspace() {
       void loadRequestDetail(selectedRequestId);
     });
     return () => {
+      cancelled = true;
       getRequestTracker(detailTrackerRef).cancelAll();
     };
   }, [selectedRequestId, loadRequestDetail]);
@@ -669,10 +679,14 @@ export function SalaryAdvanceWorkspace() {
       getRequestTracker(workersTrackerRef).cancelAll();
       return;
     }
+    let cancelled = false;
     queueMicrotask(() => {
-      void loadProjectWorkers(createProjectId, workerSearchInput);
+      if (!cancelled) {
+        void loadProjectWorkers(createProjectId, workerSearchInput);
+      }
     });
     return () => {
+      cancelled = true;
       getRequestTracker(workersTrackerRef).cancelAll();
     };
   }, [
@@ -686,6 +700,14 @@ export function SalaryAdvanceWorkspace() {
     if (nextTabId === activeTab) return;
     getRequestTracker(requestsTrackerRef).cancelAll();
     getRequestTracker(detailTrackerRef).cancelAll();
+    requestsRef.current = [];
+    setRequests([]);
+    setRequestsHasMore(false);
+    setRequestsNextCursor(null);
+    setRequestsLoading(true);
+    setRequestsLoadingMore(false);
+    setRequestsError(null);
+    selectRequest(null);
     setActiveTab(nextTabId);
     setProjectFilter("ALL");
     setRequestStateFilter("ALL");
@@ -744,13 +766,15 @@ export function SalaryAdvanceWorkspace() {
         );
         setConflictBannerMessage(null);
       }
-      setRequests((prev) =>
-        prev.map((row) =>
+      setRequests((prev) => {
+        const updated = prev.map((row) =>
           row.request_id === updatedDetail.request.request_id
             ? updatedDetail.request
             : row
-        )
-      );
+        );
+        requestsRef.current = updated;
+        return updated;
+      });
     },
     []
   );
@@ -763,6 +787,7 @@ export function SalaryAdvanceWorkspace() {
     setCreateProjectId(defaultProject?.project_id ?? "");
     setWorkerSearchInput("");
     setCreateWorkerEntryId("");
+    setCreatePaymentMethod("");
     setCreateAmountRaw("");
     setCreateInitialContent("");
     setCreateError(null);
@@ -777,6 +802,8 @@ export function SalaryAdvanceWorkspace() {
       projectId: createProjectId,
       hasActiveAccountant: selectedCreateProject?.has_active_accountant,
       workerEntryId: createWorkerEntryId,
+      paymentMethod: createPaymentMethod,
+      selectedWorker: selectedCreateWorker,
       requestedAmountRaw: createAmountRaw,
       initialContent: createInitialContent,
     });
@@ -1255,6 +1282,7 @@ export function SalaryAdvanceWorkspace() {
     const validation = validateEvidenceReviewInput({
       decision,
       note: evidenceReviewNote,
+      evidenceKind: comparisonModel.evidenceKind,
       workerPortrait: comparisonModel.workerPortrait
         ? {
             documentId: comparisonModel.workerPortrait.documentId,
@@ -1285,6 +1313,7 @@ export function SalaryAdvanceWorkspace() {
             expected_version: targetRequest.version,
             evidence_version: targetEvidenceVersion,
             decision,
+            evidence_kind: validation.evidenceKind,
             expected_worker_portrait_document_id:
               validation.expectedWorkerPortraitDocumentId,
             expected_worker_portrait_version:
@@ -1481,19 +1510,24 @@ export function SalaryAdvanceWorkspace() {
         <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-[var(--color-text-secondary)]">
           <span>{currentTabConfig.description}</span>
           <span>
-            Người dùng: <strong>{context?.display_name}</strong> · Ngày hiệu
-            lực: <strong>{context?.authorization_date}</strong>
+            Người dùng:{" "}
+            <strong>
+              {resolveSalaryAdvanceActorDisplayName(context?.display_name)}
+            </strong>{" "}
+            · Ngày hiệu lực: <strong>{context?.authorization_date}</strong>
           </span>
         </div>
       ) : null}
 
       {/* Filter Toolbar */}
       <FilterToolbar
+        dataTestId="salary-advance-filter-toolbar"
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <Button
               variant="secondary"
               size="sm"
+              className="md:h-9 md:min-h-9 px-3 text-sm whitespace-nowrap shrink-0"
               onClick={() => {
                 setAppliedSearch(searchInput);
               }}
@@ -1504,6 +1538,7 @@ export function SalaryAdvanceWorkspace() {
             <Button
               variant="ghost"
               size="sm"
+              className="md:h-9 md:min-h-9 px-3 text-sm whitespace-nowrap shrink-0"
               onClick={() => {
                 void loadRequests();
                 if (selectedRequestId) {
@@ -1517,104 +1552,109 @@ export function SalaryAdvanceWorkspace() {
           </div>
         }
       >
-        <div className="flex flex-col gap-1 min-w-[200px]">
-          <label
-            htmlFor="salary-advance-project-filter"
-            className="text-xs font-medium text-[var(--color-text-secondary)]"
-          >
-            Dự án
-          </label>
-          <select
-            id="salary-advance-project-filter"
-            data-testid="salary-advance-project-filter"
-            value={projectFilter}
-            onChange={(event) => setProjectFilter(event.target.value)}
-            className="h-9 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-sm text-[var(--color-text-primary)]"
-          >
-            <option value="ALL">Tất cả dự án trong phạm vi</option>
-            {availableProjectsForCurrentTab.map((project) => (
-              <option key={project.project_id} value={project.project_id}>
-                {project.display_name}
-                {!project.active ? " (Ngưng HĐ)" : ""}
-              </option>
-            ))}
-          </select>
-        </div>
+        <div
+          data-testid="salary-advance-filter-grid"
+          className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)_minmax(0,0.95fr)_minmax(0,1.65fr)] lg:items-end"
+        >
+          <div className="flex flex-col gap-1 min-w-0">
+            <label
+              htmlFor="salary-advance-project-filter"
+              className="truncate text-xs font-medium text-[var(--color-text-secondary)]"
+            >
+              Dự án
+            </label>
+            <select
+              id="salary-advance-project-filter"
+              data-testid="salary-advance-project-filter"
+              value={projectFilter}
+              onChange={(event) => setProjectFilter(event.target.value)}
+              className="h-9 w-full min-w-0 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 text-sm text-[var(--color-text-primary)]"
+            >
+              <option value="ALL">Tất cả dự án</option>
+              {availableProjectsForCurrentTab.map((project) => (
+                <option key={project.project_id} value={project.project_id}>
+                  {project.display_name}
+                  {!project.active ? " (Ngưng HĐ)" : ""}
+                </option>
+              ))}
+            </select>
+          </div>
 
-        <div className="flex flex-col gap-1 min-w-[190px]">
-          <label
-            htmlFor="salary-advance-state-filter"
-            className="text-xs font-medium text-[var(--color-text-secondary)]"
-          >
-            Trạng thái yêu cầu
-          </label>
-          <select
-            id="salary-advance-state-filter"
-            data-testid="salary-advance-state-filter"
-            value={requestStateFilter}
-            onChange={(event) =>
-              setRequestStateFilter(
-                event.target.value as "ALL" | SalaryAdvanceRequestState
-              )
-            }
-            className="h-9 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-sm text-[var(--color-text-primary)]"
-          >
-            {REQUEST_STATE_FILTER_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="flex flex-col gap-1 min-w-[190px]">
-          <label
-            htmlFor="salary-advance-evidence-filter"
-            className="text-xs font-medium text-[var(--color-text-secondary)]"
-          >
-            Trạng thái đối chiếu ảnh
-          </label>
-          <select
-            id="salary-advance-evidence-filter"
-            data-testid="salary-advance-evidence-filter"
-            value={evidenceStateFilter}
-            onChange={(event) =>
-              setEvidenceStateFilter(
-                event.target.value as "ALL" | SalaryAdvanceEvidenceReviewState
-              )
-            }
-            className="h-9 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-sm text-[var(--color-text-primary)]"
-          >
-            {EVIDENCE_STATE_FILTER_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="flex flex-col gap-1 min-w-[220px] flex-1">
-          <label
-            htmlFor="salary-advance-search-input"
-            className="text-xs font-medium text-[var(--color-text-secondary)]"
-          >
-            Tìm người lao động (mã NV / họ tên)
-          </label>
-          <input
-            id="salary-advance-search-input"
-            data-testid="salary-advance-search-input"
-            type="search"
-            value={searchInput}
-            onChange={(event) => setSearchInput(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                event.preventDefault();
-                setAppliedSearch(searchInput);
+          <div className="flex flex-col gap-1 min-w-0">
+            <label
+              htmlFor="salary-advance-state-filter"
+              className="truncate text-xs font-medium text-[var(--color-text-secondary)]"
+            >
+              Trạng thái yêu cầu
+            </label>
+            <select
+              id="salary-advance-state-filter"
+              data-testid="salary-advance-state-filter"
+              value={requestStateFilter}
+              onChange={(event) =>
+                setRequestStateFilter(
+                  event.target.value as "ALL" | SalaryAdvanceRequestState
+                )
               }
-            }}
-            placeholder="Nhập mã nhân viên hoặc họ tên NLĐ..."
-            className="h-9 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-sm text-[var(--color-text-primary)]"
-          />
+              className="h-9 w-full min-w-0 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 text-sm text-[var(--color-text-primary)]"
+            >
+              {REQUEST_STATE_FILTER_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex flex-col gap-1 min-w-0">
+            <label
+              htmlFor="salary-advance-evidence-filter"
+              className="truncate text-xs font-medium text-[var(--color-text-secondary)]"
+            >
+              Trạng thái đối chiếu ảnh
+            </label>
+            <select
+              id="salary-advance-evidence-filter"
+              data-testid="salary-advance-evidence-filter"
+              value={evidenceStateFilter}
+              onChange={(event) =>
+                setEvidenceStateFilter(
+                  event.target.value as "ALL" | SalaryAdvanceEvidenceReviewState
+                )
+              }
+              className="h-9 w-full min-w-0 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 text-sm text-[var(--color-text-primary)]"
+            >
+              {EVIDENCE_STATE_FILTER_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex flex-col gap-1 min-w-0">
+            <label
+              htmlFor="salary-advance-search-input"
+              className="truncate text-xs font-medium text-[var(--color-text-secondary)]"
+            >
+              Tìm NLĐ
+            </label>
+            <input
+              id="salary-advance-search-input"
+              data-testid="salary-advance-search-input"
+              type="search"
+              value={searchInput}
+              onChange={(event) => setSearchInput(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  setAppliedSearch(searchInput);
+                }
+              }}
+              placeholder="Mã NV hoặc tên NLĐ"
+              className="h-9 w-full min-w-0 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-sm text-[var(--color-text-primary)]"
+            />
+          </div>
         </div>
       </FilterToolbar>
 
@@ -1632,7 +1672,13 @@ export function SalaryAdvanceWorkspace() {
                       ? "Hàng đợi Cần xử lý (Kế toán dự án)"
                       : "Danh sách Giám sát toàn miền"
                 }
-                description={`Hiển thị ${requests.length} yêu cầu`}
+                description={
+                  requestsLoading
+                    ? "Đang tải danh sách yêu cầu..."
+                    : requestsError
+                      ? "Không thể tải danh sách yêu cầu"
+                      : `Hiển thị ${requests.length} yêu cầu`
+                }
               />
             </div>
 
@@ -1688,6 +1734,12 @@ export function SalaryAdvanceWorkspace() {
                         const evMeta = getEvidenceReviewStateMeta(
                           item.evidence_review_state
                         );
+                        const payMeta = getPaymentMethodMeta(
+                          item.payment_method
+                        );
+                        const itemWorkerElig = item.worker_eligibility
+                          ? describeWorkerEligibility(item.worker_eligibility)
+                          : null;
                         const attention = evaluateRequestAttentionForTab(
                           item,
                           currentTabConfig?.id ?? "pm"
@@ -1715,6 +1767,13 @@ export function SalaryAdvanceWorkspace() {
                                 Mã NV: {item.worker_employee_code} ·{" "}
                                 {item.project_display_name}
                               </div>
+                              {itemWorkerElig && !itemWorkerElig.isEligible ? (
+                                <div className="mt-1">
+                                  <StatusBadge tone="danger">
+                                    {itemWorkerElig.statusLabel}
+                                  </StatusBadge>
+                                </div>
+                              ) : null}
                               {attention.needsAttention && attention.label ? (
                                 <div className="mt-1">
                                   <StatusBadge tone={attention.tone} dot>
@@ -1728,7 +1787,14 @@ export function SalaryAdvanceWorkspace() {
                               data-label="Số tiền ứng"
                               className="py-3 px-3 align-top font-semibold text-[var(--color-text-primary)] whitespace-nowrap"
                             >
-                              {formatVndAmount(item.requested_amount_vnd)}
+                              <div>
+                                {formatVndAmount(item.requested_amount_vnd)}
+                              </div>
+                              <div className="mt-1">
+                                <StatusBadge tone={payMeta.tone}>
+                                  {payMeta.shortLabel}
+                                </StatusBadge>
+                              </div>
                             </td>
 
                             <td
@@ -1841,6 +1907,21 @@ export function SalaryAdvanceWorkspace() {
                       description={`Dự án: ${activeDetail.request.project_display_name} · Phiên bản dữ liệu v${activeDetail.request.version}`}
                     />
                     <div className="flex flex-wrap items-center gap-2">
+                      <span data-testid="salary-advance-detail-payment-method">
+                        <StatusBadge
+                          tone={
+                            getPaymentMethodMeta(
+                              activeDetail.request.payment_method
+                            ).tone
+                          }
+                        >
+                          {
+                            getPaymentMethodMeta(
+                              activeDetail.request.payment_method
+                            ).label
+                          }
+                        </StatusBadge>
+                      </span>
                       <StatusBadge
                         tone={
                           getRequestStateMeta(
@@ -1870,7 +1951,30 @@ export function SalaryAdvanceWorkspace() {
                     </div>
                   </div>
 
-                  <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 rounded-lg bg-[var(--color-surface-subtle)] p-3.5 text-sm">
+                  {activeDetail.request.worker_eligibility &&
+                  !describeWorkerEligibility(
+                    activeDetail.request.worker_eligibility
+                  ).isEligible ? (
+                    <div
+                      className="mt-3"
+                      data-testid="salary-advance-detail-worker-ineligible-banner"
+                    >
+                      <StatusBanner
+                        tone="error"
+                        title="Cảnh báo: Người lao động hiện không còn đủ điều kiện ứng lương"
+                      >
+                        {
+                          describeWorkerEligibility(
+                            activeDetail.request.worker_eligibility
+                          ).blockingMessage
+                        }{" "}
+                        Không thể chấp thuận (phê duyệt) yêu cầu này khi NLĐ không
+                        đủ điều kiện.
+                      </StatusBanner>
+                    </div>
+                  ) : null}
+
+                  <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 rounded-lg bg-[var(--color-surface-subtle)] p-3.5 text-sm">
                     <div>
                       <div className="text-xs text-[var(--color-text-secondary)]">
                         Số tiền đề nghị ứng
@@ -1887,11 +1991,33 @@ export function SalaryAdvanceWorkspace() {
 
                     <div>
                       <div className="text-xs text-[var(--color-text-secondary)]">
+                        Phương thức nhận tiền
+                      </div>
+                      <div className="font-medium text-[var(--color-text-primary)]">
+                        {
+                          getPaymentMethodMeta(
+                            activeDetail.request.payment_method
+                          ).label
+                        }
+                      </div>
+                      <div className="text-xs text-[var(--color-text-secondary)]">
+                        Chứng từ:{" "}
+                        {
+                          getPaymentMethodMeta(
+                            activeDetail.request.payment_method
+                          ).evidenceShortTitle
+                        }
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="text-xs text-[var(--color-text-secondary)]">
                         QLDA tạo yêu cầu
                       </div>
                       <div className="font-medium text-[var(--color-text-primary)]">
-                        {activeDetail.request.created_by_display_name ||
-                          activeDetail.request.created_by_user_id}
+                        {resolveSalaryAdvanceActorDisplayName(
+                          activeDetail.request.created_by_display_name
+                        )}
                       </div>
                       <div className="text-xs text-[var(--color-text-secondary)]">
                         {formatDateTimeVi(activeDetail.request.created_at)}
@@ -1904,7 +2030,11 @@ export function SalaryAdvanceWorkspace() {
                       </div>
                       <div className="font-medium text-[var(--color-text-primary)]">
                         {activeDetail.request.current_project_accountant
-                          ?.display_name ?? "Chưa phân công"}
+                          ? resolveSalaryAdvanceActorDisplayName(
+                              activeDetail.request.current_project_accountant
+                                .display_name
+                            )
+                          : "Chưa phân công"}
                       </div>
                       <div className="text-xs text-[var(--color-text-secondary)]">
                         Cập nhật:{" "}
@@ -1914,6 +2044,53 @@ export function SalaryAdvanceWorkspace() {
                       </div>
                     </div>
                   </div>
+
+                  {activeDetail.request.payment_method === "BANK_TRANSFER" &&
+                  activeDetail.request.payment_destination_snapshot ? (
+                    <div
+                      className="mt-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-subtle)] p-3.5 text-sm"
+                      data-testid="salary-advance-detail-bank-destination"
+                    >
+                      <div className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-secondary)]">
+                        Tài khoản ngân hàng chính chủ của NLĐ (đã khóa theo yêu cầu)
+                      </div>
+                      <div className="mt-1.5 grid grid-cols-1 sm:grid-cols-3 gap-2">
+                        <div>
+                          <span className="text-xs text-[var(--color-text-secondary)]">
+                            Ngân hàng:{" "}
+                          </span>
+                          <strong className="text-[var(--color-text-primary)]">
+                            {
+                              activeDetail.request.payment_destination_snapshot
+                                .institution_name
+                            }
+                          </strong>
+                        </div>
+                        <div>
+                          <span className="text-xs text-[var(--color-text-secondary)]">
+                            Số tài khoản:{" "}
+                          </span>
+                          <strong className="font-mono text-[var(--color-text-primary)]">
+                            {
+                              activeDetail.request.payment_destination_snapshot
+                                .account_number
+                            }
+                          </strong>
+                        </div>
+                        <div>
+                          <span className="text-xs text-[var(--color-text-secondary)]">
+                            Chủ tài khoản:{" "}
+                          </span>
+                          <strong className="text-[var(--color-text-primary)]">
+                            {
+                              activeDetail.request.payment_destination_snapshot
+                                .account_holder_name
+                            }
+                          </strong>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
 
                   <div className="mt-4 rounded-lg border border-[var(--color-border)] p-3.5">
                     <div className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-secondary)]">
@@ -1964,6 +2141,12 @@ export function SalaryAdvanceWorkspace() {
                       <Button
                         variant="primary"
                         size="sm"
+                        disabled={Boolean(
+                          activeDetail.request.worker_eligibility &&
+                            !describeWorkerEligibility(
+                              activeDetail.request.worker_eligibility
+                            ).isEligible
+                        )}
                         data-testid="salary-advance-action-approve"
                         onClick={() => openTransitionActionDialog("APPROVE")}
                       >
@@ -2042,14 +2225,22 @@ export function SalaryAdvanceWorkspace() {
                 </Card>
               </div>
 
-              {/* Side-by-Side Photo Comparison Panel: "Đối chiếu ảnh nhận tiền" */}
+              {/* Side-by-Side Photo / Receipt Comparison Panel */}
               {comparisonModel ? (
                 <div data-testid="salary-advance-photo-comparison-panel">
                   <Card>
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <CardHeader
-                        title="Đối chiếu ảnh nhận tiền"
-                        description="Đặt cạnh nhau ảnh chân dung hồ sơ NLĐ trong hệ thống và ảnh NLĐ nhận tiền mặt do QLDA tải lên"
+                        title={
+                          comparisonModel.requiresWorkerPortraitComparison
+                            ? "Đối chiếu ảnh nhận tiền"
+                            : "Đối chiếu chứng từ chuyển khoản"
+                        }
+                        description={
+                          comparisonModel.requiresWorkerPortraitComparison
+                            ? "Đặt cạnh nhau ảnh chân dung hồ sơ NLĐ trong hệ thống và ảnh NLĐ nhận tiền mặt do QLDA tải lên"
+                            : "Đối chiếu tài khoản ngân hàng chính chủ nhận tiền của NLĐ với chứng từ chuyển khoản (Bill) đã tải lên"
+                        }
                       />
                       {comparisonModel.evidenceVersions.length > 0 ? (
                         <div className="flex items-center gap-2">
@@ -2057,7 +2248,7 @@ export function SalaryAdvanceWorkspace() {
                             htmlFor="salary-advance-evidence-version-select"
                             className="text-xs text-[var(--color-text-secondary)]"
                           >
-                            Phiên bản ảnh nhận tiền:
+                            Phiên bản minh chứng:
                           </label>
                           <select
                             id="salary-advance-evidence-version-select"
@@ -2088,7 +2279,7 @@ export function SalaryAdvanceWorkspace() {
                       ) : null}
                     </div>
 
-                    {/* Warning if worker portrait is missing */}
+                    {/* Warning if worker portrait is missing (CASH only) */}
                     {comparisonModel.missingPortraitWarning ? (
                       <div
                         className="mt-3"
@@ -2105,88 +2296,148 @@ export function SalaryAdvanceWorkspace() {
 
                     {/* Side-by-Side Grid on wide screens, stacked vertically on narrow screens */}
                     <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
-                      {/* Column 1: System Worker Portrait */}
-                      <div
-                        className="flex flex-col justify-between rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-subtle)] p-3.5"
-                        data-testid="salary-advance-worker-portrait-card"
-                      >
-                        <div>
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-secondary)]">
-                              1. Ảnh chân dung hồ sơ NLĐ
-                            </span>
+                      {/* Column 1: System Worker Portrait (CASH) OR Self-Owned Bank Destination (BANK_TRANSFER) */}
+                      {comparisonModel.requiresWorkerPortraitComparison ? (
+                        <div
+                          className="flex flex-col justify-between rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-subtle)] p-3.5"
+                          data-testid="salary-advance-worker-portrait-card"
+                        >
+                          <div>
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-secondary)]">
+                                1. Ảnh chân dung hồ sơ NLĐ
+                              </span>
+                              {comparisonModel.workerPortrait ? (
+                                <StatusBadge tone="info">
+                                  Hồ sơ v{comparisonModel.workerPortrait.version}
+                                </StatusBadge>
+                              ) : (
+                                <StatusBadge tone="warning">
+                                  Chưa có ảnh hồ sơ
+                                </StatusBadge>
+                              )}
+                            </div>
+
                             {comparisonModel.workerPortrait ? (
-                              <StatusBadge tone="info">
-                                Hồ sơ v{comparisonModel.workerPortrait.version}
-                              </StatusBadge>
+                              <>
+                                <div className="mt-1 text-xs text-[var(--color-text-secondary)]">
+                                  Nguồn:{" "}
+                                  <strong>
+                                    {comparisonModel.workerPortrait.sourceLabel}
+                                  </strong>
+                                </div>
+                                <div className="text-xs text-[var(--color-text-secondary)]">
+                                  Định dạng:{" "}
+                                  {comparisonModel.workerPortrait.mimeType} ·{" "}
+                                  {formatFileSizeBytes(
+                                    comparisonModel.workerPortrait.sizeBytes
+                                  )}
+                                </div>
+
+                                <div className="mt-3 flex min-h-[240px] items-center justify-center overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-2">
+                                  {!portraitImgError ? (
+                                    <img
+                                      src={
+                                        comparisonModel.workerPortrait.previewUrl
+                                      }
+                                      alt={`Ảnh hồ sơ NLĐ ${comparisonModel.workerDisplayName}`}
+                                      data-testid="salary-advance-worker-portrait-img"
+                                      className="max-h-[320px] w-auto object-contain rounded"
+                                      onError={() => setPortraitImgError(true)}
+                                    />
+                                  ) : (
+                                    <div className="p-4 text-center text-xs text-[var(--color-text-secondary)]">
+                                      <p>Không tải được ảnh hồ sơ NLĐ.</p>
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        className="mt-2"
+                                        onClick={() => setPortraitImgError(false)}
+                                      >
+                                        Tải lại ảnh hồ sơ
+                                      </Button>
+                                    </div>
+                                  )}
+                                </div>
+                              </>
                             ) : (
-                              <StatusBadge tone="warning">
-                                Chưa có ảnh hồ sơ
-                              </StatusBadge>
+                              <div className="mt-3 flex min-h-[240px] flex-col items-center justify-center rounded-lg border border-dashed border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-center">
+                                <p className="text-sm font-medium text-[var(--color-text-primary)]">
+                                  Chưa có ảnh chân dung chuẩn trong hồ sơ NLĐ
+                                </p>
+                                <p className="mt-1 text-xs text-[var(--color-text-secondary)]">
+                                  Vui lòng cập nhật ảnh chân dung của NLĐ{" "}
+                                  <strong>
+                                    {comparisonModel.workerDisplayName} (
+                                    {comparisonModel.workerEmployeeCode})
+                                  </strong>{" "}
+                                  trước khi Kế toán xác nhận «Đã đối chiếu».
+                                </p>
+                              </div>
                             )}
                           </div>
-
-                          {comparisonModel.workerPortrait ? (
-                            <>
-                              <div className="mt-1 text-xs text-[var(--color-text-secondary)]">
-                                Nguồn:{" "}
-                                <strong>
-                                  {comparisonModel.workerPortrait.sourceLabel}
-                                </strong>
-                              </div>
-                              <div className="text-xs text-[var(--color-text-secondary)]">
-                                Định dạng:{" "}
-                                {comparisonModel.workerPortrait.mimeType} ·{" "}
-                                {formatFileSizeBytes(
-                                  comparisonModel.workerPortrait.sizeBytes
-                                )}
-                              </div>
-
-                              <div className="mt-3 flex min-h-[240px] items-center justify-center overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-2">
-                                {!portraitImgError ? (
-                                  <img
-                                    src={
-                                      comparisonModel.workerPortrait.previewUrl
-                                    }
-                                    alt={`Ảnh hồ sơ NLĐ ${comparisonModel.workerDisplayName}`}
-                                    data-testid="salary-advance-worker-portrait-img"
-                                    className="max-h-[320px] w-auto object-contain rounded"
-                                    onError={() => setPortraitImgError(true)}
-                                  />
-                                ) : (
-                                  <div className="p-4 text-center text-xs text-[var(--color-text-secondary)]">
-                                    <p>Không tải được ảnh hồ sơ NLĐ.</p>
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      className="mt-2"
-                                      onClick={() => setPortraitImgError(false)}
-                                    >
-                                      Tải lại ảnh hồ sơ
-                                    </Button>
-                                  </div>
-                                )}
-                              </div>
-                            </>
-                          ) : (
-                            <div className="mt-3 flex min-h-[240px] flex-col items-center justify-center rounded-lg border border-dashed border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-center">
-                              <p className="text-sm font-medium text-[var(--color-text-primary)]">
-                                Chưa có ảnh chân dung chuẩn trong hồ sơ NLĐ
-                              </p>
-                              <p className="mt-1 text-xs text-[var(--color-text-secondary)]">
-                                Vui lòng cập nhật ảnh chân dung của NLĐ{" "}
-                                <strong>
-                                  {comparisonModel.workerDisplayName} (
-                                  {comparisonModel.workerEmployeeCode})
-                                </strong>{" "}
-                                trước khi Kế toán xác nhận «Đã đối chiếu».
-                              </p>
-                            </div>
-                          )}
                         </div>
-                      </div>
+                      ) : (
+                        <div
+                          className="flex flex-col justify-between rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-subtle)] p-3.5"
+                          data-testid="salary-advance-bank-destination-card"
+                        >
+                          <div>
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-secondary)]">
+                                1. Tài khoản ngân hàng nhận chuyển khoản
+                              </span>
+                              <StatusBadge tone="success">
+                                Tài khoản chính chủ
+                              </StatusBadge>
+                            </div>
 
-                      {/* Column 2: Cash-Handover Evidence Photo */}
+                            <div className="mt-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-3.5 text-sm">
+                              <dl className="flex flex-col gap-2">
+                                <div>
+                                  <dt className="text-xs text-[var(--color-text-secondary)]">
+                                    Người lao động thụ hưởng
+                                  </dt>
+                                  <dd className="font-semibold text-[var(--color-text-primary)]">
+                                    {comparisonModel.workerDisplayName} (
+                                    {comparisonModel.workerEmployeeCode})
+                                  </dd>
+                                </div>
+                                <div>
+                                  <dt className="text-xs text-[var(--color-text-secondary)]">
+                                    Ngân hàng
+                                  </dt>
+                                  <dd className="font-semibold text-[var(--color-text-primary)]">
+                                    {comparisonModel.paymentDestinationSnapshot
+                                      ?.institution_name ?? "Chưa có thông tin"}
+                                  </dd>
+                                </div>
+                                <div>
+                                  <dt className="text-xs text-[var(--color-text-secondary)]">
+                                    Số tài khoản
+                                  </dt>
+                                  <dd className="font-mono font-semibold text-[var(--color-text-primary)]">
+                                    {comparisonModel.paymentDestinationSnapshot
+                                      ?.account_number ?? "Chưa có thông tin"}
+                                  </dd>
+                                </div>
+                                <div>
+                                  <dt className="text-xs text-[var(--color-text-secondary)]">
+                                    Chủ tài khoản (đã đối khớp chính chủ)
+                                  </dt>
+                                  <dd className="font-semibold text-[var(--color-text-primary)]">
+                                    {comparisonModel.paymentDestinationSnapshot
+                                      ?.account_holder_name ??
+                                      comparisonModel.workerDisplayName}
+                                  </dd>
+                                </div>
+                              </dl>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Column 2: Cash-Handover Photo OR Bank Transfer Receipt */}
                       <div
                         className="flex flex-col justify-between rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-subtle)] p-3.5"
                         data-testid="salary-advance-evidence-photo-card"
@@ -2194,7 +2445,9 @@ export function SalaryAdvanceWorkspace() {
                         <div>
                           <div className="flex items-center justify-between gap-2">
                             <span className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-secondary)]">
-                              2. Ảnh NLĐ nhận tiền mặt
+                              {comparisonModel.requiresWorkerPortraitComparison
+                                ? "2. Ảnh NLĐ nhận tiền mặt"
+                                : "2. Chứng từ chuyển khoản (Bill)"}
                             </span>
                             {comparisonModel.selectedEvidence ? (
                               <div className="flex items-center gap-1.5">
@@ -2209,7 +2462,7 @@ export function SalaryAdvanceWorkspace() {
                                   tone={
                                     getEvidenceReviewStateMeta(
                                       comparisonModel.selectedEvidence
-                                        .reviewState
+                                       .reviewState
                                     ).tone
                                   }
                                 >
@@ -2223,7 +2476,9 @@ export function SalaryAdvanceWorkspace() {
                               </div>
                             ) : (
                               <StatusBadge tone="neutral">
-                                Chưa tải ảnh
+                                {comparisonModel.requiresWorkerPortraitComparison
+                                  ? "Chưa tải ảnh"
+                                  : "Chưa tải chứng từ"}
                               </StatusBadge>
                             )}
                           </div>
@@ -2239,10 +2494,10 @@ export function SalaryAdvanceWorkspace() {
                               <div className="text-xs text-[var(--color-text-secondary)]">
                                 Người tải lên:{" "}
                                 <strong>
-                                  {comparisonModel.selectedEvidence
-                                    .uploadedByDisplayName ??
+                                  {resolveSalaryAdvanceActorDisplayName(
                                     comparisonModel.selectedEvidence
-                                      .uploadedByUserId}
+                                      .uploadedByDisplayName
+                                  )}
                                 </strong>{" "}
                                 · Lúc:{" "}
                                 {formatDateTimeVi(
@@ -2251,7 +2506,7 @@ export function SalaryAdvanceWorkspace() {
                               </div>
                               {comparisonModel.selectedEvidence.captionNote ? (
                                 <div className="mt-1 rounded bg-[var(--color-surface)] px-2.5 py-1.5 text-xs text-[var(--color-text-primary)]">
-                                  Ghi chú QLDA:{" "}
+                                  Ghi chú:{" "}
                                   {comparisonModel.selectedEvidence.captionNote}
                                 </div>
                               ) : null}
@@ -2260,10 +2515,10 @@ export function SalaryAdvanceWorkspace() {
                                 <div className="mt-1 rounded bg-[var(--color-surface)] px-2.5 py-1.5 text-xs text-[var(--color-text-secondary)]">
                                   Đối chiếu bởi:{" "}
                                   <strong>
-                                    {comparisonModel.selectedEvidence
-                                      .reviewedByDisplayName ??
+                                    {resolveSalaryAdvanceActorDisplayName(
                                       comparisonModel.selectedEvidence
-                                        .reviewedByUserId}
+                                        .reviewedByDisplayName
+                                    )}
                                   </strong>{" "}
                                   ({formatDateTimeVi(
                                     comparisonModel.selectedEvidence.reviewedAt
@@ -2281,21 +2536,21 @@ export function SalaryAdvanceWorkspace() {
                                       comparisonModel.selectedEvidence
                                         .previewUrl
                                     }
-                                    alt={`Ảnh nhận tiền mặt phiên bản #${comparisonModel.selectedEvidence.evidenceVersion}`}
+                                    alt={`${comparisonModel.selectedEvidence.sourceLabel} phiên bản #${comparisonModel.selectedEvidence.evidenceVersion}`}
                                     data-testid="salary-advance-evidence-photo-img"
                                     className="max-h-[320px] w-auto object-contain rounded"
                                     onError={() => setEvidenceImgError(true)}
                                   />
                                 ) : (
                                   <div className="p-4 text-center text-xs text-[var(--color-text-secondary)]">
-                                    <p>Không tải được ảnh nhận tiền mặt.</p>
+                                    <p>Không tải được ảnh minh chứng.</p>
                                     <Button
                                       variant="ghost"
                                       size="sm"
                                       className="mt-2"
                                       onClick={() => setEvidenceImgError(false)}
                                     >
-                                      Tải lại ảnh nhận tiền
+                                      Tải lại ảnh
                                     </Button>
                                   </div>
                                 )}
@@ -2304,12 +2559,14 @@ export function SalaryAdvanceWorkspace() {
                           ) : (
                             <div className="mt-3 flex min-h-[240px] flex-col items-center justify-center rounded-lg border border-dashed border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-center">
                               <p className="text-sm font-medium text-[var(--color-text-primary)]">
-                                Chưa có ảnh NLĐ nhận tiền mặt
+                                {comparisonModel.requiresWorkerPortraitComparison
+                                  ? "Chưa có ảnh NLĐ nhận tiền mặt"
+                                  : "Chưa có chứng từ chuyển khoản"}
                               </p>
                               <p className="mt-1 text-xs text-[var(--color-text-secondary)]">
-                                Sau khi yêu cầu được chấp thuận và chi tiền mặt,
-                                QLDA tải ảnh NLĐ nhận tiền tại đây để Kế toán
-                                đối chiếu.
+                                {comparisonModel.requiresWorkerPortraitComparison
+                                  ? "Sau khi yêu cầu được chấp thuận và chi tiền mặt, QLDA tải ảnh NLĐ nhận tiền tại đây để Kế toán đối chiếu."
+                                  : "Sau khi yêu cầu được chấp thuận và chuyển khoản, tải chứng từ chuyển khoản (Bill) tại đây để Kế toán đối chiếu."}
                               </p>
                             </div>
                           )}
@@ -2317,7 +2574,7 @@ export function SalaryAdvanceWorkspace() {
                       </div>
                     </div>
 
-                    {/* QLDA Upload Evidence Section (strictly gated by allowed_actions.can_upload_evidence) */}
+                    {/* Upload Evidence Section (strictly gated by allowed_actions.can_upload_evidence) */}
                     {comparisonModel.canUploadEvidence ? (
                       <form
                         onSubmit={(event) =>
@@ -2327,10 +2584,12 @@ export function SalaryAdvanceWorkspace() {
                         data-testid="salary-advance-evidence-upload-form"
                       >
                         <div className="text-sm font-semibold text-[var(--color-text-primary)]">
-                          Tải lên ảnh NLĐ nhận tiền mặt (QLDA)
+                          {comparisonModel.requiresWorkerPortraitComparison
+                            ? "Tải lên ảnh NLĐ nhận tiền mặt (QLDA)"
+                            : "Tải lên chứng từ chuyển khoản (Bill)"}
                         </div>
                         <p className="mt-0.5 text-xs text-[var(--color-text-secondary)]">
-                          Chỉ chấp nhận tệp JPEG hoặc PNG, tối đa 10 MB. Ảnh sẽ
+                          Chỉ chấp nhận tệp JPEG hoặc PNG, tối đa 10 MB. Tệp sẽ
                           được lưu thành phiên bản mới để Kế toán đối chiếu.
                         </p>
 
@@ -2367,7 +2626,9 @@ export function SalaryAdvanceWorkspace() {
                               htmlFor="salary-advance-evidence-caption-input"
                               className="text-xs font-medium text-[var(--color-text-secondary)]"
                             >
-                              Ghi chú ảnh nhận tiền (không bắt buộc)
+                              {comparisonModel.requiresWorkerPortraitComparison
+                                ? "Ghi chú ảnh nhận tiền (không bắt buộc)"
+                                : "Ghi chú chứng từ chuyển khoản (không bắt buộc)"}
                             </label>
                             <input
                               id="salary-advance-evidence-caption-input"
@@ -2377,7 +2638,11 @@ export function SalaryAdvanceWorkspace() {
                               onChange={(event) =>
                                 setEvidenceCaptionNote(event.target.value)
                               }
-                              placeholder="VD: Đã trao tiền mặt tại công trường..."
+                              placeholder={
+                                comparisonModel.requiresWorkerPortraitComparison
+                                  ? "VD: Đã trao tiền mặt tại công trường..."
+                                  : "VD: Mã giao dịch ngân hàng FT..."
+                              }
                               disabled={evidenceUploading}
                               className="h-9 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-sm text-[var(--color-text-primary)]"
                             />
@@ -2393,7 +2658,9 @@ export function SalaryAdvanceWorkspace() {
                             disabled={!evidenceFile || evidenceUploading}
                             data-testid="salary-advance-upload-evidence-btn"
                           >
-                            Tải ảnh nhận tiền lên
+                            {comparisonModel.requiresWorkerPortraitComparison
+                              ? "Tải ảnh nhận tiền lên"
+                              : "Tải chứng từ chuyển khoản lên"}
                           </Button>
                         </div>
                       </form>
@@ -2406,7 +2673,9 @@ export function SalaryAdvanceWorkspace() {
                         data-testid="salary-advance-evidence-review-panel"
                       >
                         <div className="text-sm font-semibold text-[var(--color-text-primary)]">
-                          Kết luận đối chiếu ảnh của Kế toán dự án
+                          {comparisonModel.requiresWorkerPortraitComparison
+                            ? "Kết luận đối chiếu ảnh của Kế toán dự án"
+                            : "Kết luận đối chiếu chứng từ chuyển khoản của Kế toán dự án"}
                         </div>
 
                         {comparisonModel.confirmReviewedLockReason ? (
@@ -2430,7 +2699,9 @@ export function SalaryAdvanceWorkspace() {
                             htmlFor="salary-advance-evidence-review-note"
                             className="text-xs font-medium text-[var(--color-text-secondary)]"
                           >
-                            Ghi chú đối chiếu hoặc lý do yêu cầu chụp lại ảnh
+                            {comparisonModel.requiresWorkerPortraitComparison
+                              ? "Ghi chú đối chiếu hoặc lý do yêu cầu chụp lại ảnh"
+                              : "Ghi chú đối chiếu hoặc lý do yêu cầu gửi lại chứng từ"}
                           </label>
                           <textarea
                             id="salary-advance-evidence-review-note"
@@ -2441,7 +2712,11 @@ export function SalaryAdvanceWorkspace() {
                               setEvidenceReviewNote(event.target.value)
                             }
                             disabled={evidenceReviewSubmitting}
-                            placeholder="Nhập nhận xét đối chiếu ảnh hoặc hướng dẫn QLDA chụp lại..."
+                            placeholder={
+                              comparisonModel.requiresWorkerPortraitComparison
+                                ? "Nhập nhận xét đối chiếu ảnh hoặc hướng dẫn QLDA chụp lại..."
+                                : "Nhập nhận xét đối chiếu chứng từ hoặc yêu cầu gửi lại bill..."
+                            }
                             className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-2.5 text-sm text-[var(--color-text-primary)]"
                           />
                         </div>
@@ -2461,7 +2736,9 @@ export function SalaryAdvanceWorkspace() {
                               void handleSubmitEvidenceReview("RETAKE_REQUIRED")
                             }
                           >
-                            Yêu cầu chụp/gửi lại ảnh
+                            {comparisonModel.requiresWorkerPortraitComparison
+                              ? "Yêu cầu chụp/gửi lại ảnh"
+                              : "Yêu cầu gửi lại chứng từ"}
                           </Button>
                           <Button
                             type="button"
@@ -2477,7 +2754,9 @@ export function SalaryAdvanceWorkspace() {
                               void handleSubmitEvidenceReview("REVIEWED")
                             }
                           >
-                            Đã đối chiếu ảnh hợp lệ
+                            {comparisonModel.requiresWorkerPortraitComparison
+                              ? "Đã đối chiếu ảnh hợp lệ"
+                              : "Đã đối chiếu chứng từ hợp lệ"}
                           </Button>
                         </div>
                       </div>
@@ -2560,10 +2839,15 @@ export function SalaryAdvanceWorkspace() {
                             <StatusBadge
                               tone={getSalaryAdvanceEventTone(ev.event_type)}
                             >
-                              {getSalaryAdvanceEventTypeLabel(ev.event_type)}
+                              {getSalaryAdvanceEventTypeLabel(
+                                ev.event_type,
+                                ev.evidence_kind
+                              )}
                             </StatusBadge>
                             <span className="font-semibold text-[var(--color-text-primary)]">
-                              {ev.actor_display_name || ev.actor_user_id}
+                              {resolveSalaryAdvanceActorDisplayName(
+                                ev.actor_display_name
+                              )}
                             </span>
                             <StatusBadge tone="neutral">
                               {getSalaryAdvanceActorRoleLabel(ev.actor_role)}
@@ -2604,7 +2888,7 @@ export function SalaryAdvanceWorkspace() {
         }}
         closeDisabled={createSubmitting}
         title="Tạo yêu cầu ứng lương mới"
-        description="Chọn dự án đang quản lý, chọn người lao động thuộc dự án và nhập số tiền VNĐ cùng nội dung đề nghị."
+        description="Chọn dự án đang quản lý, chọn người lao động đủ điều kiện, phương thức nhận tiền và nhập số tiền VNĐ cùng nội dung đề nghị."
       >
         <div className="flex flex-col gap-4">
           {createError ? (
@@ -2639,8 +2923,10 @@ export function SalaryAdvanceWorkspace() {
               {activeManagedProjects.map((project) => (
                 <option key={project.project_id} value={project.project_id}>
                   {project.display_name}
-                  {project.accountant_display_name
-                    ? ` (Kế toán: ${project.accountant_display_name})`
+                  {project.has_active_accountant
+                    ? ` (Kế toán: ${resolveSalaryAdvanceActorDisplayName(
+                        project.accountant_display_name
+                      )})`
                     : " (Chưa gán Kế toán dự án)"}
                 </option>
               ))}
@@ -2707,18 +2993,21 @@ export function SalaryAdvanceWorkspace() {
                     ? "-- Không tìm thấy NLĐ phù hợp --"
                     : "-- Chọn người lao động --"}
               </option>
-              {workers.map((worker) => (
-                <option
-                  key={worker.worker_entry_id}
-                  value={worker.worker_entry_id}
-                >
-                  {worker.display_name} ({worker.employee_code}) · Ngày công đầu:{" "}
-                  {worker.first_work_date} ·{" "}
-                  {worker.has_portrait
-                    ? "Đã có ảnh hồ sơ"
-                    : "Chưa có ảnh hồ sơ"}
-                </option>
-              ))}
+              {workers.map((worker) => {
+                const eligibility = describeWorkerEligibility(worker);
+                return (
+                  <option
+                    key={worker.worker_entry_id}
+                    value={worker.worker_entry_id}
+                  >
+                    {worker.display_name} ({worker.employee_code}) · Ngày công
+                    đầu: {worker.first_work_date} ·{" "}
+                    {eligibility.isEligible
+                      ? `${worker.has_portrait ? "Đã có ảnh hồ sơ" : "Chưa có ảnh hồ sơ"} · ${worker.bank_transfer_eligible ? "Có TK chính chủ" : "Chưa đủ TK chính chủ"}`
+                      : `[Không đủ ĐK: ${eligibility.statusLabel}]`}
+                  </option>
+                );
+              })}
             </select>
             {workersHasMore ? (
               <div className="mt-1">
@@ -2735,6 +3024,140 @@ export function SalaryAdvanceWorkspace() {
                 >
                   Tải thêm người lao động
                 </Button>
+              </div>
+            ) : null}
+          </div>
+
+          {selectedCreateWorker &&
+          selectedCreateWorkerEligibility &&
+          !selectedCreateWorkerEligibility.isEligible ? (
+            <div data-testid="salary-advance-worker-eligibility-banner">
+              <StatusBanner
+                tone="error"
+                title={selectedCreateWorkerEligibility.statusLabel}
+              >
+                <ul className="list-disc pl-4 text-xs">
+                  {selectedCreateWorkerEligibility.reasonLabels.map(
+                    (reason) => (
+                      <li key={reason}>{reason}</li>
+                    )
+                  )}
+                </ul>
+              </StatusBanner>
+            </div>
+          ) : null}
+
+          <div
+            className="flex flex-col gap-1.5"
+            data-testid="salary-advance-create-payment-method"
+          >
+            <span className="text-xs font-medium text-[var(--color-text-secondary)]">
+              Phương thức nhận tiền (*)
+            </span>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <label
+                className={`flex cursor-pointer items-start gap-2.5 rounded-lg border p-2.5 text-sm transition-colors ${
+                  createPaymentMethod === "CASH"
+                    ? "border-[var(--color-primary)] bg-[var(--color-surface-subtle)]"
+                    : "border-[var(--color-border)] bg-[var(--color-surface)]"
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="salary-advance-payment-method"
+                  value="CASH"
+                  checked={createPaymentMethod === "CASH"}
+                  onChange={() => setCreatePaymentMethod("CASH")}
+                  disabled={createSubmitting}
+                  data-testid="salary-advance-payment-method-cash"
+                  className="mt-0.5"
+                />
+                <div className="flex flex-col">
+                  <span className="font-semibold text-[var(--color-text-primary)]">
+                    Tiền mặt
+                  </span>
+                  <span className="text-xs text-[var(--color-text-secondary)]">
+                    QLDA tải ảnh NLĐ nhận tiền mặt, Kế toán đối chiếu chân dung
+                    hồ sơ
+                  </span>
+                </div>
+              </label>
+
+              <label
+                className={`flex cursor-pointer items-start gap-2.5 rounded-lg border p-2.5 text-sm transition-colors ${
+                  createPaymentMethod === "BANK_TRANSFER"
+                    ? "border-[var(--color-primary)] bg-[var(--color-surface-subtle)]"
+                    : "border-[var(--color-border)] bg-[var(--color-surface)]"
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="salary-advance-payment-method"
+                  value="BANK_TRANSFER"
+                  checked={createPaymentMethod === "BANK_TRANSFER"}
+                  onChange={() => setCreatePaymentMethod("BANK_TRANSFER")}
+                  disabled={createSubmitting}
+                  data-testid="salary-advance-payment-method-bank-transfer"
+                  className="mt-0.5"
+                />
+                <div className="flex flex-col">
+                  <span className="font-semibold text-[var(--color-text-primary)]">
+                    Chuyển khoản
+                  </span>
+                  <span className="text-xs text-[var(--color-text-secondary)]">
+                    Chuyển vào tài khoản ngân hàng chính chủ của NLĐ và đối
+                    chiếu chứng từ (Bill)
+                  </span>
+                </div>
+              </label>
+            </div>
+
+            {createPaymentMethod === "BANK_TRANSFER" &&
+            selectedCreateWorker &&
+            selectedCreateWorkerBankEligibility ? (
+              <div
+                className="mt-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-subtle)] p-3 text-xs"
+                data-testid="salary-advance-worker-bank-info"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-semibold text-[var(--color-text-primary)]">
+                    Tài khoản ngân hàng trong hồ sơ NLĐ
+                  </span>
+                  <StatusBadge
+                    tone={selectedCreateWorkerBankEligibility.tone}
+                  >
+                    {selectedCreateWorkerBankEligibility.statusLabel}
+                  </StatusBadge>
+                </div>
+                <div className="mt-1.5 grid grid-cols-1 sm:grid-cols-3 gap-2 text-[var(--color-text-secondary)]">
+                  <div>
+                    Ngân hàng:{" "}
+                    <strong className="text-[var(--color-text-primary)]">
+                      {selectedCreateWorkerBankEligibility.institutionName ??
+                        "Chưa cập nhật"}
+                    </strong>
+                  </div>
+                  <div>
+                    Số TK:{" "}
+                    <strong className="font-mono text-[var(--color-text-primary)]">
+                      {selectedCreateWorkerBankEligibility.accountNumber ??
+                        "Chưa cập nhật"}
+                    </strong>
+                  </div>
+                  <div>
+                    Chủ TK:{" "}
+                    <strong className="text-[var(--color-text-primary)]">
+                      {selectedCreateWorkerBankEligibility.accountHolderName ??
+                        "Chưa cập nhật"}
+                    </strong>
+                  </div>
+                </div>
+                {!selectedCreateWorkerBankEligibility.canUseBankTransfer &&
+                selectedCreateWorkerBankEligibility.blockingMessage ? (
+                  <p className="mt-2 text-[var(--color-danger)]">
+                    {selectedCreateWorkerBankEligibility.blockingMessage}
+                  </p>
+                ) : null}
               </div>
             ) : null}
           </div>
@@ -2797,7 +3220,16 @@ export function SalaryAdvanceWorkspace() {
               loading={createSubmitting}
               disabled={
                 createSubmitting ||
-                selectedCreateProject?.has_active_accountant === false
+                selectedCreateProject?.has_active_accountant === false ||
+                Boolean(
+                  selectedCreateWorkerEligibility &&
+                    !selectedCreateWorkerEligibility.isEligible
+                ) ||
+                Boolean(
+                  createPaymentMethod === "BANK_TRANSFER" &&
+                    selectedCreateWorkerBankEligibility &&
+                    !selectedCreateWorkerBankEligibility.canUseBankTransfer
+                )
               }
               onClick={() => void handleSubmitCreateRequest()}
               data-testid="salary-advance-submit-create-btn"

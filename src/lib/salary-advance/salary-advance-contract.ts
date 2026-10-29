@@ -84,6 +84,49 @@ export const SALARY_ADVANCE_ACTOR_ROLES = [
 export type SalaryAdvanceActorRole =
   (typeof SALARY_ADVANCE_ACTOR_ROLES)[number];
 
+export const SALARY_ADVANCE_PAYMENT_METHODS = [
+  "CASH",
+  "BANK_TRANSFER",
+] as const;
+
+export type SalaryAdvancePaymentMethod =
+  (typeof SALARY_ADVANCE_PAYMENT_METHODS)[number];
+
+export const SALARY_ADVANCE_EVIDENCE_KINDS = [
+  "CASH_HANDOVER_PHOTO",
+  "BANK_TRANSFER_RECEIPT",
+] as const;
+
+export type SalaryAdvanceEvidenceKind =
+  (typeof SALARY_ADVANCE_EVIDENCE_KINDS)[number];
+
+export const SALARY_ADVANCE_WORKER_EMPLOYMENT_STATUSES = [
+  "ON",
+  "OFF",
+  "UNCONFIRMED",
+] as const;
+
+export type SalaryAdvanceWorkerEmploymentStatus =
+  (typeof SALARY_ADVANCE_WORKER_EMPLOYMENT_STATUSES)[number];
+
+export const SALARY_ADVANCE_WORKER_INELIGIBLE_REASONS = [
+  "WORKER_STATUS_OFF",
+  "WORKER_STATUS_UNCONFIRMED",
+  "WORKER_MULTI_PROJECT_ON",
+  "WORKER_DUPLICATE_CCCD",
+] as const;
+
+export type SalaryAdvanceWorkerIneligibleReason =
+  (typeof SALARY_ADVANCE_WORKER_INELIGIBLE_REASONS)[number];
+
+export const SALARY_ADVANCE_BANK_INELIGIBLE_REASONS = [
+  "BANK_ACCOUNT_MISSING",
+  "BANK_ACCOUNT_NOT_SELF_OWNED",
+] as const;
+
+export type SalaryAdvanceBankIneligibleReason =
+  (typeof SALARY_ADVANCE_BANK_INELIGIBLE_REASONS)[number];
+
 export const SALARY_ADVANCE_EVIDENCE_MAX_BYTES = 10 * 1024 * 1024; // 10_485_760
 export const SALARY_ADVANCE_EVIDENCE_UPLOAD_URL_TTL_SECONDS = 900; // 15 minutes
 export const MAX_PG_BIGINT = BigInt("9223372036854775807");
@@ -104,6 +147,12 @@ export type SalaryAdvanceErrorCode =
   | "SALARY_ADVANCE_WORKER_INVALID"
   | "SALARY_ADVANCE_WORKER_NOT_FOUND"
   | "SALARY_ADVANCE_WORKER_PROJECT_MISMATCH"
+  | "SALARY_ADVANCE_WORKER_INELIGIBLE_STATUS"
+  | "SALARY_ADVANCE_WORKER_MULTI_PROJECT_ON"
+  | "SALARY_ADVANCE_WORKER_DUPLICATE_CCCD"
+  | "SALARY_ADVANCE_PAYMENT_METHOD_INVALID"
+  | "SALARY_ADVANCE_BANK_ACCOUNT_MISSING"
+  | "SALARY_ADVANCE_BANK_ACCOUNT_NOT_SELF_OWNED"
   | "SALARY_ADVANCE_AMOUNT_INVALID"
   | "SALARY_ADVANCE_CONTENT_INVALID"
   | "SALARY_ADVANCE_MESSAGE_REQUIRED"
@@ -153,6 +202,11 @@ export function salaryAdvanceHttpStatusForError(
       return 404;
     case "SALARY_ADVANCE_PROJECT_INACTIVE":
     case "SALARY_ADVANCE_PROJECT_ACCOUNTANT_UNASSIGNED":
+    case "SALARY_ADVANCE_WORKER_INELIGIBLE_STATUS":
+    case "SALARY_ADVANCE_WORKER_MULTI_PROJECT_ON":
+    case "SALARY_ADVANCE_WORKER_DUPLICATE_CCCD":
+    case "SALARY_ADVANCE_BANK_ACCOUNT_MISSING":
+    case "SALARY_ADVANCE_BANK_ACCOUNT_NOT_SELF_OWNED":
     case "SALARY_ADVANCE_STATE_CONFLICT":
     case "SALARY_ADVANCE_VERSION_CONFLICT":
     case "SALARY_ADVANCE_IDEMPOTENCY_CONFLICT":
@@ -179,6 +233,7 @@ export function salaryAdvanceHttpStatusForError(
     case "SALARY_ADVANCE_PROJECT_INVALID":
     case "SALARY_ADVANCE_WORKER_INVALID":
     case "SALARY_ADVANCE_WORKER_PROJECT_MISMATCH":
+    case "SALARY_ADVANCE_PAYMENT_METHOD_INVALID":
     case "SALARY_ADVANCE_AMOUNT_INVALID":
     case "SALARY_ADVANCE_CONTENT_INVALID":
     case "SALARY_ADVANCE_MESSAGE_REQUIRED":
@@ -224,12 +279,46 @@ export type SalaryAdvanceActorContext = {
   authorization_date: string;
 };
 
+export type SalaryAdvanceWorkerBankAccountInfo = {
+  has_bank_account: boolean;
+  bank_id: string | null;
+  institution_name: string | null;
+  account_number: string | null;
+  account_number_masked: string | null;
+  account_holder_name: string | null;
+  is_self_owned: boolean;
+};
+
+export type SalaryAdvancePaymentDestinationSnapshot = {
+  bank_id: string | null;
+  institution_name: string;
+  account_number: string;
+  account_number_masked: string;
+  account_holder_name: string;
+};
+
+export type SalaryAdvanceWorkerEligibilitySummary = {
+  employment_status: SalaryAdvanceWorkerEmploymentStatus;
+  active_on_project_count: number;
+  has_duplicate_cccd: boolean;
+  is_eligible: boolean;
+  ineligible_reasons: SalaryAdvanceWorkerIneligibleReason[];
+};
+
 export type SalaryAdvanceWorkerOption = {
   worker_entry_id: string;
   employee_code: string;
   display_name: string;
   first_work_date: string;
   has_portrait: boolean;
+  employment_status?: SalaryAdvanceWorkerEmploymentStatus;
+  active_on_project_count?: number;
+  has_duplicate_cccd?: boolean;
+  is_eligible?: boolean;
+  ineligible_reasons?: SalaryAdvanceWorkerIneligibleReason[];
+  bank_transfer_eligible?: boolean;
+  bank_ineligible_reason?: SalaryAdvanceBankIneligibleReason | null;
+  bank_account?: SalaryAdvanceWorkerBankAccountInfo;
 };
 
 export type SalaryAdvanceWorkerListResponse = {
@@ -249,6 +338,7 @@ export type SalaryAdvanceWorkerPortraitMeta = {
 
 export type SalaryAdvanceCurrentEvidenceMeta = {
   evidence_version: number;
+  evidence_kind?: SalaryAdvanceEvidenceKind;
   mime_type: SalaryAdvanceEvidenceMimeType;
   size_bytes: number;
   checksum_sha256: string;
@@ -283,7 +373,10 @@ export type SalaryAdvanceRequestSummary = {
   worker_employee_code: string;
   worker_display_name: string;
   worker_portrait: SalaryAdvanceWorkerPortraitMeta | null;
+  worker_eligibility?: SalaryAdvanceWorkerEligibilitySummary;
   requested_amount_vnd: string;
+  payment_method?: SalaryAdvancePaymentMethod;
+  payment_destination_snapshot?: SalaryAdvancePaymentDestinationSnapshot | null;
   initial_content: string;
   request_state: SalaryAdvanceRequestState;
   evidence_review_state: SalaryAdvanceEvidenceReviewState;
@@ -326,6 +419,7 @@ export type SalaryAdvanceEventItem = {
   to_evidence_review_state: SalaryAdvanceEvidenceReviewState;
   message_text: string | null;
   evidence_version: number | null;
+  evidence_kind?: SalaryAdvanceEvidenceKind | null;
   evidence_mime_type: SalaryAdvanceEvidenceMimeType | null;
   evidence_size_bytes: number | null;
   evidence_checksum_sha256: string | null;
@@ -336,6 +430,7 @@ export type SalaryAdvanceEventItem = {
 
 export type SalaryAdvanceEvidenceVersionItem = {
   evidence_version: number;
+  evidence_kind?: SalaryAdvanceEvidenceKind;
   event_id: string;
   mime_type: SalaryAdvanceEvidenceMimeType;
   size_bytes: number;
@@ -742,6 +837,27 @@ export function parseWorkerPortraitQuery(
   return { ok: true, value: { expected_document_id: parsed.id } };
 }
 
+export function normalizeSalaryAdvancePersonName(raw: unknown): string {
+  if (typeof raw !== "string") return "";
+  return raw
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[đĐ]/g, "D")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function isSelfOwnedBankAccountNameMatch(
+  workerDisplayName: unknown,
+  accountHolderName: unknown,
+): boolean {
+  const normalizedWorker = normalizeSalaryAdvancePersonName(workerDisplayName);
+  const normalizedHolder = normalizeSalaryAdvancePersonName(accountHolderName);
+  return normalizedWorker.length > 0 && normalizedWorker === normalizedHolder;
+}
+
 export function parseCreateSalaryAdvanceRequestBody(
   body: unknown,
   idempotencyHeader: string | null,
@@ -752,6 +868,7 @@ export function parseCreateSalaryAdvanceRequestBody(
         project_id: string;
         worker_entry_id: string;
         requested_amount_vnd: string;
+        payment_method: SalaryAdvancePaymentMethod;
         initial_content: string;
         idempotency_key: string;
       };
@@ -764,6 +881,7 @@ export function parseCreateSalaryAdvanceRequestBody(
     "project_id",
     "worker_entry_id",
     "requested_amount_vnd",
+    "payment_method",
     "initial_content",
     "idempotency_key",
   ]);
@@ -790,6 +908,19 @@ export function parseCreateSalaryAdvanceRequestBody(
   const amount = parsePositiveAmountVnd(body.requested_amount_vnd);
   if (!amount.ok) return amount;
 
+  const rawPaymentMethod =
+    typeof body.payment_method === "string"
+      ? body.payment_method.trim().toUpperCase()
+      : "";
+  if (
+    !SALARY_ADVANCE_PAYMENT_METHODS.includes(
+      rawPaymentMethod as SalaryAdvancePaymentMethod,
+    )
+  ) {
+    return { ok: false, code: "SALARY_ADVANCE_PAYMENT_METHOD_INVALID" };
+  }
+  const paymentMethod = rawPaymentMethod as SalaryAdvancePaymentMethod;
+
   const content = validateTextField(
     body.initial_content,
     1,
@@ -807,6 +938,7 @@ export function parseCreateSalaryAdvanceRequestBody(
       project_id: proj.project_id,
       worker_entry_id: worker.id,
       requested_amount_vnd: amount.value,
+      payment_method: paymentMethod,
       initial_content: content.value,
       idempotency_key: idem.key,
     },
@@ -1109,6 +1241,7 @@ export function parseReviewSalaryAdvanceEvidenceBody(
         expected_version: number;
         evidence_version: number;
         decision: SalaryAdvanceEvidenceReviewDecision;
+        evidence_kind: SalaryAdvanceEvidenceKind;
         expected_worker_portrait_document_id: string | null;
         expected_worker_portrait_version: number | null;
         note: string | null;
@@ -1123,6 +1256,7 @@ export function parseReviewSalaryAdvanceEvidenceBody(
     "expected_version",
     "evidence_version",
     "decision",
+    "evidence_kind",
     "expected_worker_portrait_document_id",
     "expected_worker_portrait_version",
     "note",
@@ -1159,10 +1293,35 @@ export function parseReviewSalaryAdvanceEvidenceBody(
   }
   const decision = rawDecision as SalaryAdvanceEvidenceReviewDecision;
 
+  let evidenceKind: SalaryAdvanceEvidenceKind = "CASH_HANDOVER_PHOTO";
+  if (body.evidence_kind !== undefined && body.evidence_kind !== null) {
+    const rawKind =
+      typeof body.evidence_kind === "string"
+        ? body.evidence_kind.trim().toUpperCase()
+        : "";
+    if (
+      !SALARY_ADVANCE_EVIDENCE_KINDS.includes(
+        rawKind as SalaryAdvanceEvidenceKind,
+      )
+    ) {
+      return { ok: false, code: "SALARY_ADVANCE_REQUEST_INVALID" };
+    }
+    evidenceKind = rawKind as SalaryAdvanceEvidenceKind;
+  }
+
   let portraitDocId: string | null = null;
   let portraitVer: number | null = null;
 
-  if (decision === "REVIEWED") {
+  if (evidenceKind === "BANK_TRANSFER_RECEIPT") {
+    if (
+      (body.expected_worker_portrait_document_id !== undefined &&
+        body.expected_worker_portrait_document_id !== null) ||
+      (body.expected_worker_portrait_version !== undefined &&
+        body.expected_worker_portrait_version !== null)
+    ) {
+      return { ok: false, code: "SALARY_ADVANCE_PORTRAIT_LOCK_INVALID" };
+    }
+  } else if (decision === "REVIEWED") {
     const parsedDoc = parseUuidParam(
       typeof body.expected_worker_portrait_document_id === "string"
         ? body.expected_worker_portrait_document_id
@@ -1224,6 +1383,7 @@ export function parseReviewSalaryAdvanceEvidenceBody(
       expected_version: ver.value,
       evidence_version: body.evidence_version,
       decision,
+      evidence_kind: evidenceKind,
       expected_worker_portrait_document_id: portraitDocId,
       expected_worker_portrait_version: portraitVer,
       note: note.value,
@@ -1240,6 +1400,7 @@ export function computeCreateRequestFingerprint(input: {
   project_id: string;
   worker_entry_id: string;
   requested_amount_vnd: string;
+  payment_method?: SalaryAdvancePaymentMethod;
   initial_content: string;
 }): string {
   return sha256Json({
@@ -1247,6 +1408,7 @@ export function computeCreateRequestFingerprint(input: {
     project_id: input.project_id,
     worker_entry_id: input.worker_entry_id,
     requested_amount_vnd: input.requested_amount_vnd,
+    ...(input.payment_method ? { payment_method: input.payment_method } : {}),
     initial_content: input.initial_content,
   });
 }

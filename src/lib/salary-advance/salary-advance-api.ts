@@ -390,6 +390,7 @@ export async function handlePostCreateSalaryAdvanceRequest(
     project_id: parsedBody.value.project_id,
     worker_entry_id: parsedBody.value.worker_entry_id,
     requested_amount_vnd: parsedBody.value.requested_amount_vnd,
+    payment_method: parsedBody.value.payment_method,
     initial_content: parsedBody.value.initial_content,
   });
 
@@ -399,6 +400,7 @@ export async function handlePostCreateSalaryAdvanceRequest(
     project_id: parsedBody.value.project_id,
     worker_entry_id: parsedBody.value.worker_entry_id,
     requested_amount_vnd: parsedBody.value.requested_amount_vnd,
+    payment_method: parsedBody.value.payment_method,
     initial_content: parsedBody.value.initial_content,
     idempotency_key: parsedBody.value.idempotency_key,
     request_fingerprint: fingerprint,

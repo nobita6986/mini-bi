@@ -5,23 +5,33 @@ import {
 } from "../auth/session-page-access.ts";
 import {
   SALARY_ADVANCE_EVIDENCE_MAX_BYTES,
+  SALARY_ADVANCE_PAYMENT_METHODS,
+  isSelfOwnedBankAccountNameMatch,
   type SalaryAdvanceActorContext,
   type SalaryAdvanceActorRole,
   type SalaryAdvanceAllowedActions,
+  type SalaryAdvanceBankIneligibleReason,
   type SalaryAdvanceErrorCode,
   type SalaryAdvanceEventItem,
   type SalaryAdvanceEventType,
+  type SalaryAdvanceEvidenceKind,
   type SalaryAdvanceEvidenceMimeType,
   type SalaryAdvanceEvidenceReserveResponse,
   type SalaryAdvanceEvidenceReviewDecision,
   type SalaryAdvanceEvidenceReviewState,
   type SalaryAdvanceEvidenceVersionItem,
   type SalaryAdvanceMutationDetailResponse,
+  type SalaryAdvancePaymentDestinationSnapshot,
+  type SalaryAdvancePaymentMethod,
   type SalaryAdvanceQueue,
   type SalaryAdvanceRequestDetail,
+  type SalaryAdvanceRequestListResponse,
   type SalaryAdvanceRequestState,
   type SalaryAdvanceRequestSummary,
   type SalaryAdvanceTransitionAction,
+  type SalaryAdvanceWorkerEligibilitySummary,
+  type SalaryAdvanceWorkerEmploymentStatus,
+  type SalaryAdvanceWorkerIneligibleReason,
   type SalaryAdvanceWorkerOption,
 } from "./salary-advance-contract.ts";
 
@@ -63,6 +73,43 @@ export type SalaryAdvanceEvidenceReviewStateMeta = {
   tone: SalaryAdvanceBadgeTone;
 };
 
+export type SalaryAdvancePaymentMethodMeta = {
+  method: SalaryAdvancePaymentMethod;
+  label: string;
+  shortLabel: string;
+  evidenceKind: SalaryAdvanceEvidenceKind;
+  evidenceTitle: string;
+  evidenceShortTitle: string;
+  tone: SalaryAdvanceBadgeTone;
+};
+
+export type SalaryAdvanceWorkerEligibilityView = {
+  employmentStatus: SalaryAdvanceWorkerEmploymentStatus;
+  activeOnProjectCount: number;
+  hasDuplicateCccd: boolean;
+  isEligible: boolean;
+  statusLabel: string;
+  tone: SalaryAdvanceBadgeTone;
+  reasonCodes: SalaryAdvanceWorkerIneligibleReason[];
+  reasonLabels: string[];
+  blockingMessage: string | null;
+};
+
+export type SalaryAdvanceWorkerBankTransferView = {
+  canUseBankTransfer: boolean;
+  hasBankAccount: boolean;
+  isSelfOwned: boolean;
+  statusLabel: string;
+  tone: SalaryAdvanceBadgeTone;
+  reasonCode: SalaryAdvanceBankIneligibleReason | null;
+  blockingMessage: string | null;
+  bankId: string | null;
+  institutionName: string | null;
+  accountNumber: string | null;
+  accountNumberMasked: string | null;
+  accountHolderName: string | null;
+};
+
 export type SalaryAdvanceAvailableActionsView = {
   canPostMessage: boolean;
   canProvideInfo: boolean;
@@ -86,6 +133,10 @@ export type SalaryAdvanceAttentionIndicator = {
 
 export type SalaryAdvanceComparisonPanelModel = {
   requestId: string;
+  paymentMethod: SalaryAdvancePaymentMethod;
+  evidenceKind: SalaryAdvanceEvidenceKind;
+  requiresWorkerPortraitComparison: boolean;
+  paymentDestinationSnapshot: SalaryAdvancePaymentDestinationSnapshot | null;
   workerEntryId: string;
   workerEmployeeCode: string;
   workerDisplayName: string;
@@ -103,6 +154,7 @@ export type SalaryAdvanceComparisonPanelModel = {
   selectedEvidence: {
     eventId: string;
     evidenceVersion: number;
+    evidenceKind: SalaryAdvanceEvidenceKind;
     mimeType: SalaryAdvanceEvidenceMimeType;
     sizeBytes: number;
     captionNote: string | null;
@@ -122,6 +174,7 @@ export type SalaryAdvanceComparisonPanelModel = {
   } | null;
   evidenceVersions: Array<{
     evidenceVersion: number;
+    evidenceKind: SalaryAdvanceEvidenceKind;
     isCurrent: boolean;
     reviewState: SalaryAdvanceEvidenceReviewState;
     uploadedAt: string;
@@ -139,6 +192,8 @@ export type CreateSalaryAdvanceDraftInput = {
   hasActiveAccountant?: boolean;
   workerEntryId: string;
   requestedAmountRaw: string;
+  paymentMethod?: string | null;
+  selectedWorker?: SalaryAdvanceWorkerOption | null;
   initialContent: string;
 };
 
@@ -149,6 +204,7 @@ export type CreateSalaryAdvanceValidationResult =
         project_id: string;
         worker_entry_id: string;
         requested_amount_vnd: string;
+        payment_method: SalaryAdvancePaymentMethod;
         initial_content: string;
       };
     }
@@ -157,7 +213,11 @@ export type CreateSalaryAdvanceValidationResult =
       message: string;
       fieldErrors: Partial<
         Record<
-          "projectId" | "workerEntryId" | "requestedAmountRaw" | "initialContent",
+          | "projectId"
+          | "workerEntryId"
+          | "requestedAmountRaw"
+          | "paymentMethod"
+          | "initialContent",
           string
         >
       >;
@@ -354,6 +414,285 @@ export function resolveVisibleSalaryAdvanceTabs(
   return tabs;
 }
 
+const PAYMENT_METHOD_META: Record<
+  SalaryAdvancePaymentMethod,
+  SalaryAdvancePaymentMethodMeta
+> = {
+  CASH: {
+    method: "CASH",
+    label: "Nhận tiền mặt",
+    shortLabel: "Tiền mặt",
+    evidenceKind: "CASH_HANDOVER_PHOTO",
+    evidenceTitle: "Ảnh NLĐ nhận tiền mặt",
+    evidenceShortTitle: "Ảnh nhận tiền mặt",
+    tone: "info",
+  },
+  BANK_TRANSFER: {
+    method: "BANK_TRANSFER",
+    label: "Chuyển khoản ngân hàng",
+    shortLabel: "Chuyển khoản",
+    evidenceKind: "BANK_TRANSFER_RECEIPT",
+    evidenceTitle: "Chứng từ chuyển khoản",
+    evidenceShortTitle: "Bill chuyển khoản",
+    tone: "primary",
+  },
+};
+
+const WORKER_INELIGIBLE_REASON_LABELS: Record<
+  SalaryAdvanceWorkerIneligibleReason,
+  string
+> = {
+  WORKER_STATUS_OFF: "NLĐ đã nghỉ việc (OFF)",
+  WORKER_STATUS_UNCONFIRMED: "Trạng thái làm việc chưa xác nhận (UNCONFIRMED)",
+  WORKER_MULTI_PROJECT_ON: "NLĐ đang ON tại từ 2 dự án trở lên",
+  WORKER_DUPLICATE_CCCD: "Hồ sơ thuộc nhóm trùng CCCD cần rà soát",
+};
+
+const BANK_INELIGIBLE_REASON_LABELS: Record<
+  SalaryAdvanceBankIneligibleReason,
+  string
+> = {
+  BANK_ACCOUNT_MISSING:
+    "Hồ sơ NLĐ chưa có đầy đủ thông tin tài khoản ngân hàng",
+  BANK_ACCOUNT_NOT_SELF_OWNED:
+    "Tên chủ tài khoản ngân hàng không trùng khớp với họ tên NLĐ (không chính chủ)",
+};
+
+export function getPaymentMethodMeta(
+  method: SalaryAdvancePaymentMethod | string | null | undefined
+): SalaryAdvancePaymentMethodMeta {
+  if (method === "BANK_TRANSFER") {
+    return PAYMENT_METHOD_META.BANK_TRANSFER;
+  }
+  return PAYMENT_METHOD_META.CASH;
+}
+
+export function getEvidenceKindLabel(
+  kind: SalaryAdvanceEvidenceKind | string | null | undefined
+): string {
+  if (kind === "BANK_TRANSFER_RECEIPT") {
+    return "Chứng từ chuyển khoản";
+  }
+  return "Ảnh NLĐ nhận tiền mặt";
+}
+
+export function getWorkerIneligibleReasonLabel(
+  reason: SalaryAdvanceWorkerIneligibleReason | string
+): string {
+  return (
+    WORKER_INELIGIBLE_REASON_LABELS[
+      reason as SalaryAdvanceWorkerIneligibleReason
+    ] ?? reason
+  );
+}
+
+export function getBankIneligibleReasonLabel(
+  reason: SalaryAdvanceBankIneligibleReason | string
+): string {
+  return (
+    BANK_INELIGIBLE_REASON_LABELS[
+      reason as SalaryAdvanceBankIneligibleReason
+    ] ?? reason
+  );
+}
+
+export function describeWorkerEligibility(
+  worker:
+    | Pick<
+        SalaryAdvanceWorkerOption,
+        | "employment_status"
+        | "active_on_project_count"
+        | "has_duplicate_cccd"
+        | "is_eligible"
+        | "ineligible_reasons"
+      >
+    | SalaryAdvanceWorkerEligibilitySummary
+    | null
+    | undefined
+): SalaryAdvanceWorkerEligibilityView {
+  const employmentStatus: SalaryAdvanceWorkerEmploymentStatus =
+    worker?.employment_status === "OFF" ||
+    worker?.employment_status === "UNCONFIRMED"
+      ? worker.employment_status
+      : "ON";
+  const activeOnProjectCount =
+    typeof worker?.active_on_project_count === "number" &&
+    Number.isFinite(worker.active_on_project_count)
+      ? Math.max(0, Math.trunc(worker.active_on_project_count))
+      : employmentStatus === "ON"
+        ? 1
+        : 0;
+  const hasDuplicateCccd = Boolean(worker?.has_duplicate_cccd);
+
+  const derivedReasons: SalaryAdvanceWorkerIneligibleReason[] = [];
+  if (Array.isArray(worker?.ineligible_reasons)) {
+    for (const r of worker.ineligible_reasons) {
+      if (!derivedReasons.includes(r)) {
+        derivedReasons.push(r);
+      }
+    }
+  }
+  if (
+    employmentStatus === "OFF" &&
+    !derivedReasons.includes("WORKER_STATUS_OFF")
+  ) {
+    derivedReasons.push("WORKER_STATUS_OFF");
+  }
+  if (
+    employmentStatus === "UNCONFIRMED" &&
+    !derivedReasons.includes("WORKER_STATUS_UNCONFIRMED")
+  ) {
+    derivedReasons.push("WORKER_STATUS_UNCONFIRMED");
+  }
+  if (
+    activeOnProjectCount >= 2 &&
+    !derivedReasons.includes("WORKER_MULTI_PROJECT_ON")
+  ) {
+    derivedReasons.push("WORKER_MULTI_PROJECT_ON");
+  }
+  if (
+    hasDuplicateCccd &&
+    !derivedReasons.includes("WORKER_DUPLICATE_CCCD")
+  ) {
+    derivedReasons.push("WORKER_DUPLICATE_CCCD");
+  }
+
+  const isEligible =
+    worker?.is_eligible === false ? false : derivedReasons.length === 0;
+  const reasonLabels = derivedReasons.map(getWorkerIneligibleReasonLabel);
+
+  if (!isEligible) {
+    const joinedReasons =
+      reasonLabels.length > 0
+        ? reasonLabels.join("; ")
+        : "Không đủ điều kiện nghiệp vụ";
+    return {
+      employmentStatus,
+      activeOnProjectCount,
+      hasDuplicateCccd,
+      isEligible: false,
+      statusLabel: "Không đủ điều kiện",
+      tone: "danger",
+      reasonCodes: derivedReasons,
+      reasonLabels,
+      blockingMessage: `Không thể ứng lương cho NLĐ này: ${joinedReasons}.`,
+    };
+  }
+
+  return {
+    employmentStatus,
+    activeOnProjectCount,
+    hasDuplicateCccd,
+    isEligible: true,
+    statusLabel: "Đủ điều kiện (ON)",
+    tone: "success",
+    reasonCodes: [],
+    reasonLabels: [],
+    blockingMessage: null,
+  };
+}
+
+export function describeWorkerBankTransferEligibility(
+  worker:
+    | Pick<
+        SalaryAdvanceWorkerOption,
+        | "display_name"
+        | "bank_transfer_eligible"
+        | "bank_ineligible_reason"
+        | "bank_account"
+      >
+    | null
+    | undefined
+): SalaryAdvanceWorkerBankTransferView {
+  const bankAccount = worker?.bank_account;
+  const institutionName =
+    typeof bankAccount?.institution_name === "string" &&
+    bankAccount.institution_name.trim().length > 0
+      ? bankAccount.institution_name.trim()
+      : null;
+  const accountNumber =
+    typeof bankAccount?.account_number === "string" &&
+    bankAccount.account_number.trim().length > 0
+      ? bankAccount.account_number.trim()
+      : null;
+  const accountNumberMasked =
+    typeof bankAccount?.account_number_masked === "string" &&
+    bankAccount.account_number_masked.trim().length > 0
+      ? bankAccount.account_number_masked.trim()
+      : accountNumber;
+  const accountHolderName =
+    typeof bankAccount?.account_holder_name === "string" &&
+    bankAccount.account_holder_name.trim().length > 0
+      ? bankAccount.account_holder_name.trim()
+      : null;
+  const bankId =
+    typeof bankAccount?.bank_id === "string" &&
+    bankAccount.bank_id.trim().length > 0
+      ? bankAccount.bank_id.trim()
+      : null;
+
+  const hasBankAccount = Boolean(
+    bankAccount?.has_bank_account ??
+      (institutionName && accountNumber && accountHolderName)
+  );
+  const nameMatches = Boolean(
+    hasBankAccount &&
+      worker?.display_name &&
+      accountHolderName &&
+      isSelfOwnedBankAccountNameMatch(worker.display_name, accountHolderName)
+  );
+  const isSelfOwned =
+    typeof bankAccount?.is_self_owned === "boolean"
+      ? bankAccount.is_self_owned && nameMatches
+      : nameMatches;
+
+  const canUseBankTransfer =
+    typeof worker?.bank_transfer_eligible === "boolean"
+      ? worker.bank_transfer_eligible && hasBankAccount && isSelfOwned
+      : hasBankAccount && isSelfOwned;
+
+  if (canUseBankTransfer) {
+    return {
+      canUseBankTransfer: true,
+      hasBankAccount: true,
+      isSelfOwned: true,
+      statusLabel: "Tài khoản chính chủ hợp lệ",
+      tone: "success",
+      reasonCode: null,
+      blockingMessage: null,
+      bankId,
+      institutionName,
+      accountNumber,
+      accountNumberMasked,
+      accountHolderName,
+    };
+  }
+
+  const reasonCode: SalaryAdvanceBankIneligibleReason =
+    worker?.bank_ineligible_reason === "BANK_ACCOUNT_NOT_SELF_OWNED" ||
+    (hasBankAccount && !isSelfOwned)
+      ? "BANK_ACCOUNT_NOT_SELF_OWNED"
+      : "BANK_ACCOUNT_MISSING";
+
+  return {
+    canUseBankTransfer: false,
+    hasBankAccount,
+    isSelfOwned: false,
+    statusLabel:
+      reasonCode === "BANK_ACCOUNT_NOT_SELF_OWNED"
+        ? "Tài khoản không chính chủ"
+        : "Thiếu tài khoản ngân hàng",
+    tone: "danger",
+    reasonCode,
+    blockingMessage: `${getBankIneligibleReasonLabel(reasonCode)}.`,
+    bankId,
+    institutionName,
+    accountNumber,
+    accountNumberMasked,
+    accountHolderName,
+  };
+}
+
 export function getRequestStateMeta(
   state: SalaryAdvanceRequestState
 ): SalaryAdvanceRequestStateMeta {
@@ -382,8 +721,20 @@ export function getEvidenceReviewStateMeta(
 }
 
 export function getSalaryAdvanceEventTypeLabel(
-  eventType: SalaryAdvanceEventType
+  eventType: SalaryAdvanceEventType,
+  evidenceKind?: SalaryAdvanceEvidenceKind | null
 ): string {
+  if (evidenceKind === "BANK_TRANSFER_RECEIPT") {
+    if (eventType === "EVIDENCE_UPLOADED") {
+      return "Tải lên chứng từ chuyển khoản";
+    }
+    if (eventType === "EVIDENCE_REVIEWED") {
+      return "Xác nhận đã đối chiếu chứng từ chuyển khoản";
+    }
+    if (eventType === "EVIDENCE_RETAKE_REQUESTED") {
+      return "Yêu cầu gửi lại chứng từ chuyển khoản";
+    }
+  }
   return EVENT_TYPE_LABELS[eventType] ?? eventType;
 }
 
@@ -573,6 +924,94 @@ export function countActionableRequestsForTab(
   return count;
 }
 
+export function updateTabBadgeCountsForTab(
+  currentCounts: Partial<Record<SalaryAdvanceWorkspaceTabId, number>>,
+  tabId: SalaryAdvanceWorkspaceTabId,
+  requests: ReadonlyArray<
+    Pick<
+      SalaryAdvanceRequestSummary,
+      "request_state" | "evidence_review_state" | "allowed_actions"
+    >
+  >
+): Partial<Record<SalaryAdvanceWorkspaceTabId, number>> {
+  const nextCount = countActionableRequestsForTab(requests, tabId);
+  if (currentCounts[tabId] === nextCount) {
+    return currentCounts;
+  }
+  return {
+    ...currentCounts,
+    [tabId]: nextCount,
+  };
+}
+
+const UUID_DISPLAY_NAME_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export type SalaryAdvanceActorNameSource = {
+  recruiterDisplayName?: string | null;
+  verifiedCurrentRecruiterLink?: boolean;
+  displayName?: string | null;
+  loginId?: string | null;
+};
+
+function sanitizeNonUuidActorLabel(
+  candidate: string | null | undefined
+): string | null {
+  if (typeof candidate !== "string") return null;
+  const trimmed = candidate.trim();
+  if (!trimmed || UUID_DISPLAY_NAME_PATTERN.test(trimmed)) {
+    return null;
+  }
+  return trimmed;
+}
+
+function sanitizeLoginIdCandidate(
+  candidate: string | null | undefined
+): string | null {
+  const sanitized = sanitizeNonUuidActorLabel(candidate);
+  if (!sanitized) return null;
+  const localPart = sanitized.includes("@")
+    ? sanitized.split("@")[0].trim().toLowerCase()
+    : sanitized;
+  if (!localPart || UUID_DISPLAY_NAME_PATTERN.test(localPart)) {
+    return null;
+  }
+  return localPart;
+}
+
+export function resolveSalaryAdvanceActorDisplayName(
+  input: string | SalaryAdvanceActorNameSource | null | undefined,
+  fallbackLabel = "Chưa cập nhật tên"
+): string {
+  const safeFallback =
+    sanitizeNonUuidActorLabel(fallbackLabel) ?? "Chưa cập nhật tên";
+
+  if (typeof input === "string" || input === null || input === undefined) {
+    return sanitizeNonUuidActorLabel(input) ?? safeFallback;
+  }
+
+  if (input.verifiedCurrentRecruiterLink !== false) {
+    const linkedRecruiterName = sanitizeNonUuidActorLabel(
+      input.recruiterDisplayName
+    );
+    if (linkedRecruiterName) {
+      return linkedRecruiterName;
+    }
+  }
+
+  const accountDisplayName = sanitizeNonUuidActorLabel(input.displayName);
+  if (accountDisplayName) {
+    return accountDisplayName;
+  }
+
+  const loginId = sanitizeLoginIdCandidate(input.loginId);
+  if (loginId) {
+    return loginId;
+  }
+
+  return safeFallback;
+}
+
 export function buildWorkerPortraitPreviewUrl(
   requestId: string,
   expectedDocumentId: string
@@ -598,6 +1037,13 @@ export function evaluateEvidenceComparisonPanel(
   selectedEvidenceVersion?: number | null
 ): SalaryAdvanceComparisonPanelModel {
   const { request, evidence_versions } = detail;
+  const paymentMethod: SalaryAdvancePaymentMethod =
+    request.payment_method === "BANK_TRANSFER" ? "BANK_TRANSFER" : "CASH";
+  const evidenceKind: SalaryAdvanceEvidenceKind =
+    paymentMethod === "BANK_TRANSFER"
+      ? "BANK_TRANSFER_RECEIPT"
+      : "CASH_HANDOVER_PHOTO";
+  const requiresWorkerPortraitComparison = paymentMethod === "CASH";
   const workerPortrait = request.worker_portrait;
   const hasWorkerPortrait = workerPortrait !== null;
 
@@ -627,6 +1073,8 @@ export function evaluateEvidenceComparisonPanel(
     } else if (request.current_evidence) {
       resolvedVersionItem = {
         evidence_version: request.current_evidence.evidence_version,
+        evidence_kind:
+          request.current_evidence.evidence_kind ?? evidenceKind,
         event_id: `ev-${request.current_evidence.evidence_version}`,
         mime_type: request.current_evidence.mime_type,
         size_bytes: request.current_evidence.size_bytes,
@@ -651,7 +1099,7 @@ export function evaluateEvidenceComparisonPanel(
 
   const canConfirmReviewed = Boolean(
     canReviewEvidence &&
-      hasWorkerPortrait &&
+      (requiresWorkerPortraitComparison ? hasWorkerPortrait : true) &&
       resolvedVersionItem !== null &&
       isViewingCurrentEvidence
   );
@@ -665,12 +1113,14 @@ export function evaluateEvidenceComparisonPanel(
   let confirmReviewedLockReason: string | null = null;
   if (canReviewEvidence) {
     if (!resolvedVersionItem) {
-      confirmReviewedLockReason =
-        "Chưa có ảnh NLĐ nhận tiền mặt để xác nhận đối chiếu.";
+      confirmReviewedLockReason = requiresWorkerPortraitComparison
+        ? "Chưa có ảnh NLĐ nhận tiền mặt để xác nhận đối chiếu."
+        : "Chưa có chứng từ chuyển khoản để xác nhận đối chiếu.";
     } else if (!isViewingCurrentEvidence) {
-      confirmReviewedLockReason =
-        "Bạn đang xem phiên bản ảnh lịch sử. Chỉ có thể đối chiếu trên phiên bản ảnh hiện hành mới nhất.";
-    } else if (!hasWorkerPortrait) {
+      confirmReviewedLockReason = requiresWorkerPortraitComparison
+        ? "Bạn đang xem phiên bản ảnh lịch sử. Chỉ có thể đối chiếu trên phiên bản ảnh hiện hành mới nhất."
+        : "Bạn đang xem phiên bản chứng từ lịch sử. Chỉ có thể đối chiếu trên phiên bản chứng từ hiện hành mới nhất.";
+    } else if (requiresWorkerPortraitComparison && !hasWorkerPortrait) {
       confirmReviewedLockReason =
         "Không thể xác nhận «Đã đối chiếu» vì người lao động chưa có ảnh hồ sơ chuẩn trong hệ thống. Bạn vẫn có thể yêu cầu gửi lại ảnh hoặc giữ nguyên yêu cầu chờ cập nhật hồ sơ.";
     }
@@ -680,6 +1130,10 @@ export function evaluateEvidenceComparisonPanel(
 
   return {
     requestId: request.request_id,
+    paymentMethod,
+    evidenceKind,
+    requiresWorkerPortraitComparison,
+    paymentDestinationSnapshot: request.payment_destination_snapshot ?? null,
     workerEntryId: request.worker_entry_id,
     workerEmployeeCode: request.worker_employee_code,
     workerDisplayName: request.worker_display_name,
@@ -697,19 +1151,23 @@ export function evaluateEvidenceComparisonPanel(
           sourceLabel: "Ảnh chân dung hồ sơ NLĐ trong hệ thống",
         }
       : null,
-    missingPortraitWarning: hasWorkerPortrait
-      ? null
-      : SALARY_ADVANCE_MISSING_PORTRAIT_WARNING,
+    missingPortraitWarning:
+      !requiresWorkerPortraitComparison || hasWorkerPortrait
+        ? null
+        : SALARY_ADVANCE_MISSING_PORTRAIT_WARNING,
     hasEvidencePhoto: resolvedVersionItem !== null,
     selectedEvidence: resolvedVersionItem
       ? {
           eventId: resolvedVersionItem.event_id,
           evidenceVersion: resolvedVersionItem.evidence_version,
+          evidenceKind: resolvedVersionItem.evidence_kind ?? evidenceKind,
           mimeType: resolvedVersionItem.mime_type,
           sizeBytes: resolvedVersionItem.size_bytes,
           captionNote: resolvedVersionItem.caption_note,
           uploadedByUserId: resolvedVersionItem.uploaded_by_user_id,
-          uploadedByDisplayName: resolvedVersionItem.uploaded_by_display_name,
+          uploadedByDisplayName: resolveSalaryAdvanceActorDisplayName(
+            resolvedVersionItem.uploaded_by_display_name
+          ),
           uploadedAt: resolvedVersionItem.uploaded_at,
           reviewState: isViewingCurrentEvidence
             ? request.evidence_review_state
@@ -719,8 +1177,14 @@ export function evaluateEvidenceComparisonPanel(
               ? currentEvMeta.reviewed_by_user_id
               : null,
           reviewedByDisplayName:
-            isViewingCurrentEvidence && currentEvMeta
-              ? currentEvMeta.reviewed_by_display_name
+            isViewingCurrentEvidence &&
+            currentEvMeta &&
+            (currentEvMeta.reviewed_at !== null ||
+              currentEvMeta.reviewed_by_user_id !== null ||
+              currentEvMeta.reviewed_by_display_name !== null)
+              ? resolveSalaryAdvanceActorDisplayName(
+                  currentEvMeta.reviewed_by_display_name
+                )
               : null,
           reviewedAt:
             isViewingCurrentEvidence && currentEvMeta
@@ -743,7 +1207,11 @@ export function evaluateEvidenceComparisonPanel(
             request.request_id,
             resolvedVersionItem.evidence_version
           ),
-          sourceLabel: "Ảnh NLĐ nhận tiền mặt do QLDA tải lên",
+          sourceLabel:
+            (resolvedVersionItem.evidence_kind ?? evidenceKind) ===
+            "BANK_TRANSFER_RECEIPT"
+              ? "Chứng từ chuyển khoản (bill) đã tải lên"
+              : "Ảnh NLĐ nhận tiền mặt do QLDA tải lên",
         }
       : null,
     evidenceVersions: sortedVersions.map((item) => {
@@ -752,12 +1220,15 @@ export function evaluateEvidenceComparisonPanel(
         item.evidence_version === currentVersionNumber;
       return {
         evidenceVersion: item.evidence_version,
+        evidenceKind: item.evidence_kind ?? evidenceKind,
         isCurrent,
         reviewState: isCurrent
           ? request.evidence_review_state
           : "RETAKE_REQUIRED",
         uploadedAt: item.uploaded_at,
-        uploadedByDisplayName: item.uploaded_by_display_name,
+        uploadedByDisplayName: resolveSalaryAdvanceActorDisplayName(
+          item.uploaded_by_display_name
+        ),
       };
     }),
     canUploadEvidence,
@@ -824,17 +1295,230 @@ export function createLatestRequestTracker(): LatestRequestTracker {
   };
 }
 
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function isValidRequestSummaryItem(
+  value: unknown
+): value is SalaryAdvanceRequestSummary {
+  if (!isPlainRecord(value)) return false;
+  if (typeof value.request_id !== "string" || !value.request_id.trim()) {
+    return false;
+  }
+  if (typeof value.project_id !== "string" || !value.project_id.trim()) {
+    return false;
+  }
+  if (
+    typeof value.worker_entry_id !== "string" ||
+    !value.worker_entry_id.trim()
+  ) {
+    return false;
+  }
+  if (typeof value.request_state !== "string" || !value.request_state.trim()) {
+    return false;
+  }
+  if (
+    typeof value.evidence_review_state !== "string" ||
+    !value.evidence_review_state.trim()
+  ) {
+    return false;
+  }
+  if (!isPlainRecord(value.allowed_actions)) {
+    return false;
+  }
+  return true;
+}
+
+export function parseSalaryAdvanceRequestListPayload(raw: unknown):
+  | {
+      ok: true;
+      data: SalaryAdvanceRequestListResponse;
+    }
+  | {
+      ok: false;
+      code: string;
+      message: string;
+    } {
+  if (!isPlainRecord(raw)) {
+    return {
+      ok: false,
+      code: "SALARY_ADVANCE_PAYLOAD_INVALID",
+      message: salaryAdvanceErrorMessage("SALARY_ADVANCE_PAYLOAD_INVALID"),
+    };
+  }
+
+  if (!Array.isArray(raw.requests)) {
+    return {
+      ok: false,
+      code: "SALARY_ADVANCE_PAYLOAD_INVALID",
+      message: salaryAdvanceErrorMessage("SALARY_ADVANCE_PAYLOAD_INVALID"),
+    };
+  }
+
+  for (const item of raw.requests) {
+    if (!isValidRequestSummaryItem(item)) {
+      return {
+        ok: false,
+        code: "SALARY_ADVANCE_PAYLOAD_INVALID",
+        message: salaryAdvanceErrorMessage("SALARY_ADVANCE_PAYLOAD_INVALID"),
+      };
+    }
+  }
+
+  if (typeof raw.has_more !== "boolean") {
+    return {
+      ok: false,
+      code: "SALARY_ADVANCE_PAYLOAD_INVALID",
+      message: salaryAdvanceErrorMessage("SALARY_ADVANCE_PAYLOAD_INVALID"),
+    };
+  }
+
+  if (
+    raw.next_cursor !== null &&
+    raw.next_cursor !== undefined &&
+    typeof raw.next_cursor !== "string"
+  ) {
+    return {
+      ok: false,
+      code: "SALARY_ADVANCE_PAYLOAD_INVALID",
+      message: salaryAdvanceErrorMessage("SALARY_ADVANCE_PAYLOAD_INVALID"),
+    };
+  }
+
+  return {
+    ok: true,
+    data: {
+      requests: raw.requests,
+      has_more: raw.has_more,
+      next_cursor: typeof raw.next_cursor === "string" ? raw.next_cursor : null,
+    },
+  };
+}
+
+export type SalaryAdvanceRequestListFetchOutcome =
+  | {
+      status: "success";
+      data: SalaryAdvanceRequestListResponse;
+      isEmpty: boolean;
+    }
+  | {
+      status: "error";
+      code: string;
+      message: string;
+    }
+  | {
+      status: "stale";
+    };
+
+export async function fetchSalaryAdvanceRequestListPage(params: {
+  queue: Extract<SalaryAdvanceQueue, "PM" | "ACCOUNTANT" | "SUPERVISORY">;
+  projectFilter: string;
+  requestStateFilter: "ALL" | SalaryAdvanceRequestState;
+  evidenceStateFilter: "ALL" | SalaryAdvanceEvidenceReviewState;
+  appliedSearch: string;
+  cursor?: string | null;
+  append?: boolean;
+  pageSize?: number;
+  ticket: LatestRequestTicket;
+  fetchImpl?: typeof fetch;
+}): Promise<SalaryAdvanceRequestListFetchOutcome> {
+  const fetchFn = params.fetchImpl ?? globalThis.fetch;
+  const queryParams = new URLSearchParams();
+  queryParams.set("queue", params.queue);
+  queryParams.set("page_size", String(params.pageSize ?? 25));
+
+  if (params.projectFilter !== "ALL") {
+    queryParams.set("project_id", params.projectFilter);
+  }
+  if (params.requestStateFilter !== "ALL") {
+    queryParams.set("request_state", params.requestStateFilter);
+  }
+  if (params.evidenceStateFilter !== "ALL") {
+    queryParams.set("evidence_review_state", params.evidenceStateFilter);
+  }
+  if (params.appliedSearch.trim().length > 0) {
+    queryParams.set("search", params.appliedSearch.trim());
+  }
+  if (params.append && params.cursor) {
+    queryParams.set("cursor", params.cursor);
+  }
+
+  try {
+    const response = await fetchFn(
+      `/api/salary-advance/requests?${queryParams.toString()}`,
+      {
+        method: "GET",
+        cache: "no-store",
+        signal: params.ticket.signal,
+      }
+    );
+
+    const json = (await response.json().catch(() => null)) as
+      | {
+          ok?: boolean;
+          data?: unknown;
+          code?: string;
+        }
+      | null;
+
+    if (!params.ticket.isCurrent()) {
+      return { status: "stale" };
+    }
+
+    if (!response.ok || !json?.ok || json.data === undefined || json.data === null) {
+      const code = json?.code ?? "SALARY_ADVANCE_UNAVAILABLE";
+      return {
+        status: "error",
+        code,
+        message: salaryAdvanceErrorMessage(code),
+      };
+    }
+
+    const parsed = parseSalaryAdvanceRequestListPayload(json.data);
+    if (!parsed.ok) {
+      return {
+        status: "error",
+        code: parsed.code,
+        message: parsed.message,
+      };
+    }
+
+    return {
+      status: "success",
+      data: parsed.data,
+      isEmpty: parsed.data.requests.length === 0,
+    };
+  } catch {
+    if (!params.ticket.isCurrent()) {
+      return { status: "stale" };
+    }
+    return {
+      status: "error",
+      code: "SALARY_ADVANCE_UNAVAILABLE",
+      message: salaryAdvanceErrorMessage("SALARY_ADVANCE_UNAVAILABLE"),
+    };
+  }
+}
+
 export function reconcileSelectedWorkerEntryId(
   currentWorkerEntryId: string,
-  workers: ReadonlyArray<Pick<SalaryAdvanceWorkerOption, "worker_entry_id">>
+  workers: ReadonlyArray<
+    Pick<
+      SalaryAdvanceWorkerOption,
+      "worker_entry_id" | "is_eligible" | "ineligible_reasons" | "employment_status" | "active_on_project_count" | "has_duplicate_cccd"
+    >
+  >
 ): string {
   const trimmed = currentWorkerEntryId.trim();
   if (!trimmed || workers.length === 0) {
     return "";
   }
-  return workers.some((worker) => worker.worker_entry_id === trimmed)
-    ? trimmed
-    : "";
+  const match = workers.find((worker) => worker.worker_entry_id === trimmed);
+  if (!match) {
+    return "";
+  }
+  return describeWorkerEligibility(match).isEligible ? trimmed : "";
 }
 
 export function reconcileSelectedRequestIdFromList(
@@ -986,7 +1670,11 @@ export function validateCreateSalaryAdvanceDraft(
 ): CreateSalaryAdvanceValidationResult {
   const fieldErrors: Partial<
     Record<
-      "projectId" | "workerEntryId" | "requestedAmountRaw" | "initialContent",
+      | "projectId"
+      | "workerEntryId"
+      | "requestedAmountRaw"
+      | "paymentMethod"
+      | "initialContent",
       string
     >
   > = {};
@@ -1002,6 +1690,44 @@ export function validateCreateSalaryAdvanceDraft(
   const workerEntryId = draft.workerEntryId.trim();
   if (!workerEntryId) {
     fieldErrors.workerEntryId = "Vui lòng chọn người lao động thuộc dự án.";
+  } else if (draft.selectedWorker) {
+    const eligibility = describeWorkerEligibility(draft.selectedWorker);
+    if (!eligibility.isEligible) {
+      fieldErrors.workerEntryId =
+        eligibility.blockingMessage ??
+        "Người lao động không đủ điều kiện ứng lương.";
+    }
+  }
+
+  let resolvedPaymentMethod: SalaryAdvancePaymentMethod = "CASH";
+  if (draft.paymentMethod !== undefined) {
+    const rawMethod =
+      typeof draft.paymentMethod === "string"
+        ? draft.paymentMethod.trim().toUpperCase()
+        : "";
+    if (
+      !SALARY_ADVANCE_PAYMENT_METHODS.includes(
+        rawMethod as SalaryAdvancePaymentMethod
+      )
+    ) {
+      fieldErrors.paymentMethod =
+        "Vui lòng chọn phương thức nhận tiền (Tiền mặt hoặc Chuyển khoản).";
+    } else {
+      resolvedPaymentMethod = rawMethod as SalaryAdvancePaymentMethod;
+      if (
+        resolvedPaymentMethod === "BANK_TRANSFER" &&
+        draft.selectedWorker
+      ) {
+        const bankEligibility = describeWorkerBankTransferEligibility(
+          draft.selectedWorker
+        );
+        if (!bankEligibility.canUseBankTransfer) {
+          fieldErrors.paymentMethod =
+            bankEligibility.blockingMessage ??
+            "Người lao động chưa có tài khoản ngân hàng chính chủ hợp lệ để nhận chuyển khoản.";
+        }
+      }
+    }
   }
 
   const amountVnd = normalizePositiveVndInput(draft.requestedAmountRaw);
@@ -1021,6 +1747,7 @@ export function validateCreateSalaryAdvanceDraft(
   const firstError =
     fieldErrors.projectId ??
     fieldErrors.workerEntryId ??
+    fieldErrors.paymentMethod ??
     fieldErrors.requestedAmountRaw ??
     fieldErrors.initialContent;
 
@@ -1038,6 +1765,7 @@ export function validateCreateSalaryAdvanceDraft(
       project_id: projectId,
       worker_entry_id: workerEntryId,
       requested_amount_vnd: String(amountVnd),
+      payment_method: resolvedPaymentMethod,
       initial_content: initialContent,
     },
   };
@@ -1118,11 +1846,13 @@ export function validateMessageInput(messageText: string):
 export function validateEvidenceReviewInput(params: {
   decision: SalaryAdvanceEvidenceReviewDecision;
   note: string;
+  evidenceKind?: SalaryAdvanceEvidenceKind;
   workerPortrait: { documentId: string; version: number } | null;
 }):
   | {
       ok: true;
       normalizedNote: string | null;
+      evidenceKind: SalaryAdvanceEvidenceKind;
       expectedWorkerPortraitDocumentId: string | null;
       expectedWorkerPortraitVersion: number | null;
     }
@@ -1131,7 +1861,22 @@ export function validateEvidenceReviewInput(params: {
   if (trimmedNote.length > 1000) {
     return {
       ok: false,
-      message: "Ghi chú đối chiếu ảnh không được vượt quá 1.000 ký tự.",
+      message: "Ghi chú đối chiếu chứng từ không được vượt quá 1.000 ký tự.",
+    };
+  }
+
+  const evidenceKind: SalaryAdvanceEvidenceKind =
+    params.evidenceKind === "BANK_TRANSFER_RECEIPT"
+      ? "BANK_TRANSFER_RECEIPT"
+      : "CASH_HANDOVER_PHOTO";
+
+  if (evidenceKind === "BANK_TRANSFER_RECEIPT") {
+    return {
+      ok: true,
+      normalizedNote: trimmedNote.length > 0 ? trimmedNote : null,
+      evidenceKind: "BANK_TRANSFER_RECEIPT",
+      expectedWorkerPortraitDocumentId: null,
+      expectedWorkerPortraitVersion: null,
     };
   }
 
@@ -1146,6 +1891,7 @@ export function validateEvidenceReviewInput(params: {
     return {
       ok: true,
       normalizedNote: trimmedNote.length > 0 ? trimmedNote : null,
+      evidenceKind: "CASH_HANDOVER_PHOTO",
       expectedWorkerPortraitDocumentId: params.workerPortrait.documentId,
       expectedWorkerPortraitVersion: params.workerPortrait.version,
     };
@@ -1154,6 +1900,7 @@ export function validateEvidenceReviewInput(params: {
   return {
     ok: true,
     normalizedNote: trimmedNote.length > 0 ? trimmedNote : null,
+    evidenceKind: "CASH_HANDOVER_PHOTO",
     expectedWorkerPortraitDocumentId: params.workerPortrait?.documentId ?? null,
     expectedWorkerPortraitVersion: params.workerPortrait?.version ?? null,
   };
@@ -1398,6 +2145,18 @@ export function salaryAdvanceErrorMessage(
     case "SALARY_ADVANCE_WORKER_PROJECT_MISMATCH":
     case "SALARY_ADVANCE_WORKER_NOT_IN_PROJECT":
       return "Người lao động được chọn không thuộc phạm vi dự án này hoặc chưa có công hợp lệ.";
+    case "SALARY_ADVANCE_WORKER_INELIGIBLE_STATUS":
+      return "Người lao động hiện không ở trạng thái đang làm việc (ON) nên không đủ điều kiện ứng lương.";
+    case "SALARY_ADVANCE_WORKER_MULTI_PROJECT_ON":
+      return "Người lao động đang ở trạng thái làm việc (ON) tại từ 2 dự án trở lên nên không đủ điều kiện ứng lương.";
+    case "SALARY_ADVANCE_WORKER_DUPLICATE_CCCD":
+      return "Hồ sơ người lao động đang thuộc nhóm trùng CCCD cần rà soát nên tạm thời bị chặn ứng lương.";
+    case "SALARY_ADVANCE_PAYMENT_METHOD_INVALID":
+      return "Vui lòng chọn phương thức nhận tiền hợp lệ (Tiền mặt hoặc Chuyển khoản).";
+    case "SALARY_ADVANCE_BANK_ACCOUNT_MISSING":
+      return "Hồ sơ người lao động chưa có đầy đủ thông tin tài khoản ngân hàng để nhận chuyển khoản.";
+    case "SALARY_ADVANCE_BANK_ACCOUNT_NOT_SELF_OWNED":
+      return "Tên chủ tài khoản ngân hàng không trùng khớp với họ tên người lao động (không chính chủ). Không thể tạo yêu cầu chuyển khoản.";
     case "SALARY_ADVANCE_AMOUNT_INVALID":
       return "Số tiền ứng lương không hợp lệ (phải là số nguyên dương VNĐ).";
     case "SALARY_ADVANCE_CONTENT_INVALID":

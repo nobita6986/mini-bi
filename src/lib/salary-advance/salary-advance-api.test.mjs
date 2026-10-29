@@ -396,6 +396,7 @@ test("context, workers, list, create, detail, message, action, and review handle
         project_id: "PRJ_NORTH",
         worker_entry_id: WORKER_ID,
         requested_amount_vnd: "15000000",
+        payment_method: "CASH",
         initial_content: "Ứng lương đợt 1",
       }),
     }),
@@ -765,4 +766,130 @@ test("all Next.js salary-advance API route files enforce nodejs runtime, force-d
     "utf8",
   );
   assert.match(previewRoute, /evidenceRef: version/);
+});
+
+test("BANK_TRANSFER creation, BANK_TRANSFER_RECEIPT review without portrait lock, and worker/bank eligibility 409 error mapping", async () => {
+  let lastRpcArgs = null;
+  let simulatedRpcErrorCode = null;
+  const repository = createSalaryAdvanceRepository(async (fn, args) => {
+    lastRpcArgs = { fn, args };
+    if (simulatedRpcErrorCode) {
+      return {
+        data: null,
+        error: {
+          code: "PT409",
+          message: simulatedRpcErrorCode,
+        },
+      };
+    }
+    if (fn === "salary_advance_create_request") {
+      return {
+        data: {
+          ...makeSampleDetail({
+            payment_method: args.p_payment_method,
+            payment_destination_snapshot: {
+              bank_id: "VCB",
+              institution_name: "Vietcombank",
+              account_number: "0123456789",
+              account_number_masked: "******6789",
+              account_holder_name: "NGUYEN VAN CONG NHAN",
+            },
+          }),
+          replayed: false,
+        },
+        error: null,
+      };
+    }
+    if (fn === "salary_advance_review_evidence") {
+      return {
+        data: {
+          ...makeSampleDetail({
+            payment_method: "BANK_TRANSFER",
+            evidence_review_state: "REVIEWED",
+            version: 4,
+          }),
+          replayed: false,
+        },
+        error: null,
+      };
+    }
+    return { data: null, error: { message: "UNEXPECTED_RPC" } };
+  });
+
+  const deps = {
+    resolveSession: makeActorSession(),
+    repository,
+  };
+
+  const bankCreateRes = await handlePostCreateSalaryAdvanceRequest(
+    new Request(`${ORIGIN}/api/salary-advance/requests`, {
+      method: "POST",
+      headers: { ...SAME_ORIGIN_POST_HEADERS, "idempotency-key": IDEM_1 },
+      body: JSON.stringify({
+        project_id: "PRJ_NORTH",
+        worker_entry_id: WORKER_ID,
+        requested_amount_vnd: "3500000",
+        payment_method: "BANK_TRANSFER",
+        initial_content: "Ứng lương chuyển khoản chính chủ",
+      }),
+    }),
+    "true",
+    deps,
+  );
+  assert.equal(bankCreateRes.status, 201);
+  assert.equal(lastRpcArgs?.fn, "salary_advance_create_request");
+  assert.equal(lastRpcArgs?.args?.p_payment_method, "BANK_TRANSFER");
+
+  const bankReviewRes = await handlePostReviewSalaryAdvanceEvidence(
+    new Request(
+      `${ORIGIN}/api/salary-advance/requests/${REQ_ID}/evidence/review`,
+      {
+        method: "POST",
+        headers: { ...SAME_ORIGIN_POST_HEADERS, "idempotency-key": IDEM_1 },
+        body: JSON.stringify({
+          expected_version: 3,
+          evidence_version: 1,
+          evidence_kind: "BANK_TRANSFER_RECEIPT",
+          decision: "REVIEWED",
+          note: "Đã đối chiếu bill chuyển khoản hợp lệ",
+        }),
+      },
+    ),
+    REQ_ID,
+    "true",
+    deps,
+  );
+  assert.equal(bankReviewRes.status, 200);
+  assert.equal(lastRpcArgs?.fn, "salary_advance_review_evidence");
+  assert.equal(lastRpcArgs?.args?.p_expected_worker_portrait_document_id, null);
+  assert.equal(lastRpcArgs?.args?.p_expected_worker_portrait_version, null);
+
+  for (const errorCode of [
+    "SALARY_ADVANCE_WORKER_INELIGIBLE_STATUS",
+    "SALARY_ADVANCE_WORKER_MULTI_PROJECT_ON",
+    "SALARY_ADVANCE_WORKER_DUPLICATE_CCCD",
+    "SALARY_ADVANCE_BANK_ACCOUNT_MISSING",
+    "SALARY_ADVANCE_BANK_ACCOUNT_NOT_SELF_OWNED",
+  ]) {
+    simulatedRpcErrorCode = errorCode;
+    const errRes = await handlePostCreateSalaryAdvanceRequest(
+      new Request(`${ORIGIN}/api/salary-advance/requests`, {
+        method: "POST",
+        headers: { ...SAME_ORIGIN_POST_HEADERS, "idempotency-key": IDEM_1 },
+        body: JSON.stringify({
+          project_id: "PRJ_NORTH",
+          worker_entry_id: WORKER_ID,
+          requested_amount_vnd: "2000000",
+          payment_method: "BANK_TRANSFER",
+          initial_content: "Kiểm tra chặn",
+        }),
+      }),
+      "true",
+      deps,
+    );
+    assert.equal(errRes.status, 409);
+    const errPayload = await errRes.json();
+    assert.equal(errPayload.ok, false);
+    assert.equal(errPayload.code, errorCode);
+  }
 });
