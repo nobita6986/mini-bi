@@ -455,7 +455,7 @@ test("filterEntriesForActor: owner (đủ 3 admin) + viewport=mobile → các kh
     actor: ownerActor,
     decide: decideFor(ownerActor, "mobile"),
   });
-  // Full Admin sees Admin, Attendance, Finance, Leave and Work Reports entry points; hidden nav actions stay out of the menu.
+  // Full Admin sees Admin, Attendance, Finance, Leave, Salary Advances and Work Reports entry points; hidden nav actions stay out of the menu.
   assert.deepEqual(result.map((e) => e.id).sort(),
     [
       "admin",
@@ -466,6 +466,7 @@ test("filterEntriesForActor: owner (đủ 3 admin) + viewport=mobile → các kh
       "leave",
       "leave-admin",
       "project-operations",
+      "salary-advances",
       "work-report-assignments",
       "work-reports",
       "worker-operations",
@@ -495,7 +496,7 @@ test("Admin catalog navigation remains available when Direct Entry UI is disable
 });
 
 test("CURRENT_NAV_ENTRIES giữ nguyên một registry duy nhất (không tạo registry thứ hai)", () => {
-  // Admin, Finance, Leave, Change Requests and Work Reports share one registry; hidden entries retain route metadata.
+  // Admin, Finance, Leave, Salary Advances, Change Requests and Work Reports share one registry; hidden entries retain route metadata.
   const ids = CURRENT_NAV_ENTRIES.map((e) => e.id).sort();
   assert.deepEqual(
     ids,
@@ -509,6 +510,7 @@ test("CURRENT_NAV_ENTRIES giữ nguyên một registry duy nhất (không tạo 
       "leave",
       "leave-admin",
       "project-operations",
+      "salary-advances",
       "work-report-analytics",
       "work-report-assignments",
       "work-report-reviews",
@@ -631,7 +633,7 @@ test("Global IA representative actor matrix: Recruiter/Nhân viên, Team Leader,
   assert.equal(departmentHeadMenu.ids.includes("admin"), false, "Trưởng phòng must not see /admin without admin_area");
   assert.equal(departmentHeadMenu.ids.includes("project-operations"), false);
 
-  // 4a. BoD (executive reader + reviewer + finance view): sees attendance and finance, not hidden report menu actions.
+  // 4a. BoD (executive reader + reviewer + finance view): sees attendance, salary-advances and finance, not hidden report menu actions.
   const bodActor = {
     capabilities: ["entry_privileged_edit", "report_analytics_view", "report_view", "change_review", "vendor_finance_view"],
     scopes: all,
@@ -644,7 +646,7 @@ test("Global IA representative actor matrix: Recruiter/Nhân viên, Team Leader,
     {
       id: "my-work",
       label: "Công việc của tôi",
-      children: ["worker-operations", "work-reports", "leave"],
+      children: ["worker-operations", "work-reports", "leave", "salary-advances"],
     },
     {
       id: "management",
@@ -666,7 +668,7 @@ test("Global IA representative actor matrix: Recruiter/Nhân viên, Team Leader,
     {
       id: "my-work",
       label: "Công việc của tôi",
-      children: ["direct-entry", "worker-operations", "work-reports", "leave"],
+      children: ["direct-entry", "worker-operations", "work-reports", "leave", "salary-advances"],
     },
     {
       id: "management",

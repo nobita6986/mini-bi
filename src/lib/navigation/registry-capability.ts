@@ -34,6 +34,7 @@ export type NavActorProjection = {
   hasVendorFinanceReconcileAccess?: boolean;
   hasLeaveManagementAccess?: boolean;
   hasLeaveAdminAccess?: boolean;
+  hasSalaryAdvanceAccess?: boolean;
 };
 
 /** Predicate phụ thuộc entry — registry.ts có metadata `capability`. */
@@ -276,6 +277,17 @@ export const leaveAdminNavPredicate: NavCapabilityPredicate = (actor) =>
   adminAuthorityNavPredicate(actor) ||
   actor.hasLeaveAdminAccess === true;
 
+/**
+ * W2S2 WP2 Salary Advance navigation predicate:
+ * Opens for Canonical Full Admin, BoD (`entry_privileged_edit` @ `all`), or server-verified
+ * Project Manager / Project Accountant / Supervisory Viewer (`hasSalaryAdvanceAccess === true`).
+ */
+export const salaryAdvanceNavPredicate: NavCapabilityPredicate = (actor) =>
+  adminAuthorityNavPredicate(actor) ||
+  actor.hasSalaryAdvanceAccess === true ||
+  (actor.scopes.some((scope) => scope.kind === "all") &&
+    actor.capabilities.includes("entry_privileged_edit"));
+
 /** Bảng ánh xạ `entry.capability` metadata → predicate tương ứng. */
 export const NAV_CAPABILITY_PREDICATES: Readonly<Record<string, NavCapabilityPredicate>> = {
   any: () => true,
@@ -285,6 +297,7 @@ export const NAV_CAPABILITY_PREDICATES: Readonly<Record<string, NavCapabilityPre
   finance: vendorFinanceNavPredicate,
   leave: leaveManagementNavPredicate,
   leave_admin: leaveAdminNavPredicate,
+  salary_advances: salaryAdvanceNavPredicate,
   hrp: directEntryNavPredicate,
   entry_own: directEntryNavPredicate,
   entry_team: directEntryNavPredicate,

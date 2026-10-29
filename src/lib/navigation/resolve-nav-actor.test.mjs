@@ -168,3 +168,12 @@ test("VFIN-01 & VFIN-02: resolveVendorFinanceAccessForRequest is wrapped by Reac
   assert.match(resolveNavActor, /projection\.hasVendorFinanceRecordAccess\s*=\s*true/);
   assert.match(resolveNavActor, /projection\.hasVendorFinanceReconcileAccess\s*=\s*true/);
 });
+
+test("W2S2 WP2: resolveSalaryAdvanceAccessForRequest is wrapped by React cache() and probes server-side Salary Advance access when DIRECT_ENTRY_API_ENABLED is true", () => {
+  assert.match(
+    resolveNavActor,
+    /export\s+const\s+resolveSalaryAdvanceAccessForRequest\s*=\s*cache\(/,
+  );
+  assert.match(resolveNavActor, /!salaryAdvanceNavPredicate\(projection\)/);
+  assert.match(resolveNavActor, /projection\.hasSalaryAdvanceAccess\s*=\s*true/);
+});

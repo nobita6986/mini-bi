@@ -38,6 +38,7 @@ import { resolveSessionWithBoundedRetry } from "@/lib/auth/direct-entry-session-
 import { createDirectEntryActorRepository } from "@/lib/direct-entry/actor-context-repository";
 import { createChangeRequestReadRepository } from "@/lib/direct-entry/change-request-read-repository";
 import { createLeaveRepository } from "@/lib/leave/leave-repository";
+import { createSalaryAdvanceRepository } from "@/lib/salary-advance/salary-advance-repository";
 import { createVendorFinanceRepository } from "@/lib/vendor-finance/vendor-finance-repository";
 import { createSubmissionRepository } from "@/lib/work-reports/submission-repository";
 import type { ActorResolution } from "@/lib/auth/direct-entry-v2";
@@ -45,6 +46,7 @@ import {
   changeRequestsNavPredicate,
   leaveManagementNavPredicate,
   type NavActorProjection,
+  salaryAdvanceNavPredicate,
   vendorFinanceRecordNavPredicate,
   workReportsNavPredicate,
 } from "@/lib/navigation/registry-capability";
@@ -181,6 +183,34 @@ export const resolveLeaveManagementAccessForRequest = cache(
   },
 );
 
+export const resolveSalaryAdvanceAccessForRequest = cache(
+  async (): Promise<{
+    canAccess: boolean;
+  } | null> => {
+    const actor = await resolveActorForRequest();
+    if (!actor.ok) {
+      return null;
+    }
+    try {
+      const ctx = await createSalaryAdvanceRepository().getActorContext({
+        auth_subject: actor.actor.auth_subject,
+        app_user_id: actor.actor.app_user_id,
+      });
+      if (ctx.ok) {
+        const canAccess = Boolean(
+          ctx.data.is_project_manager ||
+            ctx.data.is_project_accountant ||
+            ctx.data.is_supervisory_viewer
+        );
+        return { canAccess };
+      }
+    } catch {
+      // Fail closed without disrupting AppShell rendering.
+    }
+    return null;
+  },
+);
+
 export const resolveNavActorForAppShell = cache(
   async (input: {
     directEntryEnabled: boolean;
@@ -234,6 +264,15 @@ export const resolveNavActorForAppShell = cache(
         projection.hasLeaveManagementAccess = true;
         projection.hasLeaveAdminAccess =
           leaveAccess.canManageConfig || leaveAccess.canViewMonthlyReport;
+      }
+    }
+    if (
+      process.env.DIRECT_ENTRY_API_ENABLED === "true" &&
+      !salaryAdvanceNavPredicate(projection)
+    ) {
+      const salaryAdvanceAccess = await resolveSalaryAdvanceAccessForRequest();
+      if (salaryAdvanceAccess?.canAccess) {
+        projection.hasSalaryAdvanceAccess = true;
       }
     }
     if (input.directEntryEnabled && !changeRequestsNavPredicate(projection)) {

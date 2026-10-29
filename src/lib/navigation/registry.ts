@@ -66,7 +66,8 @@ export type NavCapability =
   | "work_report_analytics"
   | "workforce_offboarding"
   | "leave"
-  | "leave_admin";
+  | "leave_admin"
+  | "salary_advances";
 
 /** Icon component type — accept cả LucideIcon và custom SVG component. */
 export type NavIcon = LucideIcon | ComponentType<SVGProps<SVGSVGElement>>;
@@ -221,6 +222,18 @@ export const NAV_ENTRIES: ReadonlyArray<NavEntry> = [
     icon: CalendarDays,
     status: "current",
     capability: "leave",
+    group: "my-work",
+    visibility: { desktop: true, mobile: true },
+  },
+  {
+    id: "salary-advances",
+    label: "Ứng lương",
+    path: "/salary-advances",
+    description:
+      "Tạo đề nghị ứng lương cho người lao động thuộc dự án, xử lý phê duyệt/từ chối và đối chiếu ảnh NLĐ nhận tiền mặt theo phân quyền máy chủ.",
+    icon: Landmark,
+    status: "current",
+    capability: "salary_advances",
     group: "my-work",
     visibility: { desktop: true, mobile: true },
   },
