@@ -1,0 +1,6 @@
+services:
+  db:
+    mem_limit: 3g
+    memswap_limit: 3g
+    cpus: 2.0
+    shm_size: 1g

@@ -1,0 +1,147 @@
+name: Deploy BI to VPS Red (UAT)
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: bi-red-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: red
+    env:
+      RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_SHA }}
+          fetch-depth: 0
+
+      - name: Validate immutable main release
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo '::error::CI did not supply a full commit SHA.'
+            exit 1
+          }
+          git fetch origin main
+          [[ "$(git rev-parse HEAD)" == "$RELEASE_SHA" ]] || {
+            echo '::error::Checked-out revision differs from the successful CI revision.'
+            exit 1
+          }
+          git merge-base --is-ancestor "$RELEASE_SHA" origin/main || {
+            echo '::error::Successful CI revision is no longer on main.'
+            exit 1
+          }
+          echo "repository=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Require Red build settings
+        shell: bash
+        env:
+          SUPABASE_URL: ${{ vars.RED_NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_KEY: ${{ vars.RED_NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          set -euo pipefail
+          [[ "$SUPABASE_URL" == 'https://spbase.hrpvietnam.com' ]] || {
+            echo '::error::RED_NEXT_PUBLIC_SUPABASE_URL must target Supabase Red.'
+            exit 1
+          }
+          [[ -n "$SUPABASE_KEY" ]] || {
+            echo '::error::RED_NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY is missing.'
+            exit 1
+          }
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish immutable Red app image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: runner
+          push: true
+          tags: ${{ steps.release.outputs.repository }}:red-${{ env.RELEASE_SHA }}
+          labels: |
+            org.opencontainers.image.revision=${{ env.RELEASE_SHA }}
+            com.hrpartner.environment=red
+            com.hrpartner.kind=app
+          build-args: |
+            NEXT_PUBLIC_SUPABASE_URL=${{ vars.RED_NEXT_PUBLIC_SUPABASE_URL }}
+            NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=${{ vars.RED_NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
+          cache-from: type=gha,scope=red-app
+          cache-to: type=gha,mode=max,scope=red-app
+
+      - name: Build and publish immutable Red migration image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: migrations
+          push: true
+          tags: ${{ steps.release.outputs.repository }}:red-${{ env.RELEASE_SHA }}-migrations
+          labels: |
+            org.opencontainers.image.revision=${{ env.RELEASE_SHA }}
+            com.hrpartner.environment=red
+            com.hrpartner.kind=migrations
+          cache-from: type=gha,scope=red-migrations
+          cache-to: type=gha,mode=max,scope=red-migrations
+
+      - name: Configure pinned Red SSH host
+        shell: bash
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.RED_SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.RED_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          [[ -n "$SSH_PRIVATE_KEY" && -n "$SSH_KNOWN_HOSTS" ]] || {
+            echo '::error::Red SSH credentials are missing.'
+            exit 1
+          }
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
+
+      - name: Check Red migrations, release app, and clean old images
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RED_HOST: ${{ secrets.RED_HOST }}
+          RED_USER: ${{ secrets.RED_USER }}
+          IMAGE: ${{ steps.release.outputs.repository }}:red-${{ env.RELEASE_SHA }}
+          MIGRATION_IMAGE: ${{ steps.release.outputs.repository }}:red-${{ env.RELEASE_SHA }}-migrations
+        run: |
+          set -euo pipefail
+          [[ -n "$RED_HOST" && -n "$RED_USER" ]] || {
+            echo '::error::RED_HOST or RED_USER is missing.'
+            exit 1
+          }
+          printf '%s' "$GHCR_TOKEN" | ssh -i ~/.ssh/id_ed25519 -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            "$RED_USER@$RED_HOST" \
+            "sudo -n /usr/local/sbin/bi-red-release '$IMAGE' '$MIGRATION_IMAGE' '$GITHUB_ACTOR'"
+
+      - name: Verify public Red route
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --retry 5 --retry-delay 3 \
+            --output /dev/null https://bi.hrpvietnam.com/login
