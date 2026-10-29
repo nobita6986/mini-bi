@@ -43,6 +43,7 @@ test("R2.1 Zero-Orphan Test Manifest: every *.test.mjs file in src/ and scripts/
     "scripts/w2-s1-stage-recovery-concurrency.test.mjs",
     "scripts/pre-w2-hf-draft-submission-delete-concurrency.test.mjs",
     "scripts/leave-management-wp1-concurrency.test.mjs",
+    "scripts/w2s2-salary-advance-wp1-concurrency.test.mjs",
   ]);
 
   const summary = assertZeroOrphanTests({

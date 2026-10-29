@@ -251,6 +251,23 @@ export const LEAVE_ADMIN_ACCOUNT_STATUS_FILTER_MIGRATION_NAME =
   "20261028130000_hf_leave_admin_account_status_filter.sql";
 export const LEAVE_ADMIN_ACCOUNT_STATUS_FILTER_RPC_SIGNATURE =
   "public.leave_management_get_admin_overview(uuid, uuid, text, integer, integer, text)";
+export const SALARY_ADVANCE_WP1_MIGRATION_NAME =
+  "20261029120000_w2s2_salary_advance_wp1.sql";
+export const SALARY_ADVANCE_WP1_RPC_SIGNATURES = Object.freeze([
+  "public.salary_advance_get_actor_context(uuid, uuid)",
+  "public.salary_advance_list_project_workers(uuid, uuid, text, text, text, integer)",
+  "public.salary_advance_list_requests(uuid, uuid, text, text, text, text, text, text, integer)",
+  "public.salary_advance_get_request_detail(uuid, uuid, uuid)",
+  "public.salary_advance_create_request(uuid, uuid, text, uuid, text, text, text, text)",
+  "public.salary_advance_post_message(uuid, uuid, uuid, integer, text, text, text)",
+  "public.salary_advance_transition_request(uuid, uuid, uuid, text, integer, text, text, text)",
+  "public.salary_advance_reserve_evidence(uuid, uuid, uuid, integer, text, integer, text, text, text, text)",
+  "public.salary_advance_get_evidence_finalize_context(uuid, uuid, uuid, uuid, integer, text, text)",
+  "public.salary_advance_finalize_evidence(uuid, uuid, uuid, uuid, integer, text, text)",
+  "public.salary_advance_review_evidence(uuid, uuid, uuid, integer, integer, text, uuid, integer, text, text, text)",
+  "public.salary_advance_get_evidence_preview_context(uuid, uuid, uuid, integer)",
+  "public.salary_advance_get_worker_portrait_context(uuid, uuid, uuid, uuid)",
+]);
 export const F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES = Object.freeze([
   "public.work_report_list_templates(uuid, uuid)",
   "public.work_report_get_template(uuid, uuid, uuid)",
@@ -269,7 +286,7 @@ export const F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES = Object.freeze([
   "public.work_report_submit(uuid, uuid, uuid, jsonb, integer, text)",
 ]);
 export const S0_T1_C_TARGET_ROUTINE_PATTERN =
-  "^(direct_entry_|work_report_|attendance_|org_department_|vendor_finance_|leave_management_|ai_report_|ai_provider_config_|recruitment_|(expand|replace|reject|upsert)_daily_recruitment|record_recruitment_source_failure_|set_updated_at$)";
+  "^(direct_entry_|work_report_|attendance_|org_department_|vendor_finance_|leave_management_|salary_advance_|ai_report_|ai_provider_config_|recruitment_|(expand|replace|reject|upsert)_daily_recruitment|record_recruitment_source_failure_|set_updated_at$)";
 
 export function migrationChecksum(text) {
   // Git may materialize SQL files as CRLF on Windows even though the same
@@ -485,7 +502,8 @@ export async function verifyS0T1CHistoricalCompatibility(
     workReportsAndroidSyncAndUxApplied = false,
     adminLinkExistingPersonnelAccountApplied = false,
     leaveManagementWp1Applied = false,
-    leaveAdminAccountStatusFilterApplied = false } = {},
+    leaveAdminAccountStatusFilterApplied = false,
+    salaryAdvanceWp1Applied = false } = {},
 ) {
   const baseAllowlist = extractS0T1CAllowlistSignatures(migrationSql);
   if (baseAllowlist.length === 0) {
@@ -550,6 +568,9 @@ export async function verifyS0T1CHistoricalCompatibility(
     ...(leaveAdminAccountStatusFilterApplied
       ? [LEAVE_ADMIN_ACCOUNT_STATUS_FILTER_RPC_SIGNATURE]
       : []),
+    ...(salaryAdvanceWp1Applied
+      ? SALARY_ADVANCE_WP1_RPC_SIGNATURES
+      : []),
   ];
 
   const { rows } = await client.query(
@@ -608,7 +629,7 @@ export async function verifyS0T1CHistoricalCompatibility(
           join pg_catalog.pg_namespace n on n.oid = p.pronamespace
          where n.nspname = 'public'
            and p.prokind in ('f', 'p')
-           and p.proname ~ '^(direct_entry_|attendance_|org_department_|vendor_finance_|leave_management_)'
+           and p.proname ~ '^(direct_entry_|attendance_|org_department_|vendor_finance_|leave_management_|salary_advance_)'
            and p.prosecdef
            and not coalesce(
              'search_path=pg_catalog, public' = any(p.proconfig)
@@ -790,6 +811,8 @@ export async function verifyAppliedMigrationChecksum(
           appliedMap.has(LEAVE_MANAGEMENT_WP1_MIGRATION_NAME),
         leaveAdminAccountStatusFilterApplied:
           appliedMap.has(LEAVE_ADMIN_ACCOUNT_STATUS_FILTER_MIGRATION_NAME),
+        salaryAdvanceWp1Applied:
+          appliedMap.has(SALARY_ADVANCE_WP1_MIGRATION_NAME),
       },
     );
     if (postconditions.ok) {
