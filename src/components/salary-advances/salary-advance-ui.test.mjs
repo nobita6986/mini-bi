@@ -158,4 +158,19 @@ test("SalaryAdvanceWorkspace guards loadRequests, loadRequestDetail, and loadPro
     workspaceSource,
     /resolveAvailableRequestActions\(\s*activeDetail\?\.request\.allowed_actions\s*\)/
   );
+
+  // Post-response UI updates in all 4 request-scoped mutation handlers must verify selectedRequestIdRef.current === targetRequest.request_id
+  assert.match(workspaceSource, /resolveScopedMutationFailureOutcome/);
+  assert.match(
+    workspaceSource,
+    /if\s*\(\s*selectedRequestIdRef\.current\s*!==\s*requestId\s*\)/,
+    "handleConflictReload must guard against setting conflictBannerMessage when selectedRequestId has changed"
+  );
+  const selectedIdEqualMatches = workspaceSource.match(
+    /selectedRequestIdRef\.current\s*===\s*targetRequest\.request_id/g
+  );
+  assert.ok(
+    (selectedIdEqualMatches?.length ?? 0) >= 8,
+    "All request-scoped mutation handlers must guard post-await UI updates with selectedRequestIdRef.current === targetRequest.request_id"
+  );
 });

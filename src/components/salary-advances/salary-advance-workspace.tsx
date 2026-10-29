@@ -50,6 +50,7 @@ import {
   reconcileSelectedWorkerEntryId,
   resolveActiveRequestDetail,
   resolveAvailableRequestActions,
+  resolveScopedMutationFailureOutcome,
   resolveVisibleSalaryAdvanceTabs,
   salaryAdvanceErrorMessage,
   sortEventsChronologically,
@@ -696,6 +697,10 @@ export function SalaryAdvanceWorkspace() {
 
   const handleConflictReload = useCallback(
     async (requestId: string, code: string) => {
+      if (selectedRequestIdRef.current !== requestId) {
+        await loadRequests();
+        return;
+      }
       const msg = salaryAdvanceErrorMessage(code);
       setConflictBannerMessage(msg);
       notify.warning({
@@ -877,23 +882,46 @@ export function SalaryAdvanceWorkspace() {
         if (isSalaryAdvanceConflictError(response.status, code)) {
           messageIdempotencyKeyRef.current =
             newSalaryAdvanceIdempotencyKey("sa-msg");
+        }
+        const failureOutcome = resolveScopedMutationFailureOutcome({
+          targetRequestId: targetRequest.request_id,
+          currentSelectedRequestId: selectedRequestIdRef.current,
+          status: response.status,
+          code,
+        });
+        if (
+          !failureOutcome.shouldUpdateSelectedRequestUi ||
+          selectedRequestIdRef.current !== targetRequest.request_id
+        ) {
+          if (failureOutcome.shouldReloadRequestList) {
+            await loadRequests();
+          }
+          return;
+        }
+        if (failureOutcome.shouldReloadSelectedDetail) {
           await handleConflictReload(targetRequest.request_id, code);
           return;
         }
-        setMessageError(salaryAdvanceErrorMessage(code));
+        setMessageError(failureOutcome.errorMessage);
         return;
       }
 
       messageIdempotencyKeyRef.current =
         newSalaryAdvanceIdempotencyKey("sa-msg");
-      setMessageText("");
+      if (selectedRequestIdRef.current === targetRequest.request_id) {
+        setMessageText("");
+      }
       applyMutationDetailResponse(json.data);
       notify.success({
         title: "Đã gửi tin nhắn",
         description: "Tin nhắn đã được ghi vào lịch sử trao đổi của yêu cầu.",
       });
     } catch {
-      setMessageError(salaryAdvanceErrorMessage("SALARY_ADVANCE_UNAVAILABLE"));
+      if (selectedRequestIdRef.current === targetRequest.request_id) {
+        setMessageError(
+          salaryAdvanceErrorMessage("SALARY_ADVANCE_UNAVAILABLE")
+        );
+      }
     } finally {
       setMessageSubmitting(false);
     }
@@ -1047,18 +1075,37 @@ export function SalaryAdvanceWorkspace() {
         if (isSalaryAdvanceConflictError(response.status, code)) {
           transitionIdempotencyKeyRef.current =
             newSalaryAdvanceIdempotencyKey("sa-act");
+        }
+        const failureOutcome = resolveScopedMutationFailureOutcome({
+          targetRequestId: targetRequest.request_id,
+          currentSelectedRequestId: selectedRequestIdRef.current,
+          status: response.status,
+          code,
+        });
+        if (
+          !failureOutcome.shouldUpdateSelectedRequestUi ||
+          selectedRequestIdRef.current !== targetRequest.request_id
+        ) {
+          if (failureOutcome.shouldReloadRequestList) {
+            await loadRequests();
+          }
+          return;
+        }
+        if (failureOutcome.shouldReloadSelectedDetail) {
           setTransitionDialog(null);
           await handleConflictReload(targetRequest.request_id, code);
           return;
         }
-        setTransitionError(salaryAdvanceErrorMessage(code));
+        setTransitionError(failureOutcome.errorMessage);
         return;
       }
 
       transitionIdempotencyKeyRef.current =
         newSalaryAdvanceIdempotencyKey("sa-act");
-      setTransitionDialog(null);
-      setTransitionMessageText("");
+      if (selectedRequestIdRef.current === targetRequest.request_id) {
+        setTransitionDialog(null);
+        setTransitionMessageText("");
+      }
       applyMutationDetailResponse(json.data);
       notify.success({
         title: "Đã cập nhật trạng thái yêu cầu",
@@ -1066,9 +1113,11 @@ export function SalaryAdvanceWorkspace() {
       });
       await loadRequests();
     } catch {
-      setTransitionError(
-        salaryAdvanceErrorMessage("SALARY_ADVANCE_UNAVAILABLE")
-      );
+      if (selectedRequestIdRef.current === targetRequest.request_id) {
+        setTransitionError(
+          salaryAdvanceErrorMessage("SALARY_ADVANCE_UNAVAILABLE")
+        );
+      }
     } finally {
       setTransitionSubmitting(false);
     }
@@ -1127,10 +1176,28 @@ export function SalaryAdvanceWorkspace() {
             newSalaryAdvanceIdempotencyKey("sa-ev-res");
           evidenceFinalizeKeyRef.current =
             newSalaryAdvanceIdempotencyKey("sa-ev-fin");
+        }
+        const failureOutcome = resolveScopedMutationFailureOutcome({
+          targetRequestId: targetRequest.request_id,
+          currentSelectedRequestId: selectedRequestIdRef.current,
+          status: result.status,
+          code: result.code,
+          fallbackMessage: result.message,
+        });
+        if (
+          !failureOutcome.shouldUpdateSelectedRequestUi ||
+          selectedRequestIdRef.current !== targetRequest.request_id
+        ) {
+          if (failureOutcome.shouldReloadRequestList) {
+            await loadRequests();
+          }
+          return;
+        }
+        if (failureOutcome.shouldReloadSelectedDetail) {
           await handleConflictReload(targetRequest.request_id, result.code);
           return;
         }
-        setEvidenceUploadError(result.message);
+        setEvidenceUploadError(failureOutcome.errorMessage);
         return;
       }
 
@@ -1138,10 +1205,12 @@ export function SalaryAdvanceWorkspace() {
         newSalaryAdvanceIdempotencyKey("sa-ev-res");
       evidenceFinalizeKeyRef.current =
         newSalaryAdvanceIdempotencyKey("sa-ev-fin");
-      setEvidenceFile(null);
-      setEvidenceCaptionNote("");
-      if (fileInputRef.current) {
-        fileInputRef.current.value = "";
+      if (selectedRequestIdRef.current === targetRequest.request_id) {
+        setEvidenceFile(null);
+        setEvidenceCaptionNote("");
+        if (fileInputRef.current) {
+          fileInputRef.current.value = "";
+        }
       }
 
       applyMutationDetailResponse(result.data);
@@ -1152,9 +1221,11 @@ export function SalaryAdvanceWorkspace() {
       });
       await loadRequests();
     } catch {
-      setEvidenceUploadError(
-        salaryAdvanceErrorMessage("SALARY_ADVANCE_UNAVAILABLE")
-      );
+      if (selectedRequestIdRef.current === targetRequest.request_id) {
+        setEvidenceUploadError(
+          salaryAdvanceErrorMessage("SALARY_ADVANCE_UNAVAILABLE")
+        );
+      }
     } finally {
       setEvidenceUploading(false);
     }
@@ -1237,16 +1308,35 @@ export function SalaryAdvanceWorkspace() {
         if (isSalaryAdvanceConflictError(response.status, code)) {
           evidenceReviewKeyRef.current =
             newSalaryAdvanceIdempotencyKey("sa-ev-rev");
+        }
+        const failureOutcome = resolveScopedMutationFailureOutcome({
+          targetRequestId: targetRequest.request_id,
+          currentSelectedRequestId: selectedRequestIdRef.current,
+          status: response.status,
+          code,
+        });
+        if (
+          !failureOutcome.shouldUpdateSelectedRequestUi ||
+          selectedRequestIdRef.current !== targetRequest.request_id
+        ) {
+          if (failureOutcome.shouldReloadRequestList) {
+            await loadRequests();
+          }
+          return;
+        }
+        if (failureOutcome.shouldReloadSelectedDetail) {
           await handleConflictReload(targetRequest.request_id, code);
           return;
         }
-        setEvidenceReviewError(salaryAdvanceErrorMessage(code));
+        setEvidenceReviewError(failureOutcome.errorMessage);
         return;
       }
 
       evidenceReviewKeyRef.current =
         newSalaryAdvanceIdempotencyKey("sa-ev-rev");
-      setEvidenceReviewNote("");
+      if (selectedRequestIdRef.current === targetRequest.request_id) {
+        setEvidenceReviewNote("");
+      }
       applyMutationDetailResponse(json.data);
       notify.success({
         title:
@@ -1259,9 +1349,11 @@ export function SalaryAdvanceWorkspace() {
       });
       await loadRequests();
     } catch {
-      setEvidenceReviewError(
-        salaryAdvanceErrorMessage("SALARY_ADVANCE_UNAVAILABLE")
-      );
+      if (selectedRequestIdRef.current === targetRequest.request_id) {
+        setEvidenceReviewError(
+          salaryAdvanceErrorMessage("SALARY_ADVANCE_UNAVAILABLE")
+        );
+      }
     } finally {
       setEvidenceReviewSubmitting(false);
     }

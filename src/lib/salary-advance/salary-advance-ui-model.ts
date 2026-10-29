@@ -863,6 +863,60 @@ export function resolveActiveRequestDetail(
   return detail.request.request_id === selectedRequestId ? detail : null;
 }
 
+export type ScopedMutationUiOutcome = {
+  shouldUpdateSelectedRequestUi: boolean;
+  conflictBannerMessage: string | null;
+  errorMessage: string | null;
+  shouldReloadSelectedDetail: boolean;
+  shouldReloadRequestList: boolean;
+};
+
+export function resolveScopedMutationFailureOutcome(params: {
+  targetRequestId: string;
+  currentSelectedRequestId: string | null;
+  status: number;
+  code: string | null | undefined;
+  fallbackMessage?: string;
+}): ScopedMutationUiOutcome {
+  const isSelected =
+    Boolean(params.currentSelectedRequestId) &&
+    params.currentSelectedRequestId === params.targetRequestId;
+  const isConflict = isSalaryAdvanceConflictError(params.status, params.code);
+  const resolvedMessage =
+    params.fallbackMessage ??
+    salaryAdvanceErrorMessage(params.code ?? "SALARY_ADVANCE_UNAVAILABLE");
+
+  if (!isSelected) {
+    return {
+      shouldUpdateSelectedRequestUi: false,
+      conflictBannerMessage: null,
+      errorMessage: null,
+      shouldReloadSelectedDetail: false,
+      shouldReloadRequestList: isConflict,
+    };
+  }
+
+  if (isConflict) {
+    return {
+      shouldUpdateSelectedRequestUi: true,
+      conflictBannerMessage: salaryAdvanceErrorMessage(
+        params.code ?? "SALARY_ADVANCE_VERSION_CONFLICT"
+      ),
+      errorMessage: null,
+      shouldReloadSelectedDetail: true,
+      shouldReloadRequestList: true,
+    };
+  }
+
+  return {
+    shouldUpdateSelectedRequestUi: true,
+    conflictBannerMessage: null,
+    errorMessage: resolvedMessage,
+    shouldReloadSelectedDetail: false,
+    shouldReloadRequestList: false,
+  };
+}
+
 export function sortEventsChronologically(
   events: ReadonlyArray<SalaryAdvanceEventItem>
 ): SalaryAdvanceEventItem[] {

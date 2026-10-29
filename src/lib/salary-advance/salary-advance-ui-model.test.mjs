@@ -26,6 +26,7 @@ import {
   reconcileSelectedWorkerEntryId,
   resolveActiveRequestDetail,
   resolveAvailableRequestActions,
+  resolveScopedMutationFailureOutcome,
   resolveVisibleSalaryAdvanceTabs,
   salaryAdvanceErrorMessage,
   sortEventsChronologically,
@@ -829,4 +830,72 @@ test("out-of-order request list and detail responses are ignored and switching s
 
   assert.deepEqual(currentRows, [reqSummary2]);
   assert.equal(selectedRequestId, reqSummary2.request_id);
+});
+
+test("late mutation failure or 409 conflict for request A after switching selection to request B never writes error state or conflict banner onto request B", () => {
+  const requestIdA = "11111111-1111-4111-8111-111111111111";
+  const requestIdB = "22222222-2222-4222-8222-222222222222";
+
+  // Case 1: User starts mutation on request A, switches to request B, then A fails with 409 VERSION_CONFLICT
+  const conflictAfterSwitch = resolveScopedMutationFailureOutcome({
+    targetRequestId: requestIdA,
+    currentSelectedRequestId: requestIdB,
+    status: 409,
+    code: "SALARY_ADVANCE_VERSION_CONFLICT",
+  });
+  assert.equal(
+    conflictAfterSwitch.shouldUpdateSelectedRequestUi,
+    false,
+    "Late 409 on request A must NOT update UI state of currently selected request B"
+  );
+  assert.equal(conflictAfterSwitch.conflictBannerMessage, null);
+  assert.equal(conflictAfterSwitch.errorMessage, null);
+  assert.equal(
+    conflictAfterSwitch.shouldReloadSelectedDetail,
+    false,
+    "Must NOT reload detail of A when B is selected"
+  );
+  assert.equal(
+    conflictAfterSwitch.shouldReloadRequestList,
+    true,
+    "Still refreshes queue list in background after a 409 conflict on A"
+  );
+
+  // Case 2: User starts mutation on request A, switches to request B, then A fails with 400/500 error
+  const errorAfterSwitch = resolveScopedMutationFailureOutcome({
+    targetRequestId: requestIdA,
+    currentSelectedRequestId: requestIdB,
+    status: 500,
+    code: "SALARY_ADVANCE_UNAVAILABLE",
+  });
+  assert.equal(errorAfterSwitch.shouldUpdateSelectedRequestUi, false);
+  assert.equal(errorAfterSwitch.conflictBannerMessage, null);
+  assert.equal(errorAfterSwitch.errorMessage, null);
+  assert.equal(errorAfterSwitch.shouldReloadSelectedDetail, false);
+  assert.equal(errorAfterSwitch.shouldReloadRequestList, false);
+
+  // Case 3: User stays on request A when 409 VERSION_CONFLICT arrives -> banner and detail reload apply to A
+  const conflictSameRequest = resolveScopedMutationFailureOutcome({
+    targetRequestId: requestIdA,
+    currentSelectedRequestId: requestIdA,
+    status: 409,
+    code: "SALARY_ADVANCE_VERSION_CONFLICT",
+  });
+  assert.equal(conflictSameRequest.shouldUpdateSelectedRequestUi, true);
+  assert.ok(conflictSameRequest.conflictBannerMessage);
+  assert.equal(conflictSameRequest.errorMessage, null);
+  assert.equal(conflictSameRequest.shouldReloadSelectedDetail, true);
+  assert.equal(conflictSameRequest.shouldReloadRequestList, true);
+
+  // Case 4: User stays on request A when non-conflict error arrives -> error message applies to A
+  const errorSameRequest = resolveScopedMutationFailureOutcome({
+    targetRequestId: requestIdA,
+    currentSelectedRequestId: requestIdA,
+    status: 400,
+    code: "SALARY_ADVANCE_MESSAGE_REQUIRED",
+  });
+  assert.equal(errorSameRequest.shouldUpdateSelectedRequestUi, true);
+  assert.equal(errorSameRequest.conflictBannerMessage, null);
+  assert.match(errorSameRequest.errorMessage ?? "", /nội dung trao đổi/);
+  assert.equal(errorSameRequest.shouldReloadSelectedDetail, false);
 });
