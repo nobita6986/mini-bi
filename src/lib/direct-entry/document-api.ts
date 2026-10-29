@@ -95,13 +95,10 @@ export async function resolveActor(
     };
   }
   const actor = session.actor.actor;
-  const canUploadWithScopedAuthority =
+  const canUploadDraftAsProjectManager =
     capability === "document_upload" &&
-    (actor.capabilities.includes("change_request_create") ||
-      actor.capabilities.includes("change_review") ||
-      actor.capabilities.includes("entry_privileged_edit") ||
-      actor.capabilities.includes("entry_admin"));
-  if (!actor.capabilities.includes(capability) && !canUploadWithScopedAuthority) {
+    actor.capabilities.includes("change_request_create");
+  if (!actor.capabilities.includes(capability) && !canUploadDraftAsProjectManager) {
     return { ok: false, response: fail("DOCUMENT_DENIED", 403) };
   }
   return { ok: true, auth_subject: actor.auth_subject, app_user_id: actor.app_user_id };

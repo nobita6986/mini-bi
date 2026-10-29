@@ -40,7 +40,10 @@ import {
   WORKER_CONFLICT_MESSAGE,
   privilegedEditErrorMessage,
 } from "../src/lib/direct-entry/worker-operations-model.ts";
+import { reserveDirectEntryDocument } from "../src/lib/direct-entry/document-api.ts";
+import { finalizeDirectEntryDocument } from "../src/lib/direct-entry/document-finalize-api.ts";
 import { getDirectEntryEntry } from "../src/lib/direct-entry/write-api.ts";
+import { createDirectEntryWriteRepository } from "../src/lib/direct-entry/write-repository.ts";
 import { seedLegacyReviewSubmission } from "./lib/seed-legacy-review-submission.mjs";
 
 const MIGRATION_DIR = path.resolve("supabase/migrations");
@@ -895,11 +898,6 @@ test("HF Worker Profile Direct Edit: banking (payment) in direct_entry_privilege
     await db.query(
       "insert into public.direct_entry_banks (bank_id, display_name, active) values ('VCB', 'Vietcombank', true) on conflict (bank_id) do nothing",
     );
-    await db.query(
-      "insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from, is_current)" +
-        " values ($1, 'document_upload', '2020-01-01', true), ($2, 'document_upload', '2020-01-01', true), ($3, 'document_upload', '2020-01-01', true)",
-      [ADMIN_APP, PM_A_APP, PM_B_APP],
-    );
 
     const worker = await seedSubmittedWorker(db, {
       employeeCode: "hrp-2025-000088",
@@ -1033,8 +1031,180 @@ test("HF Worker Profile Direct Edit: banking (payment) in direct_entry_privilege
       (err) => err.code === "42501",
     );
 
-    // 4. Assigned PM (PM_A) with document_upload can upload new and replacement documents
-    //    (WORKER_PORTRAIT, CCCD_FRONT, CCCD_BACK, EMPLOYMENT_CONTRACT) on SUBMITTED entry
+    // 3b. Security regression: actors who have direct-edit authority (ADMIN, PM_A, TL_A)
+    //     but LACK capability 'document_upload' MUST be denied on reserve (both DB & API)
+    //     on SUBMITTED entries with zero upload intent or entry mutation.
+    const writeRepo = createDirectEntryWriteRepository(async (name, args) => {
+      const keys = Object.keys(args);
+      const placeholders = keys.map((_, idx) => `$${idx + 1}`).join(", ");
+      const values = keys.map((key) => args[key]);
+      try {
+        const res = await db.query(
+          `select public.${name}(${placeholders}) as data`,
+          values,
+        );
+        return { data: res.rows[0]?.data ?? null, error: null };
+      } catch (err) {
+        return {
+          data: null,
+          error: { code: err.code ?? "P0001", message: err.message ?? "db error" },
+        };
+      }
+    });
+
+    for (const [actorLabel, authSub, appId, apiCaps, expectedApiStatus] of [
+      ["ADMIN", ADMIN_AUTH, ADMIN_APP, ["entry_admin", "entry_privileged_edit"], 403],
+      ["PM_A", PM_A_AUTH, PM_A_APP, ["change_request_create"], 404],
+      ["TL_A", TL_A_AUTH, TL_A_APP, ["team_manager_assign"], 403],
+    ]) {
+      for (const [docType, mimeType] of [
+        ["WORKER_PORTRAIT", "image/jpeg"],
+        ["CCCD_FRONT", "image/jpeg"],
+        ["CCCD_BACK", "image/png"],
+        ["EMPLOYMENT_CONTRACT", "application/pdf"],
+      ]) {
+        await assert.rejects(
+          db.query(
+            "select public.direct_entry_reserve_document_direct_upload($1::uuid, $2::uuid, $3::uuid, $4::integer, $5::text, $6::text, 1024, $7::text, 'Denied without document_upload')",
+            [
+              authSub,
+              appId,
+              worker.entryId,
+              editPaymentBlank.version,
+              docType,
+              `hf-no-cap-res-${actorLabel}-${docType}`,
+              mimeType,
+            ],
+          ),
+          (err) => err.code === "42501",
+          `${actorLabel} without document_upload must be rejected with 42501 on reserve (${docType})`,
+        );
+      }
+
+      let signedUrlCalled = false;
+      const apiRes = await reserveDirectEntryDocument(
+        new Request(`https://example.test/api/direct-entry/entries/${worker.entryId}/documents`, {
+          method: "POST",
+          headers: {
+            origin: "https://example.test",
+            host: "example.test",
+            "content-type": "application/json",
+            "idempotency-key": `hf-api-no-cap-res-${actorLabel}`,
+          },
+          body: JSON.stringify({
+            document_type: "WORKER_PORTRAIT",
+            expected_entry_version: editPaymentBlank.version,
+            size_bytes: 1024,
+            mime_type: "image/jpeg",
+          }),
+        }),
+        worker.entryId,
+        "true",
+        {
+          resolveSession: async () => ({
+            actor: {
+              ok: true,
+              actor: {
+                auth_subject: authSub,
+                app_user_id: appId,
+                display_name: actorLabel,
+                enabled: true,
+                capabilities: apiCaps,
+                scopes: [],
+                self_recruiter_suggestion: null,
+                session: { provider: "supabase", verification: "getUser", authenticated_at: null },
+              },
+            },
+            response_headers: {},
+          }),
+          repository: writeRepo,
+          storage: {
+            available: () => true,
+            async createUploadUrl() {
+              signedUrlCalled = true;
+              throw new Error("createUploadUrl must not be called when document_upload is missing");
+            },
+          },
+        },
+      );
+      assert.equal(apiRes.status, expectedApiStatus);
+      assert.equal(signedUrlCalled, false);
+    }
+
+    const residueAfterDeniedReserve = (
+      await db.query(
+        `select
+           (select count(*)::int from public.direct_entry_document_versions where candidate_id = $1::uuid) as doc_versions,
+           (select count(*)::int from public.direct_entry_rpc_idempotency where action = 'document_direct_reserve') as reserve_idem,
+           (select version from public.direct_entries where entry_id = $2::uuid) as entry_version`,
+        [worker.candidateId, worker.entryId],
+      )
+    ).rows[0];
+    assert.deepEqual(residueAfterDeniedReserve, {
+      doc_versions: 0,
+      reserve_idem: 0,
+      entry_version: editPaymentBlank.version,
+    });
+
+    // 3c. DRAFT upload permission remains intact: Assigned PM (PM_A) without document_upload
+    //     can still upload to their OWN DRAFT entry in PROJ_A.
+    const draftSubmissionId = uuid(598);
+    const draftCandidateId = uuid(599);
+    const draftEntryId = uuid(600);
+    await db.exec("begin");
+    try {
+      await db.query(
+        "insert into public.direct_entry_candidates (candidate_id) values ($1)",
+        [draftCandidateId],
+      );
+      await db.query(
+        "insert into public.direct_entry_submissions (submission_id, state, created_by_user_id) values ($1, 'DRAFT', $2)",
+        [draftSubmissionId, PM_A_APP],
+      );
+      await db.query(
+        `insert into public.direct_entries (
+           entry_id, submission_id, candidate_id, project_id, first_work_date, employee_code,
+           worker_details, general_note, recruiter_id, team_id, provider_type, labor_type,
+           created_by_user_id, version
+         ) values (
+           $1, $2, $3, $4, '2026-03-15', 'hrp-2026-000099',
+           $5::jsonb, '{"state":"omitted"}'::jsonb, $6, $7, 'hrp', 'TEMPORARY',
+           $8, 1
+         )`,
+        [
+          draftEntryId,
+          draftSubmissionId,
+          draftCandidateId,
+          PROJ_A,
+          JSON.stringify(workerDetails("079095000099", "Nguyen Van Draft PM")),
+          REC_A,
+          TEAM_A,
+          PM_A_APP,
+        ],
+      );
+      await db.exec("commit");
+    } catch (err) {
+      await db.exec("rollback");
+      throw err;
+    }
+    const pmDraftReserve = (
+      await db.query(
+        "select public.direct_entry_reserve_document_direct_upload($1::uuid, $2::uuid, $3::uuid, 1, 'WORKER_PORTRAIT', 'hf-draft-pm-res', 1024, 'image/jpeg', null) as data",
+        [PM_A_AUTH, PM_A_APP, draftEntryId],
+      )
+    ).rows[0].data;
+    assert.equal(pmDraftReserve.upload_status, "QUEUED");
+
+    // 4. Grant document_upload capability to direct-edit actors (ADMIN, PM_A, TL_A) and PM_B
+    await db.query(
+      "insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from, is_current)" +
+        " values ($1, 'document_upload', '2020-01-01', true), ($2, 'document_upload', '2020-01-01', true), ($3, 'document_upload', '2020-01-01', true), ($4, 'document_upload', '2020-01-01', true)",
+      [ADMIN_APP, PM_A_APP, TL_A_APP, PM_B_APP],
+    );
+
+    // 4a. Assigned PM (PM_A) with BOTH direct-edit authority and document_upload can upload
+    //     new and replacement documents (WORKER_PORTRAIT, CCCD_FRONT, CCCD_BACK, EMPLOYMENT_CONTRACT)
+    //     on SUBMITTED entry, while any direct-edit actor lacking document_upload is denied on finalize.
     let currentEntryVersion = editPaymentBlank.version;
     for (const [docType, mimeType] of [
       ["WORKER_PORTRAIT", "image/jpeg"],
@@ -1059,6 +1229,120 @@ test("HF Worker Profile Direct Edit: banking (payment) in direct_entry_privilege
       ).rows[0].data;
       assert.equal(res1.version, 1);
       assert.equal(res1.upload_status, "QUEUED");
+
+      if (docType === "WORKER_PORTRAIT") {
+        // Temporarily revoke document_upload from ADMIN, PM_A, TL_A and prove finalize & context('finalize')
+        // are denied at both DB and API layers without mutating the QUEUED document or entry version.
+        await db.query(
+          "update public.direct_entry_capability_grants set is_current = false, valid_to = '2025-01-01'" +
+            " where capability = 'document_upload' and app_user_id in ($1::uuid, $2::uuid, $3::uuid)",
+          [ADMIN_APP, PM_A_APP, TL_A_APP],
+        );
+
+        for (const [actorLabel, authSub, appId, apiCaps, expectedApiStatus] of [
+          ["ADMIN", ADMIN_AUTH, ADMIN_APP, ["entry_admin", "entry_privileged_edit"], 403],
+          ["PM_A", PM_A_AUTH, PM_A_APP, ["change_request_create"], 404],
+          ["TL_A", TL_A_AUTH, TL_A_APP, ["team_manager_assign"], 403],
+        ]) {
+          await assert.rejects(
+            db.query(
+              "select public.direct_entry_document_direct_context($1::uuid, $2::uuid, $3::uuid, $4::uuid, 'finalize')",
+              [authSub, appId, worker.entryId, res1.document_id],
+            ),
+            (err) => err.code === "42501",
+            `${actorLabel} without document_upload must be rejected with 42501 on document_direct_context('finalize')`,
+          );
+          await assert.rejects(
+            db.query(
+              "select public.direct_entry_finalize_document_direct_upload($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::integer, $6::text, 'validated', $7::text, 1024, $8::text)",
+              [
+                authSub,
+                appId,
+                worker.entryId,
+                res1.document_id,
+                res1.entry_version,
+                `hf-no-cap-fin-${actorLabel}`,
+                "a".repeat(64),
+                mimeType,
+              ],
+            ),
+            (err) => err.code === "42501",
+            `${actorLabel} without document_upload must be rejected with 42501 on finalize`,
+          );
+
+          let storageTouched = false;
+          const finApiRes = await finalizeDirectEntryDocument(
+            new Request(
+              `https://example.test/api/direct-entry/entries/${worker.entryId}/documents/${res1.document_id}/finalize`,
+              {
+                method: "POST",
+                headers: {
+                  origin: "https://example.test",
+                  host: "example.test",
+                  "content-type": "application/json",
+                  "idempotency-key": `hf-api-no-cap-fin-${actorLabel}`,
+                },
+                body: JSON.stringify({ expected_entry_version: res1.entry_version }),
+              },
+            ),
+            worker.entryId,
+            res1.document_id,
+            "true",
+            {
+              resolveSession: async () => ({
+                actor: {
+                  ok: true,
+                  actor: {
+                    auth_subject: authSub,
+                    app_user_id: appId,
+                    display_name: actorLabel,
+                    enabled: true,
+                    capabilities: apiCaps,
+                    scopes: [],
+                    self_recruiter_suggestion: null,
+                    session: { provider: "supabase", verification: "getUser", authenticated_at: null },
+                  },
+                },
+                response_headers: {},
+              }),
+              repository: writeRepo,
+              storage: {
+                available: () => true,
+                async headStaged() {
+                  storageTouched = true;
+                  throw new Error("headStaged must not be called when finalize access is denied");
+                },
+              },
+            },
+          );
+          assert.equal(finApiRes.status, expectedApiStatus);
+          assert.equal(storageTouched, false);
+        }
+
+        const residueAfterDeniedFinalize = (
+          await db.query(
+            `select
+               (select count(*)::int from public.direct_entry_document_objects where document_id = $1::uuid) as doc_objects,
+               (select upload_status from public.direct_entry_document_events where document_id = $1::uuid order by version desc limit 1) as latest_status,
+               (select count(*)::int from public.direct_entry_rpc_idempotency where action = 'document_direct_finalize') as finalize_idem,
+               (select version from public.direct_entries where entry_id = $2::uuid) as entry_version`,
+            [res1.document_id, worker.entryId],
+          )
+        ).rows[0];
+        assert.deepEqual(residueAfterDeniedFinalize, {
+          doc_objects: 0,
+          latest_status: "QUEUED",
+          finalize_idem: 0,
+          entry_version: res1.entry_version,
+        });
+
+        // Re-enable document_upload for ADMIN, PM_A, TL_A
+        await db.query(
+          "update public.direct_entry_capability_grants set is_current = true, valid_to = null" +
+            " where capability = 'document_upload' and app_user_id in ($1::uuid, $2::uuid, $3::uuid)",
+          [ADMIN_APP, PM_A_APP, TL_A_APP],
+        );
+      }
 
       const ctx1 = (
         await db.query(

@@ -186,8 +186,16 @@ begin
 
     v_old := $old$  perform public.direct_entry_assert_actor(
     p_auth_subject, p_app_user_id, 'entry_privileged_edit'
+  );
+  return public.direct_entry_assert_entry_access(
+    p_auth_subject, p_app_user_id, 'document_upload',
+    v_entry.created_by_user_id, v_entry.team_id,
+    v_entry.first_work_date, null
   );$old$;
     v_new := $new$  if v_submission_state = 'SUBMITTED' then
+    perform public.direct_entry_assert_actor(
+      p_auth_subject, p_app_user_id, 'document_upload'
+    );
     begin
       perform public.direct_entry_assert_actor_app_user_admin(p_auth_subject, p_app_user_id);
       v_is_full_admin := true;
@@ -206,6 +214,9 @@ begin
       v_entry.project_id, v_is_full_admin, v_current_team_leader_team_id
     );
     if v_direct_edit_authority is not null then
+      perform public.direct_entry_assert_actor(
+        p_auth_subject, p_app_user_id, 'document_upload'
+      );
       return case
         when v_direct_edit_authority = 'admin_all' then 'all'
         when v_direct_edit_authority = 'team_leader' then 'team'
@@ -219,6 +230,11 @@ begin
 
   perform public.direct_entry_assert_actor(
     p_auth_subject, p_app_user_id, 'entry_privileged_edit'
+  );
+  return public.direct_entry_assert_entry_access(
+    p_auth_subject, p_app_user_id, 'document_upload',
+    v_entry.created_by_user_id, v_entry.team_id,
+    v_entry.first_work_date, null
   );$new$;
     if position(v_old in v_next) = 0 then
       raise exception 'HF direct edit authority drift in direct_entry_assert_document_upload_access' using errcode = '55000';
@@ -261,6 +277,12 @@ begin
                from pg_catalog.pg_proc p where p.oid = v_edit)
      or not (select p.prosecdef and p.proconfig @> array['search_path=pg_catalog, public']
                from pg_catalog.pg_proc p where p.oid = v_upload_access)
+     or not exists (
+       select 1
+         from pg_catalog.pg_proc p
+        where p.oid = v_upload_access
+          and p.prosrc ~* 'if[[:space:]]+v_direct_edit_authority[[:space:]]+is[[:space:]]+not[[:space:]]+null[[:space:]]+then[[:space:]]+perform[[:space:]]+public\.direct_entry_assert_actor\([[:space:]]*p_auth_subject,[[:space:]]*p_app_user_id,[[:space:]]*''document_upload''[[:space:]]*\)'
+     )
      or exists (
        select 1
          from pg_catalog.pg_proc p

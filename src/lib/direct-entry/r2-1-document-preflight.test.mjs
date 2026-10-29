@@ -91,6 +91,24 @@ test("document-api preflight allows document_upload or draft-PM change_request_c
   assert.equal(deniedRes.status, 403);
   assert.deepEqual(await deniedRes.json(), { ok: false, code: "DOCUMENT_DENIED" });
   assert.equal(reserveCalled, false);
+
+  // 5. Direct-edit / review capabilities without document_upload are denied at upload preflight
+  for (const caps of [
+    ["entry_privileged_edit"],
+    ["entry_admin"],
+    ["entry_admin", "entry_privileged_edit"],
+    ["team_manager_assign"],
+    ["change_review"],
+  ]) {
+    const deniedDirectEdit = await resolveActor({
+      resolveSession: sessionWithCapabilities(caps),
+      repository: {},
+      storage: {},
+    }, "document_upload");
+    assert.equal(deniedDirectEdit.ok, false, `expected deny for ${caps.join(",")}`);
+    assert.equal(deniedDirectEdit.response.status, 403);
+    assert.deepEqual(await deniedDirectEdit.response.json(), { ok: false, code: "DOCUMENT_DENIED" });
+  }
 });
 
 test("full-profile-api preflight requires explicit document_upload when staging documents and does not widen to change_request_create", async () => {

@@ -155,6 +155,79 @@ test("project-manager capability reaches the upload RPC while download remains s
   const managerCannotDownload = deps({ capabilities: ["change_request_create"], repo: readyContext });
   assert.equal((await downloadDirectEntryDocument(downloadReq(), entryId, documentId, "true", managerCannotDownload)).status, 403);
   assert.deepEqual(managerCannotDownload.log.storage, []);
+
+  // Direct-edit / review actors without document_upload are denied on reserve and finalize
+  for (const caps of [
+    ["entry_privileged_edit"],
+    ["entry_admin"],
+    ["entry_admin", "entry_privileged_edit"],
+    ["team_manager_assign"],
+    ["change_review"],
+  ]) {
+    const reserveDenied = deps({ capabilities: caps });
+    const res = await reserveDirectEntryDocument(makeRequest(reserveBody), entryId, "true", reserveDenied);
+    assert.equal(res.status, 403, `reserve denied for ${caps.join(",")}`);
+    assert.deepEqual(await res.json(), { ok: false, code: "DOCUMENT_DENIED" });
+    assert.deepEqual(reserveDenied.log.db, []);
+    assert.deepEqual(reserveDenied.log.storage, []);
+
+    const finalizeDenied = deps({ capabilities: caps });
+    const fin = await finalizeDirectEntryDocument(finalizeReq(), entryId, documentId, "true", finalizeDenied);
+    assert.equal(fin.status, 403, `finalize denied for ${caps.join(",")}`);
+    assert.deepEqual(await fin.json(), { ok: false, code: "DOCUMENT_DENIED" });
+    assert.deepEqual(finalizeDenied.log.db, []);
+    assert.deepEqual(finalizeDenied.log.storage, []);
+  }
+
+  // Assigned PM with change_request_create (no document_upload) on SUBMITTED entry is denied by DB RPC without storage activity
+  const submittedPmReserveDenied = deps({
+    capabilities: ["change_request_create"],
+    repo: {
+      async reserveDocumentUpload(input) {
+        submittedPmReserveDenied.log.db.push(["reserve", input]);
+        return { ok: false, kind: "denied" };
+      },
+    },
+  });
+  const pmSubmittedRes = await reserveDirectEntryDocument(
+    makeRequest(reserveBody), entryId, "true", submittedPmReserveDenied,
+  );
+  assert.equal(pmSubmittedRes.status, 404);
+  assert.deepEqual(submittedPmReserveDenied.log.storage, []);
+
+  const submittedPmFinalizeDenied = deps({
+    capabilities: ["change_request_create"],
+    repo: {
+      async getDocumentContext(input) {
+        submittedPmFinalizeDenied.log.db.push(["context", input]);
+        return { ok: false, kind: "denied" };
+      },
+    },
+  });
+  const pmSubmittedFin = await finalizeDirectEntryDocument(
+    finalizeReq(), entryId, documentId, "true", submittedPmFinalizeDenied,
+  );
+  assert.equal(pmSubmittedFin.status, 404);
+  assert.deepEqual(submittedPmFinalizeDenied.log.storage, []);
+
+  // Direct-edit actors WITH document_upload succeed on reserve and finalize
+  for (const caps of [
+    ["entry_privileged_edit", "document_upload"],
+    ["entry_admin", "document_upload"],
+    ["team_manager_assign", "document_upload"],
+    ["change_request_create", "document_upload"],
+  ]) {
+    const allowedRes = deps({ capabilities: caps });
+    assert.equal(
+      (await reserveDirectEntryDocument(makeRequest(reserveBody), entryId, "true", allowedRes)).status,
+      201,
+    );
+    const allowedFin = deps({ capabilities: caps });
+    assert.equal(
+      (await finalizeDirectEntryDocument(finalizeReq(), entryId, documentId, "true", allowedFin)).status,
+      200,
+    );
+  }
 });
 
 test("reservation replay and conflicts map without leaking and do not re-sign finished uploads", async () => {
