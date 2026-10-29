@@ -85,7 +85,7 @@ jobs:
             exit 1
           fi
 
-          if ! grep -Eq '^COPY ("auth"\."users"|auth\.users)\b' data.sql && ! grep -Eq 'INTO ("auth"\."users"|auth\.users)\b' data.sql; then
+          if ! grep -Eq '^COPY ("auth"\."users"|auth\.users)[[:space:]]' data.sql && ! grep -Eq 'INTO ("auth"\."users"|auth\.users)[[:space:]]' data.sql; then
             echo "::error::data.sql does not contain data or COPY statement for auth.users."
             exit 1
           fi
