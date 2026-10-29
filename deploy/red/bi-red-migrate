@@ -42,6 +42,9 @@ if (!url || new URL(url).hostname !== "supabase-db") {
 if (process.env.NEXT_PUBLIC_SUPABASE_URL !== "https://spbase.hrpvietnam.com") {
   throw new Error("Red migration environment has the wrong Supabase URL");
 }
+if (process.env.SUPABASE_DB_SSL_MODE !== "disable") {
+  throw new Error("Red local PostgreSQL migrations must disable TLS explicitly");
+}
 console.log("Red migration target preflight passed");
 NODE
 

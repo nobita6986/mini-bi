@@ -36,7 +36,9 @@ Keep the existing `/etc/bi-test/production.env` root-owned at mode `0600`.
 Create `/etc/bi-test/migration.env`, also root-owned at mode `0600`, with the
 Supabase settings required by `scripts/apply-migrations.mjs`. Its
 `SUPABASE_DB_URL` hostname must be `supabase-db`, and its public URL must be
-`https://spbase.hrpvietnam.com`; both wrappers reject any other DB target.
+`https://spbase.hrpvietnam.com`. Set `SUPABASE_DB_SSL_MODE=disable` because this
+Docker-internal PostgreSQL endpoint does not provide TLS; both wrappers reject
+any other DB target or SSL mode.
 
 Keep the Supabase resource override in `COMPOSE_FILE`:
 

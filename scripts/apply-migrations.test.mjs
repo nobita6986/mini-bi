@@ -16,6 +16,21 @@ import {
   S0_T1_C_MIGRATION_NAME,
   S0_T1_C_PRE_PR92_CHECKSUM,
 } from "./lib/migration-validation.mjs";
+import { buildSslOptions } from "./lib/supabase-tls.mjs";
+
+test("explicit local PostgreSQL mode disables TLS", () => {
+  const previousMode = process.env.SUPABASE_DB_SSL_MODE;
+  const previousWarn = console.warn;
+  process.env.SUPABASE_DB_SSL_MODE = "disable";
+  console.warn = () => {};
+  try {
+    assert.equal(buildSslOptions(), false);
+  } finally {
+    console.warn = previousWarn;
+    if (previousMode === undefined) delete process.env.SUPABASE_DB_SSL_MODE;
+    else process.env.SUPABASE_DB_SSL_MODE = previousMode;
+  }
+});
 
 test("migration checksum is stable across LF and CRLF checkouts", () => {
   const lf = "create table example (id integer);\nselect 1;\n";

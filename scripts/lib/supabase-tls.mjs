@@ -8,6 +8,7 @@
  * File pin: supabase/certs/supabase-pooler-root-2021-ca.pem (chứng chỉ công khai,
  * không phải secret). Khi Supabase xoay CA, cập nhật file này.
  *
+ * SUPABASE_DB_SSL_MODE=disable chỉ dùng cho PostgreSQL nội bộ không hỗ trợ TLS.
  * SUPABASE_DB_TLS_INSECURE=1 chỉ dùng để xử lý sự cố cục bộ; sẽ in cảnh báo rõ ràng.
  */
 import { readFileSync } from "node:fs";
@@ -25,6 +26,10 @@ const CA_PATH = path.join(
 );
 
 export function buildSslOptions() {
+  if (process.env.SUPABASE_DB_SSL_MODE === "disable") {
+    console.warn("CẢNH BÁO: SUPABASE_DB_SSL_MODE=disable — kết nối PostgreSQL không dùng TLS.");
+    return false;
+  }
   if (process.env.SUPABASE_DB_TLS_INSECURE === "1") {
     console.warn("CẢNH BÁO: SUPABASE_DB_TLS_INSECURE=1 — KHÔNG xác minh chứng chỉ TLS của server.");
     return { rejectUnauthorized: false };
