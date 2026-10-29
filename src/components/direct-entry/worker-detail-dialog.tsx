@@ -128,8 +128,6 @@ function CccdPreview({
 export type WorkerDetailDialogProps = {
   row: WorkerDirectoryRow | null;
   onOpenChange(open: boolean): void;
-  /** Capability `document_upload` cua actor server-resolved. */
-  canUploadDocuments: boolean;
   /** Tra focus ve nut da mo dialog khi dong (Radix khong tu lam khi khong dung Trigger). */
   openerRef?: { current: HTMLElement | null };
 };
@@ -137,7 +135,6 @@ export type WorkerDetailDialogProps = {
 export function WorkerDetailDialog({
   row,
   onOpenChange,
-  canUploadDocuments,
   openerRef,
 }: WorkerDetailDialogProps) {
   const open = row !== null;
@@ -170,7 +167,7 @@ export function WorkerDetailDialog({
               {" "}chỉ hiển thị theo quyền và phạm vi máy chủ xác nhận; khóa lưu trữ và liên kết
               {" "}ký dài hạn không bao giờ hiển thị trên UI hay log.
             </Dialog.Description>
-            <WorkerDetailBody key={row.entry_id} row={row} canUploadDocuments={canUploadDocuments} />
+            <WorkerDetailBody key={row.entry_id} row={row} />
             <div className={styles.drawerActions}>
               <Dialog.Close asChild>
                 <button type="button" className={styles.secondaryButton}>Đóng</button>
@@ -185,14 +182,11 @@ export function WorkerDetailDialog({
 
 function WorkerDetailBody({
   row,
-  canUploadDocuments,
 }: {
   row: WorkerDirectoryRow;
-  canUploadDocuments: boolean;
 }) {
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   const [detail, setDetail] = useState<WorkerDetailProjection | null>(null);
-  const [entryVersion, setEntryVersion] = useState<number | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
@@ -204,7 +198,6 @@ function WorkerDetailBody({
         return;
       }
       setDetail(projection);
-      setEntryVersion(projection.entryVersion);
       setState("ready");
     });
     return () => { cancelled = true; };
@@ -314,11 +307,11 @@ function WorkerDetailBody({
 
       <WorkerPortraitPanel
         entryId={detail.entryId}
-        entryVersion={entryVersion ?? detail.entryVersion}
+        entryVersion={detail.entryVersion}
         portrait={detail.portrait}
-        canUpload={canUploadDocuments}
-        onEntryVersionChange={(version) => setEntryVersion(version)}
-        onPortraitChanged={() => setReloadKey((value) => value + 1)}
+        canUpload={false}
+        onEntryVersionChange={() => undefined}
+        onPortraitChanged={() => undefined}
       />
 
       <section className={styles.documentSection} aria-labelledby="worker-detail-documents">

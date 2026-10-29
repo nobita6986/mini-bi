@@ -409,3 +409,23 @@ test("HF-R5A-R1: submission network rejection uses the canonical message", () =>
   assert.equal((source.match(/onClick=\{\(\) => void reload\(\)\}/g) ?? []).length >= 2, true);
   assert.equal((source.match(/Thử lại/g) ?? []).length >= 2, true);
 });
+
+test("HF Worker Profile: Xem chi tiết chỉ đọc; Sửa trực tiếp đủ cá nhân, công việc, ngân hàng, tài liệu và tách trạng thái lỗi", () => {
+  const detailDialogCall = source.match(/<WorkerDetailDialog[\s\S]*?\n      \/>/)?.[0] ?? "";
+  assert.ok(detailDialogCall.length > 0);
+  assert.doesNotMatch(detailDialogCall, /canUploadDocuments/);
+
+  // Sửa trực tiếp hiển thị phần ngân hàng, trạng thái làm việc và tài liệu hồ sơ
+  assert.match(source, /mode === "correction" \|\| \(mode === "proposal" && target === "PAYMENT"\)/);
+  assert.match(source, /patch\.payment = paymentBuilt\.proposal/);
+  assert.match(source, /mode === "correction" \? \(\s*<DirectEditFilesSection/);
+  assert.match(source, /data-testid="direct-edit-profile-status"/);
+  assert.match(source, /data-testid="direct-edit-documents-section"/);
+  assert.match(source, /data-testid=\{"direct-edit-doc-input-" \+ kind\}/);
+  assert.match(source, /data-testid=\{"direct-edit-doc-status-" \+ kind\}/);
+  assert.match(source, /data-testid=\{"direct-edit-doc-retry-" \+ kind\}/);
+  assert.match(source, /Thử lại tệp này/);
+  // Không log và không hiển thị tên file nhạy cảm
+  assert.doesNotMatch(source, /console\.(log|info|warn|error)/);
+  assert.doesNotMatch(source, /\.name\b/);
+});

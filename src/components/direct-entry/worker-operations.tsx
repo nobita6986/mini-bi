@@ -34,6 +34,9 @@ import { useNotify } from "@/components/ui/notify-provider";
 import { formatHcmDateTime, shortRef } from "@/lib/direct-entry/submission-lifecycle";
 import {
   BANK_ACCOUNT_SECTION_LABEL,
+  DIRECT_EDIT_DOCUMENT_ACCEPT,
+  DIRECT_EDIT_DOCUMENT_LABELS,
+  DIRECT_EDIT_DOCUMENT_TYPES,
   WORKER_CONFLICT_MESSAGE,
   WORKER_OPERATIONS_TAB_HINTS,
   WORKER_OPERATIONS_TAB_LABELS,
@@ -42,6 +45,8 @@ import {
   WORKER_PROPOSE_TARGET_LABELS,
   applyPage,
   bankAccountSummary,
+  checkDirectEditDocumentFile,
+  directEditDocumentErrorMessage,
   emptyTabPage,
   failLoad,
   initialWorkerTab,
@@ -57,6 +62,7 @@ import {
   submissionsQuery,
   tabScope,
   updateWorkerDirectoryFilter,
+  uploadDirectEditDocument,
   visibleWorkerTabs,
   workerListErrorMessage,
   WORKER_LOAD_FAILED_MESSAGE,
@@ -64,6 +70,7 @@ import {
   workerRowKey,
   workerStatusLabel,
   workersQuery,
+  type DirectEditDocumentType,
   type PageState,
   type TabPage,
   type WorkerOperationsActor,
@@ -674,11 +681,13 @@ export function WorkerOperations({
         key={drawerRow === null ? "none" : drawerRow.entry_id + ":" + drawerMode}
         row={drawerRow}
         mode={drawerMode}
+        canUploadDocuments={canUploadDocuments}
         openerRef={drawerOpenerRef}
         catalogDenied={filterCatalogState === "denied"}
         catalogFor={catalogFor}
         ensureCatalog={ensureCatalog}
         onOpenChange={(open) => { if (!open) setDrawerRow(null); }}
+        onSyncSuccess={() => { void reload(); }}
         onDone={(message) => {
           setDrawerRow(null);
           void reload();
@@ -704,7 +713,6 @@ export function WorkerOperations({
       <WorkerDetailDialog
         key={detailRow === null ? "none" : detailRow.entry_id}
         row={detailRow}
-        canUploadDocuments={canUploadDocuments}
         openerRef={detailOpenerRef}
         onOpenChange={(open) => { if (!open) setDetailRow(null); }}
       />
@@ -878,6 +886,16 @@ function WorkerTable({
   );
 }
 
+const DIRECT_EDIT_FILE_KINDS = DIRECT_EDIT_DOCUMENT_TYPES;
+type DirectEditFileKind = DirectEditDocumentType;
+type DirectEditFileStatus = {
+  state: "selected" | "uploading" | "saved" | "error";
+  text: string;
+};
+const successClass =
+  "rounded-lg border border-emerald-500/40 bg-emerald-50 p-3 text-sm text-emerald-800 " +
+  "dark:bg-emerald-950/40 dark:text-emerald-200";
+
 type EntryBaseline = {
   version: number;
   projectId: string;
@@ -892,6 +910,7 @@ type EntryBaseline = {
   effectiveDate: string | null;
   payment: { state: PaymentState; account_number: string | null; bank_id: string | null;
     bank_name: string | null; account_holder_name: string | null } | null;
+  fileVersions: Readonly<Partial<Record<DirectEditFileKind, number>>>;
 };
 
 async function fetchBaseline(entryId: string): Promise<EntryBaseline | null> {
@@ -917,6 +936,28 @@ async function fetchBaseline(entryId: string): Promise<EntryBaseline | null> {
       ? row.employment_status as Record<string, unknown> : null;
     const payment = typeof row.payment === "object" && row.payment !== null
       ? row.payment as Record<string, unknown> : null;
+    const fileVersions: Partial<Record<DirectEditFileKind, number>> = {};
+    if (typeof row.worker_portrait === "object" && row.worker_portrait !== null) {
+      const currentPortrait = (row.worker_portrait as Record<string, unknown>).current;
+      if (typeof currentPortrait === "object" && currentPortrait !== null &&
+          typeof (currentPortrait as Record<string, unknown>).version === "number") {
+        fileVersions.WORKER_PORTRAIT = (currentPortrait as { version: number }).version;
+      }
+    }
+    if (Array.isArray(row.documents)) {
+      for (const item of row.documents) {
+        if (typeof item !== "object" || item === null) continue;
+        const docRecord = item as Record<string, unknown>;
+        const docType = docRecord.document_type;
+        const docVersion = docRecord.version;
+        if (typeof docType === "string" &&
+            (DIRECT_EDIT_FILE_KINDS as readonly string[]).includes(docType) &&
+            typeof docVersion === "number") {
+          const kind = docType as DirectEditFileKind;
+          fileVersions[kind] = Math.max(fileVersions[kind] ?? 0, docVersion);
+        }
+      }
+    }
     return {
       version: row.version,
       projectId: row.project_id,
@@ -939,6 +980,7 @@ async function fetchBaseline(entryId: string): Promise<EntryBaseline | null> {
         account_holder_name: typeof payment.account_holder_name === "string"
           ? payment.account_holder_name : null,
       },
+      fileVersions,
     };
   } catch {
     return null;
@@ -946,16 +988,19 @@ async function fetchBaseline(entryId: string): Promise<EntryBaseline | null> {
 }
 
 function ProposeDrawer({
-  row, mode, openerRef, catalogDenied, catalogFor, ensureCatalog, onOpenChange, onDone, onConflict,
+  row, mode, canUploadDocuments = false, openerRef, catalogDenied, catalogFor, ensureCatalog,
+  onOpenChange, onSyncSuccess, onDone, onConflict,
 }: {
   row: WorkerDirectoryRow | null;
   mode: "proposal" | "correction";
+  canUploadDocuments?: boolean;
   openerRef: { current: HTMLElement | null };
   /** True khi catalog bi tu choi (403) — gap #2 da biet; copy phai la gioi han quyen, khong phai loi. */
   catalogDenied: boolean;
   catalogFor: (date: string) => DraftCatalog | undefined;
   ensureCatalog: (date: string) => Promise<DraftCatalog>;
   onOpenChange: (open: boolean) => void;
+  onSyncSuccess?: () => void;
   onDone: (message: string) => void;
   onConflict: () => void;
 }) {
@@ -965,6 +1010,11 @@ function ProposeDrawer({
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [profileSaveNotice, setProfileSaveNotice] = useState("");
+  const [selectedFiles, setSelectedFiles] =
+    useState<Partial<Record<DirectEditFileKind, File>>>({});
+  const [fileStatuses, setFileStatuses] =
+    useState<Partial<Record<DirectEditFileKind, DirectEditFileStatus>>>({});
   const [reason, setReason] = useState("");
   const [target, setTarget] = useState<WorkerProposeTarget>("WORKER");
   const [entryForm, setEntryForm] = useState<WorkerEntryFieldForm | null>(null);
@@ -1028,6 +1078,63 @@ function ProposeDrawer({
     }
   }, [row, entryCatalogDate, ensureCatalog]);
 
+  async function retrySingleFile(kind: DirectEditFileKind): Promise<void> {
+    if (row === null || baseline === null || busy) return;
+    const file = selectedFiles[kind];
+    if (!file) return;
+    if (!canUploadDocuments) {
+      setMessage("Tài khoản hiện tại không có quyền tải tài liệu hồ sơ.");
+      return;
+    }
+    const trimmed = reason.trim();
+    const actionReason = trimmed === "" ? null : trimmed;
+    setBusy(true);
+    setMessage(null);
+    setFileStatuses((prev) => ({
+      ...prev,
+      [kind]: { state: "uploading", text: "Đang tải và xác thực tệp…" },
+    }));
+    const outcome = await uploadDirectEditDocument({
+      entryId: row.entry_id,
+      expectedEntryVersion: baseline.version,
+      docType: kind,
+      file,
+      reason: actionReason,
+    });
+    setBaseline((prev) => prev === null ? null : {
+      ...prev,
+      version: outcome.entryVersion,
+      fileVersions: outcome.ok
+        ? { ...prev.fileVersions, [kind]: outcome.documentVersion }
+        : prev.fileVersions,
+    });
+    if (outcome.ok) {
+      setSelectedFiles((prev) => {
+        const next = { ...prev };
+        delete next[kind];
+        return next;
+      });
+      setFileStatuses((prev) => ({
+        ...prev,
+        [kind]: {
+          state: "saved",
+          text: "Đã lưu tài liệu thành công (v" + outcome.documentVersion + ").",
+        },
+      }));
+      onSyncSuccess?.();
+      notify.success({
+        title: "Đã tải tài liệu hồ sơ thành công.",
+        dedupeKey: "worker-file-retry:" + kind,
+      });
+    } else {
+      setFileStatuses((prev) => ({
+        ...prev,
+        [kind]: { state: "error", text: outcome.message },
+      }));
+    }
+    setBusy(false);
+  }
+
   async function submit(): Promise<void> {
     if (row === null || baseline === null) return;
     const trimmed = reason.trim();
@@ -1059,6 +1166,44 @@ function ProposeDrawer({
           setMessage(proposalErrorMessage(built.code));
           return;
         }
+        const baselinePaymentState: PaymentState = baseline.payment?.state ?? "omitted";
+        const baselineAccountNumber = baseline.payment?.account_number ?? "";
+        const baselineBankId = baseline.payment?.bank_id ?? "";
+        const baselineAccountHolder = baseline.payment?.account_holder_name ?? "";
+        const paymentDirty =
+          paymentState !== baselinePaymentState ||
+          (paymentState === "provided" &&
+            (accountNumber.trim() !== baselineAccountNumber ||
+              bankId.trim() !== baselineBankId ||
+              accountHolder.trim() !== baselineAccountHolder));
+        if (paymentDirty) {
+          const activeBankIds = new Set([
+            ...(catalog?.banks ?? []).map((bank) => bank.bank_id),
+            ...(entryCatalog?.banks ?? []).map((bank) => bank.bank_id),
+          ]);
+          const paymentBuilt = buildPaymentProposal({
+            baseline: baseline.payment === null ? null : projectPaymentInput({
+              state: baseline.payment.state,
+              account_number: baseline.payment.account_number,
+              bank_id: baseline.payment.bank_id,
+              account_holder_name: baseline.payment.account_holder_name,
+            }, activeBankIds),
+            draft: {
+              state: paymentState,
+              account_number: accountNumber === "" ? null : accountNumber,
+              bank_id: bankId === "" ? null : bankId,
+              account_holder_name: accountHolder === "" ? null : accountHolder,
+            },
+            activeBankIds,
+          });
+          if (!paymentBuilt.ok && paymentBuilt.code !== "PAYMENT_UNCHANGED") {
+            setMessage(proposalErrorMessage(paymentBuilt.code));
+            return;
+          }
+          if (paymentBuilt.ok) {
+            patch.payment = paymentBuilt.proposal;
+          }
+        }
         if (targetStatus !== "") {
           const status = buildWorkStatusProposal({
             baseline: baseline.status === null ? null : {
@@ -1073,53 +1218,177 @@ function ProposeDrawer({
           if (!status.ok) { setMessage(proposalErrorMessage(status.code)); return; }
           patch.employment_status = status.proposal;
         }
-        if (Object.keys(patch).length === 0) {
+        const pendingFileKinds = DIRECT_EDIT_FILE_KINDS.filter(
+          (kind) => selectedFiles[kind] !== undefined,
+        );
+        if (pendingFileKinds.length > 0 && !canUploadDocuments) {
+          setMessage("Tài khoản hiện tại không có quyền tải tài liệu hồ sơ.");
+          return;
+        }
+        const hasFieldPatch = Object.keys(patch).length > 0;
+        if (!hasFieldPatch && pendingFileKinds.length === 0) {
           setMessage("Hồ sơ chưa có thay đổi.");
           return;
         }
         setBusy(true);
-        try {
-          const response = await fetch(API + "/entries/" + encodeURIComponent(row.entry_id) +
-            "/privileged-edit", {
-            method: "POST",
-            headers: {
-              "content-type": "application/json",
-              "idempotency-key": crypto.randomUUID(),
-            },
-            credentials: "same-origin",
-            body: JSON.stringify({
-              expected_entry_version: baseline.version,
-              patch,
-              reason: actionReason,
-            }),
-          });
-          setBusy(false);
-          if (response.status !== 200) {
+        setMessage(null);
+        let currentVersion = baseline.version;
+        if (hasFieldPatch) {
+          try {
+            const response = await fetch(API + "/entries/" + encodeURIComponent(row.entry_id) +
+              "/privileged-edit", {
+              method: "POST",
+              headers: {
+                "content-type": "application/json",
+                "idempotency-key": crypto.randomUUID(),
+              },
+              credentials: "same-origin",
+              body: JSON.stringify({
+                expected_entry_version: currentVersion,
+                patch,
+                reason: actionReason,
+              }),
+            });
             const payload = await response.json().catch(() => null);
-            const errorCode =
-              typeof payload === "object" &&
-              payload !== null &&
-              typeof (payload as { code?: unknown }).code === "string"
-                ? (payload as { code: string }).code
-                : undefined;
-            if (response.status === 409 && (errorCode === undefined || errorCode === "VERSION_CONFLICT")) {
-              onConflict();
+            if (response.status !== 200) {
+              setBusy(false);
+              const errorCode =
+                typeof payload === "object" &&
+                payload !== null &&
+                typeof (payload as { code?: unknown }).code === "string"
+                  ? (payload as { code: string }).code
+                  : undefined;
+              if (response.status === 409 && (errorCode === undefined || errorCode === "VERSION_CONFLICT")) {
+                onConflict();
+                return;
+              }
+              notify.error({
+                title: privilegedEditErrorMessage(response.status, errorCode),
+                dedupeKey: "worker-privileged-edit-err",
+              });
               return;
             }
+            const nextVersion =
+              typeof payload === "object" &&
+              payload !== null &&
+              typeof (payload as { version?: unknown }).version === "number"
+                ? (payload as { version: number }).version
+                : currentVersion + 1;
+            currentVersion = nextVersion;
+            const nextWorkerDetails: WorkerDetails =
+              patch.worker_details !== undefined
+                ? (patch.worker_details as WorkerDetails)
+                : baseline.workerDetails;
+            const nextStatus: WorkerStatus | null =
+              targetStatus !== "" ? (targetStatus as WorkerStatus) : baseline.status;
+            const nextEffectiveDate: string | null =
+              targetStatus !== ""
+                ? (effectiveDate === ""
+                    ? (baseline.effectiveDate ?? row.first_work_date)
+                    : effectiveDate)
+                : baseline.effectiveDate;
+            const nextPayment =
+              patch.payment !== undefined
+                ? {
+                    state: paymentState,
+                    account_number: paymentState === "provided" ? accountNumber.trim() : null,
+                    bank_id: paymentState === "provided" ? bankId.trim() : null,
+                    bank_name: baseline.payment?.bank_name ?? null,
+                    account_holder_name: paymentState === "provided" ? accountHolder.trim() : null,
+                  }
+                : baseline.payment;
+            setBaseline((prev) => prev === null ? null : {
+              ...prev,
+              version: nextVersion,
+              projectId: entryForm.project_id,
+              firstWorkDate: entryForm.first_work_date,
+              employeeCode: entryForm.employee_code,
+              recruiterId: entryForm.recruiter_id,
+              laborType: entryForm.labor_type,
+              workerDetails: nextWorkerDetails,
+              status: nextStatus,
+              effectiveDate: nextEffectiveDate,
+              payment: nextPayment,
+            });
+            if (targetStatus !== "") {
+              setTargetStatus("");
+              setLeaveReason("");
+            }
+            setProfileSaveNotice(
+              "Thông tin hồ sơ (cá nhân, công việc, ngân hàng): Đã lưu thành công.",
+            );
+            if (pendingFileKinds.length > 0) {
+              onSyncSuccess?.();
+            }
+          } catch {
+            setBusy(false);
             notify.error({
-              title: privilegedEditErrorMessage(response.status, errorCode),
+              title: "Không lưu được chỉnh sửa trực tiếp. Vui lòng thử lại.",
               dedupeKey: "worker-privileged-edit-err",
             });
             return;
           }
-          onDone("Đã lưu chỉnh sửa trực tiếp.");
-        } catch {
-          setBusy(false);
-          notify.error({
-            title: "Không lưu được chỉnh sửa trực tiếp. Vui lòng thử lại.",
-            dedupeKey: "worker-privileged-edit-err",
-          });
         }
+        if (pendingFileKinds.length === 0) {
+          setBusy(false);
+          onDone("Đã lưu chỉnh sửa trực tiếp.");
+          return;
+        }
+        let failedCount = 0;
+        for (const kind of pendingFileKinds) {
+          const file = selectedFiles[kind];
+          if (!file) continue;
+          setFileStatuses((prev) => ({
+            ...prev,
+            [kind]: { state: "uploading", text: "Đang tải và xác thực tệp…" },
+          }));
+          const outcome = await uploadDirectEditDocument({
+            entryId: row.entry_id,
+            expectedEntryVersion: currentVersion,
+            docType: kind,
+            file,
+            reason: actionReason,
+          });
+          currentVersion = outcome.entryVersion;
+          setBaseline((prev) => prev === null ? null : {
+            ...prev,
+            version: outcome.entryVersion,
+            fileVersions: outcome.ok
+              ? { ...prev.fileVersions, [kind]: outcome.documentVersion }
+              : prev.fileVersions,
+          });
+          if (outcome.ok) {
+            setSelectedFiles((prev) => {
+              const next = { ...prev };
+              delete next[kind];
+              return next;
+            });
+            setFileStatuses((prev) => ({
+              ...prev,
+              [kind]: {
+                state: "saved",
+                text: "Đã lưu tài liệu thành công (v" + outcome.documentVersion + ").",
+              },
+            }));
+            onSyncSuccess?.();
+          } else {
+            failedCount += 1;
+            setFileStatuses((prev) => ({
+              ...prev,
+              [kind]: { state: "error", text: outcome.message },
+            }));
+          }
+        }
+        setBusy(false);
+        if (failedCount === 0) {
+          onDone("Đã lưu chỉnh sửa trực tiếp.");
+          return;
+        }
+        setMessage(
+          hasFieldPatch
+            ? "Thông tin hồ sơ đã được lưu. Một số tài liệu chưa tải lên được — vui lòng kiểm tra từng tệp bên dưới và thử lại."
+            : "Một số tài liệu chưa tải lên được — vui lòng kiểm tra từng tệp bên dưới và thử lại.",
+        );
         return;
       }
       if (!built.ok) { setMessage(proposalErrorMessage(built.code)); return; }
@@ -1266,6 +1535,11 @@ function ProposeDrawer({
                 Các giá trị hiện tại được nạp sẵn. Chỉ nội dung đã thay đổi mới được gửi; dữ liệu khác
                 giữ nguyên theo hồ sơ đang lưu.
               </p>
+              {profileSaveNotice !== "" ? (
+                <p role="status" data-testid="direct-edit-profile-status" className={successClass}>
+                  {profileSaveNotice}
+                </p>
+              ) : null}
               {loading ? (
                 <p role="status" className="rounded-md border border-blue-500/30 bg-blue-50 p-3 text-sm
                   text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">
@@ -1466,8 +1740,15 @@ function ProposeDrawer({
                 )
               ) : null}
 
-              {mode === "proposal" && target === "PAYMENT" ? (
-                <>
+              {(mode === "correction" || (mode === "proposal" && target === "PAYMENT")) ? (
+                <section aria-labelledby="worker-bank-fields" className="space-y-4 rounded-xl
+                  border border-border p-4">
+                  <div>
+                    <h3 id="worker-bank-fields" className="font-semibold">{BANK_ACCOUNT_SECTION_LABEL}</h3>
+                    <p className="mt-1 text-xs text-muted">
+                      Cập nhật tên chủ tài khoản, số tài khoản và ngân hàng.
+                    </p>
+                  </div>
                   <div className="flex flex-col gap-1.5">
                     <label htmlFor="bank-state" className="text-sm font-medium">
                       Trạng thái thông tin tài khoản ngân hàng
@@ -1506,7 +1787,7 @@ function ProposeDrawer({
                       disabled={paymentState !== "provided"}
                       onChange={(event) => setAccountHolder(event.target.value)} />
                   </div>
-                </>
+                </section>
               ) : null}
 
               {(mode === "correction" || target === "WORK_STATUS") ? (
@@ -1548,6 +1829,60 @@ function ProposeDrawer({
                     </div>
                   ) : null}
                 </>
+              ) : null}
+
+              {mode === "correction" ? (
+                <DirectEditFilesSection
+                  canUpload={canUploadDocuments}
+                  disabled={busy || loading || baseline === null}
+                  fileVersions={baseline?.fileVersions ?? {}}
+                  selectedFiles={selectedFiles}
+                  fileStatuses={fileStatuses}
+                  onSelectFile={(kind, file) => {
+                    setMessage(null);
+                    if (file === null) {
+                      setSelectedFiles((prev) => {
+                        const next = { ...prev };
+                        delete next[kind];
+                        return next;
+                      });
+                      setFileStatuses((prev) => {
+                        const next = { ...prev };
+                        delete next[kind];
+                        return next;
+                      });
+                      return;
+                    }
+                    const check = checkDirectEditDocumentFile(kind, file);
+                    if (!check.ok) {
+                      setSelectedFiles((prev) => {
+                        const next = { ...prev };
+                        delete next[kind];
+                        return next;
+                      });
+                      setFileStatuses((prev) => ({
+                        ...prev,
+                        [kind]: {
+                          state: "error",
+                          text: directEditDocumentErrorMessage(kind, check.code),
+                        },
+                      }));
+                      return;
+                    }
+                    const hasExisting = (baseline?.fileVersions?.[kind] ?? 0) > 0;
+                    setSelectedFiles((prev) => ({ ...prev, [kind]: file }));
+                    setFileStatuses((prev) => ({
+                      ...prev,
+                      [kind]: {
+                        state: "selected",
+                        text: hasExisting
+                          ? "Đã chọn tệp mới để thay thế tài liệu hiện có."
+                          : "Đã chọn tệp mới để tải lên.",
+                      },
+                    }));
+                  }}
+                  onRetryFile={(kind) => { void retrySingleFile(kind); }}
+                />
               ) : null}
 
               <div className="flex flex-col gap-1.5">
@@ -1724,5 +2059,128 @@ function WorkerExportDialog({
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
+  );
+}
+
+function DirectEditFilesSection({
+  canUpload,
+  disabled,
+  fileVersions,
+  selectedFiles,
+  fileStatuses,
+  onSelectFile,
+  onRetryFile,
+}: {
+  canUpload: boolean;
+  disabled: boolean;
+  fileVersions: Readonly<Partial<Record<DirectEditDocumentType, number>>>;
+  selectedFiles: Readonly<Partial<Record<DirectEditDocumentType, File>>>;
+  fileStatuses: Readonly<Partial<Record<DirectEditDocumentType, DirectEditFileStatus>>>;
+  onSelectFile: (kind: DirectEditDocumentType, file: File | null) => void;
+  onRetryFile: (kind: DirectEditDocumentType) => void;
+}) {
+  const smallBtnClass = buttonClasses({ variant: "secondary", size: "sm" });
+  return (
+    <section
+      aria-labelledby="worker-files-heading"
+      data-testid="direct-edit-documents-section"
+      className="space-y-4 rounded-xl border border-border p-4"
+    >
+      <div>
+        <h3 id="worker-files-heading" className="font-semibold">Tài liệu hồ sơ</h3>
+        <p className="mt-1 text-xs text-muted">
+          Tải mới hoặc thay thế ảnh NLĐ, CCCD mặt trước, CCCD mặt sau và hợp đồng lao động. Mỗi tệp
+          được tải lên kho lưu trữ riêng tư và xác thực độc lập.
+        </p>
+      </div>
+      {!canUpload ? (
+        <p role="status" data-testid="direct-edit-documents-denied" className={infoClass}>
+          Tài khoản hiện tại chưa được cấp quyền tải tài liệu hồ sơ (document_upload). Bạn vẫn có
+          thể lưu thông tin cá nhân, công việc và tài khoản ngân hàng.
+        </p>
+      ) : null}
+      <div className="space-y-3">
+        {DIRECT_EDIT_DOCUMENT_TYPES.map((kind) => {
+          const currentVersion = fileVersions[kind] ?? 0;
+          const selectedFile = selectedFiles[kind];
+          const status = fileStatuses[kind];
+          const inputId = "direct-edit-doc-" + kind;
+          return (
+            <div
+              key={kind}
+              data-testid={"direct-edit-doc-row-" + kind}
+              className="rounded-lg border border-border bg-muted/5 p-3 space-y-2"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <label htmlFor={inputId} className="text-sm font-medium text-foreground">
+                  {DIRECT_EDIT_DOCUMENT_LABELS[kind]}
+                </label>
+                <StatusBadge tone={currentVersion > 0 ? "success" : "neutral"}>
+                  {currentVersion > 0
+                    ? "Hiện có v" + currentVersion + " · Thay thế"
+                    : "Chưa có · Tải mới"}
+                </StatusBadge>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  id={inputId}
+                  data-testid={"direct-edit-doc-input-" + kind}
+                  type="file"
+                  accept={DIRECT_EDIT_DOCUMENT_ACCEPT[kind]}
+                  disabled={disabled || !canUpload || status?.state === "uploading"}
+                  className={inputClass}
+                  onChange={(event) => {
+                    const nextFile = event.currentTarget.files?.[0] ?? null;
+                    onSelectFile(kind, nextFile);
+                    event.currentTarget.value = "";
+                  }}
+                />
+                {selectedFile !== undefined && status?.state !== "uploading" ? (
+                  <button
+                    type="button"
+                    className={smallBtnClass}
+                    disabled={disabled}
+                    onClick={() => onSelectFile(kind, null)}
+                  >
+                    Bỏ chọn
+                  </button>
+                ) : null}
+              </div>
+              {selectedFile !== undefined ? (
+                <p className="text-xs text-muted">
+                  Tệp đã chọn · {(selectedFile.size / (1024 * 1024)).toFixed(2)} MiB
+                </p>
+              ) : null}
+              {status !== undefined ? (
+                <div
+                  role={status.state === "error" ? "alert" : "status"}
+                  data-testid={"direct-edit-doc-status-" + kind}
+                  className={
+                    status.state === "error"
+                      ? "flex flex-wrap items-center justify-between gap-2 " + errorClass
+                      : status.state === "saved"
+                        ? successClass
+                        : infoClass
+                  }
+                >
+                  <span>{status.text}</span>
+                  {status.state === "error" && selectedFile !== undefined ? (
+                    <button
+                      type="button"
+                      data-testid={"direct-edit-doc-retry-" + kind}
+                      className={smallBtnClass}
+                      disabled={disabled}
+                      onClick={() => onRetryFile(kind)}
+                    >
+                      Thử lại tệp này
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    </section>
   );
 }

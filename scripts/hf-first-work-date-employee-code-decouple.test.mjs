@@ -883,3 +883,256 @@ test("TS/API/UI 1..9: cross-year proposal, single-field direct-edit patch, sanit
     );
   }
 });
+
+test("HF Worker Profile Direct Edit: banking (payment) in direct_entry_privileged_edit and document upload/replace on SUBMITTED entries", async () => {
+  const { db, names } = await buildDb();
+  try {
+    assert.ok(
+      names.includes("20261030100000_hf_worker_profile_direct_edit_banking_and_documents.sql"),
+      "Hotfix migration 20261030100000 is present in supabase/migrations",
+    );
+    await seedActorsAndCatalog(db);
+    await db.query(
+      "insert into public.direct_entry_banks (bank_id, display_name, active) values ('VCB', 'Vietcombank', true) on conflict (bank_id) do nothing",
+    );
+    await db.query(
+      "insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from, is_current)" +
+        " values ($1, 'document_upload', '2020-01-01', true), ($2, 'document_upload', '2020-01-01', true), ($3, 'document_upload', '2020-01-01', true)",
+      [ADMIN_APP, PM_A_APP, PM_B_APP],
+    );
+
+    const worker = await seedSubmittedWorker(db, {
+      employeeCode: "hrp-2025-000088",
+      firstWorkDate: "2026-03-10",
+      cccd: "079095000088",
+      name: "Nguyen Thi Ho So",
+      projectId: PROJ_A,
+      recruiterId: REC_A,
+      teamId: TEAM_A,
+    });
+
+    // 1. Assigned PM (PM_A) updates personal + banking (payment: provided) via direct_entry_privileged_edit
+    const editPaymentRes = (
+      await db.query(
+        "select public.direct_entry_privileged_edit($1::uuid, $2::uuid, $3::uuid, $4::integer, $5::jsonb, $6::text, $7::text) as data",
+        [
+          PM_A_AUTH,
+          PM_A_APP,
+          worker.entryId,
+          1,
+          JSON.stringify({
+            worker_details: {
+              ...workerDetails("079095000088", "Nguyen Thi Ho So Moi"),
+              phone: { state: "provided", value: "0912345678" },
+            },
+            payment: {
+              state: "provided",
+              account_number: "19038889990001",
+              bank_id: "VCB",
+              account_holder_name: "NGUYEN THI HO SO MOI",
+            },
+          }),
+          "Cap nhat thong tin ca nhan va ngan hang",
+          "hf-direct-edit-payment-1",
+        ],
+      )
+    ).rows[0].data;
+    assert.equal(editPaymentRes.version, 2);
+
+    const paymentRow1 = (
+      await db.query(
+        "select state, account_number, bank_id, account_holder_name, version from public.direct_entry_payments where entry_id = $1::uuid",
+        [worker.entryId],
+      )
+    ).rows[0];
+    assert.deepEqual(paymentRow1, {
+      state: "provided",
+      account_number: "19038889990001",
+      bank_id: "VCB",
+      account_holder_name: "NGUYEN THI HO SO MOI",
+      version: 1,
+    });
+
+    // 2. Admin updates banking state to intentionally_blank ( increments payment.version )
+    const editPaymentBlank = (
+      await db.query(
+        "select public.direct_entry_privileged_edit($1::uuid, $2::uuid, $3::uuid, $4::integer, $5::jsonb, $6::text, $7::text) as data",
+        [
+          ADMIN_AUTH,
+          ADMIN_APP,
+          worker.entryId,
+          editPaymentRes.version,
+          JSON.stringify({
+            payment: {
+              state: "intentionally_blank",
+              account_number: null,
+              bank_id: null,
+              account_holder_name: null,
+            },
+          }),
+          null,
+          "hf-direct-edit-payment-2",
+        ],
+      )
+    ).rows[0].data;
+    assert.equal(editPaymentBlank.version, editPaymentRes.version + 1);
+
+    const paymentRow2 = (
+      await db.query(
+        "select state, account_number, bank_id, account_holder_name, version from public.direct_entry_payments where entry_id = $1::uuid",
+        [worker.entryId],
+      )
+    ).rows[0];
+    assert.deepEqual(paymentRow2, {
+      state: "intentionally_blank",
+      account_number: null,
+      bank_id: null,
+      account_holder_name: null,
+      version: 2,
+    });
+
+    // 3. Invalid payment payload is rejected with 22023 and Out-of-scope PM_B is rejected with 42501
+    await assert.rejects(
+      db.query(
+        "select public.direct_entry_privileged_edit($1::uuid, $2::uuid, $3::uuid, $4::integer, $5::jsonb, null, 'hf-bad-payment')",
+        [
+          ADMIN_AUTH,
+          ADMIN_APP,
+          worker.entryId,
+          editPaymentBlank.version,
+          JSON.stringify({
+            payment: {
+              state: "provided",
+              account_number: "not-digits",
+              bank_id: "VCB",
+              account_holder_name: "NGUYEN THI HO SO",
+            },
+          }),
+        ],
+      ),
+      (err) => err.code === "22023",
+    );
+    await assert.rejects(
+      db.query(
+        "select public.direct_entry_privileged_edit($1::uuid, $2::uuid, $3::uuid, $4::integer, $5::jsonb, null, 'hf-denied-pm-b')",
+        [
+          PM_B_AUTH,
+          PM_B_APP,
+          worker.entryId,
+          editPaymentBlank.version,
+          JSON.stringify({
+            payment: {
+              state: "unknown",
+              account_number: null,
+              bank_id: null,
+              account_holder_name: null,
+            },
+          }),
+        ],
+      ),
+      (err) => err.code === "42501",
+    );
+
+    // 4. Assigned PM (PM_A) with document_upload can upload new and replacement documents
+    //    (WORKER_PORTRAIT, CCCD_FRONT, CCCD_BACK, EMPLOYMENT_CONTRACT) on SUBMITTED entry
+    let currentEntryVersion = editPaymentBlank.version;
+    for (const [docType, mimeType] of [
+      ["WORKER_PORTRAIT", "image/jpeg"],
+      ["CCCD_FRONT", "image/jpeg"],
+      ["CCCD_BACK", "image/png"],
+      ["EMPLOYMENT_CONTRACT", "application/pdf"],
+    ]) {
+      // Initial upload (version 1)
+      const res1 = (
+        await db.query(
+          "select public.direct_entry_reserve_document_direct_upload($1::uuid, $2::uuid, $3::uuid, $4::integer, $5::text, $6::text, 1024, $7::text, 'Direct edit upload v1') as data",
+          [
+            PM_A_AUTH,
+            PM_A_APP,
+            worker.entryId,
+            currentEntryVersion,
+            docType,
+            `hf-doc-${docType}-v1-res`,
+            mimeType,
+          ],
+        )
+      ).rows[0].data;
+      assert.equal(res1.version, 1);
+      assert.equal(res1.upload_status, "QUEUED");
+
+      const ctx1 = (
+        await db.query(
+          "select public.direct_entry_document_direct_context($1::uuid, $2::uuid, $3::uuid, $4::uuid, 'finalize') as data",
+          [PM_A_AUTH, PM_A_APP, worker.entryId, res1.document_id],
+        )
+      ).rows[0].data;
+      assert.equal(ctx1.document_id, res1.document_id);
+
+      const fin1 = (
+        await db.query(
+          "select public.direct_entry_finalize_document_direct_upload($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::integer, $6::text, 'validated', $7::text, 1024, $8::text) as data",
+          [
+            PM_A_AUTH,
+            PM_A_APP,
+            worker.entryId,
+            res1.document_id,
+            res1.entry_version,
+            `hf-doc-${docType}-v1-fin`,
+            "a".repeat(64),
+            mimeType,
+          ],
+        )
+      ).rows[0].data;
+      assert.equal(fin1.upload_status, "READY");
+      assert.equal(fin1.version, 1);
+      currentEntryVersion = fin1.entry_version;
+
+      // Replacement upload (version 2)
+      const res2 = (
+        await db.query(
+          "select public.direct_entry_reserve_document_direct_upload($1::uuid, $2::uuid, $3::uuid, $4::integer, $5::text, $6::text, 2048, $7::text, 'Direct edit replace v2') as data",
+          [
+            PM_A_AUTH,
+            PM_A_APP,
+            worker.entryId,
+            currentEntryVersion,
+            docType,
+            `hf-doc-${docType}-v2-res`,
+            mimeType,
+          ],
+        )
+      ).rows[0].data;
+      assert.equal(res2.version, 2);
+
+      const fin2 = (
+        await db.query(
+          "select public.direct_entry_finalize_document_direct_upload($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::integer, $6::text, 'validated', $7::text, 2048, $8::text) as data",
+          [
+            PM_A_AUTH,
+            PM_A_APP,
+            worker.entryId,
+            res2.document_id,
+            res2.entry_version,
+            `hf-doc-${docType}-v2-fin`,
+            "b".repeat(64),
+            mimeType,
+          ],
+        )
+      ).rows[0].data;
+      assert.equal(fin2.upload_status, "READY");
+      assert.equal(fin2.version, 2);
+      currentEntryVersion = fin2.entry_version;
+    }
+
+    // 5. Out-of-scope PM_B (even with document_upload) is denied document upload on SUBMITTED entry
+    await assert.rejects(
+      db.query(
+        "select public.direct_entry_reserve_document_direct_upload($1::uuid, $2::uuid, $3::uuid, $4::integer, 'WORKER_PORTRAIT', 'hf-denied-doc-pm-b', 1024, 'image/jpeg', null)",
+        [PM_B_AUTH, PM_B_APP, worker.entryId, currentEntryVersion],
+      ),
+      (err) => err.code === "42501",
+    );
+  } finally {
+    await db.close();
+  }
+});

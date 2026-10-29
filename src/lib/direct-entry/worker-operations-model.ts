@@ -586,6 +586,376 @@ export function rowsWithProposeCta(
   return rows.filter((row) => proposeCta(row).show);
 }
 
+/* ---------- HF-Worker-Profile: Direct Edit (Sửa trực tiếp) tài liệu hồ sơ ---------- */
+
+export const DIRECT_EDIT_DOCUMENT_TYPES = [
+  "WORKER_PORTRAIT",
+  "CCCD_FRONT",
+  "CCCD_BACK",
+  "EMPLOYMENT_CONTRACT",
+] as const;
+
+export type DirectEditDocumentType = (typeof DIRECT_EDIT_DOCUMENT_TYPES)[number];
+
+export const DIRECT_EDIT_DOCUMENT_LABELS: Readonly<Record<DirectEditDocumentType, string>> =
+  Object.freeze({
+    WORKER_PORTRAIT: "Ảnh NLĐ",
+    CCCD_FRONT: "CCCD mặt trước",
+    CCCD_BACK: "CCCD mặt sau",
+    EMPLOYMENT_CONTRACT: "Hợp đồng lao động",
+  });
+
+export const DIRECT_EDIT_DOCUMENT_ACCEPT: Readonly<Record<DirectEditDocumentType, string>> =
+  Object.freeze({
+    WORKER_PORTRAIT: "image/jpeg,image/png",
+    CCCD_FRONT: "image/jpeg,image/png,application/pdf",
+    CCCD_BACK: "image/jpeg,image/png,application/pdf",
+    EMPLOYMENT_CONTRACT: "image/jpeg,image/png,application/pdf",
+  });
+
+export const DIRECT_EDIT_DOCUMENT_MAX_BYTES = 10 * 1024 * 1024;
+
+export type DirectEditFileLike = {
+  size: number;
+  type: string;
+};
+
+export type DirectEditDocumentFileCheck =
+  | {
+      ok: true;
+      mimeType: "image/jpeg" | "image/png" | "application/pdf";
+      sizeBytes: number;
+    }
+  | {
+      ok: false;
+      code: "DOCUMENT_FILE_REQUIRED" | "DOCUMENT_SIZE_INVALID" | "DOCUMENT_MIME_INVALID";
+    };
+
+export function checkDirectEditDocumentFile(
+  docType: DirectEditDocumentType,
+  file: DirectEditFileLike | null | undefined,
+): DirectEditDocumentFileCheck {
+  if (!file) {
+    return { ok: false, code: "DOCUMENT_FILE_REQUIRED" };
+  }
+  if (
+    typeof file.size !== "number" ||
+    !Number.isFinite(file.size) ||
+    file.size < 1 ||
+    file.size > DIRECT_EDIT_DOCUMENT_MAX_BYTES
+  ) {
+    return { ok: false, code: "DOCUMENT_SIZE_INVALID" };
+  }
+  const mime = typeof file.type === "string" ? file.type.trim().toLowerCase() : "";
+  if (docType === "WORKER_PORTRAIT") {
+    if (mime !== "image/jpeg" && mime !== "image/png") {
+      return { ok: false, code: "DOCUMENT_MIME_INVALID" };
+    }
+    return { ok: true, mimeType: mime, sizeBytes: file.size };
+  }
+  if (mime !== "image/jpeg" && mime !== "image/png" && mime !== "application/pdf") {
+    return { ok: false, code: "DOCUMENT_MIME_INVALID" };
+  }
+  return { ok: true, mimeType: mime, sizeBytes: file.size };
+}
+
+export function directEditDocumentErrorMessage(
+  docType: DirectEditDocumentType,
+  code?: string | null,
+): string {
+  const label = DIRECT_EDIT_DOCUMENT_LABELS[docType];
+  if (code === "DOCUMENT_FILE_REQUIRED") {
+    return `${label}: Hãy chọn tệp trước khi tải lên.`;
+  }
+  if (code === "DOCUMENT_SIZE_INVALID") {
+    return `${label}: Tệp phải lớn hơn 0 và không vượt quá 10 MiB.`;
+  }
+  if (code === "DOCUMENT_MIME_INVALID") {
+    return docType === "WORKER_PORTRAIT"
+      ? `${label}: Chỉ chấp nhận ảnh JPEG hoặc PNG.`
+      : `${label}: Chỉ chấp nhận tệp JPEG, PNG hoặc PDF.`;
+  }
+  if (code === "DOCUMENT_CONTENT_INVALID") {
+    return `${label}: Nội dung tệp không khớp định dạng đã chọn.`;
+  }
+  if (code === "DOCUMENT_VERSION_CONFLICT" || code === "VERSION_CONFLICT") {
+    return `${label}: Dữ liệu hồ sơ đã thay đổi. Vui lòng bấm Thử lại cho tệp này.`;
+  }
+  if (code === "DOCUMENT_DENIED" || code === "ACTOR_NOT_AVAILABLE") {
+    return `${label}: Bạn không có quyền tải tài liệu này.`;
+  }
+  if (code === "DOCUMENT_STORAGE_UNAVAILABLE" || code === "DOCUMENT_UPLOAD_MISSING") {
+    return `${label}: Kho lưu trữ chưa sẵn sàng. Bạn có thể bấm Thử lại cho tệp này.`;
+  }
+  if (code === "DOCUMENT_FINALIZE_UNAVAILABLE") {
+    return `${label}: Chưa hoàn tất ghi nhận tệp. Bạn có thể bấm Thử lại cho tệp này.`;
+  }
+  return `${label}: Không tải lên được. Bạn có thể bấm Thử lại cho tệp này.`;
+}
+
+export type DirectEditSingleDocumentUploadResult =
+  | {
+      ok: true;
+      docType: DirectEditDocumentType;
+      documentId: string;
+      documentVersion: number;
+      entryVersion: number;
+      message: string;
+    }
+  | {
+      ok: false;
+      docType: DirectEditDocumentType;
+      conflict: boolean;
+      code: string;
+      entryVersion: number;
+      message: string;
+    };
+
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+async function readSafeJson(response: Response): Promise<unknown> {
+  try {
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
+export async function uploadDirectEditDocument(input: {
+  entryId: string;
+  expectedEntryVersion: number;
+  docType: DirectEditDocumentType;
+  file: DirectEditFileLike & BodyInit;
+  reason: string | null;
+  idempotencyKey?: string;
+  fetchImpl?: typeof fetch;
+}): Promise<DirectEditSingleDocumentUploadResult> {
+  const {
+    entryId,
+    expectedEntryVersion,
+    docType,
+    file,
+    reason,
+    idempotencyKey = crypto.randomUUID(),
+    fetchImpl = fetch,
+  } = input;
+
+  const check = checkDirectEditDocumentFile(docType, file);
+  if (!check.ok) {
+    return {
+      ok: false,
+      docType,
+      conflict: false,
+      code: check.code,
+      entryVersion: expectedEntryVersion,
+      message: directEditDocumentErrorMessage(docType, check.code),
+    };
+  }
+
+  const baseUrl = `/api/direct-entry/entries/${encodeURIComponent(entryId)}/documents`;
+  let currentEntryVersion = expectedEntryVersion;
+
+  try {
+    const reserveRes = await fetchImpl(baseUrl, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": idempotencyKey,
+      },
+      body: JSON.stringify({
+        document_type: docType,
+        expected_entry_version: expectedEntryVersion,
+        size_bytes: check.sizeBytes,
+        mime_type: check.mimeType,
+        reason: reason ?? `Cập nhật ${DIRECT_EDIT_DOCUMENT_LABELS[docType]}`,
+      }),
+    });
+    const reservePayload = await readSafeJson(reserveRes);
+    if (reserveRes.status === 409) {
+      return {
+        ok: false,
+        docType,
+        conflict: true,
+        code: "DOCUMENT_VERSION_CONFLICT",
+        entryVersion: currentEntryVersion,
+        message: directEditDocumentErrorMessage(docType, "DOCUMENT_VERSION_CONFLICT"),
+      };
+    }
+    if (
+      !reserveRes.ok ||
+      !isJsonObject(reservePayload) ||
+      reservePayload.ok !== true ||
+      typeof reservePayload.document_id !== "string" ||
+      typeof reservePayload.entry_version !== "number"
+    ) {
+      const code =
+        isJsonObject(reservePayload) && typeof reservePayload.code === "string"
+          ? reservePayload.code
+          : reserveRes.status === 403
+            ? "DOCUMENT_DENIED"
+            : "DOCUMENT_RESPONSE_INVALID";
+      return {
+        ok: false,
+        docType,
+        conflict: false,
+        code,
+        entryVersion: currentEntryVersion,
+        message: directEditDocumentErrorMessage(docType, code),
+      };
+    }
+
+    const documentId = reservePayload.document_id;
+    const documentVersion =
+      typeof reservePayload.version === "number" ? reservePayload.version : 1;
+    currentEntryVersion = reservePayload.entry_version;
+
+    const uploadInfo = reservePayload.upload;
+    if (
+      isJsonObject(uploadInfo) &&
+      uploadInfo.method === "PUT" &&
+      typeof uploadInfo.url === "string" &&
+      isJsonObject(uploadInfo.headers)
+    ) {
+      const putHeaders: Record<string, string> = {};
+      for (const [headerName, headerValue] of Object.entries(uploadInfo.headers)) {
+        if (typeof headerValue === "string") {
+          putHeaders[headerName] = headerValue;
+        }
+      }
+      const putRes = await fetchImpl(uploadInfo.url, {
+        method: "PUT",
+        headers: putHeaders,
+        body: file,
+      });
+      if (!putRes.ok) {
+        return {
+          ok: false,
+          docType,
+          conflict: false,
+          code: "DOCUMENT_STORAGE_UNAVAILABLE",
+          entryVersion: currentEntryVersion,
+          message: directEditDocumentErrorMessage(docType, "DOCUMENT_STORAGE_UNAVAILABLE"),
+        };
+      }
+    }
+
+    const finalizeUrl = `${baseUrl}/${encodeURIComponent(documentId)}/finalize`;
+    const finalizeRes = await fetchImpl(finalizeUrl, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": `${idempotencyKey}:finalize`,
+      },
+      body: JSON.stringify({
+        expected_entry_version: currentEntryVersion,
+      }),
+    });
+    const finalizePayload = await readSafeJson(finalizeRes);
+    if (finalizeRes.status === 422) {
+      currentEntryVersion += 1;
+    }
+    if (finalizeRes.status === 409) {
+      const conflictCode =
+        isJsonObject(finalizePayload) && typeof finalizePayload.code === "string"
+          ? finalizePayload.code
+          : "DOCUMENT_VERSION_CONFLICT";
+      return {
+        ok: false,
+        docType,
+        conflict: conflictCode === "DOCUMENT_VERSION_CONFLICT" || conflictCode === "VERSION_CONFLICT",
+        code: conflictCode,
+        entryVersion: currentEntryVersion,
+        message: directEditDocumentErrorMessage(docType, conflictCode),
+      };
+    }
+    if (
+      !finalizeRes.ok ||
+      !isJsonObject(finalizePayload) ||
+      finalizePayload.ok !== true
+    ) {
+      const code =
+        isJsonObject(finalizePayload) && typeof finalizePayload.code === "string"
+          ? finalizePayload.code
+          : finalizeRes.status === 403
+            ? "DOCUMENT_DENIED"
+            : "DOCUMENT_FINALIZE_UNAVAILABLE";
+      return {
+        ok: false,
+        docType,
+        conflict: false,
+        code,
+        entryVersion: currentEntryVersion,
+        message: directEditDocumentErrorMessage(docType, code),
+      };
+    }
+
+    if (typeof finalizePayload.entry_version === "number") {
+      currentEntryVersion = finalizePayload.entry_version;
+    }
+    const finalDocVersion =
+      typeof finalizePayload.version === "number" ? finalizePayload.version : documentVersion;
+
+    return {
+      ok: true,
+      docType,
+      documentId,
+      documentVersion: finalDocVersion,
+      entryVersion: currentEntryVersion,
+      message: `${DIRECT_EDIT_DOCUMENT_LABELS[docType]}: Đã tải lên (v${finalDocVersion}).`,
+    };
+  } catch {
+    return {
+      ok: false,
+      docType,
+      conflict: false,
+      code: "DOCUMENT_STORAGE_UNAVAILABLE",
+      entryVersion: currentEntryVersion,
+      message: directEditDocumentErrorMessage(docType, "DOCUMENT_STORAGE_UNAVAILABLE"),
+    };
+  }
+}
+
+export async function runDirectEditDocumentUploads(input: {
+  entryId: string;
+  initialEntryVersion: number;
+  items: readonly {
+    docType: DirectEditDocumentType;
+    file: DirectEditFileLike & BodyInit;
+    idempotencyKey?: string;
+  }[];
+  reason: string | null;
+  fetchImpl?: typeof fetch;
+}): Promise<{
+  entryVersion: number;
+  results: readonly DirectEditSingleDocumentUploadResult[];
+  allSucceeded: boolean;
+}> {
+  let currentVersion = input.initialEntryVersion;
+  const results: DirectEditSingleDocumentUploadResult[] = [];
+  for (const item of input.items) {
+    const outcome = await uploadDirectEditDocument({
+      entryId: input.entryId,
+      expectedEntryVersion: currentVersion,
+      docType: item.docType,
+      file: item.file,
+      reason: input.reason,
+      idempotencyKey: item.idempotencyKey,
+      fetchImpl: input.fetchImpl,
+    });
+    currentVersion = outcome.entryVersion;
+    results.push(outcome);
+  }
+  return {
+    entryVersion: currentVersion,
+    results,
+    allSucceeded: results.every((item) => item.ok),
+  };
+}
+
 export type {
   ChangeRequestListItem,
   SubmissionReadItem,
