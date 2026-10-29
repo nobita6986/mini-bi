@@ -128,3 +128,34 @@ test("SalaryAdvanceWorkspace covers 'Yêu cầu tôi tạo' (PM), 'Cần xử l�
   assert.match(workspaceSource, /handleConflictReload/);
   assert.match(workspaceSource, /Idempotency-Key/);
 });
+
+test("SalaryAdvanceWorkspace guards loadRequests, loadRequestDetail, and loadProjectWorkers against out-of-order responses and stale selections", () => {
+  // Uses LatestRequestTracker with AbortSignal for all 3 async loaders
+  assert.match(workspaceSource, /createLatestRequestTracker/);
+  assert.match(workspaceSource, /requestsTrackerRef/);
+  assert.match(workspaceSource, /detailTrackerRef/);
+  assert.match(workspaceSource, /workersTrackerRef/);
+  assert.match(workspaceSource, /signal:\s*req\.signal/);
+
+  // Worker selection reconciliation never auto-selects nextWorkers[0]
+  assert.match(workspaceSource, /reconcileSelectedWorkerEntryId/);
+  assert.equal(
+    workspaceSource.includes("nextWorkers[0].worker_entry_id"),
+    false,
+    "loadProjectWorkers must never auto-select nextWorkers[0].worker_entry_id"
+  );
+
+  // Active detail must be gated by resolveActiveRequestDetail(detail, selectedRequestId)
+  assert.match(
+    workspaceSource,
+    /const\s+activeDetail\s*=\s*resolveActiveRequestDetail\(\s*detail\s*,\s*selectedRequestId\s*\)/
+  );
+  assert.match(
+    workspaceSource,
+    /evaluateEvidenceComparisonPanel\(\s*activeDetail/
+  );
+  assert.match(
+    workspaceSource,
+    /resolveAvailableRequestActions\(\s*activeDetail\?\.request\.allowed_actions\s*\)/
+  );
+});

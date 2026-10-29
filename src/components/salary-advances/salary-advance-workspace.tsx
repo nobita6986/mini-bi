@@ -32,6 +32,7 @@ import {
   SALARY_ADVANCE_NON_ACCOUNTING_NOTICE,
   canAccessSalaryAdvanceContext,
   countActionableRequestsForTab,
+  createLatestRequestTracker,
   evaluateEvidenceComparisonPanel,
   evaluateRequestAttentionForTab,
   formatDateTimeVi,
@@ -45,6 +46,9 @@ import {
   isSalaryAdvanceConflictError,
   newSalaryAdvanceIdempotencyKey,
   normalizePositiveVndInput,
+  reconcileSelectedRequestIdFromList,
+  reconcileSelectedWorkerEntryId,
+  resolveActiveRequestDetail,
   resolveAvailableRequestActions,
   resolveVisibleSalaryAdvanceTabs,
   salaryAdvanceErrorMessage,
@@ -55,6 +59,7 @@ import {
   validateEvidenceReviewInput,
   validateMessageInput,
   validateTransitionActionInput,
+  type LatestRequestTracker,
   type SalaryAdvanceWorkspaceTabId,
 } from "@/lib/salary-advance/salary-advance-ui-model";
 
@@ -93,6 +98,15 @@ type TransitionDialogState = {
   messageLabel: string;
   messagePlaceholder: string;
 };
+
+function getRequestTracker(
+  ref: React.MutableRefObject<LatestRequestTracker | null>
+): LatestRequestTracker {
+  if (!ref.current) {
+    ref.current = createLatestRequestTracker();
+  }
+  return ref.current;
+}
 
 export function SalaryAdvanceWorkspace() {
   const notify = useNotify();
@@ -213,6 +227,46 @@ export function SalaryAdvanceWorkspace() {
   const evidenceReviewKeyRef = useRef<string>(
     newSalaryAdvanceIdempotencyKey("sa-ev-rev")
   );
+  const requestsTrackerRef = useRef<LatestRequestTracker | null>(null);
+  const detailTrackerRef = useRef<LatestRequestTracker | null>(null);
+  const workersTrackerRef = useRef<LatestRequestTracker | null>(null);
+  const selectedRequestIdRef = useRef<string | null>(null);
+
+  const activeDetail = resolveActiveRequestDetail(detail, selectedRequestId);
+
+  const selectRequest = useCallback((nextRequestId: string | null) => {
+    const previousRequestId = selectedRequestIdRef.current;
+    selectedRequestIdRef.current = nextRequestId;
+    setSelectedRequestId(nextRequestId);
+
+    if (previousRequestId !== nextRequestId) {
+      getRequestTracker(detailTrackerRef).cancelAll();
+      setDetail((prev) =>
+        prev && nextRequestId && prev.request.request_id === nextRequestId
+          ? prev
+          : null
+      );
+      setDetailLoading(Boolean(nextRequestId));
+      setDetailError(null);
+      setConflictBannerMessage(null);
+      setTransitionDialog(null);
+      setTransitionError(null);
+      setMessageError(null);
+      setEvidenceUploadError(null);
+      setEvidenceReviewError(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    const requestsTracker = getRequestTracker(requestsTrackerRef);
+    const detailTracker = getRequestTracker(detailTrackerRef);
+    const workersTracker = getRequestTracker(workersTrackerRef);
+    return () => {
+      requestsTracker.cancelAll();
+      detailTracker.cancelAll();
+      workersTracker.cancelAll();
+    };
+  }, []);
 
   const visibleTabs = useMemo(() => {
     if (!context) return [];
@@ -304,6 +358,7 @@ export function SalaryAdvanceWorkspace() {
     async (options?: { cursor?: string | null; append?: boolean }) => {
       if (!currentTabConfig) return;
 
+      const req = getRequestTracker(requestsTrackerRef).begin();
       const isAppend = Boolean(options?.append && options?.cursor);
       if (isAppend) {
         setRequestsLoadingMore(true);
@@ -338,6 +393,7 @@ export function SalaryAdvanceWorkspace() {
           {
             method: "GET",
             cache: "no-store",
+            signal: req.signal,
           }
         );
 
@@ -348,6 +404,10 @@ export function SalaryAdvanceWorkspace() {
               code?: string;
             }
           | null;
+
+        if (!req.isCurrent()) {
+          return;
+        }
 
         if (!response.ok || !json?.ok || !json.data) {
           const code = json?.code ?? "SALARY_ADVANCE_UNAVAILABLE";
@@ -371,24 +431,30 @@ export function SalaryAdvanceWorkspace() {
         setRequestsHasMore(Boolean(json.data.has_more));
         setRequestsNextCursor(json.data.next_cursor ?? null);
 
-        if (!isAppend && nextRows.length > 0) {
-          setSelectedRequestId((prev) => {
-            if (prev && nextRows.some((item) => item.request_id === prev)) {
-              return prev;
-            }
-            return nextRows[0].request_id;
-          });
-        } else if (!isAppend && nextRows.length === 0) {
-          setSelectedRequestId(null);
-          setDetail(null);
+        if (!isAppend) {
+          const nextSelectedId = reconcileSelectedRequestIdFromList(
+            selectedRequestIdRef.current,
+            nextRows
+          );
+          if (nextSelectedId !== selectedRequestIdRef.current) {
+            selectRequest(nextSelectedId);
+          } else if (nextSelectedId === null) {
+            setDetail(null);
+            setDetailLoading(false);
+          }
         }
       } catch {
+        if (!req.isCurrent()) {
+          return;
+        }
         setRequestsError(
           salaryAdvanceErrorMessage("SALARY_ADVANCE_UNAVAILABLE")
         );
       } finally {
-        setRequestsLoading(false);
-        setRequestsLoadingMore(false);
+        if (req.isCurrent()) {
+          setRequestsLoading(false);
+          setRequestsLoadingMore(false);
+        }
       }
     },
     [
@@ -397,6 +463,7 @@ export function SalaryAdvanceWorkspace() {
       requestStateFilter,
       evidenceStateFilter,
       appliedSearch,
+      selectRequest,
     ]
   );
 
@@ -405,6 +472,9 @@ export function SalaryAdvanceWorkspace() {
     queueMicrotask(() => {
       void loadRequests();
     });
+    return () => {
+      getRequestTracker(requestsTrackerRef).cancelAll();
+    };
   }, [currentTabConfig, loadRequests]);
 
   const loadRequestDetail = useCallback(
@@ -412,6 +482,10 @@ export function SalaryAdvanceWorkspace() {
       requestId: string,
       options?: { preserveConflictBanner?: boolean }
     ) => {
+      const req = getRequestTracker(detailTrackerRef).begin();
+      setDetail((prev) =>
+        prev && prev.request.request_id === requestId ? prev : null
+      );
       setDetailLoading(true);
       setDetailError(null);
       if (!options?.preserveConflictBanner) {
@@ -424,12 +498,17 @@ export function SalaryAdvanceWorkspace() {
           {
             method: "GET",
             cache: "no-store",
+            signal: req.signal,
           }
         );
 
         const json = (await response.json().catch(() => null)) as
           | { ok?: boolean; data?: SalaryAdvanceRequestDetail; code?: string }
           | null;
+
+        if (!req.isCurrent() || selectedRequestIdRef.current !== requestId) {
+          return;
+        }
 
         if (!response.ok || !json?.ok || !json.data) {
           const code = json?.code ?? "SALARY_ADVANCE_UNAVAILABLE";
@@ -438,6 +517,10 @@ export function SalaryAdvanceWorkspace() {
         }
 
         const loadedDetail = json.data;
+        if (loadedDetail.request.request_id !== requestId) {
+          return;
+        }
+
         setDetail(loadedDetail);
         setSelectedEvidenceVersion(
           loadedDetail.request.current_evidence?.evidence_version ??
@@ -455,23 +538,34 @@ export function SalaryAdvanceWorkspace() {
           )
         );
       } catch {
+        if (!req.isCurrent() || selectedRequestIdRef.current !== requestId) {
+          return;
+        }
         setDetailError(salaryAdvanceErrorMessage("SALARY_ADVANCE_UNAVAILABLE"));
       } finally {
-        setDetailLoading(false);
+        if (req.isCurrent() && selectedRequestIdRef.current === requestId) {
+          setDetailLoading(false);
+        }
       }
     },
     []
   );
 
   useEffect(() => {
+    selectedRequestIdRef.current = selectedRequestId;
     queueMicrotask(() => {
       if (!selectedRequestId) {
+        getRequestTracker(detailTrackerRef).cancelAll();
         setDetail(null);
+        setDetailLoading(false);
         setDetailError(null);
         return;
       }
       void loadRequestDetail(selectedRequestId);
     });
+    return () => {
+      getRequestTracker(detailTrackerRef).cancelAll();
+    };
   }, [selectedRequestId, loadRequestDetail]);
 
   const loadProjectWorkers = useCallback(
@@ -481,12 +575,18 @@ export function SalaryAdvanceWorkspace() {
       options?: { cursor?: string | null; append?: boolean }
     ) => {
       if (!projectId) {
+        getRequestTracker(workersTrackerRef).cancelAll();
         setWorkers([]);
         setWorkersHasMore(false);
         setWorkersNextCursor(null);
+        setWorkersLoading(false);
+        setWorkersLoadingMore(false);
+        setWorkersError(null);
+        setCreateWorkerEntryId("");
         return;
       }
 
+      const req = getRequestTracker(workersTrackerRef).begin();
       const isAppend = Boolean(options?.append && options?.cursor);
       if (isAppend) {
         setWorkersLoadingMore(true);
@@ -512,6 +612,7 @@ export function SalaryAdvanceWorkspace() {
           {
             method: "GET",
             cache: "no-store",
+            signal: req.signal,
           }
         );
 
@@ -522,6 +623,10 @@ export function SalaryAdvanceWorkspace() {
               code?: string;
             }
           | null;
+
+        if (!req.isCurrent()) {
+          return;
+        }
 
         if (!response.ok || !json?.ok || !json.data) {
           const code = json?.code ?? "SALARY_ADVANCE_UNAVAILABLE";
@@ -536,32 +641,39 @@ export function SalaryAdvanceWorkspace() {
         setWorkersHasMore(Boolean(json.data.has_more));
         setWorkersNextCursor(json.data.next_cursor ?? null);
 
-        if (!isAppend && nextWorkers.length > 0) {
+        if (!isAppend) {
           setCreateWorkerEntryId((prev) =>
-            nextWorkers.some((w) => w.worker_entry_id === prev)
-              ? prev
-              : nextWorkers[0].worker_entry_id
+            reconcileSelectedWorkerEntryId(prev, nextWorkers)
           );
-        } else if (!isAppend && nextWorkers.length === 0) {
-          setCreateWorkerEntryId("");
         }
       } catch {
+        if (!req.isCurrent()) {
+          return;
+        }
         setWorkersError(
           salaryAdvanceErrorMessage("SALARY_ADVANCE_UNAVAILABLE")
         );
       } finally {
-        setWorkersLoading(false);
-        setWorkersLoadingMore(false);
+        if (req.isCurrent()) {
+          setWorkersLoading(false);
+          setWorkersLoadingMore(false);
+        }
       }
     },
     []
   );
 
   useEffect(() => {
-    if (!createDialogOpen || !createProjectId) return;
+    if (!createDialogOpen || !createProjectId) {
+      getRequestTracker(workersTrackerRef).cancelAll();
+      return;
+    }
     queueMicrotask(() => {
       void loadProjectWorkers(createProjectId, workerSearchInput);
     });
+    return () => {
+      getRequestTracker(workersTrackerRef).cancelAll();
+    };
   }, [
     createDialogOpen,
     createProjectId,
@@ -571,6 +683,8 @@ export function SalaryAdvanceWorkspace() {
 
   const handleTabChange = (nextTabId: SalaryAdvanceWorkspaceTabId) => {
     if (nextTabId === activeTab) return;
+    getRequestTracker(requestsTrackerRef).cancelAll();
+    getRequestTracker(detailTrackerRef).cancelAll();
     setActiveTab(nextTabId);
     setProjectFilter("ALL");
     setRequestStateFilter("ALL");
@@ -597,19 +711,34 @@ export function SalaryAdvanceWorkspace() {
   );
 
   const applyMutationDetailResponse = useCallback(
-    (mutationData: SalaryAdvanceMutationDetailResponse) => {
+    (
+      mutationData: SalaryAdvanceMutationDetailResponse,
+      options?: { forceSelect?: boolean }
+    ) => {
       const updatedDetail: SalaryAdvanceRequestDetail = {
         request: mutationData.request,
         events: mutationData.events,
         evidence_versions: mutationData.evidence_versions,
       };
-      setDetail(updatedDetail);
-      setSelectedEvidenceVersion(
-        updatedDetail.request.current_evidence?.evidence_version ??
-          updatedDetail.evidence_versions[0]?.evidence_version ??
-          null
-      );
-      setConflictBannerMessage(null);
+      if (options?.forceSelect) {
+        getRequestTracker(detailTrackerRef).cancelAll();
+        selectedRequestIdRef.current = updatedDetail.request.request_id;
+        setSelectedRequestId(updatedDetail.request.request_id);
+        setDetailLoading(false);
+        setDetailError(null);
+      }
+      if (
+        options?.forceSelect ||
+        selectedRequestIdRef.current === updatedDetail.request.request_id
+      ) {
+        setDetail(updatedDetail);
+        setSelectedEvidenceVersion(
+          updatedDetail.request.current_evidence?.evidence_version ??
+            updatedDetail.evidence_versions[0]?.evidence_version ??
+            null
+        );
+        setConflictBannerMessage(null);
+      }
       setRequests((prev) =>
         prev.map((row) =>
           row.request_id === updatedDetail.request.request_id
@@ -693,9 +822,7 @@ export function SalaryAdvanceWorkspace() {
         description: `Yêu cầu ứng lương cho ${json.data.request.worker_display_name} đã được chuyển tới Kế toán dự án.`,
       });
 
-      const createdRequestId = json.data.request.request_id;
-      applyMutationDetailResponse(json.data);
-      setSelectedRequestId(createdRequestId);
+      applyMutationDetailResponse(json.data, { forceSelect: true });
       await loadRequests();
     } catch {
       setCreateError(salaryAdvanceErrorMessage("SALARY_ADVANCE_UNAVAILABLE"));
@@ -706,7 +833,8 @@ export function SalaryAdvanceWorkspace() {
 
   const handleSendMessage = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!detail) return;
+    if (!activeDetail) return;
+    const targetRequest = activeDetail.request;
     setMessageError(null);
 
     const validation = validateMessageInput(messageText);
@@ -720,7 +848,7 @@ export function SalaryAdvanceWorkspace() {
       const idempotencyKey = messageIdempotencyKeyRef.current;
       const response = await fetch(
         `/api/salary-advance/requests/${encodeURIComponent(
-          detail.request.request_id
+          targetRequest.request_id
         )}/messages`,
         {
           method: "POST",
@@ -729,7 +857,7 @@ export function SalaryAdvanceWorkspace() {
             "Idempotency-Key": idempotencyKey,
           },
           body: JSON.stringify({
-            expected_version: detail.request.version,
+            expected_version: targetRequest.version,
             message_text: validation.normalizedMessage,
             idempotency_key: idempotencyKey,
           }),
@@ -749,7 +877,7 @@ export function SalaryAdvanceWorkspace() {
         if (isSalaryAdvanceConflictError(response.status, code)) {
           messageIdempotencyKeyRef.current =
             newSalaryAdvanceIdempotencyKey("sa-msg");
-          await handleConflictReload(detail.request.request_id, code);
+          await handleConflictReload(targetRequest.request_id, code);
           return;
         }
         setMessageError(salaryAdvanceErrorMessage(code));
@@ -870,7 +998,8 @@ export function SalaryAdvanceWorkspace() {
   };
 
   const handleSubmitTransitionAction = async () => {
-    if (!detail || !transitionDialog) return;
+    if (!activeDetail || !transitionDialog) return;
+    const targetRequest = activeDetail.request;
     setTransitionError(null);
 
     const validation = validateTransitionActionInput({
@@ -888,7 +1017,7 @@ export function SalaryAdvanceWorkspace() {
       const idempotencyKey = transitionIdempotencyKeyRef.current;
       const response = await fetch(
         `/api/salary-advance/requests/${encodeURIComponent(
-          detail.request.request_id
+          targetRequest.request_id
         )}/actions`,
         {
           method: "POST",
@@ -898,7 +1027,7 @@ export function SalaryAdvanceWorkspace() {
           },
           body: JSON.stringify({
             action: transitionDialog.action,
-            expected_version: detail.request.version,
+            expected_version: targetRequest.version,
             message_text: validation.normalizedMessage,
             idempotency_key: idempotencyKey,
           }),
@@ -919,7 +1048,7 @@ export function SalaryAdvanceWorkspace() {
           transitionIdempotencyKeyRef.current =
             newSalaryAdvanceIdempotencyKey("sa-act");
           setTransitionDialog(null);
-          await handleConflictReload(detail.request.request_id, code);
+          await handleConflictReload(targetRequest.request_id, code);
           return;
         }
         setTransitionError(salaryAdvanceErrorMessage(code));
@@ -971,20 +1100,21 @@ export function SalaryAdvanceWorkspace() {
 
   const handleUploadEvidenceSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!detail || !evidenceFile) {
+    if (!activeDetail || !evidenceFile) {
       setEvidenceUploadError(
         "Vui lòng chọn tệp ảnh NLĐ nhận tiền mặt (JPEG hoặc PNG)."
       );
       return;
     }
+    const targetRequest = activeDetail.request;
 
     setEvidenceUploadError(null);
     setEvidenceUploading(true);
 
     try {
       const result = await uploadSalaryAdvanceEvidence({
-        requestId: detail.request.request_id,
-        expectedVersion: detail.request.version,
+        requestId: targetRequest.request_id,
+        expectedVersion: targetRequest.version,
         file: evidenceFile,
         captionNote: evidenceCaptionNote,
         reserveIdempotencyKey: evidenceReserveKeyRef.current,
@@ -997,7 +1127,7 @@ export function SalaryAdvanceWorkspace() {
             newSalaryAdvanceIdempotencyKey("sa-ev-res");
           evidenceFinalizeKeyRef.current =
             newSalaryAdvanceIdempotencyKey("sa-ev-fin");
-          await handleConflictReload(detail.request.request_id, result.code);
+          await handleConflictReload(targetRequest.request_id, result.code);
           return;
         }
         setEvidenceUploadError(result.message);
@@ -1030,22 +1160,25 @@ export function SalaryAdvanceWorkspace() {
     }
   };
 
-  const comparisonModel = detail
-    ? evaluateEvidenceComparisonPanel(detail, selectedEvidenceVersion)
+  const comparisonModel = activeDetail
+    ? evaluateEvidenceComparisonPanel(activeDetail, selectedEvidenceVersion)
     : null;
 
   const availableActions = resolveAvailableRequestActions(
-    detail?.request.allowed_actions
+    activeDetail?.request.allowed_actions
   );
 
-  const chronologicalEvents = detail
-    ? sortEventsChronologically(detail.events)
+  const chronologicalEvents = activeDetail
+    ? sortEventsChronologically(activeDetail.events)
     : [];
 
   const handleSubmitEvidenceReview = async (
     decision: SalaryAdvanceEvidenceReviewDecision
   ) => {
-    if (!detail || !comparisonModel?.selectedEvidence) return;
+    if (!activeDetail || !comparisonModel?.selectedEvidence) return;
+    const targetRequest = activeDetail.request;
+    const targetEvidenceVersion =
+      comparisonModel.selectedEvidence.evidenceVersion;
     setEvidenceReviewError(null);
 
     const validation = validateEvidenceReviewInput({
@@ -1069,7 +1202,7 @@ export function SalaryAdvanceWorkspace() {
       const idempotencyKey = evidenceReviewKeyRef.current;
       const response = await fetch(
         `/api/salary-advance/requests/${encodeURIComponent(
-          detail.request.request_id
+          targetRequest.request_id
         )}/evidence/review`,
         {
           method: "POST",
@@ -1078,8 +1211,8 @@ export function SalaryAdvanceWorkspace() {
             "Idempotency-Key": idempotencyKey,
           },
           body: JSON.stringify({
-            expected_version: detail.request.version,
-            evidence_version: comparisonModel.selectedEvidence.evidenceVersion,
+            expected_version: targetRequest.version,
+            evidence_version: targetEvidenceVersion,
             decision,
             expected_worker_portrait_document_id:
               validation.expectedWorkerPortraitDocumentId,
@@ -1104,7 +1237,7 @@ export function SalaryAdvanceWorkspace() {
         if (isSalaryAdvanceConflictError(response.status, code)) {
           evidenceReviewKeyRef.current =
             newSalaryAdvanceIdempotencyKey("sa-ev-rev");
-          await handleConflictReload(detail.request.request_id, code);
+          await handleConflictReload(targetRequest.request_id, code);
           return;
         }
         setEvidenceReviewError(salaryAdvanceErrorMessage(code));
@@ -1472,7 +1605,7 @@ export function SalaryAdvanceWorkspace() {
                           <tr
                             key={item.request_id}
                             data-testid={`salary-advance-row-${item.request_id}`}
-                            onClick={() => setSelectedRequestId(item.request_id)}
+                            onClick={() => selectRequest(item.request_id)}
                             className={`cursor-pointer ${
                               isSelected
                                 ? "bg-[var(--color-primary-bg)]"
@@ -1533,7 +1666,7 @@ export function SalaryAdvanceWorkspace() {
                                   size="sm"
                                   onClick={(event) => {
                                     event.stopPropagation();
-                                    setSelectedRequestId(item.request_id);
+                                    selectRequest(item.request_id);
                                   }}
                                 >
                                   Chi tiết
@@ -1574,13 +1707,13 @@ export function SalaryAdvanceWorkspace() {
                 description="Nhấn vào một dòng yêu cầu bên trái để xem toàn bộ lịch sử trao đổi, thực hiện phê duyệt hoặc đối chiếu ảnh nhận tiền mặt."
               />
             </Card>
-          ) : detailLoading && !detail ? (
+          ) : detailLoading && !activeDetail ? (
             <Card>
               <p className="text-sm text-[var(--color-text-secondary)]">
                 Đang tải chi tiết yêu cầu ứng lương và lịch sử đối chiếu...
               </p>
             </Card>
-          ) : detailError && !detail ? (
+          ) : detailError && !activeDetail ? (
             <div className="space-y-3">
               <ErrorState
                 title="Không thể tải chi tiết yêu cầu ứng lương"
@@ -1594,7 +1727,7 @@ export function SalaryAdvanceWorkspace() {
                 Thử lại
               </Button>
             </div>
-          ) : detail ? (
+          ) : activeDetail ? (
             <>
               {conflictBannerMessage ? (
                 <div data-testid="salary-advance-conflict-banner">
@@ -1612,30 +1745,33 @@ export function SalaryAdvanceWorkspace() {
                 <Card>
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <CardHeader
-                      title={`${detail.request.worker_display_name} (${detail.request.worker_employee_code})`}
-                      description={`Dự án: ${detail.request.project_display_name} · Phiên bản dữ liệu v${detail.request.version}`}
+                      title={`${activeDetail.request.worker_display_name} (${activeDetail.request.worker_employee_code})`}
+                      description={`Dự án: ${activeDetail.request.project_display_name} · Phiên bản dữ liệu v${activeDetail.request.version}`}
                     />
                     <div className="flex flex-wrap items-center gap-2">
                       <StatusBadge
                         tone={
-                          getRequestStateMeta(detail.request.request_state).tone
+                          getRequestStateMeta(
+                            activeDetail.request.request_state
+                          ).tone
                         }
                       >
                         {
-                          getRequestStateMeta(detail.request.request_state)
-                            .label
+                          getRequestStateMeta(
+                            activeDetail.request.request_state
+                          ).label
                         }
                       </StatusBadge>
                       <StatusBadge
                         tone={
                           getEvidenceReviewStateMeta(
-                            detail.request.evidence_review_state
+                            activeDetail.request.evidence_review_state
                           ).tone
                         }
                       >
                         {
                           getEvidenceReviewStateMeta(
-                            detail.request.evidence_review_state
+                            activeDetail.request.evidence_review_state
                           ).label
                         }
                       </StatusBadge>
@@ -1651,7 +1787,9 @@ export function SalaryAdvanceWorkspace() {
                         className="text-base font-bold text-[var(--color-primary)]"
                         data-testid="salary-advance-detail-amount"
                       >
-                        {formatVndAmount(detail.request.requested_amount_vnd)}
+                        {formatVndAmount(
+                          activeDetail.request.requested_amount_vnd
+                        )}
                       </div>
                     </div>
 
@@ -1660,11 +1798,11 @@ export function SalaryAdvanceWorkspace() {
                         QLDA tạo yêu cầu
                       </div>
                       <div className="font-medium text-[var(--color-text-primary)]">
-                        {detail.request.created_by_display_name ||
-                          detail.request.created_by_user_id}
+                        {activeDetail.request.created_by_display_name ||
+                          activeDetail.request.created_by_user_id}
                       </div>
                       <div className="text-xs text-[var(--color-text-secondary)]">
-                        {formatDateTimeVi(detail.request.created_at)}
+                        {formatDateTimeVi(activeDetail.request.created_at)}
                       </div>
                     </div>
 
@@ -1673,12 +1811,14 @@ export function SalaryAdvanceWorkspace() {
                         Kế toán dự án phụ trách
                       </div>
                       <div className="font-medium text-[var(--color-text-primary)]">
-                        {detail.request.current_project_accountant
+                        {activeDetail.request.current_project_accountant
                           ?.display_name ?? "Chưa phân công"}
                       </div>
                       <div className="text-xs text-[var(--color-text-secondary)]">
                         Cập nhật:{" "}
-                        {formatDateTimeVi(detail.request.last_activity_at)}
+                        {formatDateTimeVi(
+                          activeDetail.request.last_activity_at
+                        )}
                       </div>
                     </div>
                   </div>
@@ -1688,37 +1828,37 @@ export function SalaryAdvanceWorkspace() {
                       Nội dung đề nghị ban đầu của QLDA
                     </div>
                     <p className="mt-1 whitespace-pre-wrap text-sm text-[var(--color-text-primary)]">
-                      {detail.request.initial_content}
+                      {activeDetail.request.initial_content}
                     </p>
                   </div>
 
                   {/* Decision / Rejection / Withdrawal / External Handling Summary */}
-                  {detail.request.decision_note ? (
+                  {activeDetail.request.decision_note ? (
                     <div className="mt-3">
                       <StatusBanner
                         tone={
-                          detail.request.request_state === "REJECTED"
+                          activeDetail.request.request_state === "REJECTED"
                             ? "error"
                             : "info"
                         }
                         title={
-                          detail.request.request_state === "REJECTED"
+                          activeDetail.request.request_state === "REJECTED"
                             ? "Lý do từ chối của Kế toán dự án"
                             : "Ghi chú quyết định của Kế toán dự án"
                         }
                       >
-                        {detail.request.decision_note}
+                        {activeDetail.request.decision_note}
                       </StatusBanner>
                     </div>
                   ) : null}
 
-                  {detail.request.handled_externally_note ? (
+                  {activeDetail.request.handled_externally_note ? (
                     <div className="mt-3">
                       <StatusBanner
                         tone="info"
                         title="Ghi chú xử lý ngoài hệ thống BI"
                       >
-                        {detail.request.handled_externally_note}
+                        {activeDetail.request.handled_externally_note}
                       </StatusBanner>
                     </div>
                   ) : null}
@@ -2390,7 +2530,16 @@ export function SalaryAdvanceWorkspace() {
               id="salary-advance-create-project"
               data-testid="salary-advance-create-project"
               value={createProjectId}
-              onChange={(event) => setCreateProjectId(event.target.value)}
+              onChange={(event) => {
+                const nextProjectId = event.target.value;
+                getRequestTracker(workersTrackerRef).cancelAll();
+                setCreateProjectId(nextProjectId);
+                setCreateWorkerEntryId("");
+                setWorkers([]);
+                setWorkersHasMore(false);
+                setWorkersNextCursor(null);
+                setWorkersError(null);
+              }}
               disabled={createSubmitting}
               className="h-9 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-sm text-[var(--color-text-primary)]"
             >

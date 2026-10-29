@@ -22,6 +22,7 @@ import {
   type SalaryAdvanceRequestState,
   type SalaryAdvanceRequestSummary,
   type SalaryAdvanceTransitionAction,
+  type SalaryAdvanceWorkerOption,
 } from "./salary-advance-contract.ts";
 
 export type SalaryAdvancePageAccessDecision =
@@ -765,6 +766,101 @@ export function evaluateEvidenceComparisonPanel(
     canRequestRetake,
     confirmReviewedLockReason,
   };
+}
+
+export type LatestRequestTicket = {
+  readonly seq: number;
+  readonly signal: AbortSignal;
+  isCurrent: () => boolean;
+};
+
+export type LatestRequestTracker = {
+  begin: () => LatestRequestTicket;
+  cancelAll: () => void;
+  isCurrent: (seq: number) => boolean;
+  getCurrentSeq: () => number;
+};
+
+export function createLatestRequestTracker(): LatestRequestTracker {
+  let currentSeq = 0;
+  let activeController: AbortController | null = null;
+
+  return {
+    begin(): LatestRequestTicket {
+      if (activeController && !activeController.signal.aborted) {
+        activeController.abort();
+      }
+      currentSeq += 1;
+      const seq = currentSeq;
+      const controller = new AbortController();
+      activeController = controller;
+
+      return {
+        seq,
+        signal: controller.signal,
+        isCurrent: () =>
+          seq === currentSeq &&
+          activeController === controller &&
+          !controller.signal.aborted,
+      };
+    },
+    cancelAll(): void {
+      currentSeq += 1;
+      if (activeController && !activeController.signal.aborted) {
+        activeController.abort();
+      }
+      activeController = null;
+    },
+    isCurrent(seq: number): boolean {
+      return Boolean(
+        seq === currentSeq &&
+          activeController !== null &&
+          !activeController.signal.aborted
+      );
+    },
+    getCurrentSeq(): number {
+      return currentSeq;
+    },
+  };
+}
+
+export function reconcileSelectedWorkerEntryId(
+  currentWorkerEntryId: string,
+  workers: ReadonlyArray<Pick<SalaryAdvanceWorkerOption, "worker_entry_id">>
+): string {
+  const trimmed = currentWorkerEntryId.trim();
+  if (!trimmed || workers.length === 0) {
+    return "";
+  }
+  return workers.some((worker) => worker.worker_entry_id === trimmed)
+    ? trimmed
+    : "";
+}
+
+export function reconcileSelectedRequestIdFromList(
+  currentSelectedRequestId: string | null,
+  requests: ReadonlyArray<Pick<SalaryAdvanceRequestSummary, "request_id">>
+): string | null {
+  if (requests.length === 0) {
+    return null;
+  }
+  if (
+    currentSelectedRequestId &&
+    requests.some((item) => item.request_id === currentSelectedRequestId)
+  ) {
+    return currentSelectedRequestId;
+  }
+  return requests[0].request_id;
+}
+
+export function resolveActiveRequestDetail(
+  detail: SalaryAdvanceRequestDetail | null,
+  selectedRequestId: string | null
+): SalaryAdvanceRequestDetail | null {
+  if (!detail || !selectedRequestId) {
+    return null;
+  }
+  return detail.request.request_id === selectedRequestId ? detail : null;
 }
 
 export function sortEventsChronologically(

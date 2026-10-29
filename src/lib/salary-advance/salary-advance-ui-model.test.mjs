@@ -8,6 +8,7 @@ import {
   buildWorkerPortraitPreviewUrl,
   canAccessSalaryAdvanceContext,
   countActionableRequestsForTab,
+  createLatestRequestTracker,
   decideSalaryAdvancePageAccess,
   evaluateEvidenceComparisonPanel,
   evaluateRequestAttentionForTab,
@@ -21,6 +22,9 @@ import {
   isSalaryAdvanceConflictError,
   newSalaryAdvanceIdempotencyKey,
   normalizePositiveVndInput,
+  reconcileSelectedRequestIdFromList,
+  reconcileSelectedWorkerEntryId,
+  resolveActiveRequestDetail,
   resolveAvailableRequestActions,
   resolveVisibleSalaryAdvanceTabs,
   salaryAdvanceErrorMessage,
@@ -608,4 +612,221 @@ test("sortEventsChronologically and metadata helpers cover all states and events
     getSalaryAdvanceActorRoleLabel("PROJECT_ACCOUNTANT"),
     "Kế toán dự án"
   );
+});
+
+test("out-of-order worker search responses are aborted/ignored and worker selection never auto-picks the first worker", async () => {
+  const tracker = createLatestRequestTracker();
+
+  const workerAn = {
+    worker_entry_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    employee_code: "NV001",
+    display_name: "Nguyễn Văn An",
+  };
+  const workerBinh1 = {
+    worker_entry_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1",
+    employee_code: "NV002",
+    display_name: "Trần Văn Bình",
+  };
+  const workerBinh2 = {
+    worker_entry_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2",
+    employee_code: "NV003",
+    display_name: "Lê Thị Bình",
+  };
+
+  let stateWorkers = [];
+  let selectedWorkerEntryId = "";
+
+  // Simulate two overlapping loadProjectWorkers calls where search #2 ("Bình") resolves BEFORE search #1 ("An")
+  const req1 = tracker.begin();
+  assert.equal(req1.isCurrent(), true);
+  assert.equal(req1.signal.aborted, false);
+
+  const req2 = tracker.begin();
+  assert.equal(
+    req1.signal.aborted,
+    true,
+    "Starting search #2 must abort search #1 signal immediately"
+  );
+  assert.equal(req1.isCurrent(), false);
+  assert.equal(req2.isCurrent(), true);
+
+  // Search #2 arrives first
+  if (req2.isCurrent()) {
+    const nextWorkers = [workerBinh1, workerBinh2];
+    stateWorkers = nextWorkers;
+    selectedWorkerEntryId = reconcileSelectedWorkerEntryId(
+      selectedWorkerEntryId,
+      nextWorkers
+    );
+  }
+
+  assert.deepEqual(stateWorkers, [workerBinh1, workerBinh2]);
+  assert.equal(
+    selectedWorkerEntryId,
+    "",
+    "Must NOT auto-select nextWorkers[0] when user has not explicitly chosen a worker"
+  );
+
+  // User explicitly chooses workerBinh2
+  selectedWorkerEntryId = workerBinh2.worker_entry_id;
+
+  // Stale search #1 ("An") arrives late after search #2 and after user selection
+  if (req1.isCurrent()) {
+    const staleWorkers = [workerAn];
+    stateWorkers = staleWorkers;
+    selectedWorkerEntryId = reconcileSelectedWorkerEntryId(
+      selectedWorkerEntryId,
+      staleWorkers
+    );
+  }
+
+  assert.deepEqual(
+    stateWorkers,
+    [workerBinh1, workerBinh2],
+    "Late response from search #1 must not overwrite newer worker list"
+  );
+  assert.equal(
+    selectedWorkerEntryId,
+    workerBinh2.worker_entry_id,
+    "Late response from search #1 must not overwrite user's selected worker"
+  );
+
+  // If a subsequent search #3 returns a list still containing workerBinh2, selection is preserved
+  const req3 = tracker.begin();
+  if (req3.isCurrent()) {
+    selectedWorkerEntryId = reconcileSelectedWorkerEntryId(
+      selectedWorkerEntryId,
+      [workerBinh2]
+    );
+  }
+  assert.equal(selectedWorkerEntryId, workerBinh2.worker_entry_id);
+
+  // If a subsequent search #4 returns a list NOT containing workerBinh2, selection resets to "" (never auto-selects workerAn)
+  const req4 = tracker.begin();
+  if (req4.isCurrent()) {
+    selectedWorkerEntryId = reconcileSelectedWorkerEntryId(
+      selectedWorkerEntryId,
+      [workerAn]
+    );
+  }
+  assert.equal(
+    selectedWorkerEntryId,
+    "",
+    "When previously selected worker is not in new search results, selection must reset to empty string instead of auto-picking first row"
+  );
+});
+
+test("out-of-order request list and detail responses are ignored and switching selectedRequestId immediately hides stale detail", async () => {
+  const listTracker = createLatestRequestTracker();
+  const detailTracker = createLatestRequestTracker();
+
+  const reqSummary1 = makeRequestSummary({
+    request_id: "11111111-1111-4111-8111-111111111111",
+    worker_display_name: "Nguyễn Văn An",
+    version: 1,
+    allowed_actions: makeAllowedActions({ can_approve: true }),
+  });
+  const reqSummary2 = makeRequestSummary({
+    request_id: "22222222-2222-4222-8222-222222222222",
+    worker_display_name: "Trần Văn Bình",
+    version: 5,
+    allowed_actions: makeAllowedActions({ can_approve: true }),
+  });
+
+  const detail1 = {
+    request: reqSummary1,
+    events: [],
+    evidence_versions: [],
+  };
+  const detail2 = {
+    request: reqSummary2,
+    events: [],
+    evidence_versions: [],
+  };
+
+  // Initial state: req-1 is selected and its detail is loaded
+  let selectedRequestId = reqSummary1.request_id;
+  let detailState = detail1;
+
+  assert.equal(
+    resolveActiveRequestDetail(detailState, selectedRequestId)?.request
+      .request_id,
+    reqSummary1.request_id
+  );
+
+  // User quickly clicks req-2 while detail1 is still in state
+  selectedRequestId = reqSummary2.request_id;
+  assert.equal(
+    resolveActiveRequestDetail(detailState, selectedRequestId),
+    null,
+    "As soon as selectedRequestId changes to req-2, resolveActiveRequestDetail must return null so stale req-1 detail cannot be rendered or mutated"
+  );
+
+  // Simulate rapid selection: user selects req-1 (starts detailReq1) then immediately selects req-2 (starts detailReq2)
+  selectedRequestId = reqSummary1.request_id;
+  const detailReq1 = detailTracker.begin();
+  selectedRequestId = reqSummary2.request_id;
+  const detailReq2 = detailTracker.begin();
+
+  assert.equal(
+    detailReq1.signal.aborted,
+    true,
+    "Selecting req-2 must abort in-flight detail fetch for req-1"
+  );
+  assert.equal(detailReq1.isCurrent(), false);
+  assert.equal(detailReq2.isCurrent(), true);
+
+  // detailReq2 resolves first
+  if (
+    detailReq2.isCurrent() &&
+    selectedRequestId === detail2.request.request_id
+  ) {
+    detailState = detail2;
+  }
+  assert.equal(
+    resolveActiveRequestDetail(detailState, selectedRequestId)?.request
+      .request_id,
+    reqSummary2.request_id
+  );
+
+  // Stale detailReq1 resolves later (out of order)
+  if (
+    detailReq1.isCurrent() &&
+    selectedRequestId === detail1.request.request_id
+  ) {
+    detailState = detail1;
+  }
+  assert.equal(
+    detailState.request.request_id,
+    reqSummary2.request_id,
+    "Late detail response for req-1 must be ignored and must not overwrite req-2 detail"
+  );
+
+  // Simulate out-of-order loadRequests filter #1 vs filter #2
+  const listReq1 = listTracker.begin();
+  const listReq2 = listTracker.begin();
+  assert.equal(listReq1.signal.aborted, true);
+  assert.equal(listReq1.isCurrent(), false);
+  assert.equal(listReq2.isCurrent(), true);
+
+  let currentRows = [];
+  // Filter #2 resolves first with [reqSummary2]
+  if (listReq2.isCurrent()) {
+    currentRows = [reqSummary2];
+    selectedRequestId = reconcileSelectedRequestIdFromList(
+      selectedRequestId,
+      currentRows
+    );
+  }
+  // Stale filter #1 resolves later with [reqSummary1]
+  if (listReq1.isCurrent()) {
+    currentRows = [reqSummary1];
+    selectedRequestId = reconcileSelectedRequestIdFromList(
+      selectedRequestId,
+      currentRows
+    );
+  }
+
+  assert.deepEqual(currentRows, [reqSummary2]);
+  assert.equal(selectedRequestId, reqSummary2.request_id);
 });
