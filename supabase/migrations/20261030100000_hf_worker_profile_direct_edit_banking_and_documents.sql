@@ -258,6 +258,13 @@ begin
 end;
 $patch_document_upload_direct_edit_access$;
 
+revoke all on function public.direct_entry_privileged_edit(uuid,uuid,uuid,integer,jsonb,text,text)
+  from public, anon, authenticated, service_role;
+grant execute on function public.direct_entry_privileged_edit(uuid,uuid,uuid,integer,jsonb,text,text)
+  to service_role;
+revoke all on function public.direct_entry_assert_document_upload_access(uuid,uuid,uuid)
+  from public, anon, authenticated, service_role;
+
 do $assert_hf_direct_edit_boundary$
 declare
   v_edit regprocedure :=
