@@ -330,3 +330,74 @@ test("HF-Duplicate-CCCD: quick ON -> OFF payload requires non-empty leave_reason
     assert.equal(rejectedDeps.calls.length, 0, label);
   }
 });
+
+test("HF-Worker-Profile: privileged edit accepts and validates banking payment patch", async () => {
+  const providedPayment = {
+    state: "provided",
+    account_number: "1234567890",
+    bank_id: "VCB",
+    account_holder_name: "  NGUYEN VAN A  ",
+  };
+  assert.deepEqual(
+    projectPrivilegedEditRequest({
+      expected_entry_version: 2,
+      patch: { payment: providedPayment },
+    }),
+    {
+      expected_entry_version: 2,
+      patch: {
+        payment: {
+          state: "provided",
+          account_number: "1234567890",
+          bank_id: "VCB",
+          account_holder_name: "NGUYEN VAN A",
+        },
+      },
+      reason: null,
+    },
+  );
+
+  for (const state of ["omitted", "unknown", "intentionally_blank"]) {
+    assert.deepEqual(
+      projectPrivilegedEditRequest({
+        expected_entry_version: 2,
+        patch: {
+          payment: {
+            state,
+            account_number: null,
+            bank_id: null,
+            account_holder_name: null,
+          },
+        },
+      })?.patch,
+      {
+        payment: {
+          state,
+          account_number: null,
+          bank_id: null,
+          account_holder_name: null,
+        },
+      },
+    );
+  }
+
+  for (const badPayment of [
+    null,
+    {},
+    { state: "provided", account_number: "12A", bank_id: "VCB", account_holder_name: "NGUYEN A" },
+    { state: "provided", account_number: "123456", bank_id: "bad bank", account_holder_name: "NGUYEN A" },
+    { state: "provided", account_number: "123456", bank_id: "VCB", account_holder_name: "   " },
+    { state: "provided", account_number: "123456", bank_id: "VCB", account_holder_name: "NGUYEN\u0000A" },
+    { state: "omitted", account_number: "123456", bank_id: null, account_holder_name: null },
+    { state: "provided", account_number: "123456", bank_id: "VCB", account_holder_name: "A", extra: 1 },
+  ]) {
+    assert.equal(
+      projectPrivilegedEditRequest({
+        expected_entry_version: 2,
+        patch: { payment: badPayment },
+      }),
+      null,
+      JSON.stringify(badPayment),
+    );
+  }
+});

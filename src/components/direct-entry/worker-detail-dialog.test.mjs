@@ -58,11 +58,15 @@ test("W2S1: dialog đủ các nhóm dữ liệu đã chốt và trạng thái t�
   assert.match(dialog, /<dt>CCCD<\/dt>/);
 });
 
-test("W2S1: quyền chỉ đến từ capability server-resolved, không suy từ tab/role", () => {
+test("W2S1: quyền chỉ đến từ capability server-resolved, không suy từ tab/role; Xem chi tiết chỉ đọc", () => {
   assert.match(operations, /actor\?\.capabilities\.includes\("document_upload"\) === true/);
-  assert.match(operations, /canUploadDocuments=\{canUploadDocuments\}/);
-  assert.match(dialog, /canUploadDocuments: boolean/);
-  assert.match(dialog, /canUpload=\{canUploadDocuments\}/);
+  const proposeDrawerCall = operations.match(/<ProposeDrawer[\s\S]*?\n      \/>/)?.[0] ?? "";
+  const detailDialogCall = operations.match(/<WorkerDetailDialog[\s\S]*?\n      \/>/)?.[0] ?? "";
+  assert.match(proposeDrawerCall, /canUploadDocuments=\{canUploadDocuments\}/);
+  assert.doesNotMatch(detailDialogCall, /canUploadDocuments/);
+  assert.doesNotMatch(dialog, /canUploadDocuments/);
+  assert.match(dialog, /canUpload=\{false\}/);
+  assert.doesNotMatch(dialog, /type="file"|privileged-edit|change-requests/);
   assert.doesNotMatch(dialog, /\.role\b/);
   assert.doesNotMatch(dialog, /allowed_actions\.view_pii/);
 });
@@ -114,7 +118,7 @@ test("W2S1: upload ảnh NLĐ theo đúng pipeline reserve -> PUT -> finalize, k
   assert.match(panel, /reason: WORKER_PORTRAIT_AUDIT_REASON/);
   assert.match(panel, /const WORKER_PORTRAIT_AUDIT_REASON = "Tải ảnh NLĐ"/);
   assert.doesNotMatch(panel, /Lý do tải ảnh|requireReason|textarea/);
-  assert.match(dialog, /canUpload=\{canUploadDocuments\}/);
+  assert.match(dialog, /canUpload=\{false\}/);
   assert.doesNotMatch(dialog, /requireReason/);
   assert.match(panel, /"Idempotency-Key": key/);
   assert.match(panel, /`\$\{pending\.key\}:finalize`/);

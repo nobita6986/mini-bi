@@ -19,6 +19,7 @@ import {
   resolveTrustedSessionActor,
   UUID_REGEX as UUID,
 } from "../http/direct-entry-api-guard.ts";
+import { isPaymentText, projectPaymentInput } from "./payment-contract.ts";
 import { readBoundedJson } from "./write-api.ts";
 import type { PrivilegedEditRepository } from "./privileged-edit-repository.ts";
 
@@ -29,7 +30,7 @@ const ISO_DATE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
 const BODY_KEYS = ["expected_entry_version", "patch", "reason"] as const;
 export const PRIVILEGED_EDIT_PATCH_KEYS = [
   "employee_code", "first_work_date", "labor_type", "project_id", "recruiter_id", "worker_details",
-  "employment_status",
+  "employment_status", "payment",
 ] as const;
 
 export type PrivilegedEditDependencies = {
@@ -110,7 +111,19 @@ export function projectPrivilegedEditRequest(body: unknown): PrivilegedEditReque
           status.leave_reason.length > 4000) return null;
     } else if (status.leave_reason !== undefined) return null;
   }
-  return { expected_entry_version: version, patch, reason };
+  const normalizedPatch: Record<string, unknown> = { ...patch };
+  if (patch.payment !== undefined) {
+    const payment = projectPaymentInput(patch.payment);
+    if (!payment ||
+        (payment.account_holder_name !== null && !isPaymentText(payment.account_holder_name, 256))) {
+      return null;
+    }
+    normalizedPatch.payment = {
+      ...payment,
+      account_holder_name: payment.account_holder_name ? payment.account_holder_name.trim() : null,
+    };
+  }
+  return { expected_entry_version: version, patch: normalizedPatch, reason };
 }
 
 export async function privilegedEditEntry(

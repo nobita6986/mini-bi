@@ -3,6 +3,8 @@ import test from "node:test";
 
 import {
   BANK_ACCOUNT_SECTION_LABEL,
+  DIRECT_EDIT_DOCUMENT_MAX_BYTES,
+  DIRECT_EDIT_DOCUMENT_TYPES,
   WORKER_OPERATIONS_TABS,
   WORKER_OPERATIONS_TAB_LABELS,
   WORKER_PROPOSE_TARGETS,
@@ -13,6 +15,8 @@ import {
   beginLoad,
   canReviewChangeRequests,
   canViewGlobalChangeRequestHistory,
+  checkDirectEditDocumentFile,
+  directEditDocumentErrorMessage,
   emptyTabPage,
   failLoad,
   initialWorkerTab,
@@ -21,8 +25,10 @@ import {
   requestRowKey,
   requestsQuery,
   resetTabPage,
+  runDirectEditDocumentUploads,
   submissionRowKey,
   submissionsQuery,
+  uploadDirectEditDocument,
   workerRowKey,
   workersQuery,
   lastDecisionLabel,
@@ -391,4 +397,195 @@ test("W06: parse submission page fail-closed", () => {
   assert.equal(parsed.items.length, 1);
   assert.equal(parseSubmissionPageResponse({ ok: true, items: [{}], page_size: 25,
     has_more: false, next_cursor: null }, { page_size: 25 }), null);
+});
+
+test("HF Worker Profile: checkDirectEditDocumentFile validates MIME and size per document type", () => {
+  assert.deepEqual(DIRECT_EDIT_DOCUMENT_TYPES, [
+    "WORKER_PORTRAIT",
+    "CCCD_FRONT",
+    "CCCD_BACK",
+    "EMPLOYMENT_CONTRACT",
+  ]);
+  assert.deepEqual(checkDirectEditDocumentFile("WORKER_PORTRAIT", null), {
+    ok: false,
+    code: "DOCUMENT_FILE_REQUIRED",
+  });
+  assert.deepEqual(
+    checkDirectEditDocumentFile("WORKER_PORTRAIT", { size: 0, type: "image/jpeg" }),
+    { ok: false, code: "DOCUMENT_SIZE_INVALID" },
+  );
+  assert.deepEqual(
+    checkDirectEditDocumentFile("WORKER_PORTRAIT", {
+      size: DIRECT_EDIT_DOCUMENT_MAX_BYTES + 1,
+      type: "image/jpeg",
+    }),
+    { ok: false, code: "DOCUMENT_SIZE_INVALID" },
+  );
+  assert.deepEqual(
+    checkDirectEditDocumentFile("WORKER_PORTRAIT", { size: 1024, type: "application/pdf" }),
+    { ok: false, code: "DOCUMENT_MIME_INVALID" },
+  );
+  assert.deepEqual(
+    checkDirectEditDocumentFile("WORKER_PORTRAIT", { size: 1024, type: "image/png" }),
+    { ok: true, mimeType: "image/png", sizeBytes: 1024 },
+  );
+  assert.deepEqual(
+    checkDirectEditDocumentFile("CCCD_FRONT", { size: 2048, type: "application/pdf" }),
+    { ok: true, mimeType: "application/pdf", sizeBytes: 2048 },
+  );
+  assert.deepEqual(
+    checkDirectEditDocumentFile("EMPLOYMENT_CONTRACT", {
+      size: DIRECT_EDIT_DOCUMENT_MAX_BYTES,
+      type: "application/pdf",
+    }),
+    {
+      ok: true,
+      mimeType: "application/pdf",
+      sizeBytes: DIRECT_EDIT_DOCUMENT_MAX_BYTES,
+    },
+  );
+  assert.match(
+    directEditDocumentErrorMessage("CCCD_BACK", "DOCUMENT_MIME_INVALID"),
+    /CCCD mặt sau/,
+  );
+});
+
+test("HF Worker Profile: runDirectEditDocumentUploads chains entry_version and isolates per-file errors", async () => {
+  const calls = [];
+  const fakeFetch = async (url, init) => {
+    calls.push({ url: String(url), method: init?.method ?? "GET", body: init?.body });
+    if (String(url).endsWith("/documents") && init?.method === "POST") {
+      const parsed = JSON.parse(String(init.body));
+      if (parsed.document_type === "WORKER_PORTRAIT") {
+        assert.equal(parsed.expected_entry_version, 4);
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            document_id: "doc-portrait-1",
+            version: 1,
+            entry_version: 5,
+            upload: {
+              method: "PUT",
+              url: "https://storage.example.test/put/portrait",
+              headers: { "Content-Type": "image/jpeg" },
+            },
+          }),
+          { status: 200 },
+        );
+      }
+      if (parsed.document_type === "CCCD_FRONT") {
+        // Must receive entry_version 5 from the succeeded portrait upload!
+        assert.equal(parsed.expected_entry_version, 5);
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            document_id: "doc-cccd-1",
+            version: 2,
+            entry_version: 6,
+            upload: {
+              method: "PUT",
+              url: "https://storage.example.test/put/cccd-fail",
+              headers: { "Content-Type": "image/png" },
+            },
+          }),
+          { status: 200 },
+        );
+      }
+      if (parsed.document_type === "EMPLOYMENT_CONTRACT") {
+        // Even after CCCD_FRONT PUT failed, entry_version had advanced to 6 on reserve!
+        assert.equal(parsed.expected_entry_version, 6);
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            document_id: "doc-contract-1",
+            version: 1,
+            entry_version: 7,
+            upload: {
+              method: "PUT",
+              url: "https://storage.example.test/put/contract",
+              headers: { "Content-Type": "application/pdf" },
+            },
+          }),
+          { status: 200 },
+        );
+      }
+    }
+    if (init?.method === "PUT") {
+      if (String(url).includes("cccd-fail")) {
+        return new Response("Storage error", { status: 503 });
+      }
+      return new Response("", { status: 200 });
+    }
+    if (String(url).endsWith("/finalize")) {
+      const parsed = JSON.parse(String(init.body));
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          entry_version: parsed.expected_entry_version,
+        }),
+        { status: 200 },
+      );
+    }
+    return new Response("Not found", { status: 404 });
+  };
+
+  const portraitFile = new File([new Uint8Array([1, 2, 3])], "portrait.jpg", { type: "image/jpeg" });
+  const cccdFile = new File([new Uint8Array([4, 5, 6])], "cccd.png", { type: "image/png" });
+  const contractFile = new File([new Uint8Array([7, 8, 9])], "contract.pdf", { type: "application/pdf" });
+
+  const result = await runDirectEditDocumentUploads({
+    entryId: ENTRY,
+    initialEntryVersion: 4,
+    items: [
+      { docType: "WORKER_PORTRAIT", file: portraitFile },
+      { docType: "CCCD_FRONT", file: cccdFile },
+      { docType: "EMPLOYMENT_CONTRACT", file: contractFile },
+    ],
+    reason: "Bo sung ho so",
+    fetchImpl: fakeFetch,
+  });
+
+  assert.equal(result.entryVersion, 7);
+  assert.equal(result.allSucceeded, false);
+  assert.equal(result.results.length, 3);
+  assert.equal(result.results[0]?.ok, true);
+  assert.equal(result.results[1]?.ok, false);
+  assert.equal(result.results[1]?.code, "DOCUMENT_STORAGE_UNAVAILABLE");
+  assert.equal(result.results[2]?.ok, true);
+
+  // Retrying only the failed CCCD_FRONT file starts from result.entryVersion (7)
+  const retryOutcome = await uploadDirectEditDocument({
+    entryId: ENTRY,
+    expectedEntryVersion: result.entryVersion,
+    docType: "CCCD_FRONT",
+    file: cccdFile,
+    fetchImpl: async (url, init) => {
+      if (String(url).endsWith("/documents") && init?.method === "POST") {
+        const parsed = JSON.parse(String(init.body));
+        assert.equal(parsed.expected_entry_version, 7);
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            document_id: "doc-cccd-2",
+            version: 3,
+            entry_version: 8,
+            upload: {
+              method: "PUT",
+              url: "https://storage.example.test/put/cccd-ok",
+              headers: { "Content-Type": "image/png" },
+            },
+          }),
+          { status: 200 },
+        );
+      }
+      if (init?.method === "PUT") return new Response("", { status: 200 });
+      if (String(url).endsWith("/finalize")) {
+        return new Response(JSON.stringify({ ok: true, entry_version: 8 }), { status: 200 });
+      }
+      return new Response("Not found", { status: 404 });
+    },
+  });
+  assert.equal(retryOutcome.ok, true);
+  assert.equal(retryOutcome.entryVersion, 8);
+  assert.equal(retryOutcome.documentVersion, 3);
 });
