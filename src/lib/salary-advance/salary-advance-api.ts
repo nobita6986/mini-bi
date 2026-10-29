@@ -9,6 +9,8 @@ import {
   type SalaryAdvanceEvidenceStorage,
 } from "./r2-salary-advance-evidence-storage.ts";
 import {
+  MAX_SALARY_ADVANCE_EXPORT_ROWS,
+  SALARY_ADVANCE_EXPORT_PAGE_SIZE,
   computeCreateRequestFingerprint,
   computeFinalizeEvidenceFingerprint,
   computePostMessageFingerprint,
@@ -17,6 +19,7 @@ import {
   computeTransitionRequestFingerprint,
   parseCreateSalaryAdvanceRequestBody,
   parseEvidenceVersionParam,
+  parseExportSalaryAdvanceRequestsQuery,
   parseFinalizeSalaryAdvanceEvidenceBody,
   parseListProjectWorkersQuery,
   parseListSalaryAdvanceRequestsQuery,
@@ -31,7 +34,14 @@ import {
   salaryAdvanceHttpStatusForError,
   type SalaryAdvanceErrorCode,
   type SalaryAdvanceEvidenceReserveResponse,
+  type SalaryAdvanceRequestSummary,
+  type SalaryAdvanceWorkerOption,
 } from "./salary-advance-contract.ts";
+import {
+  SALARY_ADVANCE_EXPORT_XLSX_CONTENT_TYPE,
+  buildSalaryAdvanceExportFilename,
+  buildSalaryAdvanceExportXlsx,
+} from "./salary-advance-export.ts";
 import type { SalaryAdvanceRepository } from "./salary-advance-repository.ts";
 
 export const MAX_SALARY_ADVANCE_MUTATION_JSON_BYTES = 8_192;
@@ -266,6 +276,19 @@ export async function handleGetSalaryAdvanceContext(
   return salAdvOk(result.data, 200);
 }
 
+function isOffProjectWorkerOption(worker: SalaryAdvanceWorkerOption): boolean {
+  if (worker.employment_status === "OFF") {
+    return true;
+  }
+  if (
+    Array.isArray(worker.ineligible_reasons) &&
+    worker.ineligible_reasons.includes("WORKER_STATUS_OFF")
+  ) {
+    return true;
+  }
+  return false;
+}
+
 // -----------------------------------------------------------------------------
 // 2. GET /api/salary-advance/projects/[projectId]/workers
 // -----------------------------------------------------------------------------
@@ -294,17 +317,70 @@ export async function handleGetSalaryAdvanceProjectWorkers(
   const actor = await resolveSalaryAdvanceActor(dependencies);
   if (!actor.ok) return actor.response;
 
-  const result = await dependencies.repository.listProjectWorkers({
-    auth_subject: actor.auth_subject,
-    app_user_id: actor.app_user_id,
-    project_id: parsedProjectId.project_id,
-    search: query.value.search,
-    cursor: query.value.cursor,
-    page_size: query.value.page_size,
-  });
-  if (!result.ok) return salAdvError(result.code);
+  const targetPageSize = query.value.page_size;
+  const collected: SalaryAdvanceWorkerOption[] = [];
+  const seenCursors = new Set<string>();
+  let cursor: string | null = query.value.cursor;
+  let lastHasMore = false;
+  let lastNextCursor: string | null = null;
+  let iterations = 0;
 
-  return salAdvOk(result.data, 200);
+  while (iterations < 25) {
+    iterations += 1;
+    const result = await dependencies.repository.listProjectWorkers({
+      auth_subject: actor.auth_subject,
+      app_user_id: actor.app_user_id,
+      project_id: parsedProjectId.project_id,
+      search: query.value.search,
+      cursor,
+      page_size: targetPageSize,
+    });
+    if (!result.ok) return salAdvError(result.code);
+
+    const visibleInPage = result.data.workers.filter(
+      (worker) => !isOffProjectWorkerOption(worker),
+    );
+    collected.push(...visibleInPage);
+    lastHasMore = result.data.has_more;
+    lastNextCursor = result.data.next_cursor;
+
+    if (
+      collected.length >= targetPageSize ||
+      !lastHasMore ||
+      !lastNextCursor ||
+      result.data.workers.length === 0 ||
+      seenCursors.has(lastNextCursor)
+    ) {
+      break;
+    }
+
+    seenCursors.add(lastNextCursor);
+    cursor = lastNextCursor;
+  }
+
+  if (collected.length > targetPageSize) {
+    const trimmed = collected.slice(0, targetPageSize);
+    const lastIncluded = trimmed[trimmed.length - 1];
+    return salAdvOk(
+      {
+        project_id: parsedProjectId.project_id,
+        workers: trimmed,
+        has_more: true,
+        next_cursor: `${lastIncluded.employee_code}|${lastIncluded.worker_entry_id}`,
+      },
+      200,
+    );
+  }
+
+  return salAdvOk(
+    {
+      project_id: parsedProjectId.project_id,
+      workers: collected,
+      has_more: lastHasMore,
+      next_cursor: lastHasMore ? lastNextCursor : null,
+    },
+    200,
+  );
 }
 
 // -----------------------------------------------------------------------------
@@ -1096,5 +1172,114 @@ export async function handleGetSalaryAdvanceWorkerPortrait(
   } catch {
     console.error("[salary-advance] worker portrait preview failed");
     return salAdvError("SALARY_ADVANCE_STORAGE_UNAVAILABLE");
+  }
+}
+
+// -----------------------------------------------------------------------------
+// 13. GET /api/salary-advance/requests/export
+// -----------------------------------------------------------------------------
+export async function handleGetExportSalaryAdvanceRequests(
+  request: Request,
+  enabledFlag: string | undefined,
+  dependencies: SalaryAdvanceApiDependencies,
+  options?: {
+    maxExportRows?: number;
+    pageSize?: number;
+  },
+): Promise<Response> {
+  const gate = directEntryFeatureGate(enabledFlag);
+  if (gate) return gate;
+
+  if (hasDisallowedAuthorityHeaders(request)) {
+    return salAdvError("CLIENT_AUTHORITY_FIELD_FORBIDDEN");
+  }
+
+  const url = parseRequestUrl(request);
+  if (!url) return salAdvError("SALARY_ADVANCE_QUERY_INVALID");
+
+  const query = parseExportSalaryAdvanceRequestsQuery(url);
+  if (!query.ok) return salAdvError(query.code);
+
+  const actor = await resolveSalaryAdvanceActor(dependencies);
+  if (!actor.ok) return actor.response;
+
+  const maxExportRows =
+    options?.maxExportRows !== undefined &&
+    Number.isSafeInteger(options.maxExportRows) &&
+    options.maxExportRows >= 1
+      ? options.maxExportRows
+      : MAX_SALARY_ADVANCE_EXPORT_ROWS;
+  const pageSize =
+    options?.pageSize !== undefined &&
+    Number.isSafeInteger(options.pageSize) &&
+    options.pageSize >= 1 &&
+    options.pageSize <= 100
+      ? options.pageSize
+      : SALARY_ADVANCE_EXPORT_PAGE_SIZE;
+
+  const allRows: SalaryAdvanceRequestSummary[] = [];
+  const seenRequestIds = new Set<string>();
+  const seenCursors = new Set<string>();
+  let cursor: string | null = null;
+
+  while (true) {
+    const result = await dependencies.repository.listRequests({
+      auth_subject: actor.auth_subject,
+      app_user_id: actor.app_user_id,
+      queue: "ACCOUNTANT",
+      project_id: query.value.project_id,
+      request_state: query.value.request_state,
+      evidence_review_state: query.value.evidence_review_state,
+      search: query.value.search,
+      cursor,
+      page_size: pageSize,
+    });
+    if (!result.ok) return salAdvError(result.code);
+
+    const page = result.data;
+    for (const row of page.requests) {
+      if (!seenRequestIds.has(row.request_id)) {
+        seenRequestIds.add(row.request_id);
+        allRows.push(row);
+      }
+    }
+
+    if (allRows.length > maxExportRows) {
+      return salAdvError("SALARY_ADVANCE_EXPORT_LIMIT_EXCEEDED");
+    }
+
+    if (!page.has_more) {
+      break;
+    }
+
+    if (
+      page.requests.length === 0 ||
+      !page.next_cursor ||
+      seenCursors.has(page.next_cursor)
+    ) {
+      console.error("[salary-advance] export pagination terminated incompletely");
+      return salAdvError("SALARY_ADVANCE_EXPORT_INCOMPLETE");
+    }
+
+    seenCursors.add(page.next_cursor);
+    cursor = page.next_cursor;
+  }
+
+  try {
+    const xlsxBytes = await buildSalaryAdvanceExportXlsx(allRows);
+    const filename = buildSalaryAdvanceExportFilename();
+    return new Response(Buffer.from(xlsxBytes), {
+      status: 200,
+      headers: {
+        "Content-Type": SALARY_ADVANCE_EXPORT_XLSX_CONTENT_TYPE,
+        "Content-Length": String(xlsxBytes.byteLength),
+        "Content-Disposition": `attachment; filename="${filename}"`,
+        "Cache-Control": "private, no-store",
+        "X-Content-Type-Options": "nosniff",
+      },
+    });
+  } catch {
+    console.error("[salary-advance] excel export generation failed");
+    return salAdvError("SALARY_ADVANCE_UNAVAILABLE");
   }
 }

@@ -906,6 +906,24 @@ export function evaluateRequestAttentionForTab(
   return { needsAttention: false, label: null, tone: "neutral" };
 }
 
+export function isRequestOpenInStateMachine(
+  request: Pick<SalaryAdvanceRequestSummary, "request_state">
+): boolean {
+  return !getRequestStateMeta(request.request_state).isTerminal;
+}
+
+export function countOpenRequestsForPmTab(
+  requests: ReadonlyArray<Pick<SalaryAdvanceRequestSummary, "request_state">>
+): number {
+  let count = 0;
+  for (const item of requests) {
+    if (isRequestOpenInStateMachine(item)) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
 export function countActionableRequestsForTab(
   requests: ReadonlyArray<
     Pick<
@@ -915,6 +933,9 @@ export function countActionableRequestsForTab(
   >,
   tabId: SalaryAdvanceWorkspaceTabId
 ): number {
+  if (tabId === "pm") {
+    return countOpenRequestsForPmTab(requests);
+  }
   let count = 0;
   for (const item of requests) {
     if (evaluateRequestAttentionForTab(item, tabId).needsAttention) {
@@ -1501,6 +1522,62 @@ export async function fetchSalaryAdvanceRequestListPage(params: {
   }
 }
 
+export function buildSalaryAdvanceExportUrl(params: {
+  projectFilter: string;
+  requestStateFilter: "ALL" | SalaryAdvanceRequestState;
+  evidenceStateFilter: "ALL" | SalaryAdvanceEvidenceReviewState;
+  appliedSearch: string;
+}): string {
+  const queryParams = new URLSearchParams();
+  if (params.projectFilter !== "ALL") {
+    queryParams.set("project_id", params.projectFilter);
+  }
+  if (params.requestStateFilter !== "ALL") {
+    queryParams.set("request_state", params.requestStateFilter);
+  }
+  if (params.evidenceStateFilter !== "ALL") {
+    queryParams.set("evidence_review_state", params.evidenceStateFilter);
+  }
+  if (params.appliedSearch.trim().length > 0) {
+    queryParams.set("search", params.appliedSearch.trim());
+  }
+  const qs = queryParams.toString();
+  return qs.length > 0
+    ? `/api/salary-advance/requests/export?${qs}`
+    : "/api/salary-advance/requests/export";
+}
+
+export function isProjectWorkerHiddenFromPicker(
+  worker:
+    | Pick<
+        SalaryAdvanceWorkerOption,
+        "employment_status" | "ineligible_reasons"
+      >
+    | null
+    | undefined
+): boolean {
+  if (!worker) return true;
+  if (worker.employment_status === "OFF") {
+    return true;
+  }
+  if (
+    Array.isArray(worker.ineligible_reasons) &&
+    worker.ineligible_reasons.includes("WORKER_STATUS_OFF")
+  ) {
+    return true;
+  }
+  return false;
+}
+
+export function filterSelectableProjectWorkers<
+  T extends Pick<
+    SalaryAdvanceWorkerOption,
+    "employment_status" | "ineligible_reasons"
+  >,
+>(workers: ReadonlyArray<T>): T[] {
+  return workers.filter((worker) => !isProjectWorkerHiddenFromPicker(worker));
+}
+
 export function reconcileSelectedWorkerEntryId(
   currentWorkerEntryId: string,
   workers: ReadonlyArray<
@@ -1515,7 +1592,7 @@ export function reconcileSelectedWorkerEntryId(
     return "";
   }
   const match = workers.find((worker) => worker.worker_entry_id === trimmed);
-  if (!match) {
+  if (!match || isProjectWorkerHiddenFromPicker(match)) {
     return "";
   }
   return describeWorkerEligibility(match).isEligible ? trimmed : "";
@@ -2195,6 +2272,10 @@ export function salaryAdvanceErrorMessage(
       return "Người lao động chưa có ảnh chân dung chuẩn trong hồ sơ hệ thống nên chưa thể xác nhận «Đã đối chiếu».";
     case "SALARY_ADVANCE_WORKER_PORTRAIT_VERSION_CONFLICT":
       return "Ảnh chân dung hồ sơ của người lao động vừa thay đổi. Hệ thống đã tải lại ảnh mới nhất để bạn đối chiếu lại.";
+    case "SALARY_ADVANCE_EXPORT_LIMIT_EXCEEDED":
+      return "Số lượng dòng khớp bộ lọc vượt quá giới hạn xuất Excel cho phép (tối đa 5.000 dòng). Vui lòng thu hẹp bộ lọc theo dự án hoặc trạng thái.";
+    case "SALARY_ADVANCE_EXPORT_INCOMPLETE":
+      return "Không thể tải đầy đủ toàn bộ các trang dữ liệu để xuất Excel. Vui lòng thử lại.";
     case "SALARY_ADVANCE_STORAGE_UNAVAILABLE":
       return "Kho lưu trữ ảnh hiện tạm thời gián đoạn. Vui lòng thử lại sau ít phút.";
     case "SALARY_ADVANCE_QUERY_INVALID":

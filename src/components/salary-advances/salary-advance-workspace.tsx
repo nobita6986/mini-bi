@@ -30,6 +30,7 @@ import type {
 } from "@/lib/salary-advance/salary-advance-contract";
 import {
   SALARY_ADVANCE_NON_ACCOUNTING_NOTICE,
+  buildSalaryAdvanceExportUrl,
   canAccessSalaryAdvanceContext,
   createLatestRequestTracker,
   describeWorkerBankTransferEligibility,
@@ -37,6 +38,7 @@ import {
   evaluateEvidenceComparisonPanel,
   evaluateRequestAttentionForTab,
   fetchSalaryAdvanceRequestListPage,
+  filterSelectableProjectWorkers,
   formatDateTimeVi,
   formatFileSizeBytes,
   formatVndAmount,
@@ -66,6 +68,7 @@ import {
   validateMessageInput,
   validateTransitionActionInput,
   type LatestRequestTracker,
+  type SalaryAdvanceWorkspaceTab,
   type SalaryAdvanceWorkspaceTabId,
 } from "@/lib/salary-advance/salary-advance-ui-model";
 
@@ -114,6 +117,46 @@ function getRequestTracker(
   return ref.current;
 }
 
+function HeaderTabButton({
+  tab,
+  isSelected,
+  onSelect,
+}: {
+  tab: SalaryAdvanceWorkspaceTab;
+  isSelected: boolean;
+  onSelect: (tabId: SalaryAdvanceWorkspaceTabId) => void;
+}) {
+  const showBadge =
+    tab.id === "pm" || tab.id === "accountant" || tab.badgeCount > 0;
+  const badgeTone =
+    tab.badgeCount > 0
+      ? tab.id === "accountant"
+        ? "warning"
+        : "info"
+      : "neutral";
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={isSelected}
+      data-testid={`salary-advance-tab-${tab.id}`}
+      onClick={() => onSelect(tab.id)}
+      className={`inline-flex min-h-11 sm:min-h-10 items-center justify-center gap-2 whitespace-nowrap shrink-0 rounded-lg border px-3.5 py-2 text-sm font-medium transition-colors ${
+        isSelected
+          ? "border-[var(--color-primary-border)] bg-[var(--color-primary-bg)] text-[var(--color-primary)]"
+          : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-subtle)]"
+      }`}
+    >
+      <span>{tab.label}</span>
+      {showBadge ? (
+        <span data-testid={`salary-advance-tab-badge-${tab.id}`}>
+          <StatusBadge tone={badgeTone}>{tab.badgeCount}</StatusBadge>
+        </span>
+      ) : null}
+    </button>
+  );
+}
+
 export function SalaryAdvanceWorkspace() {
   const notify = useNotify();
 
@@ -126,6 +169,9 @@ export function SalaryAdvanceWorkspace() {
   const [tabBadgeCounts, setTabBadgeCounts] = useState<
     Partial<Record<SalaryAdvanceWorkspaceTabId, number>>
   >({});
+  const [businessNoticeDismissed, setBusinessNoticeDismissed] = useState(false);
+  const [exportingExcel, setExportingExcel] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   // Queue filter state
   const [projectFilter, setProjectFilter] = useState<string>("ALL");
@@ -433,8 +479,15 @@ export function SalaryAdvanceWorkspace() {
           : nextRows;
         requestsRef.current = combined;
         setRequests(combined);
+        const isUnfilteredView =
+          projectFilter === "ALL" &&
+          requestStateFilter === "ALL" &&
+          evidenceStateFilter === "ALL" &&
+          appliedSearch.trim().length === 0;
         setTabBadgeCounts((counts) =>
-          updateTabBadgeCountsForTab(counts, currentTabId, combined)
+          isUnfilteredView || counts[currentTabId] === undefined
+            ? updateTabBadgeCountsForTab(counts, currentTabId, combined)
+            : counts
         );
         setRequestsHasMore(outcome.data.has_more);
         setRequestsNextCursor(outcome.data.next_cursor ?? null);
@@ -645,9 +698,13 @@ export function SalaryAdvanceWorkspace() {
           return;
         }
 
-        const nextWorkers = json.data.workers ?? [];
+        const nextWorkers = filterSelectableProjectWorkers(
+          json.data.workers ?? []
+        );
         setWorkers((prev) =>
-          isAppend ? [...prev, ...nextWorkers] : nextWorkers
+          filterSelectableProjectWorkers(
+            isAppend ? [...prev, ...nextWorkers] : nextWorkers
+          )
         );
         setWorkersHasMore(Boolean(json.data.has_more));
         setWorkersNextCursor(json.data.next_cursor ?? null);
@@ -794,6 +851,72 @@ export function SalaryAdvanceWorkspace() {
     createIdempotencyKeyRef.current =
       newSalaryAdvanceIdempotencyKey("sa-create");
     setCreateDialogOpen(true);
+  };
+
+  const handleExportExcel = async () => {
+    if (exportingExcel) return;
+    setExportError(null);
+    setExportingExcel(true);
+
+    try {
+      const exportUrl = buildSalaryAdvanceExportUrl({
+        projectFilter,
+        requestStateFilter,
+        evidenceStateFilter,
+        appliedSearch,
+      });
+
+      const response = await fetch(exportUrl, {
+        method: "GET",
+        cache: "no-store",
+      });
+
+      if (!response.ok) {
+        const json = (await response.json().catch(() => null)) as
+          | { code?: string }
+          | null;
+        const code = json?.code ?? "SALARY_ADVANCE_UNAVAILABLE";
+        const msg = salaryAdvanceErrorMessage(code);
+        setExportError(msg);
+        notify.error({
+          title: "Không thể xuất tệp Excel",
+          description: msg,
+        });
+        return;
+      }
+
+      const blob = await response.blob();
+      const contentDisposition =
+        response.headers.get("Content-Disposition") ?? "";
+      const filenameMatch = contentDisposition.match(/filename="?([^";]+)"?/i);
+      const filename =
+        filenameMatch?.[1] ??
+        `ung-luong-doi-soat-${new Date().toISOString().slice(0, 10)}.xlsx`;
+
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      URL.revokeObjectURL(objectUrl);
+
+      notify.success({
+        title: "Đã xuất tệp Excel đối soát",
+        description:
+          "Tệp Excel theo bộ lọc hiện tại của Kế toán đã được tải xuống.",
+      });
+    } catch {
+      const msg = salaryAdvanceErrorMessage("SALARY_ADVANCE_UNAVAILABLE");
+      setExportError(msg);
+      notify.error({
+        title: "Không thể xuất tệp Excel",
+        description: msg,
+      });
+    } finally {
+      setExportingExcel(false);
+    }
   };
 
   const handleSubmitCreateRequest = async () => {
@@ -1451,60 +1574,110 @@ export function SalaryAdvanceWorkspace() {
     );
   }
 
+  const pmTab = visibleTabs.find((tab) => tab.id === "pm") ?? null;
+  const accountantTab =
+    visibleTabs.find((tab) => tab.id === "accountant") ?? null;
+  const supervisoryTab =
+    visibleTabs.find((tab) => tab.id === "supervisory") ?? null;
+
   return (
     <PageShell>
       <PageHeader
         title="Ứng lương"
         description="Luồng trao đổi, phê duyệt đề nghị ứng lương và đối chiếu ảnh NLĐ nhận tiền mặt giữa QLDA và Kế toán dự án"
         actions={
-          context?.is_project_manager ? (
-            <Button
-              variant="primary"
-              onClick={handleOpenCreateDialog}
-              data-testid="salary-advance-open-create-btn"
-            >
-              + Tạo yêu cầu ứng lương
-            </Button>
-          ) : null
+          <div
+            className="flex flex-wrap items-center justify-start gap-2 sm:justify-end"
+            role="tablist"
+            aria-label="Khu vực làm việc Ứng lương"
+            data-testid="salary-advance-header-actions"
+          >
+            {pmTab || context?.is_project_manager ? (
+              <div
+                className="flex flex-wrap items-center gap-2"
+                data-testid="salary-advance-pm-header-actions"
+              >
+                {pmTab ? (
+                  <HeaderTabButton
+                    tab={pmTab}
+                    isSelected={currentTabConfig?.id === pmTab.id}
+                    onSelect={handleTabChange}
+                  />
+                ) : null}
+                {context?.is_project_manager ? (
+                  <Button
+                    variant="primary"
+                    size="md"
+                    onClick={handleOpenCreateDialog}
+                    data-testid="salary-advance-open-create-btn"
+                  >
+                    + Tạo yêu cầu ứng lương
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
+            {accountantTab || context?.is_project_accountant ? (
+              <div
+                className="flex flex-wrap items-center gap-2"
+                data-testid="salary-advance-accountant-header-actions"
+              >
+                {accountantTab ? (
+                  <HeaderTabButton
+                    tab={accountantTab}
+                    isSelected={currentTabConfig?.id === accountantTab.id}
+                    onSelect={handleTabChange}
+                  />
+                ) : null}
+                {context?.is_project_accountant ? (
+                  <Button
+                    variant="secondary"
+                    size="md"
+                    loading={exportingExcel}
+                    disabled={exportingExcel}
+                    onClick={() => void handleExportExcel()}
+                    data-testid="salary-advance-export-excel-btn"
+                  >
+                    {exportingExcel ? "Đang xuất Excel..." : "Xuất Excel"}
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
+            {supervisoryTab ? (
+              <HeaderTabButton
+                tab={supervisoryTab}
+                isSelected={currentTabConfig?.id === supervisoryTab.id}
+                onSelect={handleTabChange}
+              />
+            ) : null}
+          </div>
         }
       />
 
-      <StatusBanner tone="info" title="Lưu ý nghiệp vụ">
-        {SALARY_ADVANCE_NON_ACCOUNTING_NOTICE}
-      </StatusBanner>
+      {!businessNoticeDismissed ? (
+        <StatusBanner
+          tone="info"
+          title="Lưu ý nghiệp vụ"
+          dataTestId="salary-advance-business-notice-banner"
+          onDismiss={() => setBusinessNoticeDismissed(true)}
+          dismissLabel="Đóng lưu ý nghiệp vụ"
+          dismissTestId="salary-advance-dismiss-business-notice-btn"
+        >
+          {SALARY_ADVANCE_NON_ACCOUNTING_NOTICE}
+        </StatusBanner>
+      ) : null}
 
-      {/* Capability Tabs: "Yêu cầu tôi tạo" (PM) / "Cần xử lý" (Accountant) / "Giám sát toàn miền" */}
-      <div
-        className="flex flex-wrap items-center gap-2 border-b border-[var(--color-border)] pb-3"
-        role="tablist"
-        aria-label="Khu vực làm việc Ứng lương"
-      >
-        {visibleTabs.map((tab) => {
-          const isSelected = currentTabConfig?.id === tab.id;
-          return (
-            <button
-              key={tab.id}
-              type="button"
-              role="tab"
-              aria-selected={isSelected}
-              data-testid={`salary-advance-tab-${tab.id}`}
-              onClick={() => handleTabChange(tab.id)}
-              className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium border ${
-                isSelected
-                  ? "border-[var(--color-primary-border)] bg-[var(--color-primary-bg)] text-[var(--color-primary)]"
-                  : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-subtle)]"
-              }`}
-            >
-              <span>{tab.label}</span>
-              {tab.badgeCount > 0 ? (
-                <StatusBadge tone={tab.id === "accountant" ? "warning" : "info"}>
-                  {tab.badgeCount}
-                </StatusBadge>
-              ) : null}
-            </button>
-          );
-        })}
-      </div>
+      {exportError ? (
+        <div data-testid="salary-advance-export-error-banner">
+          <StatusBanner
+            tone="error"
+            title="Không thể xuất tệp Excel"
+            onDismiss={() => setExportError(null)}
+            dismissLabel="Đóng thông báo lỗi xuất Excel"
+          >
+            {exportError}
+          </StatusBanner>
+        </div>
+      ) : null}
 
       {currentTabConfig ? (
         <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-[var(--color-text-secondary)]">
@@ -2993,7 +3166,7 @@ export function SalaryAdvanceWorkspace() {
                     ? "-- Không tìm thấy NLĐ phù hợp --"
                     : "-- Chọn người lao động --"}
               </option>
-              {workers.map((worker) => {
+              {filterSelectableProjectWorkers(workers).map((worker) => {
                 const eligibility = describeWorkerEligibility(worker);
                 return (
                   <option
@@ -3004,7 +3177,7 @@ export function SalaryAdvanceWorkspace() {
                     đầu: {worker.first_work_date} ·{" "}
                     {eligibility.isEligible
                       ? `${worker.has_portrait ? "Đã có ảnh hồ sơ" : "Chưa có ảnh hồ sơ"} · ${worker.bank_transfer_eligible ? "Có TK chính chủ" : "Chưa đủ TK chính chủ"}`
-                      : `[Không đủ ĐK: ${eligibility.statusLabel}]`}
+                      : `[Không đủ ĐK: ${eligibility.reasonLabels.join("; ") || eligibility.statusLabel}]`}
                   </option>
                 );
               })}

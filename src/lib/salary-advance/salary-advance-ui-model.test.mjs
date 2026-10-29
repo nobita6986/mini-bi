@@ -5,9 +5,11 @@ import {
   SALARY_ADVANCE_MISSING_PORTRAIT_WARNING,
   SALARY_ADVANCE_NON_ACCOUNTING_NOTICE,
   buildEvidencePhotoPreviewUrl,
+  buildSalaryAdvanceExportUrl,
   buildWorkerPortraitPreviewUrl,
   canAccessSalaryAdvanceContext,
   countActionableRequestsForTab,
+  countOpenRequestsForPmTab,
   createLatestRequestTracker,
   decideSalaryAdvancePageAccess,
   describeWorkerBankTransferEligibility,
@@ -15,6 +17,7 @@ import {
   evaluateEvidenceComparisonPanel,
   evaluateRequestAttentionForTab,
   fetchSalaryAdvanceRequestListPage,
+  filterSelectableProjectWorkers,
   formatFileSizeBytes,
   formatVndAmount,
   getEvidenceKindLabel,
@@ -24,6 +27,8 @@ import {
   getSalaryAdvanceActorRoleLabel,
   getSalaryAdvanceEventTone,
   getSalaryAdvanceEventTypeLabel,
+  isProjectWorkerHiddenFromPicker,
+  isRequestOpenInStateMachine,
   isSalaryAdvanceConflictError,
   newSalaryAdvanceIdempotencyKey,
   normalizePositiveVndInput,
@@ -248,7 +253,11 @@ test("resolveAvailableRequestActions never enables actions outside server allowe
   assert.equal(accountantActions.hasAnyAccountantDecision, true);
 });
 
-test("evaluateRequestAttentionForTab and countActionableRequestsForTab highlight actionable items per queue", () => {
+test("evaluateRequestAttentionForTab and countActionableRequestsForTab count open non-terminal requests for PM badge and actionable items for Accountant badge", () => {
+  const pmOpen = makeRequestSummary({
+    request_state: "OPEN",
+    allowed_actions: makeAllowedActions({ can_withdraw: true }),
+  });
   const pmNeedsInfo = makeRequestSummary({
     request_state: "NEEDS_INFO",
     allowed_actions: makeAllowedActions({ can_provide_info: true }),
@@ -267,19 +276,60 @@ test("evaluateRequestAttentionForTab and countActionableRequestsForTab highlight
     request_state: "REJECTED",
     allowed_actions: makeAllowedActions(),
   });
+  const pmWithdrawn = makeRequestSummary({
+    request_state: "WITHDRAWN",
+    allowed_actions: makeAllowedActions(),
+  });
+  const pmHandledExternally = makeRequestSummary({
+    request_state: "HANDLED_EXTERNALLY",
+    allowed_actions: makeAllowedActions(),
+  });
 
+  // Row-level attention indicators for PM remain intact
   assert.equal(evaluateRequestAttentionForTab(pmNeedsInfo, "pm").needsAttention, true);
   assert.equal(evaluateRequestAttentionForTab(pmRetake, "pm").needsAttention, true);
   assert.equal(evaluateRequestAttentionForTab(pmWaitingUpload, "pm").needsAttention, true);
   assert.equal(evaluateRequestAttentionForTab(pmClosed, "pm").needsAttention, false);
+
+  // State machine open check: OPEN and NEEDS_INFO are non-terminal; APPROVED, REJECTED, WITHDRAWN, HANDLED_EXTERNALLY are terminal
+  assert.equal(isRequestOpenInStateMachine(pmOpen), true);
+  assert.equal(isRequestOpenInStateMachine(pmNeedsInfo), true);
+  assert.equal(isRequestOpenInStateMachine(pmRetake), false);
+  assert.equal(isRequestOpenInStateMachine(pmWaitingUpload), false);
+  assert.equal(isRequestOpenInStateMachine(pmClosed), false);
+  assert.equal(isRequestOpenInStateMachine(pmWithdrawn), false);
+  assert.equal(isRequestOpenInStateMachine(pmHandledExternally), false);
+
+  // PM tab badge ("Yêu cầu tôi tạo") counts open non-terminal requests (OPEN + NEEDS_INFO) and excludes terminal states
+  assert.equal(
+    countOpenRequestsForPmTab([
+      pmOpen,
+      pmNeedsInfo,
+      pmRetake,
+      pmWaitingUpload,
+      pmClosed,
+      pmWithdrawn,
+      pmHandledExternally,
+    ]),
+    2
+  );
   assert.equal(
     countActionableRequestsForTab(
-      [pmNeedsInfo, pmRetake, pmWaitingUpload, pmClosed],
+      [
+        pmOpen,
+        pmNeedsInfo,
+        pmRetake,
+        pmWaitingUpload,
+        pmClosed,
+        pmWithdrawn,
+        pmHandledExternally,
+      ],
       "pm"
     ),
-    3
+    2
   );
 
+  // Accountant tab badge ("Cần xử lý") continues to count actionable requests for the accountant
   const accOpen = makeRequestSummary({
     request_state: "OPEN",
     allowed_actions: makeAllowedActions({ can_approve: true, can_reject: true }),
@@ -1452,4 +1502,119 @@ test("describeWorkerBankTransferEligibility, validateCreateSalaryAdvanceDraft, a
     salaryAdvanceErrorMessage("SALARY_ADVANCE_BANK_ACCOUNT_NOT_SELF_OWNED"),
     /không chính chủ/
   );
+  assert.match(
+    salaryAdvanceErrorMessage("SALARY_ADVANCE_EXPORT_LIMIT_EXCEEDED"),
+    /vượt quá giới hạn xuất Excel/
+  );
+  assert.match(
+    salaryAdvanceErrorMessage("SALARY_ADVANCE_EXPORT_INCOMPLETE"),
+    /xuất Excel/
+  );
+});
+
+test("buildSalaryAdvanceExportUrl maps active accountant filters (project, request_state, evidence_review_state, search) and omits ALL/empty filters", () => {
+  assert.equal(
+    buildSalaryAdvanceExportUrl({
+      projectFilter: "ALL",
+      requestStateFilter: "ALL",
+      evidenceStateFilter: "ALL",
+      appliedSearch: "   ",
+    }),
+    "/api/salary-advance/requests/export"
+  );
+
+  assert.equal(
+    buildSalaryAdvanceExportUrl({
+      projectFilter: "PRJ_NORTH",
+      requestStateFilter: "APPROVED",
+      evidenceStateFilter: "PENDING_REVIEW",
+      appliedSearch: "  NV001  ",
+    }),
+    "/api/salary-advance/requests/export?project_id=PRJ_NORTH&request_state=APPROVED&evidence_review_state=PENDING_REVIEW&search=NV001"
+  );
+});
+
+test("filterSelectableProjectWorkers hides OFF workers while retaining UNCONFIRMED and fixable-ineligible workers with their ineligibility reasons", () => {
+  const onEligible = {
+    worker_entry_id: "33333333-3333-4333-8333-333333333331",
+    employee_code: "NV001",
+    display_name: "Nguyễn Văn A",
+    first_work_date: "2026-01-10",
+    has_portrait: true,
+    employment_status: "ON",
+    active_on_project_count: 1,
+    has_duplicate_cccd: false,
+    is_eligible: true,
+    ineligible_reasons: [],
+    bank_transfer_eligible: true,
+  };
+  const offWorker = {
+    worker_entry_id: "33333333-3333-4333-8333-333333333332",
+    employee_code: "NV002",
+    display_name: "Trần Văn Nghỉ",
+    first_work_date: "2026-01-11",
+    has_portrait: true,
+    employment_status: "OFF",
+    active_on_project_count: 0,
+    has_duplicate_cccd: false,
+    is_eligible: false,
+    ineligible_reasons: ["WORKER_STATUS_OFF"],
+    bank_transfer_eligible: true,
+  };
+  const unconfirmedWorker = {
+    worker_entry_id: "33333333-3333-4333-8333-333333333333",
+    employee_code: "NV003",
+    display_name: "Lê Thị Chưa Xác Nhận",
+    first_work_date: "2026-01-12",
+    has_portrait: true,
+    employment_status: "UNCONFIRMED",
+    active_on_project_count: 0,
+    has_duplicate_cccd: false,
+    is_eligible: false,
+    ineligible_reasons: ["WORKER_STATUS_UNCONFIRMED"],
+    bank_transfer_eligible: true,
+  };
+  const dupCccdAndMultiWorker = {
+    worker_entry_id: "33333333-3333-4333-8333-333333333334",
+    employee_code: "NV004",
+    display_name: "Phạm Văn Trùng Hồ Sơ",
+    first_work_date: "2026-01-13",
+    has_portrait: false,
+    employment_status: "ON",
+    active_on_project_count: 2,
+    has_duplicate_cccd: true,
+    is_eligible: false,
+    ineligible_reasons: ["WORKER_MULTI_PROJECT_ON", "WORKER_DUPLICATE_CCCD"],
+    bank_transfer_eligible: false,
+    bank_ineligible_reason: "BANK_ACCOUNT_MISSING",
+  };
+
+  assert.equal(isProjectWorkerHiddenFromPicker(offWorker), true);
+  assert.equal(isProjectWorkerHiddenFromPicker(onEligible), false);
+  assert.equal(isProjectWorkerHiddenFromPicker(unconfirmedWorker), false);
+  assert.equal(isProjectWorkerHiddenFromPicker(dupCccdAndMultiWorker), false);
+
+  const filtered = filterSelectableProjectWorkers([
+    onEligible,
+    offWorker,
+    unconfirmedWorker,
+    dupCccdAndMultiWorker,
+  ]);
+  assert.deepEqual(
+    filtered.map((w) => w.employee_code),
+    ["NV001", "NV003", "NV004"],
+    "OFF worker (NV002) must be hidden while ON, UNCONFIRMED (NV003), and fixable-ineligible (NV004) workers remain visible"
+  );
+
+  // UNCONFIRMED and fixable-ineligible workers still report their reasons clearly
+  const unconfirmedEligibility = describeWorkerEligibility(unconfirmedWorker);
+  assert.equal(unconfirmedEligibility.isEligible, false);
+  assert.ok(
+    unconfirmedEligibility.reasonLabels.some((r) => r.includes("UNCONFIRMED"))
+  );
+
+  const dupEligibility = describeWorkerEligibility(dupCccdAndMultiWorker);
+  assert.equal(dupEligibility.isEligible, false);
+  assert.ok(dupEligibility.reasonLabels.some((r) => r.includes("2 dự án")));
+  assert.ok(dupEligibility.reasonLabels.some((r) => r.includes("trùng CCCD")));
 });

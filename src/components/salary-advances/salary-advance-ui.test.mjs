@@ -299,3 +299,55 @@ test("SalaryAdvanceWorkspace renders mandatory payment method selection, self-ow
   assert.match(workspaceSource, /Đối chiếu chứng từ chuyển khoản/);
   assert.match(workspaceSource, /2\. Chứng từ chuyển khoản \(Bill\)/);
 });
+
+test("SalaryAdvanceWorkspace places PM and Accountant queue tabs/badges in PageHeader actions alongside primary CTA buttons, supports dismissing 'Lưu ý nghiệp vụ', exports filtered Excel for accountants, and hides OFF workers in picker", () => {
+  // 1. Header action groups & badges
+  assert.match(workspaceSource, /data-testid="salary-advance-header-actions"/);
+  assert.match(
+    workspaceSource,
+    /data-testid="salary-advance-pm-header-actions"/
+  );
+  assert.match(
+    workspaceSource,
+    /data-testid="salary-advance-accountant-header-actions"/
+  );
+  assert.match(
+    workspaceSource,
+    /data-testid=\{`salary-advance-tab-\$\{tab\.id\}`\}/
+  );
+  assert.match(
+    workspaceSource,
+    /data-testid=\{`salary-advance-tab-badge-\$\{tab\.id\}`\}/
+  );
+  assert.match(workspaceSource, /data-testid="salary-advance-open-create-btn"/);
+  assert.match(workspaceSource, /data-testid="salary-advance-export-excel-btn"/);
+  assert.match(workspaceSource, /Xuất Excel/);
+
+  // 2. Dismissible "Lưu ý nghiệp vụ" banner
+  assert.match(
+    workspaceSource,
+    /dataTestId="salary-advance-business-notice-banner"/
+  );
+  assert.match(
+    workspaceSource,
+    /dismissTestId="salary-advance-dismiss-business-notice-btn"/
+  );
+  assert.match(workspaceSource, /dismissLabel="Đóng lưu ý nghiệp vụ"/);
+  assert.match(
+    workspaceSource,
+    /onDismiss=\{\(\)\s*=>\s*setBusinessNoticeDismissed\(true\)\}/
+  );
+
+  // 3. Accountant Excel export uses active filter state and buildSalaryAdvanceExportUrl
+  assert.match(workspaceSource, /buildSalaryAdvanceExportUrl/);
+  assert.match(workspaceSource, /handleExportExcel/);
+  assert.match(uiModelSource, /\/api\/salary-advance\/requests\/export/);
+
+  // 4. Worker picker filters out OFF workers while preserving remaining workers with explicit ineligibility reasons
+  assert.match(workspaceSource, /filterSelectableProjectWorkers/);
+  assert.match(
+    workspaceSource,
+    /\[Không đủ ĐK:\s*\$\{eligibility\.reasonLabels\.join\("; "\)\s*\|\|\s*eligibility\.statusLabel\}\]/
+  );
+  assert.match(uiModelSource, /isProjectWorkerHiddenFromPicker/);
+});

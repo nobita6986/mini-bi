@@ -18,6 +18,9 @@ export function StatusBanner({
   role,
   className,
   dataTestId,
+  onDismiss,
+  dismissLabel = "Đóng thông báo",
+  dismissTestId,
 }: {
   tone?: StatusBannerTone;
   title?: string;
@@ -25,6 +28,9 @@ export function StatusBanner({
   role?: "status" | "alert";
   className?: string;
   dataTestId?: string;
+  onDismiss?: () => void;
+  dismissLabel?: string;
+  dismissTestId?: string;
 }) {
   const resolvedRole = role ?? (tone === "error" ? "alert" : "status");
   return (
@@ -39,8 +45,25 @@ export function StatusBanner({
         className,
       )}
     >
-      {title ? <p className="font-medium">{title}</p> : null}
-      <div className={title ? "mt-1" : undefined}>{children}</div>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          {title ? <p className="font-medium">{title}</p> : null}
+          <div className={title ? "mt-1" : undefined}>{children}</div>
+        </div>
+        {onDismiss ? (
+          <button
+            type="button"
+            onClick={onDismiss}
+            aria-label={dismissLabel}
+            data-testid={dismissTestId}
+            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-transparent text-current/80 hover:bg-black/5 hover:text-current focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 dark:hover:bg-white/10"
+          >
+            <span aria-hidden="true" className="text-base leading-none">
+              ×
+            </span>
+          </button>
+        ) : null}
+      </div>
     </div>
   );
 }

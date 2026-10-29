@@ -4,9 +4,12 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 
+import ExcelJS from "exceljs";
+
 import { buildSalaryAdvanceEvidenceStorageKey } from "./r2-salary-advance-evidence-storage.ts";
 import {
   MAX_SALARY_ADVANCE_MUTATION_JSON_BYTES,
+  handleGetExportSalaryAdvanceRequests,
   handleGetPreviewSalaryAdvanceEvidence,
   handleGetSalaryAdvanceContext,
   handleGetSalaryAdvanceProjectWorkers,
@@ -719,6 +722,7 @@ test("all Next.js salary-advance API route files enforce nodejs runtime, force-d
     "src/app/api/salary-advance/context/route.ts",
     "src/app/api/salary-advance/projects/[projectId]/workers/route.ts",
     "src/app/api/salary-advance/requests/route.ts",
+    "src/app/api/salary-advance/requests/export/route.ts",
     "src/app/api/salary-advance/requests/[requestId]/route.ts",
     "src/app/api/salary-advance/requests/[requestId]/messages/route.ts",
     "src/app/api/salary-advance/requests/[requestId]/actions/route.ts",
@@ -892,4 +896,302 @@ test("BANK_TRANSFER creation, BANK_TRANSFER_RECEIPT review without portrait lock
     assert.equal(errPayload.ok, false);
     assert.equal(errPayload.code, errorCode);
   }
+});
+
+test("handleGetSalaryAdvanceProjectWorkers excludes OFF workers while keeping ON and UNCONFIRMED workers (including fixable-ineligible ones) and refilling pagination", async () => {
+  const workerCalls = [];
+  const repository = createSalaryAdvanceRepository(async (fn, args) => {
+    if (fn === "salary_advance_list_project_workers") {
+      workerCalls.push(args);
+      if (!args.p_cursor) {
+        return {
+          data: {
+            project_id: "PRJ_NORTH",
+            workers: [
+              {
+                worker_entry_id: "40000000-0000-4000-8000-000000000010",
+                employee_code: "NV010",
+                display_name: "Lê Đã Nghỉ",
+                position_label: "Công nhân",
+                employment_status: "OFF",
+                has_worker_portrait: true,
+                worker_portrait_document_id: PORTRAIT_DOC_ID,
+                worker_portrait_version: 1,
+                bank_account: null,
+                is_eligible_for_request: false,
+                is_eligible_for_cash: false,
+                is_eligible_for_bank_transfer: false,
+                ineligible_reasons: ["WORKER_STATUS_OFF"],
+              },
+              {
+                worker_entry_id: "40000000-0000-4000-8000-000000000011",
+                employee_code: "NV011",
+                display_name: "Phạm Chưa Xác Nhận",
+                position_label: "Công nhân",
+                employment_status: "UNCONFIRMED",
+                has_worker_portrait: true,
+                worker_portrait_document_id: PORTRAIT_DOC_ID,
+                worker_portrait_version: 1,
+                bank_account: null,
+                is_eligible_for_request: false,
+                is_eligible_for_cash: false,
+                is_eligible_for_bank_transfer: false,
+                ineligible_reasons: ["WORKER_STATUS_UNCONFIRMED"],
+              },
+            ],
+            next_cursor: "NV011|40000000-0000-4000-8000-000000000011",
+            has_more: true,
+          },
+          error: null,
+        };
+      }
+      return {
+        data: {
+          project_id: "PRJ_NORTH",
+          workers: [
+            {
+              worker_entry_id: "40000000-0000-4000-8000-000000000012",
+              employee_code: "NV012",
+              display_name: "Hoàng Thiếu Ảnh",
+              position_label: "Tổ trưởng",
+              employment_status: "ON",
+              has_worker_portrait: false,
+              worker_portrait_document_id: null,
+              worker_portrait_version: null,
+              bank_account: {
+                bank_id: "VCB",
+                institution_name: "Vietcombank",
+                account_number: "0123456789",
+                account_number_masked: "******6789",
+                account_holder_name: "NGUYEN KHAC TEN",
+                is_self_owned: false,
+              },
+              is_eligible_for_request: true,
+              is_eligible_for_cash: false,
+              is_eligible_for_bank_transfer: false,
+              ineligible_reasons: [
+                "MISSING_WORKER_PORTRAIT",
+                "BANK_ACCOUNT_NOT_SELF_OWNED",
+              ],
+            },
+          ],
+          next_cursor: null,
+          has_more: false,
+        },
+        error: null,
+      };
+    }
+    return { data: null, error: { message: "UNEXPECTED_RPC" } };
+  });
+
+  const res = await handleGetSalaryAdvanceProjectWorkers(
+    new Request(`${ORIGIN}/api/salary-advance/projects/PRJ_NORTH/workers?page_size=2`),
+    "PRJ_NORTH",
+    "true",
+    {
+      resolveSession: makeActorSession(PM_USER_ID),
+      repository,
+    },
+  );
+  assert.equal(res.status, 200);
+  const payload = await res.json();
+  assert.equal(payload.ok, true);
+  assert.equal(workerCalls.length, 2);
+  assert.deepEqual(
+    payload.data.workers.map((w) => ({
+      code: w.employee_code,
+      status: w.employment_status,
+      reasons: w.ineligible_reasons,
+    })),
+    [
+      {
+        code: "NV011",
+        status: "UNCONFIRMED",
+        reasons: ["WORKER_STATUS_UNCONFIRMED"],
+      },
+      {
+        code: "NV012",
+        status: "ON",
+        reasons: ["MISSING_WORKER_PORTRAIT", "BANK_ACCOUNT_NOT_SELF_OWNED"],
+      },
+    ],
+  );
+  assert.equal(payload.data.has_more, false);
+});
+
+test("handleGetExportSalaryAdvanceRequests paginates all matching ACCOUNTANT rows into .xlsx without sensitive fields and fails closed on limits/incomplete pagination", async () => {
+  const listCalls = [];
+  const makeExportListItem = (seq, overrides = {}) => ({
+    request_id: `30000000-0000-4000-8000-00000000000${seq}`,
+    project_id: "PRJ_NORTH",
+    project_display_name: "Dự án Bắc",
+    worker_entry_id: `40000000-0000-4000-8000-00000000000${seq}`,
+    worker_employee_code: `NV00${seq}`,
+    worker_display_name: `Nguyễn Văn ${seq}`,
+    has_worker_portrait: true,
+    worker_portrait_document_id: PORTRAIT_DOC_ID,
+    worker_portrait_version: 1,
+    requested_amount_vnd: `${seq}500000`,
+    payment_method: seq === 1 ? "BANK_TRANSFER" : "CASH",
+    payment_destination_snapshot:
+      seq === 1
+        ? {
+            bank_id: "VCB",
+            institution_name: "Vietcombank",
+            account_number: "0123456789",
+            account_number_masked: "******6789",
+            account_holder_name: "NGUYEN VAN 1",
+          }
+        : null,
+    worker_eligibility_warning: null,
+    initial_content: `Ứng lương đợt ${seq}`,
+    request_state: "APPROVED",
+    evidence_review_state: "REVIEWED",
+    current_evidence_version: 1,
+    version: 3,
+    created_by_user_id: PM_USER_ID,
+    created_by_display_name: "Phạm Quản Lý",
+    current_project_accountant_user_id: ACCT_USER_ID,
+    current_project_accountant_display_name: "Lê Kế Toán",
+    decided_at: "2026-10-29T10:30:00Z",
+    handled_externally_at: null,
+    withdrawn_at: null,
+    last_activity_at: `2026-10-29T11:0${seq}:00Z`,
+    created_at: `2026-10-29T09:0${seq}:00Z`,
+    updated_at: `2026-10-29T11:0${seq}:00Z`,
+    ...overrides,
+  });
+
+  const repository = createSalaryAdvanceRepository(async (fn, args) => {
+    if (fn === "salary_advance_list_requests") {
+      listCalls.push(args);
+      if (!args.p_cursor) {
+        return {
+          data: {
+            queue: "ACCOUNTANT",
+            requests: [makeExportListItem(1)],
+            next_cursor: "2026-10-29T11:01:00Z|30000000-0000-4000-8000-000000000001",
+            has_more: true,
+          },
+          error: null,
+        };
+      }
+      return {
+        data: {
+          queue: "ACCOUNTANT",
+          requests: [makeExportListItem(2)],
+          next_cursor: null,
+          has_more: false,
+        },
+        error: null,
+      };
+    }
+    return { data: null, error: { message: "UNEXPECTED_RPC" } };
+  });
+
+  const exportRes = await handleGetExportSalaryAdvanceRequests(
+    new Request(
+      `${ORIGIN}/api/salary-advance/requests/export?project_id=PRJ_NORTH&request_state=APPROVED&evidence_review_state=REVIEWED&search=NV00`,
+    ),
+    "true",
+    {
+      resolveSession: makeActorSession(ACCT_USER_ID),
+      repository,
+      now: () => new Date("2026-10-30T08:00:00Z"),
+    },
+  );
+  assert.equal(exportRes.status, 200);
+  assert.equal(
+    exportRes.headers.get("Content-Type"),
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  );
+  assert.match(
+    exportRes.headers.get("Content-Disposition") ?? "",
+    /attachment; filename="ung-luong-doi-soat-[0-9]{4}-[0-9]{2}-[0-9]{2}\.xlsx"/,
+  );
+  assert.equal(listCalls.length, 2);
+  assert.equal(listCalls[0].p_queue, "ACCOUNTANT");
+  assert.equal(listCalls[0].p_project_id, "PRJ_NORTH");
+  assert.equal(listCalls[0].p_request_state, "APPROVED");
+  assert.equal(listCalls[0].p_evidence_review_state, "REVIEWED");
+  assert.equal(listCalls[0].p_search, "NV00");
+
+  // Parse the returned .xlsx workbook and verify both pages were included and no UUID/storage_key/CCCD columns exist
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(Buffer.from(await exportRes.arrayBuffer()));
+  const worksheet = workbook.getWorksheet("Đối soát ứng lương");
+  assert.ok(worksheet, "Expected worksheet 'Đối soát ứng lương'");
+  assert.equal(worksheet.rowCount, 3); // 1 header + 2 data rows
+
+  const headers = worksheet.getRow(1).values.slice(1);
+  assert.equal(headers.includes("CCCD"), false);
+  assert.equal(headers.includes("storage_key"), false);
+  assert.equal(headers.includes("request_id"), false);
+
+  const row1Values = worksheet.getRow(2).values.slice(1);
+  const row2Values = worksheet.getRow(3).values.slice(1);
+  assert.equal(row1Values.includes("NV001"), true);
+  assert.equal(row1Values.includes("Chuyển khoản ngân hàng"), true);
+  assert.equal(row1Values.includes("0123456789"), true);
+  assert.equal(row2Values.includes("NV002"), true);
+  assert.equal(row2Values.includes("Nhận tiền mặt"), true);
+
+  // Exceeding maxExportRows must fail closed with 422 SALARY_ADVANCE_EXPORT_LIMIT_EXCEEDED
+  const limitRes = await handleGetExportSalaryAdvanceRequests(
+    new Request(`${ORIGIN}/api/salary-advance/requests/export`),
+    "true",
+    {
+      resolveSession: makeActorSession(ACCT_USER_ID),
+      repository,
+    },
+    { maxExportRows: 1 },
+  );
+  assert.equal(limitRes.status, 422);
+  assert.equal(
+    (await limitRes.json()).code,
+    "SALARY_ADVANCE_EXPORT_LIMIT_EXCEEDED",
+  );
+
+  // Missing next_cursor when has_more=true must fail closed with 503 SALARY_ADVANCE_EXPORT_INCOMPLETE
+  const brokenPaginationRepo = createSalaryAdvanceRepository(async () => ({
+    data: {
+      queue: "ACCOUNTANT",
+      requests: [makeExportListItem(1)],
+      next_cursor: null,
+      has_more: true,
+    },
+    error: null,
+  }));
+  const incompleteRes = await handleGetExportSalaryAdvanceRequests(
+    new Request(`${ORIGIN}/api/salary-advance/requests/export`),
+    "true",
+    {
+      resolveSession: makeActorSession(ACCT_USER_ID),
+      repository: brokenPaginationRepo,
+    },
+  );
+  assert.equal(incompleteRes.status, 503);
+  assert.equal(
+    (await incompleteRes.json()).code,
+    "SALARY_ADVANCE_EXPORT_INCOMPLETE",
+  );
+
+  // Unauthorized actor (e.g., not a project accountant) fails closed with 403 SALARY_ADVANCE_ACCESS_DENIED
+  const deniedRepo = createSalaryAdvanceRepository(async () => ({
+    data: null,
+    error: { code: "PT403", message: "SALARY_ADVANCE_ACCESS_DENIED" },
+  }));
+  const deniedRes = await handleGetExportSalaryAdvanceRequests(
+    new Request(`${ORIGIN}/api/salary-advance/requests/export`),
+    "true",
+    {
+      resolveSession: makeActorSession(PM_USER_ID),
+      repository: deniedRepo,
+    },
+  );
+  assert.equal(deniedRes.status, 403);
+  assert.equal(
+    (await deniedRes.json()).code,
+    "SALARY_ADVANCE_ACCESS_DENIED",
+  );
 });
