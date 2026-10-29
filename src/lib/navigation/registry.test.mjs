@@ -17,7 +17,7 @@ const {
 const { isDirectEntryUiEnabled } = await import("../direct-entry/ui-model.ts");
 
 test("CURRENT_NAV_ENTRIES chứa các entry hiện hành trong một registry", () => {
-  assert.equal(CURRENT_NAV_ENTRIES.length, 14, "phải có đúng 14 entries current");
+  assert.equal(CURRENT_NAV_ENTRIES.length, 15, "phải có đúng 15 entries current");
   const ids = CURRENT_NAV_ENTRIES.map((e) => e.id).sort();
   assert.deepEqual(
     ids,
@@ -31,6 +31,7 @@ test("CURRENT_NAV_ENTRIES chứa các entry hiện hành trong một registry", 
       "leave",
       "leave-admin",
       "project-operations",
+      "salary-advances",
       "work-report-analytics",
       "work-report-assignments",
       "work-report-reviews",
@@ -53,7 +54,7 @@ test("Global IA nav groups separate 'Công việc của tôi' and 'Quản trị'
     {
       id: "my-work",
       label: "Công việc của tôi",
-      children: ["direct-entry", "worker-operations", "work-reports", "leave"],
+      children: ["direct-entry", "worker-operations", "work-reports", "leave", "salary-advances"],
     },
     {
       id: "management",
@@ -188,6 +189,7 @@ test("Desktop viewport theo feature flag, luôn giữ Dashboard và không có P
       "dashboard",
       "work-reports",
       "leave",
+      "salary-advances",
       "finance",
       "leave-admin",
       "work-report-assignments",
@@ -208,6 +210,7 @@ test("Mobile viewport theo feature flag, luôn giữ Dashboard và không có Pi
       "dashboard",
       "work-reports",
       "leave",
+      "salary-advances",
       "finance",
       "leave-admin",
       "work-report-assignments",
@@ -223,6 +226,7 @@ test("feature flag Direct Entry chỉ mở với giá trị chính xác true", (
     "dashboard",
     "work-reports",
     "leave",
+    "salary-advances",
     "finance",
     "leave-admin",
     "work-report-assignments",
@@ -284,6 +288,7 @@ test("registry: mỗi entry có id ổn định, label, path, icon, status, capa
         "workforce_offboarding",
         "leave",
         "leave_admin",
+        "salary_advances",
       ].includes(entry.capability),
       `entry '${entry.id}' capability không hợp lệ: ${entry.capability}`
     );
@@ -347,6 +352,7 @@ test("findEntryByPath('/work-reports') trả về Work Reports entry và route c
   assert.equal(findEntryByPath("/work-reports/analytics")?.id, "work-report-analytics");
   assert.equal(findEntryByPath("/work-reports/analytics/detail")?.id, "work-report-analytics");
   assert.equal(findEntryByPath("/leave")?.id, "leave");
+  assert.equal(findEntryByPath("/salary-advances")?.id, "salary-advances");
   assert.equal(findEntryByPath("/admin/attendance")?.id, "attendance-report");
   assert.equal(findEntryByPath("/admin/catalog/personnel")?.id, "admin");
 });

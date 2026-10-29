@@ -37,6 +37,7 @@ const NAV_ICONS: Record<string, typeof LayoutDashboard> = {
   finance: Landmark,
   leave: CalendarDays,
   "leave-admin": CalendarDays,
+  "salary-advances": Landmark,
   admin: ShieldCheck,
 } as const;
 

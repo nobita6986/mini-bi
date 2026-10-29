@@ -1,0 +1,1306 @@
+import type { ActorResolution } from "../auth/direct-entry-v2.ts";
+import {
+  decideSessionPageAccess,
+  type SessionPageDecision,
+} from "../auth/session-page-access.ts";
+import {
+  SALARY_ADVANCE_EVIDENCE_MAX_BYTES,
+  type SalaryAdvanceActorContext,
+  type SalaryAdvanceActorRole,
+  type SalaryAdvanceAllowedActions,
+  type SalaryAdvanceErrorCode,
+  type SalaryAdvanceEventItem,
+  type SalaryAdvanceEventType,
+  type SalaryAdvanceEvidenceMimeType,
+  type SalaryAdvanceEvidenceReserveResponse,
+  type SalaryAdvanceEvidenceReviewDecision,
+  type SalaryAdvanceEvidenceReviewState,
+  type SalaryAdvanceEvidenceVersionItem,
+  type SalaryAdvanceMutationDetailResponse,
+  type SalaryAdvanceQueue,
+  type SalaryAdvanceRequestDetail,
+  type SalaryAdvanceRequestState,
+  type SalaryAdvanceRequestSummary,
+  type SalaryAdvanceTransitionAction,
+} from "./salary-advance-contract.ts";
+
+export type SalaryAdvancePageAccessDecision =
+  | "NOT_FOUND"
+  | SessionPageDecision
+  | "ACCESS_DENIED";
+
+export type SalaryAdvanceWorkspaceTabId = "pm" | "accountant" | "supervisory";
+
+export type SalaryAdvanceWorkspaceTab = {
+  id: SalaryAdvanceWorkspaceTabId;
+  label: string;
+  description: string;
+  queue: Extract<SalaryAdvanceQueue, "PM" | "ACCOUNTANT" | "SUPERVISORY">;
+  badgeCount: number;
+};
+
+export type SalaryAdvanceBadgeTone =
+  | "neutral"
+  | "primary"
+  | "success"
+  | "warning"
+  | "danger"
+  | "info";
+
+export type SalaryAdvanceRequestStateMeta = {
+  state: SalaryAdvanceRequestState;
+  label: string;
+  shortLabel: string;
+  tone: SalaryAdvanceBadgeTone;
+  isTerminal: boolean;
+};
+
+export type SalaryAdvanceEvidenceReviewStateMeta = {
+  state: SalaryAdvanceEvidenceReviewState;
+  label: string;
+  shortLabel: string;
+  tone: SalaryAdvanceBadgeTone;
+};
+
+export type SalaryAdvanceAvailableActionsView = {
+  canPostMessage: boolean;
+  canProvideInfo: boolean;
+  canWithdraw: boolean;
+  canUploadEvidence: boolean;
+  canRequestInfo: boolean;
+  canApprove: boolean;
+  canReject: boolean;
+  canMarkHandledExternally: boolean;
+  canReviewEvidence: boolean;
+  hasAnyPmMutation: boolean;
+  hasAnyAccountantDecision: boolean;
+  hasAnyMutation: boolean;
+};
+
+export type SalaryAdvanceAttentionIndicator = {
+  needsAttention: boolean;
+  label: string | null;
+  tone: SalaryAdvanceBadgeTone;
+};
+
+export type SalaryAdvanceComparisonPanelModel = {
+  requestId: string;
+  workerEntryId: string;
+  workerEmployeeCode: string;
+  workerDisplayName: string;
+  hasWorkerPortrait: boolean;
+  workerPortrait: {
+    documentId: string;
+    version: number;
+    mimeType: string;
+    sizeBytes: number;
+    previewUrl: string;
+    sourceLabel: string;
+  } | null;
+  missingPortraitWarning: string | null;
+  hasEvidencePhoto: boolean;
+  selectedEvidence: {
+    eventId: string;
+    evidenceVersion: number;
+    mimeType: SalaryAdvanceEvidenceMimeType;
+    sizeBytes: number;
+    captionNote: string | null;
+    uploadedByUserId: string;
+    uploadedByDisplayName: string | null;
+    uploadedAt: string;
+    reviewState: SalaryAdvanceEvidenceReviewState;
+    reviewedByUserId: string | null;
+    reviewedByDisplayName: string | null;
+    reviewedAt: string | null;
+    reviewNote: string | null;
+    workerPortraitDocumentId: string | null;
+    workerPortraitVersion: number | null;
+    isCurrent: boolean;
+    previewUrl: string;
+    sourceLabel: string;
+  } | null;
+  evidenceVersions: Array<{
+    evidenceVersion: number;
+    isCurrent: boolean;
+    reviewState: SalaryAdvanceEvidenceReviewState;
+    uploadedAt: string;
+    uploadedByDisplayName: string | null;
+  }>;
+  canUploadEvidence: boolean;
+  canReviewEvidence: boolean;
+  canConfirmReviewed: boolean;
+  canRequestRetake: boolean;
+  confirmReviewedLockReason: string | null;
+};
+
+export type CreateSalaryAdvanceDraftInput = {
+  projectId: string;
+  hasActiveAccountant?: boolean;
+  workerEntryId: string;
+  requestedAmountRaw: string;
+  initialContent: string;
+};
+
+export type CreateSalaryAdvanceValidationResult =
+  | {
+      ok: true;
+      payload: {
+        project_id: string;
+        worker_entry_id: string;
+        requested_amount_vnd: string;
+        initial_content: string;
+      };
+    }
+  | {
+      ok: false;
+      message: string;
+      fieldErrors: Partial<
+        Record<
+          "projectId" | "workerEntryId" | "requestedAmountRaw" | "initialContent",
+          string
+        >
+      >;
+    };
+
+export const SALARY_ADVANCE_NON_ACCOUNTING_NOTICE =
+  "Phân hệ Ứng lương chỉ phục vụ trao đổi, phê duyệt nội bộ và đối chiếu ảnh nhận tiền mặt giữa QLDA và Kế toán dự án; không tự động tạo bút toán hay lệnh chi trong BI.";
+
+export const SALARY_ADVANCE_MISSING_PORTRAIT_WARNING =
+  "Hồ sơ người lao động hiện chưa có ảnh chân dung chuẩn trong hệ thống. Không thể xác nhận «Đã đối chiếu» cho đến khi ảnh hồ sơ NLĐ được cập nhật, nhưng yêu cầu và ảnh nhận tiền mặt đã tải lên vẫn được giữ nguyên.";
+
+const REQUEST_STATE_META: Record<
+  SalaryAdvanceRequestState,
+  SalaryAdvanceRequestStateMeta
+> = {
+  OPEN: {
+    state: "OPEN",
+    label: "Đang chờ Kế toán xử lý",
+    shortLabel: "Đang mở",
+    tone: "warning",
+    isTerminal: false,
+  },
+  NEEDS_INFO: {
+    state: "NEEDS_INFO",
+    label: "Cần QLDA bổ sung thông tin",
+    shortLabel: "Cần bổ sung",
+    tone: "info",
+    isTerminal: false,
+  },
+  APPROVED: {
+    state: "APPROVED",
+    label: "Đã chấp thuận ứng lương",
+    shortLabel: "Đã chấp thuận",
+    tone: "success",
+    isTerminal: true,
+  },
+  REJECTED: {
+    state: "REJECTED",
+    label: "Đã từ chối",
+    shortLabel: "Đã từ chối",
+    tone: "danger",
+    isTerminal: true,
+  },
+  WITHDRAWN: {
+    state: "WITHDRAWN",
+    label: "QLDA đã rút yêu cầu",
+    shortLabel: "Đã rút",
+    tone: "neutral",
+    isTerminal: true,
+  },
+  HANDLED_EXTERNALLY: {
+    state: "HANDLED_EXTERNALLY",
+    label: "Đã xử lý ngoài BI",
+    shortLabel: "Xử lý ngoài BI",
+    tone: "primary",
+    isTerminal: true,
+  },
+};
+
+const EVIDENCE_REVIEW_STATE_META: Record<
+  SalaryAdvanceEvidenceReviewState,
+  SalaryAdvanceEvidenceReviewStateMeta
+> = {
+  NOT_UPLOADED: {
+    state: "NOT_UPLOADED",
+    label: "Chưa tải ảnh nhận tiền",
+    shortLabel: "Chưa có ảnh",
+    tone: "neutral",
+  },
+  PENDING_REVIEW: {
+    state: "PENDING_REVIEW",
+    label: "Chờ Kế toán đối chiếu ảnh",
+    shortLabel: "Chờ đối chiếu",
+    tone: "warning",
+  },
+  REVIEWED: {
+    state: "REVIEWED",
+    label: "Đã đối chiếu ảnh nhận tiền",
+    shortLabel: "Đã đối chiếu",
+    tone: "success",
+  },
+  RETAKE_REQUIRED: {
+    state: "RETAKE_REQUIRED",
+    label: "Yêu cầu chụp/gửi lại ảnh",
+    shortLabel: "Cần gửi lại ảnh",
+    tone: "danger",
+  },
+};
+
+const EVENT_TYPE_LABELS: Record<SalaryAdvanceEventType, string> = {
+  REQUEST_CREATED: "Tạo yêu cầu ứng lương",
+  MESSAGE_POSTED: "Gửi tin nhắn trao đổi",
+  INFO_REQUESTED: "Yêu cầu bổ sung thông tin",
+  INFO_PROVIDED: "Đã bổ sung thông tin",
+  REQUEST_APPROVED: "Chấp thuận yêu cầu",
+  REQUEST_REJECTED: "Từ chối yêu cầu",
+  REQUEST_WITHDRAWN: "Rút yêu cầu ứng lương",
+  HANDLED_EXTERNALLY_MARKED: "Đánh dấu đã xử lý ngoài BI",
+  EVIDENCE_UPLOADED: "Tải lên ảnh NLĐ nhận tiền mặt",
+  EVIDENCE_REVIEWED: "Xác nhận đã đối chiếu ảnh nhận tiền",
+  EVIDENCE_RETAKE_REQUESTED: "Yêu cầu chụp/gửi lại ảnh nhận tiền",
+};
+
+const ACTOR_ROLE_LABELS: Record<SalaryAdvanceActorRole, string> = {
+  PROJECT_MANAGER: "Quản lý dự án (QLDA)",
+  PROJECT_ACCOUNTANT: "Kế toán dự án",
+};
+
+const CONFLICT_ERROR_CODES = new Set<string>([
+  "SALARY_ADVANCE_VERSION_CONFLICT",
+  "SALARY_ADVANCE_STATE_CONFLICT",
+  "SALARY_ADVANCE_EVIDENCE_VERSION_CONFLICT",
+  "SALARY_ADVANCE_WORKER_PORTRAIT_VERSION_CONFLICT",
+  "SALARY_ADVANCE_IDEMPOTENCY_CONFLICT",
+]);
+
+export function decideSalaryAdvancePageAccess(params: {
+  enabledFlag: string | undefined;
+  actor: ActorResolution | null;
+  contextErrorCode?: string | null;
+}): SalaryAdvancePageAccessDecision {
+  if (params.enabledFlag !== "true") {
+    return "NOT_FOUND";
+  }
+
+  const sessionDecision = decideSessionPageAccess(params.actor);
+  if (sessionDecision !== "ALLOW") {
+    return sessionDecision;
+  }
+
+  if (params.contextErrorCode === "SALARY_ADVANCE_ACCESS_DENIED") {
+    return "ACCESS_DENIED";
+  }
+
+  return "ALLOW";
+}
+
+export function canAccessSalaryAdvanceContext(
+  context: Pick<
+    SalaryAdvanceActorContext,
+    "is_project_manager" | "is_project_accountant" | "is_supervisory_viewer"
+  > | null
+): boolean {
+  if (!context) return false;
+  return Boolean(
+    context.is_project_manager ||
+      context.is_project_accountant ||
+      context.is_supervisory_viewer
+  );
+}
+
+export function resolveVisibleSalaryAdvanceTabs(
+  context: Pick<
+    SalaryAdvanceActorContext,
+    "is_project_manager" | "is_project_accountant" | "is_supervisory_viewer"
+  >,
+  badgeCounts?: Partial<Record<SalaryAdvanceWorkspaceTabId, number>>
+): SalaryAdvanceWorkspaceTab[] {
+  const tabs: SalaryAdvanceWorkspaceTab[] = [];
+
+  if (context.is_project_manager) {
+    tabs.push({
+      id: "pm",
+      label: "Yêu cầu tôi tạo",
+      description:
+        "Tạo yêu cầu ứng lương cho NLĐ thuộc dự án quản lý, phản hồi thông tin và tải ảnh NLĐ nhận tiền mặt.",
+      queue: "PM",
+      badgeCount: Math.max(0, Math.trunc(badgeCounts?.pm ?? 0)),
+    });
+  }
+
+  if (context.is_project_accountant) {
+    tabs.push({
+      id: "accountant",
+      label: "Cần xử lý",
+      description:
+        "Hàng đợi Kế toán dự án tiếp nhận, trao đổi, phê duyệt/từ chối và đối chiếu ảnh nhận tiền mặt.",
+      queue: "ACCOUNTANT",
+      badgeCount: Math.max(0, Math.trunc(badgeCounts?.accountant ?? 0)),
+    });
+  }
+
+  if (context.is_supervisory_viewer) {
+    tabs.push({
+      id: "supervisory",
+      label: "Giám sát toàn miền",
+      description:
+        "Tra cứu chỉ đọc toàn bộ yêu cầu ứng lương và lịch sử đối chiếu ảnh trên hệ thống.",
+      queue: "SUPERVISORY",
+      badgeCount: Math.max(0, Math.trunc(badgeCounts?.supervisory ?? 0)),
+    });
+  }
+
+  return tabs;
+}
+
+export function getRequestStateMeta(
+  state: SalaryAdvanceRequestState
+): SalaryAdvanceRequestStateMeta {
+  return (
+    REQUEST_STATE_META[state] ?? {
+      state,
+      label: state,
+      shortLabel: state,
+      tone: "neutral",
+      isTerminal: false,
+    }
+  );
+}
+
+export function getEvidenceReviewStateMeta(
+  state: SalaryAdvanceEvidenceReviewState
+): SalaryAdvanceEvidenceReviewStateMeta {
+  return (
+    EVIDENCE_REVIEW_STATE_META[state] ?? {
+      state,
+      label: state,
+      shortLabel: state,
+      tone: "neutral",
+    }
+  );
+}
+
+export function getSalaryAdvanceEventTypeLabel(
+  eventType: SalaryAdvanceEventType
+): string {
+  return EVENT_TYPE_LABELS[eventType] ?? eventType;
+}
+
+export function getSalaryAdvanceEventTone(
+  eventType: SalaryAdvanceEventType
+): SalaryAdvanceBadgeTone {
+  switch (eventType) {
+    case "REQUEST_APPROVED":
+    case "EVIDENCE_REVIEWED":
+      return "success";
+    case "REQUEST_REJECTED":
+    case "EVIDENCE_RETAKE_REQUESTED":
+      return "danger";
+    case "INFO_REQUESTED":
+    case "EVIDENCE_UPLOADED":
+      return "warning";
+    case "INFO_PROVIDED":
+    case "MESSAGE_POSTED":
+      return "info";
+    case "HANDLED_EXTERNALLY_MARKED":
+      return "primary";
+    case "REQUEST_CREATED":
+    case "REQUEST_WITHDRAWN":
+    default:
+      return "neutral";
+  }
+}
+
+export function getSalaryAdvanceActorRoleLabel(
+  role: SalaryAdvanceActorRole
+): string {
+  return ACTOR_ROLE_LABELS[role] ?? role;
+}
+
+export function resolveAvailableRequestActions(
+  allowedActions: SalaryAdvanceAllowedActions | null | undefined
+): SalaryAdvanceAvailableActionsView {
+  const safe: SalaryAdvanceAllowedActions = allowedActions ?? {
+    can_post_message: false,
+    can_provide_info: false,
+    can_withdraw: false,
+    can_upload_evidence: false,
+    can_request_info: false,
+    can_approve: false,
+    can_reject: false,
+    can_mark_handled_externally: false,
+    can_review_evidence: false,
+  };
+
+  const canPostMessage = Boolean(safe.can_post_message);
+  const canProvideInfo = Boolean(safe.can_provide_info);
+  const canWithdraw = Boolean(safe.can_withdraw);
+  const canUploadEvidence = Boolean(safe.can_upload_evidence);
+  const canRequestInfo = Boolean(safe.can_request_info);
+  const canApprove = Boolean(safe.can_approve);
+  const canReject = Boolean(safe.can_reject);
+  const canMarkHandledExternally = Boolean(safe.can_mark_handled_externally);
+  const canReviewEvidence = Boolean(safe.can_review_evidence);
+
+  const hasAnyPmMutation =
+    canProvideInfo || canWithdraw || canUploadEvidence || canPostMessage;
+  const hasAnyAccountantDecision =
+    canRequestInfo ||
+    canApprove ||
+    canReject ||
+    canMarkHandledExternally ||
+    canReviewEvidence;
+  const hasAnyMutation = hasAnyPmMutation || hasAnyAccountantDecision;
+
+  return {
+    canPostMessage,
+    canProvideInfo,
+    canWithdraw,
+    canUploadEvidence,
+    canRequestInfo,
+    canApprove,
+    canReject,
+    canMarkHandledExternally,
+    canReviewEvidence,
+    hasAnyPmMutation,
+    hasAnyAccountantDecision,
+    hasAnyMutation,
+  };
+}
+
+export function evaluateRequestAttentionForTab(
+  request: Pick<
+    SalaryAdvanceRequestSummary,
+    "request_state" | "evidence_review_state" | "allowed_actions"
+  >,
+  tabId: SalaryAdvanceWorkspaceTabId
+): SalaryAdvanceAttentionIndicator {
+  if (tabId === "pm") {
+    if (
+      request.request_state === "NEEDS_INFO" &&
+      request.allowed_actions.can_provide_info
+    ) {
+      return {
+        needsAttention: true,
+        label: "Cần bổ sung thông tin",
+        tone: "info",
+      };
+    }
+    if (
+      request.evidence_review_state === "RETAKE_REQUIRED" &&
+      request.allowed_actions.can_upload_evidence
+    ) {
+      return {
+        needsAttention: true,
+        label: "Cần gửi lại ảnh nhận tiền",
+        tone: "danger",
+      };
+    }
+    if (
+      request.request_state === "APPROVED" &&
+      request.evidence_review_state === "NOT_UPLOADED" &&
+      request.allowed_actions.can_upload_evidence
+    ) {
+      return {
+        needsAttention: true,
+        label: "Chờ tải ảnh nhận tiền",
+        tone: "warning",
+      };
+    }
+    return { needsAttention: false, label: null, tone: "neutral" };
+  }
+
+  if (tabId === "accountant") {
+    if (
+      request.request_state === "OPEN" &&
+      (request.allowed_actions.can_approve ||
+        request.allowed_actions.can_reject ||
+        request.allowed_actions.can_request_info ||
+        request.allowed_actions.can_mark_handled_externally)
+    ) {
+      return {
+        needsAttention: true,
+        label: "Chờ Kế toán ra quyết định",
+        tone: "warning",
+      };
+    }
+    if (
+      request.evidence_review_state === "PENDING_REVIEW" &&
+      request.allowed_actions.can_review_evidence
+    ) {
+      return {
+        needsAttention: true,
+        label: "Chờ đối chiếu ảnh nhận tiền",
+        tone: "warning",
+      };
+    }
+    return { needsAttention: false, label: null, tone: "neutral" };
+  }
+
+  if (request.evidence_review_state === "PENDING_REVIEW") {
+    return {
+      needsAttention: true,
+      label: "Đang chờ đối chiếu ảnh",
+      tone: "warning",
+    };
+  }
+  if (request.request_state === "OPEN" || request.request_state === "NEEDS_INFO") {
+    return {
+      needsAttention: true,
+      label: "Đang xử lý",
+      tone: "info",
+    };
+  }
+  return { needsAttention: false, label: null, tone: "neutral" };
+}
+
+export function countActionableRequestsForTab(
+  requests: ReadonlyArray<
+    Pick<
+      SalaryAdvanceRequestSummary,
+      "request_state" | "evidence_review_state" | "allowed_actions"
+    >
+  >,
+  tabId: SalaryAdvanceWorkspaceTabId
+): number {
+  let count = 0;
+  for (const item of requests) {
+    if (evaluateRequestAttentionForTab(item, tabId).needsAttention) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+export function buildWorkerPortraitPreviewUrl(
+  requestId: string,
+  expectedDocumentId: string
+): string {
+  return `/api/salary-advance/requests/${encodeURIComponent(
+    requestId
+  )}/worker-portrait?expected_document_id=${encodeURIComponent(
+    expectedDocumentId
+  )}`;
+}
+
+export function buildEvidencePhotoPreviewUrl(
+  requestId: string,
+  evidenceVersion: number
+): string {
+  return `/api/salary-advance/requests/${encodeURIComponent(
+    requestId
+  )}/evidence/${encodeURIComponent(String(evidenceVersion))}/preview`;
+}
+
+export function evaluateEvidenceComparisonPanel(
+  detail: SalaryAdvanceRequestDetail,
+  selectedEvidenceVersion?: number | null
+): SalaryAdvanceComparisonPanelModel {
+  const { request, evidence_versions } = detail;
+  const workerPortrait = request.worker_portrait;
+  const hasWorkerPortrait = workerPortrait !== null;
+
+  const sortedVersions = [...evidence_versions].sort(
+    (a, b) => b.evidence_version - a.evidence_version
+  );
+
+  const currentVersionNumber =
+    request.current_evidence?.evidence_version ??
+    sortedVersions[0]?.evidence_version ??
+    null;
+
+  let resolvedVersionItem: SalaryAdvanceEvidenceVersionItem | null = null;
+  if (
+    typeof selectedEvidenceVersion === "number" &&
+    Number.isInteger(selectedEvidenceVersion)
+  ) {
+    resolvedVersionItem =
+      sortedVersions.find(
+        (item) => item.evidence_version === selectedEvidenceVersion
+      ) ?? null;
+  }
+
+  if (!resolvedVersionItem) {
+    if (sortedVersions.length > 0) {
+      resolvedVersionItem = sortedVersions[0];
+    } else if (request.current_evidence) {
+      resolvedVersionItem = {
+        evidence_version: request.current_evidence.evidence_version,
+        event_id: `ev-${request.current_evidence.evidence_version}`,
+        mime_type: request.current_evidence.mime_type,
+        size_bytes: request.current_evidence.size_bytes,
+        checksum_sha256: request.current_evidence.checksum_sha256,
+        caption_note: null,
+        uploaded_by_user_id: request.current_evidence.uploaded_by_user_id,
+        uploaded_by_display_name:
+          request.current_evidence.uploaded_by_display_name,
+        uploaded_at: request.current_evidence.uploaded_at,
+      };
+    }
+  }
+
+  const isViewingCurrentEvidence = Boolean(
+    resolvedVersionItem !== null &&
+      currentVersionNumber !== null &&
+      resolvedVersionItem.evidence_version === currentVersionNumber
+  );
+
+  const canUploadEvidence = Boolean(request.allowed_actions.can_upload_evidence);
+  const canReviewEvidence = Boolean(request.allowed_actions.can_review_evidence);
+
+  const canConfirmReviewed = Boolean(
+    canReviewEvidence &&
+      hasWorkerPortrait &&
+      resolvedVersionItem !== null &&
+      isViewingCurrentEvidence
+  );
+
+  const canRequestRetake = Boolean(
+    canReviewEvidence &&
+      resolvedVersionItem !== null &&
+      isViewingCurrentEvidence
+  );
+
+  let confirmReviewedLockReason: string | null = null;
+  if (canReviewEvidence) {
+    if (!resolvedVersionItem) {
+      confirmReviewedLockReason =
+        "Chưa có ảnh NLĐ nhận tiền mặt để xác nhận đối chiếu.";
+    } else if (!isViewingCurrentEvidence) {
+      confirmReviewedLockReason =
+        "Bạn đang xem phiên bản ảnh lịch sử. Chỉ có thể đối chiếu trên phiên bản ảnh hiện hành mới nhất.";
+    } else if (!hasWorkerPortrait) {
+      confirmReviewedLockReason =
+        "Không thể xác nhận «Đã đối chiếu» vì người lao động chưa có ảnh hồ sơ chuẩn trong hệ thống. Bạn vẫn có thể yêu cầu gửi lại ảnh hoặc giữ nguyên yêu cầu chờ cập nhật hồ sơ.";
+    }
+  }
+
+  const currentEvMeta = request.current_evidence;
+
+  return {
+    requestId: request.request_id,
+    workerEntryId: request.worker_entry_id,
+    workerEmployeeCode: request.worker_employee_code,
+    workerDisplayName: request.worker_display_name,
+    hasWorkerPortrait,
+    workerPortrait: workerPortrait
+      ? {
+          documentId: workerPortrait.document_id,
+          version: workerPortrait.version,
+          mimeType: workerPortrait.mime_type,
+          sizeBytes: workerPortrait.size_bytes,
+          previewUrl: buildWorkerPortraitPreviewUrl(
+            request.request_id,
+            workerPortrait.document_id
+          ),
+          sourceLabel: "Ảnh chân dung hồ sơ NLĐ trong hệ thống",
+        }
+      : null,
+    missingPortraitWarning: hasWorkerPortrait
+      ? null
+      : SALARY_ADVANCE_MISSING_PORTRAIT_WARNING,
+    hasEvidencePhoto: resolvedVersionItem !== null,
+    selectedEvidence: resolvedVersionItem
+      ? {
+          eventId: resolvedVersionItem.event_id,
+          evidenceVersion: resolvedVersionItem.evidence_version,
+          mimeType: resolvedVersionItem.mime_type,
+          sizeBytes: resolvedVersionItem.size_bytes,
+          captionNote: resolvedVersionItem.caption_note,
+          uploadedByUserId: resolvedVersionItem.uploaded_by_user_id,
+          uploadedByDisplayName: resolvedVersionItem.uploaded_by_display_name,
+          uploadedAt: resolvedVersionItem.uploaded_at,
+          reviewState: isViewingCurrentEvidence
+            ? request.evidence_review_state
+            : "RETAKE_REQUIRED",
+          reviewedByUserId:
+            isViewingCurrentEvidence && currentEvMeta
+              ? currentEvMeta.reviewed_by_user_id
+              : null,
+          reviewedByDisplayName:
+            isViewingCurrentEvidence && currentEvMeta
+              ? currentEvMeta.reviewed_by_display_name
+              : null,
+          reviewedAt:
+            isViewingCurrentEvidence && currentEvMeta
+              ? currentEvMeta.reviewed_at
+              : null,
+          reviewNote:
+            isViewingCurrentEvidence && currentEvMeta
+              ? currentEvMeta.review_note
+              : null,
+          workerPortraitDocumentId:
+            isViewingCurrentEvidence && currentEvMeta
+              ? currentEvMeta.reviewed_worker_portrait_document_id
+              : null,
+          workerPortraitVersion:
+            isViewingCurrentEvidence && currentEvMeta
+              ? currentEvMeta.reviewed_worker_portrait_version
+              : null,
+          isCurrent: isViewingCurrentEvidence,
+          previewUrl: buildEvidencePhotoPreviewUrl(
+            request.request_id,
+            resolvedVersionItem.evidence_version
+          ),
+          sourceLabel: "Ảnh NLĐ nhận tiền mặt do QLDA tải lên",
+        }
+      : null,
+    evidenceVersions: sortedVersions.map((item) => {
+      const isCurrent =
+        currentVersionNumber !== null &&
+        item.evidence_version === currentVersionNumber;
+      return {
+        evidenceVersion: item.evidence_version,
+        isCurrent,
+        reviewState: isCurrent
+          ? request.evidence_review_state
+          : "RETAKE_REQUIRED",
+        uploadedAt: item.uploaded_at,
+        uploadedByDisplayName: item.uploaded_by_display_name,
+      };
+    }),
+    canUploadEvidence,
+    canReviewEvidence,
+    canConfirmReviewed,
+    canRequestRetake,
+    confirmReviewedLockReason,
+  };
+}
+
+export function sortEventsChronologically(
+  events: ReadonlyArray<SalaryAdvanceEventItem>
+): SalaryAdvanceEventItem[] {
+  return [...events].sort((a, b) => a.event_seq - b.event_seq);
+}
+
+export function formatVndAmount(
+  amountVnd: number | string | null | undefined
+): string {
+  if (amountVnd === null || amountVnd === undefined) {
+    return "0 ₫";
+  }
+  const numeric =
+    typeof amountVnd === "string" ? Number(amountVnd.trim()) : amountVnd;
+  if (typeof numeric !== "number" || !Number.isFinite(numeric) || numeric < 0) {
+    return "0 ₫";
+  }
+  return `${Math.trunc(numeric).toLocaleString("vi-VN")} ₫`;
+}
+
+export function formatFileSizeBytes(
+  sizeBytes: number | null | undefined
+): string {
+  if (
+    typeof sizeBytes !== "number" ||
+    !Number.isFinite(sizeBytes) ||
+    sizeBytes <= 0
+  ) {
+    return "0 B";
+  }
+  if (sizeBytes < 1024) {
+    return `${Math.trunc(sizeBytes)} B`;
+  }
+  if (sizeBytes < 1024 * 1024) {
+    return `${(sizeBytes / 1024).toFixed(1)} KB`;
+  }
+  return `${(sizeBytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+export function formatDateTimeVi(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const parsed = new Date(iso);
+  if (Number.isNaN(parsed.getTime())) return iso;
+  return parsed.toLocaleString("vi-VN", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+export function normalizePositiveVndInput(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  if (!/^[0-9.,\s_]+$/.test(trimmed)) return null;
+  const digitsOnly = trimmed.replace(/[.,\s_]/g, "");
+  if (!/^[1-9][0-9]*$/.test(digitsOnly)) return null;
+  const parsed = Number(digitsOnly);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) return null;
+  return parsed;
+}
+
+export function validateCreateSalaryAdvanceDraft(
+  draft: CreateSalaryAdvanceDraftInput
+): CreateSalaryAdvanceValidationResult {
+  const fieldErrors: Partial<
+    Record<
+      "projectId" | "workerEntryId" | "requestedAmountRaw" | "initialContent",
+      string
+    >
+  > = {};
+
+  const projectId = draft.projectId.trim();
+  if (!projectId) {
+    fieldErrors.projectId = "Vui lòng chọn dự án.";
+  } else if (draft.hasActiveAccountant === false) {
+    fieldErrors.projectId =
+      "Dự án này chưa được gán Kế toán dự án đang hoạt động. Vui lòng liên hệ Admin cấu hình trước khi tạo yêu cầu.";
+  }
+
+  const workerEntryId = draft.workerEntryId.trim();
+  if (!workerEntryId) {
+    fieldErrors.workerEntryId = "Vui lòng chọn người lao động thuộc dự án.";
+  }
+
+  const amountVnd = normalizePositiveVndInput(draft.requestedAmountRaw);
+  if (amountVnd === null) {
+    fieldErrors.requestedAmountRaw =
+      "Số tiền ứng phải là số nguyên dương (VNĐ).";
+  }
+
+  const initialContent = draft.initialContent.trim();
+  if (!initialContent) {
+    fieldErrors.initialContent = "Vui lòng nhập nội dung đề nghị ứng lương.";
+  } else if (initialContent.length > 2000) {
+    fieldErrors.initialContent =
+      "Nội dung đề nghị ứng lương không được vượt quá 2.000 ký tự.";
+  }
+
+  const firstError =
+    fieldErrors.projectId ??
+    fieldErrors.workerEntryId ??
+    fieldErrors.requestedAmountRaw ??
+    fieldErrors.initialContent;
+
+  if (firstError || amountVnd === null) {
+    return {
+      ok: false,
+      message: firstError ?? "Dữ liệu tạo yêu cầu ứng lương chưa hợp lệ.",
+      fieldErrors,
+    };
+  }
+
+  return {
+    ok: true,
+    payload: {
+      project_id: projectId,
+      worker_entry_id: workerEntryId,
+      requested_amount_vnd: String(amountVnd),
+      initial_content: initialContent,
+    },
+  };
+}
+
+export function validateTransitionActionInput(params: {
+  action: SalaryAdvanceTransitionAction;
+  messageText: string;
+}):
+  | { ok: true; normalizedMessage: string | null }
+  | { ok: false; message: string } {
+  const trimmed = params.messageText.trim();
+
+  if (params.action === "REQUEST_INFO" || params.action === "PROVIDE_INFO") {
+    if (!trimmed) {
+      return {
+        ok: false,
+        message:
+          params.action === "REQUEST_INFO"
+            ? "Vui lòng nhập nội dung câu hỏi/thông tin cần QLDA bổ sung."
+            : "Vui lòng nhập nội dung phản hồi bổ sung thông tin.",
+      };
+    }
+    if (trimmed.length > 2000) {
+      return {
+        ok: false,
+        message: "Nội dung trao đổi không được vượt quá 2.000 ký tự.",
+      };
+    }
+    return { ok: true, normalizedMessage: trimmed };
+  }
+
+  if (params.action === "REJECT") {
+    if (!trimmed) {
+      return {
+        ok: false,
+        message: "Vui lòng nhập lý do từ chối yêu cầu ứng lương.",
+      };
+    }
+    if (trimmed.length > 1000) {
+      return {
+        ok: false,
+        message: "Lý do từ chối không được vượt quá 1.000 ký tự.",
+      };
+    }
+    return { ok: true, normalizedMessage: trimmed };
+  }
+
+  if (trimmed.length > 1000) {
+    return {
+      ok: false,
+      message: "Ghi chú kèm theo không được vượt quá 1.000 ký tự.",
+    };
+  }
+
+  return {
+    ok: true,
+    normalizedMessage: trimmed.length > 0 ? trimmed : null,
+  };
+}
+
+export function validateMessageInput(messageText: string):
+  | { ok: true; normalizedMessage: string }
+  | { ok: false; message: string } {
+  const trimmed = messageText.trim();
+  if (!trimmed) {
+    return { ok: false, message: "Vui lòng nhập nội dung tin nhắn." };
+  }
+  if (trimmed.length > 2000) {
+    return {
+      ok: false,
+      message: "Nội dung tin nhắn không được vượt quá 2.000 ký tự.",
+    };
+  }
+  return { ok: true, normalizedMessage: trimmed };
+}
+
+export function validateEvidenceReviewInput(params: {
+  decision: SalaryAdvanceEvidenceReviewDecision;
+  note: string;
+  workerPortrait: { documentId: string; version: number } | null;
+}):
+  | {
+      ok: true;
+      normalizedNote: string | null;
+      expectedWorkerPortraitDocumentId: string | null;
+      expectedWorkerPortraitVersion: number | null;
+    }
+  | { ok: false; message: string } {
+  const trimmedNote = params.note.trim();
+  if (trimmedNote.length > 1000) {
+    return {
+      ok: false,
+      message: "Ghi chú đối chiếu ảnh không được vượt quá 1.000 ký tự.",
+    };
+  }
+
+  if (params.decision === "REVIEWED") {
+    if (!params.workerPortrait) {
+      return {
+        ok: false,
+        message:
+          "Không thể xác nhận «Đã đối chiếu» khi người lao động chưa có ảnh chân dung chuẩn trong hồ sơ.",
+      };
+    }
+    return {
+      ok: true,
+      normalizedNote: trimmedNote.length > 0 ? trimmedNote : null,
+      expectedWorkerPortraitDocumentId: params.workerPortrait.documentId,
+      expectedWorkerPortraitVersion: params.workerPortrait.version,
+    };
+  }
+
+  return {
+    ok: true,
+    normalizedNote: trimmedNote.length > 0 ? trimmedNote : null,
+    expectedWorkerPortraitDocumentId: params.workerPortrait?.documentId ?? null,
+    expectedWorkerPortraitVersion: params.workerPortrait?.version ?? null,
+  };
+}
+
+export function validateEvidenceFilePreflight(file: {
+  type: string;
+  size: number;
+  name?: string;
+}):
+  | { ok: true; mimeType: SalaryAdvanceEvidenceMimeType; sizeBytes: number }
+  | { ok: false; message: string } {
+  const normalizedMime = file.type.trim().toLowerCase();
+  if (normalizedMime !== "image/jpeg" && normalizedMime !== "image/png") {
+    return {
+      ok: false,
+      message:
+        "Chỉ chấp nhận tệp ảnh định dạng JPEG (.jpg, .jpeg) hoặc PNG (.png).",
+    };
+  }
+
+  if (
+    !Number.isInteger(file.size) ||
+    file.size <= 0 ||
+    file.size > SALARY_ADVANCE_EVIDENCE_MAX_BYTES
+  ) {
+    return {
+      ok: false,
+      message: "Dung lượng ảnh phải lớn hơn 0 và tối đa 10 MB.",
+    };
+  }
+
+  return {
+    ok: true,
+    mimeType: normalizedMime,
+    sizeBytes: file.size,
+  };
+}
+
+export async function computeBrowserSha256Hex(file: Blob): Promise<string> {
+  const buffer = await file.arrayBuffer();
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", buffer);
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+export function newSalaryAdvanceIdempotencyKey(prefix = "sa"): string {
+  const safePrefix = prefix.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 20) || "sa";
+  const randomPart =
+    typeof globalThis.crypto?.randomUUID === "function"
+      ? globalThis.crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2, 12)}`;
+  return `${safePrefix}-${randomPart}`;
+}
+
+export function isSalaryAdvanceConflictError(
+  status: number,
+  code: string | null | undefined
+): boolean {
+  if (status === 409) return true;
+  if (!code) return false;
+  return CONFLICT_ERROR_CODES.has(code);
+}
+
+export async function uploadSalaryAdvanceEvidence(params: {
+  requestId: string;
+  expectedVersion: number;
+  file: Blob & { type: string; size: number; name?: string };
+  captionNote?: string | null;
+  reserveIdempotencyKey?: string;
+  finalizeIdempotencyKey?: string;
+  fetchImpl?: typeof fetch;
+  computeSha256Hex?: (file: Blob) => Promise<string>;
+}): Promise<
+  | {
+      ok: true;
+      data: SalaryAdvanceMutationDetailResponse;
+    }
+  | {
+      ok: false;
+      status: number;
+      code: string;
+      message: string;
+    }
+> {
+  const fetchFn = params.fetchImpl ?? globalThis.fetch;
+  const sha256Fn = params.computeSha256Hex ?? computeBrowserSha256Hex;
+
+  const preflight = validateEvidenceFilePreflight(params.file);
+  if (!preflight.ok) {
+    return {
+      ok: false,
+      status: 400,
+      code: "SALARY_ADVANCE_PAYLOAD_INVALID",
+      message: preflight.message,
+    };
+  }
+
+  const trimmedCaption = params.captionNote?.trim() ?? "";
+  if (trimmedCaption.length > 1000) {
+    return {
+      ok: false,
+      status: 400,
+      code: "SALARY_ADVANCE_PAYLOAD_INVALID",
+      message: "Ghi chú ảnh nhận tiền không được vượt quá 1.000 ký tự.",
+    };
+  }
+
+  const checksumSha256 = await sha256Fn(params.file);
+  const reserveKey =
+    params.reserveIdempotencyKey ?? newSalaryAdvanceIdempotencyKey("sa-ev-res");
+  const finalizeKey =
+    params.finalizeIdempotencyKey ?? newSalaryAdvanceIdempotencyKey("sa-ev-fin");
+
+  const reserveResponse = await fetchFn(
+    `/api/salary-advance/requests/${encodeURIComponent(
+      params.requestId
+    )}/evidence/reserve`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": reserveKey,
+      },
+      body: JSON.stringify({
+        expected_version: params.expectedVersion,
+        mime_type: preflight.mimeType,
+        size_bytes: preflight.sizeBytes,
+        checksum_sha256: checksumSha256,
+        caption_note: trimmedCaption.length > 0 ? trimmedCaption : null,
+        idempotency_key: reserveKey,
+      }),
+    }
+  );
+
+  const reserveJson = (await reserveResponse.json().catch(() => null)) as
+    | {
+        ok?: boolean;
+        data?: SalaryAdvanceEvidenceReserveResponse;
+        code?: string;
+      }
+    | null;
+
+  if (!reserveResponse.ok || !reserveJson?.ok || !reserveJson.data) {
+    const code = reserveJson?.code ?? "SALARY_ADVANCE_UNAVAILABLE";
+    return {
+      ok: false,
+      status: reserveResponse.status,
+      code,
+      message: salaryAdvanceErrorMessage(code),
+    };
+  }
+
+  const reservation = reserveJson.data;
+  const putHeaders: Record<string, string> = {
+    ...(reservation.upload.headers ?? {}),
+  };
+  if (!putHeaders["Content-Type"] && !putHeaders["content-type"]) {
+    putHeaders["Content-Type"] = preflight.mimeType;
+  }
+
+  const putResponse = await fetchFn(reservation.upload.url, {
+    method: reservation.upload.method || "PUT",
+    headers: putHeaders,
+    body: params.file,
+  });
+
+  if (!putResponse.ok) {
+    return {
+      ok: false,
+      status: putResponse.status || 502,
+      code: "SALARY_ADVANCE_STORAGE_UNAVAILABLE",
+      message: salaryAdvanceErrorMessage("SALARY_ADVANCE_STORAGE_UNAVAILABLE"),
+    };
+  }
+
+  const finalizeResponse = await fetchFn(
+    `/api/salary-advance/requests/${encodeURIComponent(
+      params.requestId
+    )}/evidence/${encodeURIComponent(reservation.upload_id)}/finalize`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": finalizeKey,
+      },
+      body: JSON.stringify({
+        expected_version: reservation.expected_version,
+        idempotency_key: finalizeKey,
+      }),
+    }
+  );
+
+  const finalizeJson = (await finalizeResponse.json().catch(() => null)) as
+    | {
+        ok?: boolean;
+        data?: SalaryAdvanceMutationDetailResponse;
+        code?: string;
+      }
+    | null;
+
+  if (!finalizeResponse.ok || !finalizeJson?.ok || !finalizeJson.data) {
+    const code = finalizeJson?.code ?? "SALARY_ADVANCE_UNAVAILABLE";
+    return {
+      ok: false,
+      status: finalizeResponse.status,
+      code,
+      message: salaryAdvanceErrorMessage(code),
+    };
+  }
+
+  return {
+    ok: true,
+    data: finalizeJson.data,
+  };
+}
+
+export function salaryAdvanceErrorMessage(
+  code: SalaryAdvanceErrorCode | string | null | undefined
+): string {
+  switch (code) {
+    case "UNAUTHENTICATED":
+    case "SALARY_ADVANCE_UNAUTHENTICATED":
+      return "Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.";
+    case "ACTOR_NOT_AVAILABLE":
+    case "SALARY_ADVANCE_ACCOUNT_UNAVAILABLE":
+      return "Tài khoản của bạn hiện chưa sẵn sàng để sử dụng phân hệ Ứng lương.";
+    case "SALARY_ADVANCE_ACCESS_DENIED":
+      return "Bạn không có quyền thực hiện thao tác này hoặc không được phân công vào dự án tương ứng.";
+    case "SALARY_ADVANCE_PROJECT_NOT_FOUND":
+    case "SALARY_ADVANCE_WORKER_NOT_FOUND":
+    case "SALARY_ADVANCE_REQUEST_NOT_FOUND":
+    case "SALARY_ADVANCE_EVIDENCE_NOT_FOUND":
+    case "SALARY_ADVANCE_WORKER_PORTRAIT_NOT_FOUND":
+    case "SALARY_ADVANCE_NOT_FOUND":
+      return "Không tìm thấy yêu cầu ứng lương hoặc dữ liệu liên quan.";
+    case "SALARY_ADVANCE_PROJECT_INACTIVE":
+      return "Dự án được chọn hiện không còn ở trạng thái hoạt động.";
+    case "SALARY_ADVANCE_PROJECT_ACCOUNTANT_UNASSIGNED":
+      return "Dự án này chưa có Kế toán dự án đang hoạt động. Vui lòng liên hệ Admin cấu hình Kế toán dự án trước khi gửi yêu cầu.";
+    case "SALARY_ADVANCE_WORKER_PROJECT_MISMATCH":
+    case "SALARY_ADVANCE_WORKER_NOT_IN_PROJECT":
+      return "Người lao động được chọn không thuộc phạm vi dự án này hoặc chưa có công hợp lệ.";
+    case "SALARY_ADVANCE_AMOUNT_INVALID":
+      return "Số tiền ứng lương không hợp lệ (phải là số nguyên dương VNĐ).";
+    case "SALARY_ADVANCE_CONTENT_INVALID":
+    case "SALARY_ADVANCE_NOTE_INVALID":
+      return "Nội dung tin nhắn hoặc ghi chú không hợp lệ.";
+    case "SALARY_ADVANCE_MESSAGE_REQUIRED":
+      return "Vui lòng nhập nội dung trao đổi.";
+    case "SALARY_ADVANCE_REASON_REQUIRED":
+    case "SALARY_ADVANCE_REJECT_REASON_REQUIRED":
+      return "Vui lòng nhập lý do từ chối yêu cầu ứng lương.";
+    case "SALARY_ADVANCE_STATE_CONFLICT":
+      return "Trạng thái yêu cầu ứng lương đã thay đổi và không còn cho phép thao tác này. Hệ thống đã tải lại dữ liệu mới nhất.";
+    case "SALARY_ADVANCE_VERSION_CONFLICT":
+      return "Yêu cầu ứng lương vừa được người dùng khác cập nhật. Hệ thống đã tải lại phiên bản mới nhất.";
+    case "SALARY_ADVANCE_IDEMPOTENCY_INVALID":
+    case "SALARY_ADVANCE_IDEMPOTENCY_REQUIRED":
+      return "Thiếu hoặc sai định dạng mã chống gửi trùng (Idempotency-Key). Vui lòng thử lại.";
+    case "SALARY_ADVANCE_IDEMPOTENCY_CONFLICT":
+      return "Thao tác đang được xử lý hoặc mã chống gửi trùng bị xung đột. Hệ thống đã làm mới trạng thái.";
+    case "SALARY_ADVANCE_EVIDENCE_MIME_INVALID":
+      return "Định dạng ảnh không hợp lệ. Chỉ chấp nhận ảnh JPEG hoặc PNG.";
+    case "SALARY_ADVANCE_EVIDENCE_SIZE_INVALID":
+      return "Dung lượng ảnh vượt quá giới hạn 10 MB hoặc không hợp lệ.";
+    case "SALARY_ADVANCE_EVIDENCE_CHECKSUM_INVALID":
+      return "Mã kiểm tra toàn vẹn ảnh (SHA-256) không khớp. Vui lòng chọn lại ảnh và tải lên lại.";
+    case "SALARY_ADVANCE_EVIDENCE_UPLOAD_MISSING":
+    case "SALARY_ADVANCE_EVIDENCE_CONTENT_INVALID":
+      return "Tệp ảnh tải lên kho lưu trữ không hợp lệ hoặc chưa hoàn tất.";
+    case "SALARY_ADVANCE_UPLOAD_SUPERSEDED":
+    case "SALARY_ADVANCE_UPLOAD_EXPIRED":
+      return "Phiên tải ảnh lên đã hết hạn hoặc bị thay thế. Vui lòng thực hiện tải ảnh lại.";
+    case "SALARY_ADVANCE_EVIDENCE_VERSION_CONFLICT":
+      return "Phiên bản ảnh nhận tiền mặt đã thay đổi. Hệ thống đã tải lại phiên bản mới nhất.";
+    case "SALARY_ADVANCE_WORKER_PORTRAIT_MISSING":
+    case "SALARY_ADVANCE_PORTRAIT_LOCK_INVALID":
+      return "Người lao động chưa có ảnh chân dung chuẩn trong hồ sơ hệ thống nên chưa thể xác nhận «Đã đối chiếu».";
+    case "SALARY_ADVANCE_WORKER_PORTRAIT_VERSION_CONFLICT":
+      return "Ảnh chân dung hồ sơ của người lao động vừa thay đổi. Hệ thống đã tải lại ảnh mới nhất để bạn đối chiếu lại.";
+    case "SALARY_ADVANCE_STORAGE_UNAVAILABLE":
+      return "Kho lưu trữ ảnh hiện tạm thời gián đoạn. Vui lòng thử lại sau ít phút.";
+    case "SALARY_ADVANCE_QUERY_INVALID":
+    case "SALARY_ADVANCE_PROJECT_INVALID":
+    case "SALARY_ADVANCE_WORKER_INVALID":
+    case "SALARY_ADVANCE_ACTION_INVALID":
+    case "SALARY_ADVANCE_DECISION_INVALID":
+    case "SALARY_ADVANCE_REQUEST_INVALID":
+    case "SALARY_ADVANCE_EVIDENCE_VERSION_INVALID":
+    case "SALARY_ADVANCE_UPLOAD_ID_INVALID":
+    case "SALARY_ADVANCE_PAYLOAD_INVALID":
+    case "INVALID_JSON":
+      return "Dữ liệu gửi lên không hợp lệ. Vui lòng kiểm tra lại các trường thông tin.";
+    case "SALARY_ADVANCE_UNAVAILABLE":
+    default:
+      return "Hệ thống tạm thời chưa xử lý được yêu cầu. Vui lòng thử lại.";
+  }
+}
