@@ -1,0 +1,215 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+readonly COMPOSE_FILE=/opt/bi-test/current/compose.yaml
+readonly RELEASE_FILE=/opt/bi-test/current/.release.env
+readonly HISTORY_FILE=/opt/bi-test/current/.release-history
+readonly LOCK_FILE=/opt/bi-test/current/.deploy.lock
+readonly RUNTIME_ENV=/etc/bi-test/production.env
+readonly MIGRATION_ENV=/etc/bi-test/migration.env
+readonly RED_NETWORK=supabase_default
+readonly APP_LABEL=com.hrpartner.environment=red
+
+if [[ $# -ne 3 || ! $1 =~ ^ghcr\.io/nobita6986/mini-bi:red-[0-9a-f]{40}$ ||
+      ! $2 =~ ^ghcr\.io/nobita6986/mini-bi:red-[0-9a-f]{40}-migrations$ ||
+      ! $3 =~ ^[A-Za-z0-9-]+$ ]]; then
+  echo "refusing unexpected image or actor" >&2
+  exit 65
+fi
+
+app_image=$1
+migration_image=$2
+actor=$3
+token=$(cat)
+[[ -n $token ]] || { echo "registry token required on stdin" >&2; exit 66; }
+
+for path in "$COMPOSE_FILE" "$RUNTIME_ENV" "$MIGRATION_ENV"; do
+  [[ -r $path ]] || { echo "missing required Red file: $path" >&2; exit 66; }
+done
+for path in "$RUNTIME_ENV" "$MIGRATION_ENV"; do
+  [[ $(stat -c '%U:%G:%a' "$path") == root:root:600 ]] || {
+    echo "$path must be root:root mode 0600" >&2
+    exit 66
+  }
+done
+
+exec 9>"$LOCK_FILE"
+flock -n 9 || { echo "another Red release or migration is running" >&2; exit 75; }
+
+cleanup_login() {
+  docker logout ghcr.io >/dev/null 2>&1 || true
+  unset token
+}
+trap cleanup_login EXIT
+printf '%s' "$token" | docker login ghcr.io --username "$actor" --password-stdin >/dev/null
+unset token
+
+docker pull "$app_image"
+docker pull "$migration_image"
+
+# Red migration credentials must never be able to reach a hosted or production DB.
+docker run --rm --network none --env-file "$MIGRATION_ENV" \
+  --entrypoint node "$migration_image" - <<'NODE'
+const url = process.env.SUPABASE_DB_URL;
+if (!url) throw new Error("Red SUPABASE_DB_URL is missing");
+const host = new URL(url).hostname;
+if (host !== "supabase-db") {
+  throw new Error("Red migrations must target the local supabase-db container");
+}
+if (process.env.NEXT_PUBLIC_SUPABASE_URL !== "https://spbase.hrpvietnam.com") {
+  throw new Error("Red migration environment has the wrong Supabase URL");
+}
+console.log("Red migration target preflight passed");
+NODE
+
+status=$(docker run --rm --network "$RED_NETWORK" --env-file "$MIGRATION_ENV" \
+  -v "$MIGRATION_ENV:/etc/bi-test/migration.env:ro" \
+  -e SUPABASE_CONFIG_FILE=/etc/bi-test/migration.env \
+  "$migration_image" --dry-run 2>&1) || { printf '%s\n' "$status" >&2; exit 1; }
+printf '%s\n' "$status"
+if grep -Eq '^(PENDING|CHECKSUM MISMATCH) ' <<<"$status"; then
+  echo "Red database migrations are pending or mismatched; run Apply BI Red migrations first" >&2
+  exit 78
+fi
+
+docker run --rm -i --network none --env-file "$RUNTIME_ENV" \
+  --entrypoint node "$app_image" - <<'NODE'
+const fail = (message) => {
+  console.error(`Red runtime environment invalid: ${message}`);
+  process.exit(1);
+};
+for (const name of [
+  "DIRECT_ENTRY_API_ENABLED",
+  "DIRECT_ENTRY_UI_ENABLED",
+  "WORK_REPORTS_API_ENABLED",
+  "ATTENDANCE_ENABLED",
+]) {
+  if (process.env[name] !== "true") fail(`${name} must equal true`);
+}
+if (process.env.NEXT_PUBLIC_SUPABASE_URL !== "https://spbase.hrpvietnam.com") {
+  fail("NEXT_PUBLIC_SUPABASE_URL must target Supabase Red");
+}
+if (process.env.DOCUMENT_STORAGE_ENVIRONMENT !== "preview") {
+  fail("DOCUMENT_STORAGE_ENVIRONMENT must equal preview");
+}
+if (process.env.R2_BUCKET_NAME !== "hrp-bi-preview") {
+  fail("R2_BUCKET_NAME must equal hrp-bi-preview");
+}
+for (const name of [
+  "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY",
+  "SUPABASE_SECRET_KEY",
+  "R2_ACCOUNT_ID",
+  "R2_ACCESS_KEY_ID",
+  "R2_SECRET_ACCESS_KEY",
+]) {
+  if (!process.env[name]?.trim()) fail(`${name} is required`);
+}
+const attendanceSecret = process.env.ATTENDANCE_TIME_TOKEN_SECRET?.trim() ?? "";
+if (
+  attendanceSecret.length < 32 ||
+  attendanceSecret.length > 512 ||
+  !/^[\x21-\x7e]+$/.test(attendanceSecret) ||
+  new Set(attendanceSecret).size < 8
+) {
+  fail("ATTENDANCE_TIME_TOKEN_SECRET does not meet the runtime contract");
+}
+for (const name of ["SUPABASE_SECRET_KEY", "R2_SECRET_ACCESS_KEY", "R2_ACCESS_KEY_ID"]) {
+  if (attendanceSecret === process.env[name]?.trim()) {
+    fail("ATTENDANCE_TIME_TOKEN_SECRET reuses another credential");
+  }
+}
+console.log("Red runtime environment preflight passed");
+NODE
+
+resolved_image=$(docker image inspect --format '{{index .RepoDigests 0}}' "$app_image")
+[[ $resolved_image =~ ^ghcr\.io/nobita6986/mini-bi@sha256:[0-9a-f]{64}$ ]] || {
+  echo "unable to resolve immutable Red image digest" >&2
+  exit 66
+}
+app_id=$(docker image inspect --format '{{.Id}}' "$app_image")
+migration_id=$(docker image inspect --format '{{.Id}}' "$migration_image")
+
+previous_image=
+if [[ -f $RELEASE_FILE ]]; then
+  previous_image=$(sed -n 's/^BI_IMAGE=//p' "$RELEASE_FILE" | head -n 1)
+fi
+deployment_started=false
+rollback() {
+  if [[ $deployment_started == true && -n $previous_image ]]; then
+    printf 'BI_IMAGE=%s\n' "$previous_image" >"$RELEASE_FILE"
+    chmod 640 "$RELEASE_FILE"
+    docker compose --env-file "$RELEASE_FILE" -f "$COMPOSE_FILE" up -d --wait || true
+  fi
+}
+on_exit() {
+  rc=$?
+  if [[ $rc -ne 0 ]]; then rollback; fi
+  cleanup_login
+  exit "$rc"
+}
+trap on_exit EXIT
+
+printf 'BI_IMAGE=%s\n' "$resolved_image" >"$RELEASE_FILE.new"
+chmod 640 "$RELEASE_FILE.new"
+mv "$RELEASE_FILE.new" "$RELEASE_FILE"
+deployment_started=true
+docker compose --env-file "$RELEASE_FILE" -f "$COMPOSE_FILE" config --quiet
+docker compose --env-file "$RELEASE_FILE" -f "$COMPOSE_FILE" up -d --wait --remove-orphans
+
+docker compose --env-file "$RELEASE_FILE" -f "$COMPOSE_FILE" exec -T app \
+  node --input-type=module - <<'NODE'
+const checks = [
+  ["/login", undefined, 200],
+  ["/api/auth/session", undefined, 401, "UNAUTHENTICATED"],
+  ["/api/attendance/time", undefined, 401, "UNAUTHENTICATED"],
+];
+for (const [path, init, expectedStatus, expectedCode] of checks) {
+  const response = await fetch(`http://127.0.0.1:3000${path}`, init);
+  const body = expectedCode ? await response.json().catch(() => null) : null;
+  if (response.status !== expectedStatus || (expectedCode && body?.code !== expectedCode)) {
+    throw new Error(`Red post-deploy check failed for ${path}`);
+  }
+}
+console.log("Red post-deploy checks passed");
+NODE
+
+# Keep only the current healthy UAT image; the previous image remains available until this check passes.
+history_tmp=$(mktemp)
+{
+  printf '%s\n' "$app_id"
+  [[ -f $HISTORY_FILE ]] && cat "$HISTORY_FILE"
+} | awk '!seen[$0]++' | head -n 1 >"$history_tmp"
+install -o root -g root -m 600 "$history_tmp" "$HISTORY_FILE"
+rm -f "$history_tmp"
+
+mapfile -t keep_ids <"$HISTORY_FILE"
+is_kept() {
+  local candidate=$1 kept
+  for kept in "${keep_ids[@]}"; do
+    [[ $candidate == "$kept" ]] && return 0
+  done
+  return 1
+}
+
+while read -r old_id; do
+  [[ -n $old_id ]] || continue
+  if ! is_kept "$old_id"; then docker image rm --force "$old_id" >/dev/null 2>&1 || true; fi
+done < <(docker image ls --no-trunc --filter "reference=ghcr.io/nobita6986/mini-bi:red-*" \
+  --filter "label=$APP_LABEL" --filter label=com.hrpartner.kind=app \
+  --format '{{.ID}}' | awk '!seen[$0]++')
+
+while read -r old_id; do
+  [[ -n $old_id ]] || continue
+  if [[ $old_id != "$migration_id" ]]; then docker image rm --force "$old_id" >/dev/null 2>&1 || true; fi
+done < <(docker image ls --no-trunc --filter "reference=ghcr.io/nobita6986/mini-bi:red-*-migrations" \
+  --filter "label=$APP_LABEL" --filter label=com.hrpartner.kind=migrations \
+  --format '{{.ID}}' | awk '!seen[$0]++')
+
+# The first automated release also removes the unlabelled image from the manual Red deployment.
+if [[ -n $previous_image && $previous_image != "$resolved_image" ]]; then
+  docker image rm --force "$previous_image" >/dev/null 2>&1 || true
+fi
+docker image prune --force >/dev/null
+trap - EXIT
+cleanup_login
+echo "Red BI deployment is healthy; only the current app image is retained"

@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+readonly MIGRATION_ENV=/etc/bi-test/migration.env
+readonly LOCK_FILE=/opt/bi-test/current/.deploy.lock
+readonly RED_NETWORK=supabase_default
+
+if [[ $# -ne 2 || ! $1 =~ ^ghcr\.io/nobita6986/mini-bi:red-[0-9a-f]{40}-migrations$ ||
+      ! $2 =~ ^[A-Za-z0-9-]+$ ]]; then
+  echo "refusing unexpected migration image or actor" >&2
+  exit 65
+fi
+
+migration_image=$1
+actor=$2
+token=$(cat)
+[[ -n $token ]] || { echo "registry token required on stdin" >&2; exit 66; }
+[[ -r $MIGRATION_ENV ]] || { echo "missing root-owned $MIGRATION_ENV" >&2; exit 66; }
+[[ $(stat -c '%U:%G:%a' "$MIGRATION_ENV") == root:root:600 ]] || {
+  echo "$MIGRATION_ENV must be root:root mode 0600" >&2
+  exit 66
+}
+
+exec 9>"$LOCK_FILE"
+flock -n 9 || { echo "another Red release or migration is running" >&2; exit 75; }
+
+cleanup() {
+  docker logout ghcr.io >/dev/null 2>&1 || true
+  unset token
+}
+trap cleanup EXIT
+printf '%s' "$token" | docker login ghcr.io --username "$actor" --password-stdin >/dev/null
+unset token
+docker pull "$migration_image"
+
+docker run --rm --network none --env-file "$MIGRATION_ENV" \
+  --entrypoint node "$migration_image" - <<'NODE'
+const url = process.env.SUPABASE_DB_URL;
+if (!url || new URL(url).hostname !== "supabase-db") {
+  throw new Error("Red migrations must target the local supabase-db container");
+}
+if (process.env.NEXT_PUBLIC_SUPABASE_URL !== "https://spbase.hrpvietnam.com") {
+  throw new Error("Red migration environment has the wrong Supabase URL");
+}
+console.log("Red migration target preflight passed");
+NODE
+
+docker run --rm --network "$RED_NETWORK" --env-file "$MIGRATION_ENV" \
+  -v "$MIGRATION_ENV:/etc/bi-test/migration.env:ro" \
+  -e SUPABASE_CONFIG_FILE=/etc/bi-test/migration.env \
+  "$migration_image"
+
+status=$(docker run --rm --network "$RED_NETWORK" --env-file "$MIGRATION_ENV" \
+  -v "$MIGRATION_ENV:/etc/bi-test/migration.env:ro" \
+  -e SUPABASE_CONFIG_FILE=/etc/bi-test/migration.env \
+  "$migration_image" --dry-run 2>&1) || { printf '%s\n' "$status" >&2; exit 1; }
+printf '%s\n' "$status"
+if grep -Eq '^(PENDING|CHECKSUM MISMATCH) ' <<<"$status"; then
+  echo "Red post-migration verification failed" >&2
+  exit 1
+fi
+echo "Red migrations applied and verified"
