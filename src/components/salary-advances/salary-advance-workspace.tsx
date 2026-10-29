@@ -64,28 +64,28 @@ import {
   type SalaryAdvanceWorkspaceTabId,
 } from "@/lib/salary-advance/salary-advance-ui-model";
 
-const REQUEST_STATE_FILTER_OPTIONS: ReadonlyArray<{
+export const REQUEST_STATE_FILTER_OPTIONS: ReadonlyArray<{
   value: "ALL" | SalaryAdvanceRequestState;
   label: string;
 }> = [
-  { value: "ALL", label: "Tất cả trạng thái yêu cầu" },
-  { value: "OPEN", label: "Đang chờ Kế toán xử lý" },
-  { value: "NEEDS_INFO", label: "Cần QLDA bổ sung thông tin" },
-  { value: "APPROVED", label: "Đã chấp thuận ứng lương" },
+  { value: "ALL", label: "Tất cả trạng thái" },
+  { value: "OPEN", label: "Chờ Kế toán xử lý" },
+  { value: "NEEDS_INFO", label: "Cần bổ sung" },
+  { value: "APPROVED", label: "Đã chấp thuận" },
   { value: "REJECTED", label: "Đã từ chối" },
-  { value: "WITHDRAWN", label: "QLDA đã rút yêu cầu" },
-  { value: "HANDLED_EXTERNALLY", label: "Đã xử lý ngoài BI" },
+  { value: "WITHDRAWN", label: "Đã rút" },
+  { value: "HANDLED_EXTERNALLY", label: "Xử lý ngoài BI" },
 ];
 
-const EVIDENCE_STATE_FILTER_OPTIONS: ReadonlyArray<{
+export const EVIDENCE_STATE_FILTER_OPTIONS: ReadonlyArray<{
   value: "ALL" | SalaryAdvanceEvidenceReviewState;
   label: string;
 }> = [
-  { value: "ALL", label: "Tất cả trạng thái ảnh nhận tiền" },
-  { value: "NOT_UPLOADED", label: "Chưa tải ảnh nhận tiền" },
-  { value: "PENDING_REVIEW", label: "Chờ Kế toán đối chiếu ảnh" },
-  { value: "REVIEWED", label: "Đã đối chiếu ảnh nhận tiền" },
-  { value: "RETAKE_REQUIRED", label: "Yêu cầu chụp/gửi lại ảnh" },
+  { value: "ALL", label: "Tất cả ảnh" },
+  { value: "NOT_UPLOADED", label: "Chưa tải ảnh" },
+  { value: "PENDING_REVIEW", label: "Chờ đối chiếu" },
+  { value: "REVIEWED", label: "Đã đối chiếu" },
+  { value: "RETAKE_REQUIRED", label: "Cần gửi lại ảnh" },
 ];
 
 type TransitionDialogState = {
@@ -1489,11 +1489,13 @@ export function SalaryAdvanceWorkspace() {
 
       {/* Filter Toolbar */}
       <FilterToolbar
+        dataTestId="salary-advance-filter-toolbar"
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <Button
               variant="secondary"
               size="sm"
+              className="md:h-9 md:min-h-9 px-3 text-sm whitespace-nowrap shrink-0"
               onClick={() => {
                 setAppliedSearch(searchInput);
               }}
@@ -1504,6 +1506,7 @@ export function SalaryAdvanceWorkspace() {
             <Button
               variant="ghost"
               size="sm"
+              className="md:h-9 md:min-h-9 px-3 text-sm whitespace-nowrap shrink-0"
               onClick={() => {
                 void loadRequests();
                 if (selectedRequestId) {
@@ -1517,104 +1520,109 @@ export function SalaryAdvanceWorkspace() {
           </div>
         }
       >
-        <div className="flex flex-col gap-1 min-w-[200px]">
-          <label
-            htmlFor="salary-advance-project-filter"
-            className="text-xs font-medium text-[var(--color-text-secondary)]"
-          >
-            Dự án
-          </label>
-          <select
-            id="salary-advance-project-filter"
-            data-testid="salary-advance-project-filter"
-            value={projectFilter}
-            onChange={(event) => setProjectFilter(event.target.value)}
-            className="h-9 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-sm text-[var(--color-text-primary)]"
-          >
-            <option value="ALL">Tất cả dự án trong phạm vi</option>
-            {availableProjectsForCurrentTab.map((project) => (
-              <option key={project.project_id} value={project.project_id}>
-                {project.display_name}
-                {!project.active ? " (Ngưng HĐ)" : ""}
-              </option>
-            ))}
-          </select>
-        </div>
+        <div
+          data-testid="salary-advance-filter-grid"
+          className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)_minmax(0,0.95fr)_minmax(0,1.65fr)] lg:items-end"
+        >
+          <div className="flex flex-col gap-1 min-w-0">
+            <label
+              htmlFor="salary-advance-project-filter"
+              className="truncate text-xs font-medium text-[var(--color-text-secondary)]"
+            >
+              Dự án
+            </label>
+            <select
+              id="salary-advance-project-filter"
+              data-testid="salary-advance-project-filter"
+              value={projectFilter}
+              onChange={(event) => setProjectFilter(event.target.value)}
+              className="h-9 w-full min-w-0 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 text-sm text-[var(--color-text-primary)]"
+            >
+              <option value="ALL">Tất cả dự án</option>
+              {availableProjectsForCurrentTab.map((project) => (
+                <option key={project.project_id} value={project.project_id}>
+                  {project.display_name}
+                  {!project.active ? " (Ngưng HĐ)" : ""}
+                </option>
+              ))}
+            </select>
+          </div>
 
-        <div className="flex flex-col gap-1 min-w-[190px]">
-          <label
-            htmlFor="salary-advance-state-filter"
-            className="text-xs font-medium text-[var(--color-text-secondary)]"
-          >
-            Trạng thái yêu cầu
-          </label>
-          <select
-            id="salary-advance-state-filter"
-            data-testid="salary-advance-state-filter"
-            value={requestStateFilter}
-            onChange={(event) =>
-              setRequestStateFilter(
-                event.target.value as "ALL" | SalaryAdvanceRequestState
-              )
-            }
-            className="h-9 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-sm text-[var(--color-text-primary)]"
-          >
-            {REQUEST_STATE_FILTER_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="flex flex-col gap-1 min-w-[190px]">
-          <label
-            htmlFor="salary-advance-evidence-filter"
-            className="text-xs font-medium text-[var(--color-text-secondary)]"
-          >
-            Trạng thái đối chiếu ảnh
-          </label>
-          <select
-            id="salary-advance-evidence-filter"
-            data-testid="salary-advance-evidence-filter"
-            value={evidenceStateFilter}
-            onChange={(event) =>
-              setEvidenceStateFilter(
-                event.target.value as "ALL" | SalaryAdvanceEvidenceReviewState
-              )
-            }
-            className="h-9 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-sm text-[var(--color-text-primary)]"
-          >
-            {EVIDENCE_STATE_FILTER_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="flex flex-col gap-1 min-w-[220px] flex-1">
-          <label
-            htmlFor="salary-advance-search-input"
-            className="text-xs font-medium text-[var(--color-text-secondary)]"
-          >
-            Tìm người lao động (mã NV / họ tên)
-          </label>
-          <input
-            id="salary-advance-search-input"
-            data-testid="salary-advance-search-input"
-            type="search"
-            value={searchInput}
-            onChange={(event) => setSearchInput(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                event.preventDefault();
-                setAppliedSearch(searchInput);
+          <div className="flex flex-col gap-1 min-w-0">
+            <label
+              htmlFor="salary-advance-state-filter"
+              className="truncate text-xs font-medium text-[var(--color-text-secondary)]"
+            >
+              Trạng thái yêu cầu
+            </label>
+            <select
+              id="salary-advance-state-filter"
+              data-testid="salary-advance-state-filter"
+              value={requestStateFilter}
+              onChange={(event) =>
+                setRequestStateFilter(
+                  event.target.value as "ALL" | SalaryAdvanceRequestState
+                )
               }
-            }}
-            placeholder="Nhập mã nhân viên hoặc họ tên NLĐ..."
-            className="h-9 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-sm text-[var(--color-text-primary)]"
-          />
+              className="h-9 w-full min-w-0 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 text-sm text-[var(--color-text-primary)]"
+            >
+              {REQUEST_STATE_FILTER_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex flex-col gap-1 min-w-0">
+            <label
+              htmlFor="salary-advance-evidence-filter"
+              className="truncate text-xs font-medium text-[var(--color-text-secondary)]"
+            >
+              Trạng thái đối chiếu ảnh
+            </label>
+            <select
+              id="salary-advance-evidence-filter"
+              data-testid="salary-advance-evidence-filter"
+              value={evidenceStateFilter}
+              onChange={(event) =>
+                setEvidenceStateFilter(
+                  event.target.value as "ALL" | SalaryAdvanceEvidenceReviewState
+                )
+              }
+              className="h-9 w-full min-w-0 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 text-sm text-[var(--color-text-primary)]"
+            >
+              {EVIDENCE_STATE_FILTER_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex flex-col gap-1 min-w-0">
+            <label
+              htmlFor="salary-advance-search-input"
+              className="truncate text-xs font-medium text-[var(--color-text-secondary)]"
+            >
+              Tìm NLĐ
+            </label>
+            <input
+              id="salary-advance-search-input"
+              data-testid="salary-advance-search-input"
+              type="search"
+              value={searchInput}
+              onChange={(event) => setSearchInput(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  setAppliedSearch(searchInput);
+                }
+              }}
+              placeholder="Mã NV hoặc tên NLĐ"
+              className="h-9 w-full min-w-0 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-sm text-[var(--color-text-primary)]"
+            />
+          </div>
         </div>
       </FilterToolbar>
 
