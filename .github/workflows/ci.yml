@@ -49,6 +49,8 @@ jobs:
         run: pnpm db:migrate -- --offline
       - name: Build
         run: pnpm build
+      - name: Smoke test production server startup and login route
+        run: pnpm test:production-start
       - name: Check public bundle and repository for secrets
         run: pnpm secrets:check
       - name: Check documentation examples

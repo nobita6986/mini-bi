@@ -16,12 +16,12 @@ const resolveSession = () =>
 
 export async function POST(
   request: Request,
-  context: { params: Promise<{ requestId: string; uploadId: string }> },
+  context: { params: Promise<{ requestId: string; evidenceRef: string }> },
 ): Promise<Response> {
   if (process.env.DIRECT_ENTRY_API_ENABLED !== "true") {
     return failJson("NOT_FOUND", 404);
   }
-  const { requestId, uploadId } = await context.params;
+  const { requestId, evidenceRef: uploadId } = await context.params;
   return handlePostFinalizeSalaryAdvanceEvidence(
     request,
     requestId,
