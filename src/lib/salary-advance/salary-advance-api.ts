@@ -1613,3 +1613,55 @@ export async function handleGetSalaryAdvanceWorkerHistory(
 
   return salAdvOk(result.data, 200);
 }
+
+// -----------------------------------------------------------------------------
+// 15. GET /api/salary-advance/projects/[projectId]/workers/[workerEntryId]/worker-history
+// -----------------------------------------------------------------------------
+export async function handleGetSalaryAdvanceProjectWorkerHistory(
+  request: Request,
+  projectId: string,
+  workerEntryId: string,
+  enabledFlag: string | undefined,
+  dependencies: SalaryAdvanceApiDependencies,
+): Promise<Response> {
+  const gate = directEntryFeatureGate(enabledFlag);
+  if (gate) return gate;
+
+  if (hasDisallowedAuthorityHeaders(request)) {
+    return salAdvError("CLIENT_AUTHORITY_FIELD_FORBIDDEN");
+  }
+
+  const url = parseRequestUrl(request);
+  if (!url) return salAdvError("SALARY_ADVANCE_QUERY_INVALID");
+
+  const parsedProjectId = parseProjectIdParam(projectId);
+  if (!parsedProjectId.ok) return salAdvError(parsedProjectId.code);
+
+  const parsedWorkerEntryId = parseUuidParam(
+    workerEntryId,
+    "SALARY_ADVANCE_WORKER_INVALID",
+  );
+  if (!parsedWorkerEntryId.ok) return salAdvError(parsedWorkerEntryId.code);
+
+  const query = parseListWorkerHistoryQuery(url);
+  if (!query.ok) return salAdvError(query.code);
+
+  const actor = await resolveSalaryAdvanceActor(dependencies);
+  if (!actor.ok) return actor.response;
+
+  const result = await dependencies.repository.listProjectWorkerHistory({
+    auth_subject: actor.auth_subject,
+    app_user_id: actor.app_user_id,
+    project_id: parsedProjectId.project_id,
+    worker_entry_id: parsedWorkerEntryId.id,
+    period_mode: query.value.period_mode,
+    month: query.value.month,
+    from_date: query.value.from_date,
+    to_date: query.value.to_date,
+    cursor: query.value.cursor,
+    page_size: query.value.page_size,
+  });
+  if (!result.ok) return salAdvError(result.code);
+
+  return salAdvOk(result.data, 200);
+}

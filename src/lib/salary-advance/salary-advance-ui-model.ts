@@ -2034,8 +2034,8 @@ export function parseSalaryAdvanceWorkerHistoryPayload(raw: unknown):
     };
   }
   if (
-    typeof raw.request_id !== "string" ||
-    !raw.request_id.trim() ||
+    (raw.request_id !== null &&
+      (typeof raw.request_id !== "string" || !raw.request_id.trim())) ||
     typeof raw.worker_entry_id !== "string" ||
     !raw.worker_entry_id.trim() ||
     typeof raw.worker_employee_code !== "string" ||
@@ -2075,7 +2075,7 @@ export function parseSalaryAdvanceWorkerHistoryPayload(raw: unknown):
   return {
     ok: true,
     data: {
-      request_id: raw.request_id,
+      request_id: typeof raw.request_id === "string" ? raw.request_id : null,
       worker_entry_id: raw.worker_entry_id,
       worker_employee_code: raw.worker_employee_code,
       worker_display_name: raw.worker_display_name,
@@ -2097,15 +2097,28 @@ export function parseSalaryAdvanceWorkerHistoryPayload(raw: unknown):
   };
 }
 
-export function buildSalaryAdvanceWorkerHistoryUrl(params: {
-  requestId: string;
-  periodMode: SalaryAdvanceHistoryPeriodMode;
-  month?: string | null;
-  fromDate?: string | null;
-  toDate?: string | null;
-  cursor?: string | null;
-  pageSize?: number;
-}): string {
+export type SalaryAdvanceWorkerHistoryTarget =
+  | {
+      requestId: string;
+      projectId?: undefined;
+      workerEntryId?: undefined;
+    }
+  | {
+      requestId?: null | undefined;
+      projectId: string;
+      workerEntryId: string;
+    };
+
+export function buildSalaryAdvanceWorkerHistoryUrl(
+  params: SalaryAdvanceWorkerHistoryTarget & {
+    periodMode: SalaryAdvanceHistoryPeriodMode;
+    month?: string | null;
+    fromDate?: string | null;
+    toDate?: string | null;
+    cursor?: string | null;
+    pageSize?: number;
+  }
+): string {
   const queryParams = new URLSearchParams();
   queryParams.set("period_mode", params.periodMode);
   queryParams.set("page_size", String(params.pageSize ?? 20));
@@ -2123,8 +2136,15 @@ export function buildSalaryAdvanceWorkerHistoryUrl(params: {
   if (params.cursor) {
     queryParams.set("cursor", params.cursor);
   }
+  if (params.projectId && params.workerEntryId) {
+    return `/api/salary-advance/projects/${encodeURIComponent(
+      params.projectId
+    )}/workers/${encodeURIComponent(
+      params.workerEntryId
+    )}/worker-history?${queryParams.toString()}`;
+  }
   return `/api/salary-advance/requests/${encodeURIComponent(
-    params.requestId
+    params.requestId ?? ""
   )}/worker-history?${queryParams.toString()}`;
 }
 
@@ -2142,21 +2162,31 @@ export type SalaryAdvanceWorkerHistoryFetchOutcome =
       status: "stale";
     };
 
-export async function fetchSalaryAdvanceWorkerHistoryPage(params: {
-  requestId: string;
-  periodMode: SalaryAdvanceHistoryPeriodMode;
-  month?: string | null;
-  fromDate?: string | null;
-  toDate?: string | null;
-  cursor?: string | null;
-  append?: boolean;
-  pageSize?: number;
-  ticket: LatestRequestTicket;
-  fetchImpl?: typeof fetch;
-}): Promise<SalaryAdvanceWorkerHistoryFetchOutcome> {
+export async function fetchSalaryAdvanceWorkerHistoryPage(
+  params: SalaryAdvanceWorkerHistoryTarget & {
+    periodMode: SalaryAdvanceHistoryPeriodMode;
+    month?: string | null;
+    fromDate?: string | null;
+    toDate?: string | null;
+    cursor?: string | null;
+    append?: boolean;
+    pageSize?: number;
+    ticket: LatestRequestTicket;
+    fetchImpl?: typeof fetch;
+  }
+): Promise<SalaryAdvanceWorkerHistoryFetchOutcome> {
   const fetchFn = params.fetchImpl ?? globalThis.fetch;
+  const target: SalaryAdvanceWorkerHistoryTarget =
+    params.projectId && params.workerEntryId
+      ? {
+          projectId: params.projectId,
+          workerEntryId: params.workerEntryId,
+        }
+      : {
+          requestId: params.requestId ?? "",
+        };
   const url = buildSalaryAdvanceWorkerHistoryUrl({
-    requestId: params.requestId,
+    ...target,
     periodMode: params.periodMode,
     month: params.month,
     fromDate: params.fromDate,

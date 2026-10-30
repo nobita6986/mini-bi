@@ -354,6 +354,7 @@ export type SalaryAdvanceWorkerOption = {
   bank_transfer_eligible?: boolean;
   bank_ineligible_reason?: SalaryAdvanceBankIneligibleReason | null;
   bank_account?: SalaryAdvanceWorkerBankAccountInfo;
+  advance_30d_summary?: SalaryAdvanceWorker30dSummary | null;
 };
 
 export type SalaryAdvanceWorkerListResponse = {
@@ -524,7 +525,7 @@ export type SalaryAdvanceWorkerHistoryItem = {
 };
 
 export type SalaryAdvanceWorkerHistoryResponse = {
-  request_id: string;
+  request_id: string | null;
   worker_entry_id: string;
   worker_employee_code: string;
   worker_display_name: string;
