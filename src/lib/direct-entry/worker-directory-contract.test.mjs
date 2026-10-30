@@ -55,12 +55,15 @@ function query(search) {
 
 test("query accepts only the documented scope/filter/paging keys", () => {
   const parsed = query("scope=managed&project_id=proj_a&recruiter_id=" + recruiterId +
-    "&employment_status=ON&search=hrp-2026-000021&cursor=" + cursor + "&page_size=50");
+    "&employment_status=ON&search=hrp-2026-000021&first_work_date_from=2026-10-01" +
+    "&first_work_date_to=2026-10-31&provider_type=hrp&cursor=" + cursor + "&page_size=50");
   assert.deepEqual(parsed, {
     ok: true,
     value: {
       scope: "managed", project_id: "proj_a", recruiter_id: recruiterId,
-      employment_status: "ON", search: "hrp-2026-000021", cursor, page_size: 50,
+      employment_status: "ON", search: "hrp-2026-000021",
+      first_work_date_from: "2026-10-01", first_work_date_to: "2026-10-31",
+      provider_type: "hrp", cursor, page_size: 50,
     },
   });
 
@@ -68,12 +71,17 @@ test("query accepts only the documented scope/filter/paging keys", () => {
   assert.equal(defaults.ok, true);
   assert.deepEqual(defaults.value, {
     scope: "recruited", project_id: null, recruiter_id: null,
-    employment_status: null, search: null, cursor: null,
+    employment_status: null, search: null,
+    first_work_date_from: null, first_work_date_to: null, provider_type: null,
+    cursor: null,
     page_size: WORKER_DIRECTORY_DEFAULT_PAGE_SIZE,
   });
 
   assert.equal(query("scope=team").value.scope, "team");
   assert.equal(query("scope=all&search=%20Nguy%E1%BB%85n%20").value.search, "Nguyễn");
+  assert.equal(query("scope=all&provider_type=vendor").value.provider_type, "vendor");
+  assert.equal(query("scope=all&first_work_date_from=2026-10-01").value.first_work_date_from, "2026-10-01");
+  assert.equal(query("scope=all&first_work_date_to=2026-10-31").value.first_work_date_to, "2026-10-31");
 
   for (const invalid of [
     "",                                            // scope bat buoc
@@ -93,6 +101,11 @@ test("query accepts only the documented scope/filter/paging keys", () => {
     "scope=managed&employment_status=MAYBE",
     "scope=managed&search=" + "x".repeat(WORKER_DIRECTORY_SEARCH_MAX_LENGTH + 1),
     "scope=managed&search=%0A",
+    "scope=managed&first_work_date_from=2026-02-30",
+    "scope=managed&first_work_date_to=08/10/2026",
+    "scope=managed&first_work_date_from=2026-10-15&first_work_date_to=2026-10-01",
+    "scope=managed&provider_type=other",
+    "scope=managed&provider_type=HRP",
   ]) {
     assert.deepEqual(query(invalid), { ok: false, code: "WORKER_QUERY_INVALID" }, invalid);
   }

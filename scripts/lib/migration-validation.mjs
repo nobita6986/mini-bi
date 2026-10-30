@@ -280,6 +280,12 @@ export const HF_SALARY_ADVANCE_PM_WORKER_HISTORY_MIGRATION_NAME =
   "20261030180000_hf_salary_advance_pm_worker_history.sql";
 export const HF_SALARY_ADVANCE_PM_WORKER_HISTORY_RPC_SIGNATURE =
   "public.salary_advance_list_project_worker_history(uuid, uuid, text, uuid, text, text, text, text, text, integer)";
+export const HF_DUPLICATE_CCCD_RESIGNED_WITHDRAW_AND_WORKER_FILTERS_MIGRATION_NAME =
+  "20261031100000_hf_duplicate_cccd_resigned_withdraw_and_worker_filters.sql";
+export const HF_DUPLICATE_CCCD_RESIGNED_WITHDRAW_AND_WORKER_FILTERS_RPC_SIGNATURES = Object.freeze([
+  "public.direct_entry_list_workers(uuid, uuid, text, text, uuid, text, text, integer, text, date, date, text)",
+  "public.direct_entry_export_workers(uuid, uuid, text, text, uuid, text, text, text, date, date, text)",
+]);
 export const F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES = Object.freeze([
   "public.work_report_list_templates(uuid, uuid)",
   "public.work_report_get_template(uuid, uuid, uuid)",
@@ -518,7 +524,8 @@ export async function verifyS0T1CHistoricalCompatibility(
     salaryAdvanceWp1Applied = false,
     hfSalaryAdvanceActorDisplayNameApplied = false,
     hfSalaryAdvanceVendorExclusionAndWorkerHistoryApplied = false,
-    hfSalaryAdvancePmWorkerHistoryApplied = false } = {},
+    hfSalaryAdvancePmWorkerHistoryApplied = false,
+    hfDuplicateCccdResignedWithdrawAndWorkerFiltersApplied = false } = {},
 ) {
   const baseAllowlist = extractS0T1CAllowlistSignatures(migrationSql);
   if (baseAllowlist.length === 0) {
@@ -594,6 +601,9 @@ export async function verifyS0T1CHistoricalCompatibility(
       : []),
     ...(hfSalaryAdvancePmWorkerHistoryApplied
       ? [HF_SALARY_ADVANCE_PM_WORKER_HISTORY_RPC_SIGNATURE]
+      : []),
+    ...(hfDuplicateCccdResignedWithdrawAndWorkerFiltersApplied
+      ? HF_DUPLICATE_CCCD_RESIGNED_WITHDRAW_AND_WORKER_FILTERS_RPC_SIGNATURES
       : []),
   ];
 
@@ -843,6 +853,8 @@ export async function verifyAppliedMigrationChecksum(
           appliedMap.has(HF_SALARY_ADVANCE_VENDOR_EXCLUSION_AND_WORKER_HISTORY_MIGRATION_NAME),
         hfSalaryAdvancePmWorkerHistoryApplied:
           appliedMap.has(HF_SALARY_ADVANCE_PM_WORKER_HISTORY_MIGRATION_NAME),
+        hfDuplicateCccdResignedWithdrawAndWorkerFiltersApplied:
+          appliedMap.has(HF_DUPLICATE_CCCD_RESIGNED_WITHDRAW_AND_WORKER_FILTERS_MIGRATION_NAME),
       },
     );
     if (postconditions.ok) {

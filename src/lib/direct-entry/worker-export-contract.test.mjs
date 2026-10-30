@@ -44,22 +44,32 @@ function validRow(overrides = {}) {
 test("the request accepts the exact allowlist and optional/null filters and reasons", () => {
   assert.deepEqual(projectWorkerExportRequest({ scope: "recruited", reason: "  ly do  " }), {
     scope: "recruited", project_id: null, recruiter_id: null, employment_status: null,
+    search: null, first_work_date_from: null, first_work_date_to: null, provider_type: null,
     reason: "ly do",
   });
   assert.deepEqual(projectWorkerExportRequest({
     scope: "managed", project_id: "proj_a", recruiter_id: null, employment_status: "OFF",
+    search: "  Nguyễn  ", first_work_date_from: "2026-10-01", first_work_date_to: "2026-10-31",
+    provider_type: "vendor",
     reason: "x",
   }), {
-    scope: "managed", project_id: "proj_a", recruiter_id: null, employment_status: "OFF", reason: "x",
+    scope: "managed", project_id: "proj_a", recruiter_id: null, employment_status: "OFF",
+    search: "Nguyễn", first_work_date_from: "2026-10-01", first_work_date_to: "2026-10-31",
+    provider_type: "vendor",
+    reason: "x",
   });
   assert.deepEqual(projectWorkerExportRequest({ scope: "all", reason: "audit all" }), {
-    scope: "all", project_id: null, recruiter_id: null, employment_status: null, reason: "audit all",
+    scope: "all", project_id: null, recruiter_id: null, employment_status: null,
+    search: null, first_work_date_from: null, first_work_date_to: null, provider_type: null,
+    reason: "audit all",
   });
   for (const reason of [undefined, null, "", "  "]) {
     const body = { scope: "team" };
     if (reason !== undefined) body.reason = reason;
     assert.deepEqual(projectWorkerExportRequest(body), {
-      scope: "team", project_id: null, recruiter_id: null, employment_status: null, reason: null,
+      scope: "team", project_id: null, recruiter_id: null, employment_status: null,
+      search: null, first_work_date_from: null, first_work_date_to: null, provider_type: null,
+      reason: null,
     });
   }
 });
@@ -76,6 +86,10 @@ test("the request rejects unknown keys, wrong types, invalid enums and filters",
     { scope: "recruited", reason: "x", project_id: "bad project" },
     { scope: "recruited", reason: "x", recruiter_id: "not-a-uuid" },
     { scope: "recruited", reason: "x", employment_status: "MAYBE" },
+    { scope: "recruited", reason: "x", search: "x".repeat(101) },
+    { scope: "recruited", reason: "x", first_work_date_from: "2026-02-30" },
+    { scope: "recruited", reason: "x", first_work_date_from: "2026-10-15", first_work_date_to: "2026-10-01" },
+    { scope: "recruited", reason: "x", provider_type: "other" },
     { scope: "recruited", reason: "x", scope_extra: 1 },
   ]) {
     assert.equal(projectWorkerExportRequest(body), null, JSON.stringify(body));

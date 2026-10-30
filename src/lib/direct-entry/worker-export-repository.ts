@@ -27,7 +27,16 @@ export type WorkerExportOutcome =
   | { ok: true; envelope: WorkerExportEnvelope }
   | { ok: false; kind: "denied" | "invalid" | "unavailable" };
 
-export type WorkerExportInput = ActorRef & WorkerExportRequest;
+export type WorkerExportInput = ActorRef &
+  Omit<
+    WorkerExportRequest,
+    "search" | "first_work_date_from" | "first_work_date_to" | "provider_type"
+  > & {
+    search?: string | null;
+    first_work_date_from?: string | null;
+    first_work_date_to?: string | null;
+    provider_type?: WorkerExportRequest["provider_type"];
+  };
 
 export type WorkerExportRepository = {
   exportWorkers(input: WorkerExportInput): Promise<WorkerExportOutcome>;
@@ -77,6 +86,10 @@ export function createWorkerExportRepository(rpc?: Rpc): WorkerExportRepository 
           p_recruiter_id: input.recruiter_id,
           p_employment_status: input.employment_status,
           p_reason: input.reason,
+          p_search: input.search ?? null,
+          p_first_work_date_from: input.first_work_date_from ?? null,
+          p_first_work_date_to: input.first_work_date_to ?? null,
+          p_provider_type: input.provider_type ?? null,
         });
         if (error) {
           const kind = classifyWorkerExportError(error);

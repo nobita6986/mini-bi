@@ -37,12 +37,14 @@ import {
   DIRECT_EDIT_DOCUMENT_ACCEPT,
   DIRECT_EDIT_DOCUMENT_LABELS,
   DIRECT_EDIT_DOCUMENT_TYPES,
+  EMPTY_WORKER_DIRECTORY_FILTERS,
   WORKER_CONFLICT_MESSAGE,
   WORKER_OPERATIONS_TAB_HINTS,
   WORKER_OPERATIONS_TAB_LABELS,
   WORKER_PAGE_SIZE,
   WORKER_PROPOSE_TARGETS,
   WORKER_PROPOSE_TARGET_LABELS,
+  WORKER_PROVIDER_TYPES,
   applyPage,
   bankAccountSummary,
   buildDirectEditEntryFieldProposal,
@@ -52,6 +54,7 @@ import {
   directEditWorkerFormFromBaseline,
   emptyTabPage,
   failLoad,
+  hasActiveWorkerDirectoryFilters,
   initialDirectEditBankQueryText,
   initialWorkerTab,
   lastDecisionLabel,
@@ -69,10 +72,12 @@ import {
   tabScope,
   updateWorkerDirectoryFilter,
   uploadDirectEditDocument,
+  validateWorkerDirectoryDateRange,
   visibleWorkerTabs,
   workerListErrorMessage,
   WORKER_LOAD_FAILED_MESSAGE,
   workerNameAvailability,
+  workerProviderTypeLabel,
   workerRowKey,
   workerStatusLabel,
   workersQuery,
@@ -199,7 +204,7 @@ export function WorkerOperations({
   const [tab, setTab] = useState<WorkerOperationsTab>(
     () => initialWorkerTab(actor, canSeeAllWorkers, canSeeTeamWorkers));
   const [filters, setFilters] = useState<WorkerDirectoryFilters>(
-    { search: "", status: "", projectId: "", recruiterId: "" });
+    () => ({ ...EMPTY_WORKER_DIRECTORY_FILTERS }));
   const [filterCatalogState, setFilterCatalogState] =
     useState<"loading" | "ready" | "denied" | "unavailable">("loading");
   const [workerPages, setWorkerPages] = useState<Record<WorkerScopeTab, TabPage<WorkerDirectoryRow>>>(
@@ -221,6 +226,9 @@ export function WorkerOperations({
   const drawerOpenerRef = useRef<HTMLElement | null>(null);
   const detailOpenerRef = useRef<HTMLElement | null>(null);
   const filterId = useId();
+  const providerTypeFilterId = useId();
+  const firstWorkDateFromId = useId();
+  const firstWorkDateToId = useId();
   const projectFilterId = useId();
   const recruiterFilterId = useId();
   const searchId = useId();
@@ -278,6 +286,10 @@ export function WorkerOperations({
   const fetchWorkers = useCallback(async (
     scope: WorkerScopeTab, workerFilters: WorkerDirectoryFilters, cursor: string | null,
   ): Promise<FetchOutcome<WorkerDirectoryRow>> => {
+    const dateError = validateWorkerDirectoryDateRange(workerFilters);
+    if (dateError !== null) {
+      return { ok: false, state: "error", message: dateError };
+    }
     const response = await fetch(API + "/workers" + workersQuery({
       scope, ...workerFilters, cursor,
     }),
@@ -380,7 +392,7 @@ export function WorkerOperations({
     }
     workerQueryGeneration.current += 1;
     setWorkerSummary(null);
-    setFilters({ search: "", status: "", projectId: "", recruiterId: "" });
+    setFilters({ ...EMPTY_WORKER_DIRECTORY_FILTERS });
     if (next === "uploader") setSubmissionPage(resetTabPage());
     else setWorkerPages((pages) => ({ ...pages, [next as WorkerScopeTab]: resetTabPage() }));
     setTab(next);
@@ -399,6 +411,15 @@ export function WorkerOperations({
     setWorkerPages((pages) => ({ ...pages, [scope]: next.page }));
   }
 
+  function clearFilters() {
+    const scope = tabScope(tab);
+    if (scope === null) return;
+    workerQueryGeneration.current += 1;
+    setWorkerSummary(null);
+    setFilters({ ...EMPTY_WORKER_DIRECTORY_FILTERS });
+    setWorkerPages((pages) => ({ ...pages, [scope]: resetTabPage() }));
+  }
+
   const workerPageGeneration = workerQueryGeneration.current;
 
   async function reload(): Promise<void> {
@@ -409,6 +430,15 @@ export function WorkerOperations({
         () => ({ ok: false as const, state: "unavailable" as PageState, message: WORKER_LOAD_FAILED_MESSAGE })), false);
     } else {
       const scope = tab as WorkerScopeTab;
+      const dateError = validateWorkerDirectoryDateRange(filters);
+      if (dateError !== null) {
+        setWorkerSummary(null);
+        setWorkerPages((pages) => ({
+          ...pages,
+          [scope]: failLoad(emptyTabPage(), "error", dateError),
+        }));
+        return;
+      }
       workerQueryGeneration.current += 1;
       const generation = workerQueryGeneration.current;
       setWorkerSummary(null);
@@ -516,15 +546,34 @@ export function WorkerOperations({
         {tab === "uploader" ? null : (
           <>
             <FilterToolbar
+              actions={
+                <button
+                  type="button"
+                  data-testid="worker-clear-filters"
+                  className={buttonClass}
+                  disabled={!hasActiveWorkerDirectoryFilters(filters)}
+                  onClick={clearFilters}
+                >
+                  Xóa bộ lọc
+                </button>
+              }
               summary={
                 <p role="status" aria-live="polite" data-testid="worker-filter-summary"
-                  className="text-xs sm:text-sm text-muted">
+                  className="text-sm sm:text-base font-bold text-foreground">
                   {workerSummary === null ? "Đang tính tổng theo bộ lọc…" : (
                     <>
                       Tổng số NLĐ: {workerSummary.total_workers.toLocaleString("vi-VN")} — trong{" "}
                       {workerSummary.project_count.toLocaleString("vi-VN")} dự án và{" "}
                       {workerSummary.recruiter_count.toLocaleString("vi-VN")} người tuyển; trạng thái làm việc:{" "}
-                      {filters.status === "" ? "Tất cả" : workerStatusLabel(filters.status)}.
+                      {filters.status === "" ? "Tất cả" : workerStatusLabel(filters.status)}; nguồn tuyển:{" "}
+                      {workerProviderTypeLabel(filters.providerType)}.
+                      {(filters.firstWorkDateFrom ?? "") !== "" || (filters.firstWorkDateTo ?? "") !== "" ? (
+                        <>
+                          {" "}Ngày vào làm:{" "}
+                          {(filters.firstWorkDateFrom ?? "") !== "" ? filters.firstWorkDateFrom : "…"} →{" "}
+                          {(filters.firstWorkDateTo ?? "") !== "" ? filters.firstWorkDateTo : "…"}.
+                        </>
+                      ) : null}
                       {filters.search.trim() === "" ? null : <> Từ khóa: “{filters.search.trim()}”.</>}
                     </>
                   )}
@@ -532,7 +581,7 @@ export function WorkerOperations({
               }
             >
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-12 lg:items-end">
-                <div className="flex flex-col gap-1 sm:col-span-2 lg:col-span-5">
+                <div className="flex flex-col gap-1 sm:col-span-2 lg:col-span-4">
                   <label htmlFor={searchId} className="text-xs font-medium text-muted">Tìm kiếm người lao động</label>
                   <div className="flex items-center gap-2">
                     <input id={searchId} type="search" className={inputClass}
@@ -555,9 +604,50 @@ export function WorkerOperations({
                     ))}
                   </select>
                 </div>
+                <div className="flex flex-col gap-1 lg:col-span-2">
+                  <label htmlFor={providerTypeFilterId} className="text-xs font-medium text-muted">Nguồn tuyển</label>
+                  <select
+                    id={providerTypeFilterId}
+                    data-testid="worker-filter-provider-type"
+                    className={inputClass}
+                    value={filters.providerType ?? ""}
+                    onChange={(event) => changeFilter("providerType", event.target.value)}
+                  >
+                    <option value="">Tất cả</option>
+                    {WORKER_PROVIDER_TYPES.map((providerType) => (
+                      <option key={providerType} value={providerType}>
+                        {workerProviderTypeLabel(providerType)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex flex-col gap-1 lg:col-span-2">
+                  <label htmlFor={firstWorkDateFromId} className="text-xs font-medium text-muted">Từ ngày</label>
+                  <input
+                    id={firstWorkDateFromId}
+                    data-testid="worker-filter-date-from"
+                    type="date"
+                    max={(filters.firstWorkDateTo ?? "") || undefined}
+                    className={inputClass}
+                    value={filters.firstWorkDateFrom ?? ""}
+                    onChange={(event) => changeFilter("firstWorkDateFrom", event.target.value)}
+                  />
+                </div>
+                <div className="flex flex-col gap-1 lg:col-span-2">
+                  <label htmlFor={firstWorkDateToId} className="text-xs font-medium text-muted">Đến ngày</label>
+                  <input
+                    id={firstWorkDateToId}
+                    data-testid="worker-filter-date-to"
+                    type="date"
+                    min={(filters.firstWorkDateFrom ?? "") || undefined}
+                    className={inputClass}
+                    value={filters.firstWorkDateTo ?? ""}
+                    onChange={(event) => changeFilter("firstWorkDateTo", event.target.value)}
+                  />
+                </div>
                 {filterCatalog ? (
                   <>
-                    <div className="lg:col-span-3">
+                    <div className="lg:col-span-6">
                       <CatalogFilterCombobox
                         id={projectFilterId}
                         label="Dự án"
@@ -571,7 +661,7 @@ export function WorkerOperations({
                         onChange={(nextValue) => changeFilter("projectId", nextValue)}
                       />
                     </div>
-                    <div className="lg:col-span-2">
+                    <div className="lg:col-span-6">
                       <CatalogFilterCombobox
                         id={recruiterFilterId}
                         label="Người tuyển"

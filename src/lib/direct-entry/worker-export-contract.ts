@@ -11,6 +11,7 @@
  * Fail-closed: dung key, dung kieu, khong fallback rong; khong type assertion. Mot envelope
  * sai hinh => null (khong bao gio tao file rong tu du lieu khong ro nguon).
  */
+import { isRealCalendarDate } from "../analytics/identity/identity-shared.mjs";
 import { projectOptionalActionReason } from "./action-reason.ts";
 
 export const WORKER_EXPORT_SCOPES = ["recruited", "managed", "team", "all"] as const;
@@ -18,12 +19,17 @@ export type WorkerExportScope = (typeof WORKER_EXPORT_SCOPES)[number];
 
 export const WORKER_EXPORT_EMPLOYMENT_STATUSES = ["UNCONFIRMED", "ON", "OFF"] as const;
 export const WORKER_EXPORT_PROVIDER_TYPES = ["HRP", "Vendor"] as const;
+export const WORKER_EXPORT_FILTER_PROVIDER_TYPES = ["hrp", "vendor"] as const;
+export type WorkerExportFilterProviderType = (typeof WORKER_EXPORT_FILTER_PROVIDER_TYPES)[number];
+export const WORKER_EXPORT_SEARCH_MAX_LENGTH = 100;
 
 export const WORKER_EXPORT_ROW_LIMIT = 10000;
 
 /** Body allowlist. `scope` required; filters and action reason optional/null. */
 export const WORKER_EXPORT_BODY_KEYS = [
-  "scope", "project_id", "recruiter_id", "employment_status", "reason",
+  "scope", "project_id", "recruiter_id", "employment_status",
+  "search", "first_work_date_from", "first_work_date_to", "provider_type",
+  "reason",
 ] as const;
 
 /** Exact row projection, string/null theo du lieu authoritative (20 truong, P1 + Ghi chú). */
@@ -91,13 +97,17 @@ export type WorkerExportRequest = {
   project_id: string | null;
   recruiter_id: string | null;
   employment_status: (typeof WORKER_EXPORT_EMPLOYMENT_STATUSES)[number] | null;
+  search: string | null;
+  first_work_date_from: string | null;
+  first_work_date_to: string | null;
+  provider_type: WorkerExportFilterProviderType | null;
   reason: string | null;
 };
 
 /**
  * Strict request projection. Unknown keys, wrong value types or an invalid enum/filter are refused.
- * `project_id`/`recruiter_id`/`employment_status` and action `reason` may be
- * absent or null (worker-directory convention). No idempotency key.
+ * `project_id`/`recruiter_id`/`employment_status`/`search`/`first_work_date_from`/
+ * `first_work_date_to`/`provider_type` and action `reason` may be absent or null. No idempotency key.
  */
 export function projectWorkerExportRequest(body: unknown): WorkerExportRequest | null {
   if (!isRecord(body)) return null;
@@ -126,12 +136,44 @@ export function projectWorkerExportRequest(body: unknown): WorkerExportRequest |
        !(WORKER_EXPORT_EMPLOYMENT_STATUSES as readonly string[]).includes(employmentStatus))) {
     return null;
   }
+  const rawSearch = body.search ?? null;
+  if (rawSearch !== null &&
+      (typeof rawSearch !== "string" ||
+       [...rawSearch].length > WORKER_EXPORT_SEARCH_MAX_LENGTH ||
+       /[\u0000-\u001f\u007f-\u009f]/u.test(rawSearch))) {
+    return null;
+  }
+  const search = rawSearch === null ? null : rawSearch.trim() || null;
+  const firstWorkDateFrom = body.first_work_date_from ?? null;
+  if (firstWorkDateFrom !== null &&
+      (typeof firstWorkDateFrom !== "string" || !isRealCalendarDate(firstWorkDateFrom))) {
+    return null;
+  }
+  const firstWorkDateTo = body.first_work_date_to ?? null;
+  if (firstWorkDateTo !== null &&
+      (typeof firstWorkDateTo !== "string" || !isRealCalendarDate(firstWorkDateTo))) {
+    return null;
+  }
+  if (firstWorkDateFrom !== null && firstWorkDateTo !== null &&
+      firstWorkDateFrom > firstWorkDateTo) {
+    return null;
+  }
+  const providerType = body.provider_type ?? null;
+  if (providerType !== null &&
+      (typeof providerType !== "string" ||
+       !(WORKER_EXPORT_FILTER_PROVIDER_TYPES as readonly string[]).includes(providerType))) {
+    return null;
+  }
 
   return {
     scope: scope as WorkerExportScope,
     project_id: projectId,
     recruiter_id: recruiterId,
     employment_status: employmentStatus as WorkerExportRequest["employment_status"],
+    search,
+    first_work_date_from: firstWorkDateFrom,
+    first_work_date_to: firstWorkDateTo,
+    provider_type: providerType as WorkerExportFilterProviderType | null,
     reason: reason.value,
   };
 }

@@ -321,18 +321,21 @@ function projectGroup(
   if (!Array.isArray(value.episodes)) return null;
   const episodes: DuplicateCccdReportEpisode[] = [];
   let activeCount = 0;
+  let validWithdrawCount = 0;
   for (const raw of value.episodes) {
     const episode = projectEpisode(raw);
     if (episode === null) return null;
     if (episode.active) activeCount += 1;
-    if (episode.can_self_withdraw &&
-        (episode.latest_status === "ON"
-          ? value.active_profile_count < 2
-          : value.active_profile_count < 1)) return null;
+    if (episode.latest_status === "ON" || episode.latest_status === "OFF") {
+      validWithdrawCount += 1;
+    }
     episodes.push(episode);
   }
   if (episodes.length !== value.profile_count) return null;
   if (activeCount !== value.active_profile_count) return null;
+  if (episodes.some((episode) => episode.can_self_withdraw) && validWithdrawCount < 2) {
+    return null;
+  }
   return {
     cccd_last4: value.cccd_last4,
     cccd_length: value.cccd_length,
@@ -487,13 +490,13 @@ export function duplicateCccdSelfWithdrawErrorMessage(
     return "Hồ sơ này đã được rút trùng trước đó. Vui lòng tải lại báo cáo.";
   }
   if (code === "DUPLICATE_NO_LONGER_ACTIVE") {
-    return "Hồ sơ không còn nằm trong nhóm CCCD trùng đang làm việc. Vui lòng tải lại báo cáo.";
+    return "Hồ sơ không còn nằm trong nhóm CCCD trùng hợp lệ (cần còn ít nhất 2 hồ sơ chưa rút trùng). Vui lòng tải lại báo cáo.";
   }
   if (code === "VERSION_CONFLICT" || code === "IDEMPOTENCY_CONFLICT" || status === 409) {
     return "Hồ sơ đã thay đổi ở nơi khác. Vui lòng tải lại báo cáo trước khi thử lại.";
   }
   if (code === "SELF_WITHDRAW_DENIED" || code === "ACTOR_NOT_AVAILABLE" || status === 403) {
-    return "Chỉ đúng người đã tạo hồ sơ mới được tự rút trùng dòng này.";
+    return "Chỉ người đã tạo hồ sơ, QLDA phụ trách dự án của hồ sơ hoặc tài khoản có quyền rút trùng toàn cục mới được rút trùng dòng này.";
   }
   if (code === "UNAUTHENTICATED" || status === 401) {
     return "Phiên làm việc đã hết hiệu lực. Vui lòng đăng nhập lại.";

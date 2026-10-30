@@ -1310,7 +1310,7 @@ test("HF same-project-same-day: ON+OFF and OFF+OFF stay reported, cross-day/cros
           latest_status: "ON",
           active: true,
           can_mark_off: true,
-          can_self_withdraw: false,
+          can_self_withdraw: true,
         },
         {
           entry_id: ep2.entryId,
@@ -1320,25 +1320,18 @@ test("HF same-project-same-day: ON+OFF and OFF+OFF stay reported, cross-day/cros
           can_self_withdraw: true,
         },
       ],
-      "the sole ON episode cannot be withdrawn; its OFF same-project-day duplicate can be withdrawn",
+      "both ON and OFF episodes in a >=2 valid same-project-day duplicate group can be withdrawn by authorized actors",
     );
 
-    // A delegated actor may withdraw only the OFF row while its ON counterpart remains.
+    // A delegated actor may withdraw either the ON or the OFF row in the >=2 valid duplicate group.
     const delegateOnOff = await report(db, { auth: DELEGATE_AUTH, app: DELEGATE_APP, managedOnly: false });
     assert.equal(
       delegateOnOff.groups[0].episodes.find((e) => e.entry_id === ep1.entryId).can_self_withdraw,
-      false,
+      true,
     );
     assert.equal(
       delegateOnOff.groups[0].episodes.find((e) => e.entry_id === ep2.entryId).can_self_withdraw,
       true,
-    );
-    await assert.rejects(
-      () => db.query(
-        "select public.direct_entry_self_withdraw_duplicate_cccd($1::uuid,$2::uuid,$3::uuid,1,$4::text,$5::text)",
-        [ADMIN_AUTH, ADMIN_APP, ep1.entryId, "Keep the only ON profile", idemKey()],
-      ),
-      (err) => err.code === "PT409" && /not an active duplicate/i.test(err.message),
     );
 
     // Transition ep1 to OFF as well (OFF + OFF on same project + same day):
@@ -1365,8 +1358,8 @@ test("HF same-project-same-day: ON+OFF and OFF+OFF stay reported, cross-day/cros
         can_self_withdraw: e.can_self_withdraw,
       })),
       [
-        { latest_status: "OFF", active: false, can_mark_off: false, can_self_withdraw: false },
-        { latest_status: "OFF", active: false, can_mark_off: false, can_self_withdraw: false },
+        { latest_status: "OFF", active: false, can_mark_off: false, can_self_withdraw: true },
+        { latest_status: "OFF", active: false, can_mark_off: false, can_self_withdraw: true },
       ],
     );
 
@@ -1463,7 +1456,7 @@ test("HF same-project-same-day: ON+OFF and OFF+OFF stay reported, cross-day/cros
     const offAction = eligibleGroup.episodes.find((e) => e.entry_id === resignedDuplicate.entryId);
     const retainedAction = eligibleGroup.episodes.find((e) => e.entry_id === retained.entryId);
     assert.equal(offAction.can_self_withdraw, true);
-    assert.equal(retainedAction.can_self_withdraw, false);
+    assert.equal(retainedAction.can_self_withdraw, true);
 
     const withdrawnOff = (await db.query(
       "select public.direct_entry_self_withdraw_duplicate_cccd($1::uuid,$2::uuid,$3::uuid,$4::integer,$5::text,$6::text) as data",
@@ -1643,6 +1636,137 @@ test("HF UNCONFIRMED contract + action flag consistency + mixed live/historical 
     assert.equal(page2.total_entries, 7);
     assert.equal(page2.has_more, false);
     assert.deepEqual(page2.groups.map((g) => g.cccd_last4), ["1003"]);
+  } finally {
+    await db.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 16. T1A HF: Assigned Project Manager (QLDA) can withdraw ON and OFF duplicate
+//     profiles (including OFF+OFF groups) in their assigned projects, is denied
+//     outside their assigned projects, and cannot withdraw the last remaining profile.
+// ---------------------------------------------------------------------------
+test("HF QLDA + OFF+OFF withdrawal: assigned project manager can withdraw ON/OFF duplicates in managed projects and is denied outside managed projects", async () => {
+  const db = await buildDb();
+  try {
+    await seed(db);
+    const PM_AUTH = uuid(531), PM_APP = uuid(541), PM_REC = uuid(521);
+    const CREATOR_AUTH = uuid(532), CREATOR_APP = uuid(542);
+
+    await db.query(
+      "insert into public.recruiters (recruiter_id, display_name, active) values ($1, 'Assigned PM Recruiter', true)",
+      [PM_REC],
+    );
+    await db.query(
+      "insert into public.recruiter_provider_memberships (recruiter_id, provider_type, valid_from, is_current) values ($1, 'hrp', '2020-01-01', true)",
+      [PM_REC],
+    );
+    await db.query(
+      "insert into public.recruiter_team_memberships (recruiter_id, team_id, valid_from, is_current) values ($1, $2, '2020-01-01', true)",
+      [PM_REC, TEAM],
+    );
+
+    await insertActor(db, PM_AUTH, PM_APP, ["entry_own"], ["own"]);
+    await insertActor(db, CREATOR_AUTH, CREATOR_APP, ["entry_own"], ["own"]);
+    await db.query(
+      "insert into public.direct_entry_app_user_recruiter_links (app_user_id, recruiter_id, verified, valid_from, is_current) values ($1, $2, true, '2020-01-01', true)",
+      [PM_APP, PM_REC],
+    );
+    // Assign PM_APP as current Project Manager ONLY for PROJ_A (not PROJ_B):
+    await db.query(
+      "insert into public.direct_entry_project_manager_assignments (project_id, manager_recruiter_id, valid_from, is_current) values ($1, $2, '2020-01-01', true)",
+      [PROJ_A, PM_REC],
+    );
+
+    // Seed an OFF + OFF duplicate cluster in PROJ_A (created by CREATOR_APP, not PM_APP):
+    const projAOff1 = await seedEpisode(db, {
+      cccd: "079200007777", name: "ProjA Resigned 1", project: PROJ_A, date: "2026-10-05",
+      status: "ON", createdBy: CREATOR_APP,
+    });
+    const projAOff2 = await seedEpisode(db, {
+      cccd: "079200007777", name: "ProjA Resigned 2", project: PROJ_A, date: "2026-10-05",
+      status: "ON", createdBy: CREATOR_APP,
+    });
+    await appendStatus(db, projAOff1.entryId, "OFF", "2026-10-08", 2, null);
+    await appendStatus(db, projAOff2.entryId, "OFF", "2026-10-09", 2, null);
+
+    // Seed an ON + OFF duplicate cluster in PROJ_B (created by CREATOR_APP, not managed by PM_APP):
+    await seedEpisode(db, {
+      cccd: "079200008888", name: "ProjB Active", project: PROJ_B, date: "2026-10-05",
+      status: "ON", createdBy: CREATOR_APP,
+    });
+    const projBOff = await seedEpisode(db, {
+      cccd: "079200008888", name: "ProjB Resigned", project: PROJ_B, date: "2026-10-05",
+      status: "ON", createdBy: CREATOR_APP,
+    });
+    await appendStatus(db, projBOff.entryId, "OFF", "2026-10-08", 2, null);
+
+    // Verify PM_APP report projection:
+    // - In PROJ_A (OFF+OFF): can_self_withdraw = true on both OFF profiles
+    // - In PROJ_B (ON+OFF, unmanaged): can_self_withdraw = false on both profiles
+    const pmReport = await report(db, { auth: PM_AUTH, app: PM_APP, managedOnly: false });
+    const groupA = pmReport.groups.find((g) => g.cccd_last4 === "7777");
+    const groupB = pmReport.groups.find((g) => g.cccd_last4 === "8888");
+    assert.ok(groupA);
+    assert.ok(groupB);
+    assert.deepEqual(
+      groupA.episodes.map((e) => e.can_self_withdraw),
+      [true, true],
+      "assigned QLDA gets can_self_withdraw=true on OFF+OFF duplicate profiles in their managed project",
+    );
+    assert.deepEqual(
+      groupB.episodes.map((e) => e.can_self_withdraw),
+      [false, false],
+      "assigned QLDA does not get can_self_withdraw on projects they do not manage",
+    );
+
+    // Server RPC rejects PM_APP attempting to withdraw an episode in PROJ_B (unmanaged):
+    await assert.rejects(
+      () => db.query(
+        "select public.direct_entry_self_withdraw_duplicate_cccd($1::uuid,$2::uuid,$3::uuid,1,$4::text,$5::text)",
+        [PM_AUTH, PM_APP, projBOff.entryId, "Unmanaged project attempt", idemKey()],
+      ),
+      (err) => err.code === "42501",
+      "QLDA must be rejected with 42501 when attempting to withdraw from an unmanaged project",
+    );
+
+    // Assigned QLDA withdraws projAOff1 from the OFF+OFF cluster in PROJ_A:
+    const withdrawRes = (await db.query(
+      "select public.direct_entry_self_withdraw_duplicate_cccd($1::uuid,$2::uuid,$3::uuid,1,$4::text,$5::text) as data",
+      [PM_AUTH, PM_APP, projAOff1.entryId, "QLDA rút hồ sơ trùng đã nghỉ", idemKey()],
+    )).rows[0].data;
+    assert.deepEqual(withdrawRes, { entry_id: projAOff1.entryId, version: 2 });
+
+    // Audit records capability='project_manager_self_withdraw' and scope_kind='project':
+    const pmAudit = (await db.query(
+      "select app_user_id, capability, scope_kind from public.direct_entry_audit_events " +
+      "where resource_ref = $1 and action = 'entry_self_withdraw_duplicate_cccd' and outcome = 'APPLIED'",
+      [projAOff1.entryId],
+    )).rows[0];
+    assert.deepEqual(pmAudit, {
+      app_user_id: PM_APP,
+      capability: "project_manager_self_withdraw",
+      scope_kind: "project",
+    });
+
+    // Group 7777 now has only 1 remaining OFF profile (projAOff2), so it disappears from the report
+    // and cannot be withdrawn a second time (neither by QLDA nor by creator):
+    const afterPmWithdraw = await report(db, { auth: PM_AUTH, app: PM_APP, managedOnly: false });
+    assert.equal(afterPmWithdraw.groups.some((g) => g.cccd_last4 === "7777"), false);
+    await assert.rejects(
+      () => db.query(
+        "select public.direct_entry_self_withdraw_duplicate_cccd($1::uuid,$2::uuid,$3::uuid,1,$4::text,$5::text)",
+        [PM_AUTH, PM_APP, projAOff2.entryId, "Cannot withdraw last remaining profile", idemKey()],
+      ),
+      (err) => err.code === "PT409" && /not an active duplicate/i.test(err.message),
+    );
+    await assert.rejects(
+      () => db.query(
+        "select public.direct_entry_self_withdraw_duplicate_cccd($1::uuid,$2::uuid,$3::uuid,1,$4::text,$5::text)",
+        [CREATOR_AUTH, CREATOR_APP, projAOff2.entryId, "Creator also cannot withdraw last remaining profile", idemKey()],
+      ),
+      (err) => err.code === "PT409" && /not an active duplicate/i.test(err.message),
+    );
   } finally {
     await db.close();
   }

@@ -10,7 +10,11 @@
 import "server-only";
 
 import { projectWorkerDirectoryPage } from "./worker-directory-contract.ts";
-import type { WorkerDirectoryPage, WorkerDirectoryQuery } from "./worker-directory-contract.ts";
+import type {
+  WorkerDirectoryPage,
+  WorkerDirectoryQuery,
+  WorkerProviderType,
+} from "./worker-directory-contract.ts";
 import { classifySubmissionTransitionError } from "./submission-transition-repository.ts";
 
 type Rpc = (name: string, args: Record<string, unknown>) => Promise<{
@@ -31,8 +35,15 @@ export const WORKER_DIRECTORY_RPC_NAMES: readonly string[] = Object.freeze([
   "direct_entry_list_workers",
 ]);
 
+export type WorkerDirectoryListInput = ActorRef &
+  Omit<WorkerDirectoryQuery, "first_work_date_from" | "first_work_date_to" | "provider_type"> & {
+    first_work_date_from?: string | null;
+    first_work_date_to?: string | null;
+    provider_type?: WorkerProviderType | null;
+  };
+
 export type WorkerDirectoryRepository = {
-  listWorkers(input: ActorRef & WorkerDirectoryQuery): Promise<WorkerDirectoryOutcome<WorkerDirectoryPage>>;
+  listWorkers(input: WorkerDirectoryListInput): Promise<WorkerDirectoryOutcome<WorkerDirectoryPage>>;
 };
 
 function serviceRoleRpc(): Rpc {
@@ -65,6 +76,9 @@ export function createWorkerDirectoryRepository(rpc?: Rpc): WorkerDirectoryRepos
           p_search: input.search,
           p_cursor: input.cursor,
           p_page_size: input.page_size,
+          p_first_work_date_from: input.first_work_date_from ?? null,
+          p_first_work_date_to: input.first_work_date_to ?? null,
+          p_provider_type: input.provider_type ?? null,
         });
         if (error) return { ok: false, kind: normalizeKind(classifyWorkerDirectoryError(error)) };
         const page = projectWorkerDirectoryPage(data, {

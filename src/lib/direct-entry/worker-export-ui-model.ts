@@ -6,9 +6,13 @@
  * DB row-audience guard quyet dinh; all-scope export keeps its existing explicit action gate.
  */
 
+import { isRealCalendarDate } from "../analytics/identity/identity-shared.mjs";
 import {
+  WORKER_DIRECTORY_SEARCH_MAX_LENGTH,
   WORKER_EMPLOYMENT_STATUSES,
+  WORKER_PROVIDER_TYPES,
   type WorkerDirectoryScope,
+  type WorkerProviderType,
 } from "./worker-directory-contract.ts";
 import type {
   WorkerDirectoryFilters,
@@ -36,6 +40,10 @@ export type WorkerExportRequestBody = {
   project_id: string | null;
   recruiter_id: string | null;
   employment_status: WorkerExportEmploymentStatus | null;
+  search: string | null;
+  first_work_date_from: string | null;
+  first_work_date_to: string | null;
+  provider_type: WorkerProviderType | null;
   reason: string | null;
 };
 
@@ -88,15 +96,25 @@ function normalizeFilter(value: string): string | null {
   return value === "" ? null : value;
 }
 
+export type WorkerExportFilterInput = {
+  status: string;
+  projectId: string;
+  recruiterId: string;
+  search?: string;
+  firstWorkDateFrom?: string;
+  firstWorkDateTo?: string;
+  providerType?: string;
+};
+
 /**
  * Body theo dung allowlist cua contract: `scope | project_id | recruiter_id | employment_status |
- * reason`. `scope` la recruited|managed|team|all; action `reason` la tuy chon; filter rong => null.
- * Mot filter trang thai la (khong the xay ra tu select) bi tu choi fail-closed, KHONG bao gio bi
- * am tham bo di (se xuat thua du lieu).
+ * search | first_work_date_from | first_work_date_to | provider_type | reason`.
+ * `scope` la recruited|managed|team|all; action `reason` la tuy chon; filter rong => null.
+ * Mot filter la bi tu choi fail-closed, KHONG bao gio bi am tham bo di (se xuat thua du lieu).
  */
 export function buildWorkerExportRequest(input: {
   scope: string;
-  filters: WorkerDirectoryFilters;
+  filters: WorkerExportFilterInput | WorkerDirectoryFilters;
   reason?: string | null;
 }): WorkerExportRequestOutcome {
   if (!isWorkerExportScope(input.scope)) return { ok: false, code: "SCOPE_INVALID" };
@@ -111,6 +129,28 @@ export function buildWorkerExportRequest(input: {
       !(WORKER_EMPLOYMENT_STATUSES as readonly string[]).includes(status)) {
     return { ok: false, code: "FILTER_INVALID" };
   }
+  const rawSearch = input.filters.search ?? "";
+  if ([...rawSearch].length > WORKER_DIRECTORY_SEARCH_MAX_LENGTH ||
+      /[\u0000-\u001f\u007f-\u009f]/u.test(rawSearch)) {
+    return { ok: false, code: "FILTER_INVALID" };
+  }
+  const search = rawSearch.trim() === "" ? null : rawSearch.trim();
+  const dateFrom = (input.filters.firstWorkDateFrom ?? "").trim();
+  if (dateFrom !== "" && !isRealCalendarDate(dateFrom)) {
+    return { ok: false, code: "FILTER_INVALID" };
+  }
+  const dateTo = (input.filters.firstWorkDateTo ?? "").trim();
+  if (dateTo !== "" && !isRealCalendarDate(dateTo)) {
+    return { ok: false, code: "FILTER_INVALID" };
+  }
+  if (dateFrom !== "" && dateTo !== "" && dateFrom > dateTo) {
+    return { ok: false, code: "FILTER_INVALID" };
+  }
+  const providerType = (input.filters.providerType ?? "").trim();
+  if (providerType !== "" &&
+      !(WORKER_PROVIDER_TYPES as readonly string[]).includes(providerType)) {
+    return { ok: false, code: "FILTER_INVALID" };
+  }
 
   return {
     ok: true,
@@ -119,6 +159,10 @@ export function buildWorkerExportRequest(input: {
       project_id: normalizeFilter(input.filters.projectId),
       recruiter_id: normalizeFilter(input.filters.recruiterId),
       employment_status: status === "" ? null : (status as WorkerExportEmploymentStatus),
+      search,
+      first_work_date_from: dateFrom === "" ? null : dateFrom,
+      first_work_date_to: dateTo === "" ? null : dateTo,
+      provider_type: providerType === "" ? null : (providerType as WorkerProviderType),
       reason: reason.value,
     },
   };
