@@ -16,6 +16,7 @@ import {
   handleGetSalaryAdvanceProjectWorkers,
   handleGetSalaryAdvanceRequestDetail,
   handleGetSalaryAdvanceRequests,
+  handleGetSalaryAdvanceWorkerHistory,
   handleGetSalaryAdvanceWorkerPortrait,
   handlePostCreateSalaryAdvanceRequest,
   handlePostFinalizeSalaryAdvanceEvidence,
@@ -732,6 +733,7 @@ test("all Next.js salary-advance API route files enforce nodejs runtime, force-d
     "src/app/api/salary-advance/requests/[requestId]/evidence/review/route.ts",
     "src/app/api/salary-advance/requests/[requestId]/evidence/[evidenceRef]/preview/route.ts",
     "src/app/api/salary-advance/requests/[requestId]/worker-portrait/route.ts",
+    "src/app/api/salary-advance/requests/[requestId]/worker-history/route.ts",
   ];
 
   for (const rel of routeRelativePaths) {
@@ -871,6 +873,7 @@ test("BANK_TRANSFER creation, BANK_TRANSFER_RECEIPT review without portrait lock
 
   for (const errorCode of [
     "SALARY_ADVANCE_WORKER_INELIGIBLE_STATUS",
+    "SALARY_ADVANCE_WORKER_VENDOR_RECRUITED",
     "SALARY_ADVANCE_WORKER_MULTI_PROJECT_ON",
     "SALARY_ADVANCE_WORKER_DUPLICATE_CCCD",
     "SALARY_ADVANCE_BANK_ACCOUNT_MISSING",
@@ -1479,4 +1482,190 @@ test("handleGetSalaryAdvanceRequests and handleGetSalaryAdvanceContext compute e
     count: 22, // 2 pages * 10 OPEN (= 20) + 2 NEEDS_INFO (= 2)
     capped: true,
   });
+});
+
+test("handleGetSalaryAdvanceProjectWorkers excludes Vendor-recruited workers and handleGetSalaryAdvanceWorkerHistory enforces feature gate, authority, query validation, and scoped history projection", async () => {
+  const historyCalls = [];
+  const repository = createSalaryAdvanceRepository(async (fn, args) => {
+    if (fn === "salary_advance_list_project_workers") {
+      return {
+        data: {
+          project_id: "PRJ_NORTH",
+          workers: [
+            {
+              worker_entry_id: "40000000-0000-4000-8000-000000000020",
+              employee_code: "NV020",
+              display_name: "Công Nhân Vendor A",
+              employment_status: "ON",
+              provider_type: "vendor",
+              is_eligible: false,
+              ineligible_reasons: ["WORKER_VENDOR_RECRUITED"],
+            },
+            {
+              worker_entry_id: "40000000-0000-4000-8000-000000000021",
+              employee_code: "NV021",
+              display_name: "Công Nhân Vendor B",
+              employment_status: "ON",
+              provider_type: "hrp",
+              is_eligible: false,
+              ineligible_reasons: ["WORKER_VENDOR_RECRUITED"],
+            },
+            {
+              worker_entry_id: "40000000-0000-4000-8000-000000000022",
+              employee_code: "NV022",
+              display_name: "Công Nhân Nội Bộ HRP",
+              employment_status: "ON",
+              provider_type: "hrp",
+              is_eligible: true,
+              ineligible_reasons: [],
+            },
+          ],
+          next_cursor: null,
+          has_more: false,
+        },
+        error: null,
+      };
+    }
+
+    if (fn === "salary_advance_list_worker_history") {
+      historyCalls.push(args);
+      if (args.p_app_user_id === PM_USER_ID) {
+        return {
+          data: null,
+          error: {
+            code: "PT403",
+            message: "SALARY_ADVANCE_ACCESS_DENIED",
+          },
+        };
+      }
+      return {
+        data: {
+          request_id: args.p_request_id,
+          worker_entry_id: WORKER_ID,
+          worker_employee_code: "NV022",
+          worker_display_name: "Công Nhân Nội Bộ HRP",
+          period_mode: args.p_period_mode,
+          month: args.p_month,
+          from_date: "2026-10-01",
+          to_date: "2026-10-30",
+          qualifying_rule: "APPROVED_AND_EVIDENCE_REVIEWED",
+          timezone: "Asia/Ho_Chi_Minh",
+          total_count: 2,
+          total_amount_vnd: "5500000",
+          has_more: false,
+          next_cursor: null,
+          items: [
+            {
+              request_id: REQ_ID,
+              project_id: "PRJ_NORTH",
+              project_display_name: "Dự án Bắc",
+              worker_entry_id: WORKER_ID,
+              worker_employee_code: "NV022",
+              worker_display_name: "Công Nhân Nội Bộ HRP",
+              effective_date: "2026-10-28",
+              effective_at: "2026-10-28T10:00:00Z",
+              requested_amount_vnd: "3000000",
+              payment_method: "BANK_TRANSFER",
+              initial_content: "Ứng lương đợt 2",
+              request_state: "APPROVED",
+              evidence_review_state: "REVIEWED",
+              created_by_display_name: "QLDA 01",
+              decided_by_display_name: "Kế toán A",
+              decided_at: "2026-10-28T09:00:00Z",
+              evidence_reviewed_by_display_name: "Kế toán A",
+              evidence_reviewed_at: "2026-10-28T10:00:00Z",
+              created_at: "2026-10-28T08:00:00Z",
+            },
+          ],
+        },
+        error: null,
+      };
+    }
+
+    return { data: null, error: { message: "UNEXPECTED_RPC" } };
+  });
+
+  // 1. Worker picker defense-in-depth hides both provider_type === "vendor" and WORKER_VENDOR_RECRUITED
+  const workersRes = await handleGetSalaryAdvanceProjectWorkers(
+    new Request(`${ORIGIN}/api/salary-advance/projects/PRJ_NORTH/workers`),
+    "PRJ_NORTH",
+    "true",
+    {
+      resolveSession: makeActorSession(PM_USER_ID),
+      repository,
+    },
+  );
+  assert.equal(workersRes.status, 200);
+  const workersPayload = await workersRes.json();
+  assert.deepEqual(
+    workersPayload.data.workers.map((w) => w.employee_code),
+    ["NV022"],
+    "Vendor-recruited workers must never be returned by handleGetSalaryAdvanceProjectWorkers",
+  );
+
+  // 2. Worker history endpoint: feature gate disabled -> 404
+  const disabledHistRes = await handleGetSalaryAdvanceWorkerHistory(
+    new Request(`${ORIGIN}/api/salary-advance/requests/${REQ_ID}/worker-history`),
+    REQ_ID,
+    "false",
+    {
+      resolveSession: makeActorSession(ACCT_USER_ID),
+      repository,
+    },
+  );
+  assert.equal(disabledHistRes.status, 404);
+
+  // 3. Worker history endpoint: invalid query -> 400
+  const badQueryHistRes = await handleGetSalaryAdvanceWorkerHistory(
+    new Request(
+      `${ORIGIN}/api/salary-advance/requests/${REQ_ID}/worker-history?period_mode=CUSTOM_RANGE&from_date=2026-10-30&to_date=2026-10-01`,
+    ),
+    REQ_ID,
+    "true",
+    {
+      resolveSession: makeActorSession(ACCT_USER_ID),
+      repository,
+    },
+  );
+  assert.equal(badQueryHistRes.status, 400);
+
+  // 4. Worker history endpoint: PM without accountant/supervisory role -> 403 SALARY_ADVANCE_ACCESS_DENIED
+  const deniedHistRes = await handleGetSalaryAdvanceWorkerHistory(
+    new Request(`${ORIGIN}/api/salary-advance/requests/${REQ_ID}/worker-history`),
+    REQ_ID,
+    "true",
+    {
+      resolveSession: makeActorSession(PM_USER_ID),
+      repository,
+    },
+  );
+  assert.equal(deniedHistRes.status, 403);
+  assert.equal(
+    (await deniedHistRes.json()).code,
+    "SALARY_ADVANCE_ACCESS_DENIED",
+  );
+
+  // 5. Worker history endpoint: assigned Project Accountant -> 200 with full period summary and items
+  const okHistRes = await handleGetSalaryAdvanceWorkerHistory(
+    new Request(
+      `${ORIGIN}/api/salary-advance/requests/${REQ_ID}/worker-history?period_mode=MONTH&month=2026-10&page_size=10`,
+    ),
+    REQ_ID,
+    "true",
+    {
+      resolveSession: makeActorSession(ACCT_USER_ID),
+      repository,
+    },
+  );
+  assert.equal(okHistRes.status, 200);
+  const okHistPayload = await okHistRes.json();
+  assert.equal(okHistPayload.ok, true);
+  assert.equal(okHistPayload.data.total_count, 2);
+  assert.equal(okHistPayload.data.total_amount_vnd, "5500000");
+  assert.equal(okHistPayload.data.period_mode, "MONTH");
+  assert.equal(okHistPayload.data.month, "2026-10");
+  assert.equal(okHistPayload.data.items.length, 1);
+  assert.equal(historyCalls[historyCalls.length - 1].p_period_mode, "MONTH");
+  assert.equal(historyCalls[historyCalls.length - 1].p_month, "2026-10");
+  assert.equal(historyCalls[historyCalls.length - 1].p_page_size, 10);
 });

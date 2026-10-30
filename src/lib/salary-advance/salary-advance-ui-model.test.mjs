@@ -6,6 +6,7 @@ import {
   SALARY_ADVANCE_NON_ACCOUNTING_NOTICE,
   buildEvidencePhotoPreviewUrl,
   buildSalaryAdvanceExportUrl,
+  buildSalaryAdvanceWorkerHistoryUrl,
   buildWorkerPortraitPreviewUrl,
   canAccessSalaryAdvanceContext,
   countActionableRequestsForTab,
@@ -17,10 +18,13 @@ import {
   evaluateEvidenceComparisonPanel,
   evaluateRequestAttentionForTab,
   fetchSalaryAdvanceRequestListPage,
+  fetchSalaryAdvanceWorkerHistoryPage,
   filterSelectableProjectWorkers,
   formatFileSizeBytes,
   formatTabBadgeDisplayText,
   formatVndAmount,
+  formatWorkDateVi,
+  formatWorkerRecruiterLabel,
   getEvidenceKindLabel,
   getEvidenceReviewStateMeta,
   getPaymentMethodMeta,
@@ -34,6 +38,7 @@ import {
   newSalaryAdvanceIdempotencyKey,
   normalizePositiveVndInput,
   parseSalaryAdvanceRequestListPayload,
+  parseSalaryAdvanceWorkerHistoryPayload,
   reconcileSelectedRequestIdFromList,
   reconcileSelectedWorkerEntryId,
   resolveActiveRequestDetail,
@@ -42,6 +47,7 @@ import {
   resolveScopedMutationFailureOutcome,
   resolveVisibleSalaryAdvanceTabs,
   salaryAdvanceErrorMessage,
+  sanitizeWorker30dSummary,
   sortEventsChronologically,
   updateTabBadgeCappedForTab,
   updateTabBadgeCountsForTab,
@@ -1807,4 +1813,232 @@ test("updateTabBadgeCountsForTab and parseSalaryAdvanceRequestListPayload preser
   );
   assert.equal(visibleTabsUncapped[0].badgeCapped, false);
   assert.equal(visibleTabsUncapped[0].badgeDisplayText, "32");
+});
+
+test("Vendor-recruited workers are hidden from QLDA picker and blocked by describeWorkerEligibility and validateCreateSalaryAdvanceDraft", () => {
+  const vendorWorkerByProvider = {
+    worker_entry_id: "33333333-3333-4333-8333-333333333391",
+    employee_code: "NV091",
+    display_name: "Công Nhân Vendor 1",
+    first_work_date: "2026-01-10",
+    has_portrait: true,
+    employment_status: "ON",
+    provider_type: "vendor",
+    active_on_project_count: 1,
+    has_duplicate_cccd: false,
+    is_eligible: false,
+    ineligible_reasons: ["WORKER_VENDOR_RECRUITED"],
+  };
+  const vendorWorkerByReason = {
+    worker_entry_id: "33333333-3333-4333-8333-333333333392",
+    employee_code: "NV092",
+    display_name: "Công Nhân Vendor 2",
+    first_work_date: "2026-01-11",
+    has_portrait: true,
+    employment_status: "ON",
+    provider_type: "hrp",
+    active_on_project_count: 1,
+    has_duplicate_cccd: false,
+    is_eligible: false,
+    ineligible_reasons: ["WORKER_VENDOR_RECRUITED"],
+  };
+  const hrpWorker = {
+    worker_entry_id: "33333333-3333-4333-8333-333333333393",
+    employee_code: "NV093",
+    display_name: "Công Nhân HRP",
+    first_work_date: "2026-01-12",
+    has_portrait: true,
+    employment_status: "ON",
+    provider_type: "hrp",
+    active_on_project_count: 1,
+    has_duplicate_cccd: false,
+    is_eligible: true,
+    ineligible_reasons: [],
+  };
+
+  assert.equal(isProjectWorkerHiddenFromPicker(vendorWorkerByProvider), true);
+  assert.equal(isProjectWorkerHiddenFromPicker(vendorWorkerByReason), true);
+  assert.equal(isProjectWorkerHiddenFromPicker(hrpWorker), false);
+
+  const selectable = filterSelectableProjectWorkers([
+    vendorWorkerByProvider,
+    vendorWorkerByReason,
+    hrpWorker,
+  ]);
+  assert.deepEqual(
+    selectable.map((w) => w.employee_code),
+    ["NV093"],
+    "Vendor-recruited workers must be excluded from QLDA picker"
+  );
+
+  const vendorElig = describeWorkerEligibility(vendorWorkerByProvider);
+  assert.equal(vendorElig.isEligible, false);
+  assert.ok(vendorElig.reasonCodes.includes("WORKER_VENDOR_RECRUITED"));
+  assert.match(vendorElig.blockingMessage ?? "", /Vendor/);
+
+  const blockedVendorDraft = validateCreateSalaryAdvanceDraft({
+    projectId: "PRJ_NORTH",
+    hasActiveAccountant: true,
+    workerEntryId: vendorWorkerByProvider.worker_entry_id,
+    selectedWorker: vendorWorkerByProvider,
+    requestedAmountRaw: "2000000",
+    paymentMethod: "CASH",
+    initialContent: "Thử tạo cho NLĐ Vendor",
+  });
+  assert.equal(blockedVendorDraft.ok, false);
+  assert.match(
+    salaryAdvanceErrorMessage("SALARY_ADVANCE_WORKER_VENDOR_RECRUITED"),
+    /Vendor/
+  );
+});
+
+test("formatWorkDateVi, formatWorkerRecruiterLabel, sanitizeWorker30dSummary, formatVndAmount with BigInt, and fetchSalaryAdvanceWorkerHistoryPage handle worker work info, 30d summary, and history modal", async () => {
+  // 1. Work date and recruiter formatting
+  assert.equal(formatWorkDateVi("2026-10-05"), "05/10/2026");
+  assert.equal(formatWorkDateVi("invalid-date"), "Chưa cập nhật");
+  assert.equal(formatWorkDateVi(null), "Chưa cập nhật");
+
+  assert.equal(
+    formatWorkerRecruiterLabel({
+      recruiterDisplayName: "Nguyễn Tuyển Dụng",
+      recruiterCode: "TD-01",
+      providerType: "hrp",
+    }),
+    "Nguyễn Tuyển Dụng (TD-01)"
+  );
+  assert.equal(
+    formatWorkerRecruiterLabel({
+      recruiterDisplayName: "Nhà Cung Ứng Minh Phát",
+      recruiterCode: "VND-09",
+      providerType: "vendor",
+    }),
+    "Nhà Cung Ứng Minh Phát (VND-09) · Vendor"
+  );
+  assert.equal(
+    formatWorkerRecruiterLabel({
+      recruiterDisplayName: "44444444-4444-4444-8444-444444444444",
+      recruiterCode: null,
+      providerType: "hrp",
+    }),
+    "Chưa cập nhật"
+  );
+
+  // 2. Exact integer VND formatting including > Number.MAX_SAFE_INTEGER
+  assert.match(
+    formatVndAmount("9223372036854775807"),
+    /9[.,]223[.,]372[.,]036[.,]854[.,]775[.,]807\s*₫/
+  );
+
+  // 3. 30-day summary sanitization
+  const valid30d = sanitizeWorker30dSummary({
+    window_days: 30,
+    window_from_date: "2026-10-01",
+    window_to_date: "2026-10-30",
+    qualifying_rule: "APPROVED_AND_EVIDENCE_REVIEWED",
+    timezone: "Asia/Ho_Chi_Minh",
+    total_count: 3,
+    total_amount_vnd: "7500000",
+  });
+  assert.ok(valid30d);
+  assert.equal(valid30d?.total_count, 3);
+  assert.equal(valid30d?.total_amount_vnd, "7500000");
+
+  assert.equal(sanitizeWorker30dSummary(null), null);
+  assert.equal(
+    sanitizeWorker30dSummary({
+      window_days: 30,
+      window_from_date: "invalid",
+      window_to_date: "2026-10-30",
+      total_count: 1,
+      total_amount_vnd: "1000000",
+    }),
+    null
+  );
+
+  // 4. Worker history URL builder & payload parser & page fetcher
+  assert.equal(
+    buildSalaryAdvanceWorkerHistoryUrl({
+      requestId: "11111111-1111-4111-8111-111111111111",
+      periodMode: "THIS_MONTH",
+    }),
+    "/api/salary-advance/requests/11111111-1111-4111-8111-111111111111/worker-history?period_mode=THIS_MONTH&page_size=20"
+  );
+  assert.equal(
+    buildSalaryAdvanceWorkerHistoryUrl({
+      requestId: "11111111-1111-4111-8111-111111111111",
+      periodMode: "MONTH",
+      month: "2026-10",
+    }),
+    "/api/salary-advance/requests/11111111-1111-4111-8111-111111111111/worker-history?period_mode=MONTH&page_size=20&month=2026-10"
+  );
+  assert.equal(
+    buildSalaryAdvanceWorkerHistoryUrl({
+      requestId: "11111111-1111-4111-8111-111111111111",
+      periodMode: "CUSTOM_RANGE",
+      fromDate: "2026-10-01",
+      toDate: "2026-10-30",
+    }),
+    "/api/salary-advance/requests/11111111-1111-4111-8111-111111111111/worker-history?period_mode=CUSTOM_RANGE&page_size=20&from_date=2026-10-01&to_date=2026-10-30"
+  );
+
+  const sampleHistoryPayload = {
+    request_id: "11111111-1111-4111-8111-111111111111",
+    worker_entry_id: "33333333-3333-4333-8333-333333333333",
+    worker_employee_code: "NV001",
+    worker_display_name: "Nguyễn Văn An",
+    period_mode: "THIS_MONTH",
+    month: null,
+    from_date: "2026-10-01",
+    to_date: "2026-10-31",
+    qualifying_rule: "APPROVED_AND_EVIDENCE_REVIEWED",
+    timezone: "Asia/Ho_Chi_Minh",
+    total_count: 2,
+    total_amount_vnd: "4500000",
+    has_more: false,
+    next_cursor: null,
+    items: [
+      {
+        request_id: "11111111-1111-4111-8111-111111111111",
+        project_id: "PRJ_NORTH",
+        project_display_name: "Dự án Bắc",
+        worker_entry_id: "33333333-3333-4333-8333-333333333333",
+        worker_employee_code: "NV001",
+        worker_display_name: "Nguyễn Văn An",
+        effective_date: "2026-10-25",
+        effective_at: "2026-10-25T10:00:00Z",
+        requested_amount_vnd: "2500000",
+        payment_method: "CASH",
+        initial_content: "Ứng lương đợt 1",
+        request_state: "APPROVED",
+        evidence_review_state: "REVIEWED",
+        created_by_display_name: "Trần QLDA",
+        decided_by_display_name: "Lê Kế Toán",
+        decided_at: "2026-10-25T09:00:00Z",
+        evidence_reviewed_by_display_name: "Lê Kế Toán",
+        evidence_reviewed_at: "2026-10-25T10:00:00Z",
+        created_at: "2026-10-25T08:00:00Z",
+      },
+    ],
+  };
+
+  const parsedHistory = parseSalaryAdvanceWorkerHistoryPayload(sampleHistoryPayload);
+  assert.equal(parsedHistory.ok, true);
+
+  const tracker = createLatestRequestTracker();
+  const ticket = tracker.begin();
+  const fetchedHistory = await fetchSalaryAdvanceWorkerHistoryPage({
+    requestId: "11111111-1111-4111-8111-111111111111",
+    periodMode: "THIS_MONTH",
+    ticket,
+    fetchImpl: async () =>
+      new Response(JSON.stringify({ ok: true, data: sampleHistoryPayload }), {
+        status: 200,
+      }),
+  });
+  assert.equal(fetchedHistory.status, "success");
+  if (fetchedHistory.status === "success") {
+    assert.equal(fetchedHistory.data.total_count, 2);
+    assert.equal(fetchedHistory.data.total_amount_vnd, "4500000");
+    assert.equal(fetchedHistory.data.items.length, 1);
+  }
 });

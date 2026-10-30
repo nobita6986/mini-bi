@@ -12,6 +12,7 @@ import {
   type SalaryAdvanceEvidenceMimeType,
   type SalaryAdvanceEvidenceReviewDecision,
   type SalaryAdvanceEvidenceReviewState,
+  type SalaryAdvanceHistoryPeriodMode,
   type SalaryAdvanceMutationDetailResponse,
   type SalaryAdvancePaymentMethod,
   type SalaryAdvanceQueue,
@@ -19,6 +20,7 @@ import {
   type SalaryAdvanceRequestListResponse,
   type SalaryAdvanceRequestState,
   type SalaryAdvanceTransitionAction,
+  type SalaryAdvanceWorkerHistoryResponse,
   type SalaryAdvanceWorkerListResponse,
 } from "./salary-advance-contract.ts";
 
@@ -215,6 +217,18 @@ export type SalaryAdvanceRepository = {
       expected_document_id: string | null;
     },
   ): Promise<SalaryAdvanceRepoResult<SalaryAdvanceWorkerPortraitContextRecord>>;
+
+  listWorkerHistory(
+    input: SalaryAdvanceActorRef & {
+      request_id: string;
+      period_mode: SalaryAdvanceHistoryPeriodMode;
+      month: string | null;
+      from_date: string | null;
+      to_date: string | null;
+      cursor: string | null;
+      page_size: number;
+    },
+  ): Promise<SalaryAdvanceRepoResult<SalaryAdvanceWorkerHistoryResponse>>;
 };
 
 const KNOWN_ERROR_MESSAGES: ReadonlySet<SalaryAdvanceErrorCode> = new Set([
@@ -228,6 +242,7 @@ const KNOWN_ERROR_MESSAGES: ReadonlySet<SalaryAdvanceErrorCode> = new Set([
   "SALARY_ADVANCE_WORKER_NOT_FOUND",
   "SALARY_ADVANCE_WORKER_PROJECT_MISMATCH",
   "SALARY_ADVANCE_WORKER_INELIGIBLE_STATUS",
+  "SALARY_ADVANCE_WORKER_VENDOR_RECRUITED",
   "SALARY_ADVANCE_WORKER_MULTI_PROJECT_ON",
   "SALARY_ADVANCE_WORKER_DUPLICATE_CCCD",
   "SALARY_ADVANCE_PAYMENT_METHOD_INVALID",
@@ -759,6 +774,44 @@ export function createSalaryAdvanceRepository(
             size_bytes: raw.size_bytes,
             checksum_sha256: raw.checksum_sha256,
           };
+        },
+      );
+    },
+
+    listWorkerHistory(input) {
+      return invoke(
+        "salary_advance_list_worker_history",
+        {
+          p_auth_subject: input.auth_subject,
+          p_app_user_id: input.app_user_id,
+          p_request_id: input.request_id,
+          p_period_mode: input.period_mode,
+          p_month: input.month,
+          p_from_date: input.from_date,
+          p_to_date: input.to_date,
+          p_cursor: input.cursor,
+          p_page_size: input.page_size,
+        },
+        (raw) => {
+          if (
+            !isPlainObject(raw) ||
+            typeof raw.request_id !== "string" ||
+            typeof raw.worker_entry_id !== "string" ||
+            typeof raw.worker_employee_code !== "string" ||
+            typeof raw.worker_display_name !== "string" ||
+            typeof raw.period_mode !== "string" ||
+            typeof raw.total_count !== "number" ||
+            !Number.isSafeInteger(raw.total_count) ||
+            raw.total_count < 0 ||
+            typeof raw.total_amount_vnd !== "string" ||
+            !/^\d+$/.test(raw.total_amount_vnd) ||
+            !Array.isArray(raw.items) ||
+            typeof raw.has_more !== "boolean" ||
+            (raw.next_cursor !== null && typeof raw.next_cursor !== "string")
+          ) {
+            return null;
+          }
+          return raw as unknown as SalaryAdvanceWorkerHistoryResponse;
         },
       );
     },

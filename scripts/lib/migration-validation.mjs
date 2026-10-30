@@ -272,6 +272,10 @@ export const HF_SALARY_ADVANCE_ACTOR_DISPLAY_NAME_MIGRATION_NAME =
   "20261029150000_hf_salary_advance_actor_display_name.sql";
 export const HF_SALARY_ADVANCE_ACTOR_DISPLAY_NAME_RPC_SIGNATURE =
   "public.salary_advance_create_request(uuid, uuid, text, uuid, text, text, text, text, text)";
+export const HF_SALARY_ADVANCE_VENDOR_EXCLUSION_AND_WORKER_HISTORY_MIGRATION_NAME =
+  "20261030150000_hf_salary_advance_vendor_exclusion_and_worker_history.sql";
+export const HF_SALARY_ADVANCE_VENDOR_EXCLUSION_AND_WORKER_HISTORY_RPC_SIGNATURE =
+  "public.salary_advance_list_worker_history(uuid, uuid, uuid, text, text, text, text, text, integer)";
 export const F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES = Object.freeze([
   "public.work_report_list_templates(uuid, uuid)",
   "public.work_report_get_template(uuid, uuid, uuid)",
@@ -508,7 +512,8 @@ export async function verifyS0T1CHistoricalCompatibility(
     leaveManagementWp1Applied = false,
     leaveAdminAccountStatusFilterApplied = false,
     salaryAdvanceWp1Applied = false,
-    hfSalaryAdvanceActorDisplayNameApplied = false } = {},
+    hfSalaryAdvanceActorDisplayNameApplied = false,
+    hfSalaryAdvanceVendorExclusionAndWorkerHistoryApplied = false } = {},
 ) {
   const baseAllowlist = extractS0T1CAllowlistSignatures(migrationSql);
   if (baseAllowlist.length === 0) {
@@ -578,6 +583,9 @@ export async function verifyS0T1CHistoricalCompatibility(
       : []),
     ...(hfSalaryAdvanceActorDisplayNameApplied
       ? [HF_SALARY_ADVANCE_ACTOR_DISPLAY_NAME_RPC_SIGNATURE]
+      : []),
+    ...(hfSalaryAdvanceVendorExclusionAndWorkerHistoryApplied
+      ? [HF_SALARY_ADVANCE_VENDOR_EXCLUSION_AND_WORKER_HISTORY_RPC_SIGNATURE]
       : []),
   ];
 
@@ -823,6 +831,8 @@ export async function verifyAppliedMigrationChecksum(
           appliedMap.has(SALARY_ADVANCE_WP1_MIGRATION_NAME),
         hfSalaryAdvanceActorDisplayNameApplied:
           appliedMap.has(HF_SALARY_ADVANCE_ACTOR_DISPLAY_NAME_MIGRATION_NAME),
+        hfSalaryAdvanceVendorExclusionAndWorkerHistoryApplied:
+          appliedMap.has(HF_SALARY_ADVANCE_VENDOR_EXCLUSION_AND_WORKER_HISTORY_MIGRATION_NAME),
       },
     );
     if (postconditions.ok) {

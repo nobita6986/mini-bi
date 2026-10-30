@@ -398,3 +398,82 @@ test("SalaryAdvanceWorkspace places PM and Accountant queue tabs/badges in PageH
   );
   assert.match(uiModelSource, /isProjectWorkerHiddenFromPicker/);
 });
+
+test("SalaryAdvanceWorkspace renders work information (first work date + recruiter), 30-day advance summary card, and per-worker advance history modal with period filters and pagination", () => {
+  // Work information in detail header
+  assert.match(workspaceSource, /data-testid="salary-advance-detail-work-info"/);
+  assert.match(
+    workspaceSource,
+    /data-testid="salary-advance-detail-first-work-date"/
+  );
+  assert.match(workspaceSource, /data-testid="salary-advance-detail-recruiter"/);
+  assert.match(workspaceSource, /Ngày đầu tiên làm việc/);
+  assert.match(workspaceSource, /Người tuyển dụng/);
+  assert.match(workspaceSource, /formatWorkDateVi/);
+  assert.match(workspaceSource, /formatWorkerRecruiterLabel/);
+
+  // 30-day advance summary card in Accountant / Supervisory detail view
+  assert.match(
+    workspaceSource,
+    /data-testid="salary-advance-detail-30d-summary"/
+  );
+  assert.match(
+    workspaceSource,
+    /data-testid="salary-advance-detail-30d-count"/
+  );
+  assert.match(
+    workspaceSource,
+    /data-testid="salary-advance-detail-30d-amount"/
+  );
+  assert.match(
+    workspaceSource,
+    /data-testid="salary-advance-open-worker-history-btn"/
+  );
+  assert.match(workspaceSource, /sanitizeWorker30dSummary/);
+  assert.match(workspaceSource, /Tóm tắt ứng lương 30 ngày gần nhất/);
+  assert.match(workspaceSource, /SALARY_ADVANCE_30D_SUMMARY_RULE_NOTICE/);
+
+  // Per-worker history modal / drawer
+  assert.match(
+    workspaceSource,
+    /data-testid="salary-advance-worker-history-dialog"/
+  );
+  assert.match(
+    workspaceSource,
+    /data-testid=\{`salary-advance-history-mode-\$\{opt\.mode\}`\}/
+  );
+  assert.match(
+    workspaceSource,
+    /data-testid="salary-advance-history-month-input"/
+  );
+  assert.match(
+    workspaceSource,
+    /data-testid="salary-advance-history-from-date"/
+  );
+  assert.match(
+    workspaceSource,
+    /data-testid="salary-advance-history-to-date"/
+  );
+  assert.match(
+    workspaceSource,
+    /data-testid="salary-advance-history-apply-range-btn"/
+  );
+  assert.match(
+    workspaceSource,
+    /data-testid="salary-advance-worker-history-totals"/
+  );
+  assert.match(
+    workspaceSource,
+    /data-testid="salary-advance-worker-history-total-count"/
+  );
+  assert.match(
+    workspaceSource,
+    /data-testid="salary-advance-worker-history-total-amount"/
+  );
+  assert.match(
+    workspaceSource,
+    /data-testid="salary-advance-worker-history-table"/
+  );
+  assert.match(workspaceSource, /fetchSalaryAdvanceWorkerHistoryPage/);
+  assert.match(workspaceSource, /historyTrackerRef/);
+});
