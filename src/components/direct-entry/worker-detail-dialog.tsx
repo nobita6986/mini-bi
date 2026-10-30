@@ -282,7 +282,7 @@ function WorkerDetailBody({
             <dt>Số tài khoản</dt>
             <dd>{fieldValue(bank.accountNumber)}</dd>
             <dt>Ngân hàng</dt>
-            <dd>{fieldValue(bank.bankId)}</dd>
+            <dd>{fieldValue(detail.paymentBankName ?? bank.bankId)}</dd>
             <dt>Chủ tài khoản</dt>
             <dd>{fieldValue(bank.accountHolder)}</dd>
           </dl>

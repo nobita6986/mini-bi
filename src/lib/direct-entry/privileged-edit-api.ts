@@ -19,12 +19,137 @@ import {
   resolveTrustedSessionActor,
   UUID_REGEX as UUID,
 } from "../http/direct-entry-api-guard.ts";
-import { isPaymentText, projectPaymentInput } from "./payment-contract.ts";
+import { isPaymentText, PAYMENT_STATES, type PaymentState } from "./payment-contract.ts";
 import { readBoundedJson } from "./write-api.ts";
 import type { PrivilegedEditRepository } from "./privileged-edit-repository.ts";
 
 const PROJECT_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/;
+const BANK_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const ISO_DATE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
+const PAYMENT_PATCH_KEYS = [
+  "state",
+  "account_number",
+  "bank_id",
+  "bank_name",
+  "account_holder_name",
+] as const;
+
+export type PrivilegedEditPaymentPatch = {
+  state: PaymentState;
+  account_number: string | null;
+  bank_id: string | null;
+  bank_name?: string | null;
+  account_holder_name: string | null;
+};
+
+function projectPrivilegedEditPaymentPatch(
+  value: unknown,
+): PrivilegedEditPaymentPatch | null {
+  if (!isRecord(value)) return null;
+  const keys = Object.keys(value);
+  if (
+    !keys.includes("state") ||
+    !keys.includes("account_number") ||
+    !keys.includes("bank_id") ||
+    !keys.includes("account_holder_name") ||
+    !keys.every((key) => (PAYMENT_PATCH_KEYS as readonly string[]).includes(key))
+  ) {
+    return null;
+  }
+  const state = value.state;
+  if (
+    typeof state !== "string" ||
+    !(PAYMENT_STATES as readonly string[]).includes(state)
+  ) {
+    return null;
+  }
+  const hasBankNameKey = "bank_name" in value;
+  const rawAccountNumber = value.account_number;
+  const rawBankId = value.bank_id;
+  const rawBankName = hasBankNameKey ? value.bank_name : undefined;
+  const rawHolder = value.account_holder_name;
+
+  if (state !== "provided") {
+    if (
+      rawAccountNumber !== null ||
+      rawBankId !== null ||
+      (hasBankNameKey && rawBankName !== null) ||
+      rawHolder !== null
+    ) {
+      return null;
+    }
+    return hasBankNameKey
+      ? {
+          state: state as PaymentState,
+          account_number: null,
+          bank_id: null,
+          bank_name: null,
+          account_holder_name: null,
+        }
+      : {
+          state: state as PaymentState,
+          account_number: null,
+          bank_id: null,
+          account_holder_name: null,
+        };
+  }
+
+  let accountNumber: string | null = null;
+  if (rawAccountNumber !== null) {
+    if (typeof rawAccountNumber !== "string") return null;
+    const trimmed = rawAccountNumber.trim();
+    if (!/^\d{1,64}$/.test(trimmed)) return null;
+    accountNumber = trimmed;
+  }
+
+  let bankId: string | null = null;
+  if (rawBankId !== null) {
+    if (typeof rawBankId !== "string") return null;
+    const trimmed = rawBankId.trim();
+    if (!BANK_ID.test(trimmed)) return null;
+    bankId = trimmed;
+  }
+
+  let bankName: string | null | undefined = undefined;
+  if (hasBankNameKey) {
+    if (rawBankName === null) {
+      bankName = null;
+    } else {
+      if (!isPaymentText(rawBankName, 256)) return null;
+      bankName = rawBankName.trim();
+    }
+  }
+
+  let accountHolderName: string | null = null;
+  if (rawHolder !== null) {
+    if (!isPaymentText(rawHolder, 256)) return null;
+    accountHolderName = rawHolder.trim();
+  }
+
+  if (
+    accountNumber === null &&
+    bankId === null &&
+    (bankName === null || bankName === undefined) &&
+    accountHolderName === null
+  ) {
+    return null;
+  }
+
+  return hasBankNameKey
+    ? {
+        state: "provided",
+        account_number: accountNumber,
+        bank_id: bankId,
+        bank_name: bankName ?? null,
+        account_holder_name: accountHolderName,
+      }
+    : {
+        state: "provided",
+        account_number: accountNumber,
+        bank_id: bankId,
+        account_holder_name: accountHolderName,
+      };
+}
 // P3.1-W02C-R1: khong con closed set o day. Hinh dang canonical key do predicate dung chung
 // quyet dinh; ton tai/active do DB active-catalog guard quyet dinh.
 const BODY_KEYS = ["expected_entry_version", "patch", "reason"] as const;
@@ -113,15 +238,11 @@ export function projectPrivilegedEditRequest(body: unknown): PrivilegedEditReque
   }
   const normalizedPatch: Record<string, unknown> = { ...patch };
   if (patch.payment !== undefined) {
-    const payment = projectPaymentInput(patch.payment);
-    if (!payment ||
-        (payment.account_holder_name !== null && !isPaymentText(payment.account_holder_name, 256))) {
+    const payment = projectPrivilegedEditPaymentPatch(patch.payment);
+    if (!payment) {
       return null;
     }
-    normalizedPatch.payment = {
-      ...payment,
-      account_holder_name: payment.account_holder_name ? payment.account_holder_name.trim() : null,
-    };
+    normalizedPatch.payment = payment;
   }
   return { expected_entry_version: version, patch: normalizedPatch, reason };
 }

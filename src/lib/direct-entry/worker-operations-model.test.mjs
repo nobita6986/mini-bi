@@ -44,6 +44,16 @@ import {
   workerStatusLabel,
   WORKER_LOAD_FAILED_MESSAGE,
   updateWorkerDirectoryFilter,
+  VIETQR_BANK_CATALOG,
+  buildDirectEditEntryFieldProposal,
+  buildDirectEditPaymentPatch,
+  buildDirectEditWorkerDetailsProposal,
+  directEditWorkerFormFromBaseline,
+  formatBankReferenceDisplay,
+  initialDirectEditBankQueryText,
+  mergeVietQrBankCatalog,
+  resolveBankCatalogOption,
+  toDirectEditDateInputValue,
 } from "./worker-operations-model.ts";
 
 const AUTH = "2026-10-08";
@@ -588,4 +598,278 @@ test("HF Worker Profile: runDirectEditDocumentUploads chains entry_version and i
   assert.equal(retryOutcome.ok, true);
   assert.equal(retryOutcome.entryVersion, 8);
   assert.equal(retryOutcome.documentVersion, 3);
+});
+
+test("HF Edit Values: personal fields preserve untouched empty state and transition cleared provided values to intentionally_blank", () => {
+  const baselineDetails = {
+    display_name: "Nguyễn Văn A",
+    gender: { state: "omitted" },
+    date_of_birth: { state: "unknown" },
+    national_id: { state: "provided", value: "079095000123" },
+    national_id_issued_at: { state: "provided", value: "15/06/2021" },
+    // national_id_issued_place is undefined on baselineDetails
+    address: { state: "intentionally_blank" },
+    phone: { state: "provided", value: "0901234567" },
+  };
+  const baselineEntry = {
+    project_id: "proj-1",
+    first_work_date: "2026-03-01",
+    employee_code: "hrp-2026-000001",
+    recruiter_id: RECRUITER,
+    labor_type: "TEMPORARY",
+    worker_details: baselineDetails,
+  };
+
+  const entryForm = directEditWorkerFormFromBaseline(baselineEntry);
+  const form = entryForm.workerDetails;
+  assert.equal(form.display_name, "Nguyễn Văn A");
+  assert.equal(form.gender.text, "");
+  assert.equal(form.date_of_birth.text, "");
+  assert.equal(form.national_id.text, "079095000123");
+  assert.equal(
+    form.national_id_issued_at.text,
+    "2021-06-15",
+    "DD/MM/YYYY baseline date is normalized to YYYY-MM-DD for native <input type='date'>",
+  );
+  assert.equal(form.national_id_issued_place.text, "");
+  assert.equal(form.address.text, "");
+  assert.equal(form.phone.text, "0901234567");
+  assert.equal(toDirectEditDateInputValue("2021-06-15"), "2021-06-15");
+  assert.equal(toDirectEditDateInputValue("15/06/2021"), "2021-06-15");
+
+  // 1. Untouched form produces WORKER_UNCHANGED and preserves exact baseline states (including DD/MM/YYYY raw value and undefined national_id_issued_place)
+  const unchangedBuilt = buildDirectEditWorkerDetailsProposal(baselineDetails, form);
+  assert.deepEqual(unchangedBuilt, { ok: false, code: "WORKER_UNCHANGED" });
+
+  // 2. Updating only display_name keeps omitted/unknown/intentionally_blank/undefined fields in their exact baseline states
+  const renamedBuilt = buildDirectEditWorkerDetailsProposal(baselineDetails, {
+    ...form,
+    display_name: "Nguyễn Văn A Mới",
+  });
+  assert.equal(renamedBuilt.ok, true);
+  if (renamedBuilt.ok) {
+    assert.deepEqual(renamedBuilt.proposal, {
+      worker_details: {
+        display_name: "Nguyễn Văn A Mới",
+        gender: { state: "omitted" },
+        date_of_birth: { state: "unknown" },
+        national_id: { state: "provided", value: "079095000123" },
+        national_id_issued_at: { state: "provided", value: "15/06/2021" },
+        address: { state: "intentionally_blank" },
+        phone: { state: "provided", value: "0901234567" },
+      },
+    });
+    assert.equal("national_id_issued_place" in renamedBuilt.proposal.worker_details, false);
+  }
+
+  // 3. Clearing existing provided fields (including gender, national_id, national_id_issued_at, phone) transitions them to intentionally_blank
+  const baselineWithGender = {
+    ...baselineDetails,
+    gender: { state: "provided", value: "MALE" },
+  };
+  const entryFormWithGender = directEditWorkerFormFromBaseline({
+    ...baselineEntry,
+    worker_details: baselineWithGender,
+  });
+  assert.equal(entryFormWithGender.workerDetails.gender.text, "MALE");
+
+  const clearedBuilt = buildDirectEditEntryFieldProposal({
+    baseline: {
+      ...baselineEntry,
+      worker_details: baselineWithGender,
+    },
+    form: {
+      ...entryFormWithGender,
+      workerDetails: {
+        ...entryFormWithGender.workerDetails,
+        gender: { state: "provided", text: "" },
+        national_id: { state: "provided", text: "   " },
+        national_id_issued_at: { state: "provided", text: "" },
+        phone: { state: "provided", text: "" },
+        date_of_birth: { state: "provided", text: "1995-08-20" },
+        address: { state: "provided", text: "Quận 7, TP.HCM" },
+      },
+    },
+  });
+  assert.equal(clearedBuilt.ok, true);
+  if (clearedBuilt.ok) {
+    assert.deepEqual(clearedBuilt.proposal, {
+      worker_details: {
+        display_name: "Nguyễn Văn A",
+        gender: { state: "intentionally_blank" },
+        date_of_birth: { state: "provided", value: "1995-08-20" },
+        national_id: { state: "intentionally_blank" },
+        national_id_issued_at: { state: "intentionally_blank" },
+        address: { state: "provided", value: "Quận 7, TP.HCM" },
+        phone: { state: "intentionally_blank" },
+      },
+    });
+  }
+});
+
+test("HF Edit Values: VietQR bank catalog merges existing bank_ids and resolves code/short_name/bank_name to a single bank", () => {
+  assert.ok(VIETQR_BANK_CATALOG.length >= 60, "VietQR catalog includes full list of Vietnamese banks");
+
+  const existingCatalog = [
+    { bank_id: "VCB", display_name: "Vietcombank" },
+    { bank_id: "BANK_CUSTOM_TCB", display_name: "Techcombank" },
+  ];
+  const merged = mergeVietQrBankCatalog(existingCatalog);
+
+  // Existing bank_id is preserved when short_name/code matches
+  const byCode = resolveBankCatalogOption(merged, "TCB");
+  const byShortName = resolveBankCatalogOption(merged, "Techcombank");
+  const byOfficialName = resolveBankCatalogOption(
+    merged,
+    "Ngân hàng TMCP Kỹ thương Việt Nam",
+  );
+  assert.ok(byCode);
+  assert.equal(byCode.bank_id, "BANK_CUSTOM_TCB");
+  assert.equal(byShortName?.bank_id, byCode.bank_id);
+  assert.equal(byOfficialName?.bank_id, byCode.bank_id);
+
+  // Only one entry exists for Techcombank in merged list
+  const tcbMatches = merged.filter((item) => item.bank_code === "TCB");
+  assert.equal(tcbMatches.length, 1);
+
+  // Standard VietQR banks not in existingCatalog get stable canonical bank_id
+  const mbByCode = resolveBankCatalogOption(merged, "MB");
+  const mbByShort = resolveBankCatalogOption(merged, "MBBank");
+  const mbByOfficial = resolveBankCatalogOption(merged, "Ngân hàng TMCP Quân đội");
+  assert.ok(mbByCode);
+  assert.equal(mbByCode.bank_id, "MB");
+  assert.equal(mbByShort?.bank_id, "MB");
+  assert.equal(mbByOfficial?.bank_id, "MB");
+
+  assert.equal(
+    formatBankReferenceDisplay("TCB", null, existingCatalog),
+    "Techcombank",
+  );
+  assert.equal(
+    formatBankReferenceDisplay(null, "Ngân hàng Hợp tác xã XYZ", existingCatalog),
+    "Ngân hàng Hợp tác xã XYZ",
+  );
+});
+
+test("HF Edit Values: buildDirectEditPaymentPatch preserves untouched empty state, clears provided to intentionally_blank, and supports custom reference bank_name", () => {
+  const catalogBanks = [{ bank_id: "VCB", display_name: "Vietcombank" }];
+
+  // 1. Untouched empty states (null, omitted, unknown, intentionally_blank) remain unchanged
+  for (const emptyBaseline of [
+    null,
+    { state: "omitted", account_number: null, bank_id: null, bank_name: null, account_holder_name: null },
+    { state: "unknown", account_number: null, bank_id: null, bank_name: null, account_holder_name: null },
+    { state: "intentionally_blank", account_number: null, bank_id: null, bank_name: null, account_holder_name: null },
+  ]) {
+    assert.deepEqual(
+      buildDirectEditPaymentPatch({
+        baseline: emptyBaseline,
+        accountNumber: "",
+        bankId: "",
+        bankQueryText: "",
+        accountHolderName: "",
+        catalogBanks,
+      }),
+      { kind: "unchanged" },
+    );
+  }
+
+  // 2. Clearing an existing provided bank record transitions to intentionally_blank
+  const providedBaseline = {
+    state: "provided",
+    account_number: "19038889990001",
+    bank_id: "TCB",
+    bank_name: "Techcombank",
+    account_holder_name: "NGUYEN VAN A",
+  };
+  assert.equal(initialDirectEditBankQueryText(providedBaseline, catalogBanks), "Techcombank");
+  assert.deepEqual(
+    buildDirectEditPaymentPatch({
+      baseline: providedBaseline,
+      accountNumber: "  ",
+      bankId: "",
+      bankQueryText: "  ",
+      accountHolderName: "",
+      catalogBanks,
+    }),
+    {
+      kind: "changed",
+      proposal: {
+        state: "intentionally_blank",
+        account_number: null,
+        bank_id: null,
+        bank_name: null,
+        account_holder_name: null,
+      },
+    },
+  );
+
+  // 3. Searching "TCB" or "Techcombank" resolves to the same bank_id ("TCB")
+  const byCodePatch = buildDirectEditPaymentPatch({
+    baseline: null,
+    accountNumber: "19038889990001",
+    bankId: "",
+    bankQueryText: "TCB",
+    accountHolderName: "NGUYEN VAN A",
+    catalogBanks,
+  });
+  const byNamePatch = buildDirectEditPaymentPatch({
+    baseline: null,
+    accountNumber: "19038889990001",
+    bankId: "",
+    bankQueryText: "Techcombank",
+    accountHolderName: "NGUYEN VAN A",
+    catalogBanks,
+  });
+  assert.deepEqual(byCodePatch, {
+    kind: "changed",
+    proposal: {
+      state: "provided",
+      account_number: "19038889990001",
+      bank_id: "TCB",
+      bank_name: "Techcombank",
+      account_holder_name: "NGUYEN VAN A",
+    },
+  });
+  assert.deepEqual(byNamePatch, byCodePatch);
+
+  // 4. Typing an unknown bank name not in catalog saves bank_id: null and bank_name as reference text
+  const customBankPatch = buildDirectEditPaymentPatch({
+    baseline: null,
+    accountNumber: "123456789",
+    bankId: "",
+    bankQueryText: "Ngân hàng Nông thôn Xã A",
+    accountHolderName: "NGUYEN VAN A",
+    catalogBanks,
+  });
+  assert.deepEqual(customBankPatch, {
+    kind: "changed",
+    proposal: {
+      state: "provided",
+      account_number: "123456789",
+      bank_id: null,
+      bank_name: "Ngân hàng Nông thôn Xã A",
+      account_holder_name: "NGUYEN VAN A",
+    },
+  });
+
+  // 5. Account number + account holder without bank is valid (bank is for reference only)
+  const noBankPatch = buildDirectEditPaymentPatch({
+    baseline: null,
+    accountNumber: "123456789",
+    bankId: "",
+    bankQueryText: "",
+    accountHolderName: "NGUYEN VAN A",
+    catalogBanks,
+  });
+  assert.deepEqual(noBankPatch, {
+    kind: "changed",
+    proposal: {
+      state: "provided",
+      account_number: "123456789",
+      bank_id: null,
+      bank_name: null,
+      account_holder_name: "NGUYEN VAN A",
+    },
+  });
 });

@@ -400,4 +400,68 @@ test("HF-Worker-Profile: privileged edit accepts and validates banking payment p
       JSON.stringify(badPayment),
     );
   }
+
+  // HF Edit Values: privileged edit supports partial provided banking fields (e.g. account_number + holder without bank_id, or custom reference bank_name) and gender intentionally_blank
+  assert.deepEqual(
+    projectPrivilegedEditRequest({
+      expected_entry_version: 2,
+      patch: {
+        payment: {
+          state: "provided",
+          account_number: "19038889990001",
+          bank_id: null,
+          bank_name: "  Ngân hàng Nông thôn Xã A  ",
+          account_holder_name: "  NGUYEN VAN A  ",
+        },
+      },
+    })?.patch,
+    {
+      payment: {
+        state: "provided",
+        account_number: "19038889990001",
+        bank_id: null,
+        bank_name: "Ngân hàng Nông thôn Xã A",
+        account_holder_name: "NGUYEN VAN A",
+      },
+    },
+  );
+
+  assert.deepEqual(
+    projectPrivilegedEditRequest({
+      expected_entry_version: 2,
+      patch: {
+        payment: {
+          state: "provided",
+          account_number: "19038889990001",
+          bank_id: null,
+          account_holder_name: "NGUYEN VAN A",
+        },
+      },
+    })?.patch,
+    {
+      payment: {
+        state: "provided",
+        account_number: "19038889990001",
+        bank_id: null,
+        account_holder_name: "NGUYEN VAN A",
+      },
+    },
+  );
+
+  // provided with all null fields is rejected
+  assert.equal(
+    projectPrivilegedEditRequest({
+      expected_entry_version: 2,
+      patch: {
+        payment: {
+          state: "provided",
+          account_number: null,
+          bank_id: null,
+          bank_name: null,
+          account_holder_name: null,
+        },
+      },
+    }),
+    null,
+  );
 });

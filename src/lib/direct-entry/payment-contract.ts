@@ -104,7 +104,13 @@ export function projectPaymentProjection(value: unknown): PaymentProjection | nu
   }
 
   // R4 persists partial metadata. The older five-key projection may omit a bank_name-only value.
-  if ("bank_name" in value && accountNumber === null && bankName === null && holder === null) {
+  if (
+    "bank_name" in value &&
+    accountNumber === null &&
+    bankId === null &&
+    bankName === null &&
+    holder === null
+  ) {
     return null;
   }
   return "bank_name" in value

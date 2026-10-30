@@ -84,6 +84,7 @@ export type WorkerDetailProjection = {
   documents: WorkerDetailDocument[];
   /** null khi actor thieu `document_view` (server khong tra du lieu portrait). */
   portrait: WorkerPortraitProjection | null;
+  paymentBankName?: string | null;
 };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -290,6 +291,10 @@ export function projectWorkerDetail(value: unknown, expectedEntryId: string): Wo
   if (!("worker_portrait" in entry)) return null;
   const portrait = entry.worker_portrait === null ? null : projectWorkerPortrait(entry.worker_portrait);
   if (entry.worker_portrait !== null && portrait === null) return null;
+  const paymentBankName =
+    isRecord(entry.payment) && typeof entry.payment.bank_name === "string"
+      ? entry.payment.bank_name.trim() || null
+      : null;
   return {
     entryId: entry.entry_id,
     entryVersion: entry.version,
@@ -301,6 +306,7 @@ export function projectWorkerDetail(value: unknown, expectedEntryId: string): Wo
     providerLabel: entry.provider_type === "hrp" ? "HRP" : "Vendor",
     documents,
     portrait,
+    ...(paymentBankName !== null ? { paymentBankName } : {}),
   };
 }
 

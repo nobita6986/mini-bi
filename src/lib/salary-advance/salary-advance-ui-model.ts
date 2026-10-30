@@ -679,8 +679,7 @@ export function describeWorkerBankTransferEligibility(
       : null;
 
   const hasBankAccount = Boolean(
-    bankAccount?.has_bank_account ??
-      (institutionName && accountNumber && accountHolderName)
+    bankAccount?.has_bank_account ?? (accountNumber && accountHolderName)
   );
   const nameMatches = Boolean(
     hasBankAccount &&

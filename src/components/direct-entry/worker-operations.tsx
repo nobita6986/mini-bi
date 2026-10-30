@@ -45,12 +45,17 @@ import {
   WORKER_PROPOSE_TARGET_LABELS,
   applyPage,
   bankAccountSummary,
+  buildDirectEditEntryFieldProposal,
+  buildDirectEditPaymentPatch,
   checkDirectEditDocumentFile,
   directEditDocumentErrorMessage,
+  directEditWorkerFormFromBaseline,
   emptyTabPage,
   failLoad,
+  initialDirectEditBankQueryText,
   initialWorkerTab,
   lastDecisionLabel,
+  mergeVietQrBankCatalog,
   parseSubmissionPageResponse,
   parseWorkerPageResponse,
   pendingRequestLabel,
@@ -58,6 +63,7 @@ import {
   proposeCta,
   relationDenialIsEmpty,
   resetTabPage,
+  resolveBankCatalogOption,
   submissionRowKey,
   submissionsQuery,
   tabScope,
@@ -71,6 +77,7 @@ import {
   workerStatusLabel,
   workersQuery,
   type DirectEditDocumentType,
+  type MergedBankCatalogOption,
   type PageState,
   type TabPage,
   type WorkerOperationsActor,
@@ -78,6 +85,8 @@ import {
   type WorkerDirectoryFilters,
   type WorkerProposeTarget,
 } from "@/lib/direct-entry/worker-operations-model";
+import { filterCatalogSearchOptions } from "@/lib/direct-entry/catalog-search";
+import { moveTypeaheadIndex, typeaheadKeyAction } from "@/lib/direct-entry/typeahead";
 import {
   buildWorkerExportRequest,
   exportScopeForTab,
@@ -1021,6 +1030,7 @@ function ProposeDrawer({
   const [paymentState, setPaymentState] = useState<PaymentState>("omitted");
   const [accountNumber, setAccountNumber] = useState("");
   const [bankId, setBankId] = useState("");
+  const [bankQuery, setBankQuery] = useState("");
   const [accountHolder, setAccountHolder] = useState("");
   const [targetStatus, setTargetStatus] = useState("");
   const [effectiveDate, setEffectiveDate] = useState("");
@@ -1029,6 +1039,14 @@ function ProposeDrawer({
   const catalog = catalogFor(today);
   const entryCatalogDate = entryForm?.first_work_date;
   const entryCatalog = catalogFor(entryCatalogDate ?? today);
+  const mergedBankOptions = useMemo<MergedBankCatalogOption[]>(
+    () =>
+      mergeVietQrBankCatalog([
+        ...(catalog?.banks ?? []),
+        ...(entryCatalog?.banks ?? []),
+      ]),
+    [catalog, entryCatalog],
+  );
   // The row has already passed server-side worker view and scope; edits still require the existing action.
   const workerFieldMode = mode === "correction" || target === "WORKER";
   const nameAvailability = workerNameAvailability({
@@ -1054,19 +1072,41 @@ function ProposeDrawer({
             labor_type: value.laborType,
             worker_details: value.workerDetails,
           };
-          setEntryForm(workerEntryFormFromBaseline(entryBaseline));
+          setEntryForm(
+            mode === "correction"
+              ? directEditWorkerFormFromBaseline(entryBaseline)
+              : workerEntryFormFromBaseline(entryBaseline),
+          );
         }
         if (value?.payment) {
           setPaymentState(value.payment.state);
-          setAccountNumber(value.payment.account_number ?? "");
-          setBankId(value.payment.bank_id ?? "");
-          setAccountHolder(value.payment.account_holder_name ?? "");
+          setAccountNumber(
+            value.payment.state === "provided"
+              ? (value.payment.account_number ?? "")
+              : "",
+          );
+          setBankId(
+            value.payment.state === "provided"
+              ? (value.payment.bank_id ?? "")
+              : "",
+          );
+          setBankQuery(
+            initialDirectEditBankQueryText(
+              value.payment,
+              catalogFor(today)?.banks ?? [],
+            ),
+          );
+          setAccountHolder(
+            value.payment.state === "provided"
+              ? (value.payment.account_holder_name ?? "")
+              : "",
+          );
         }
       },
       () => { if (active) { setBaseline(null); setLoading(false); } },
     );
     return () => { active = false; };
-  }, [row]);
+  }, [row, mode, catalogFor, today]);
 
   useEffect(() => {
     if (row !== null) void ensureCatalog(today).catch(() => undefined);
@@ -1161,48 +1201,32 @@ function ProposeDrawer({
         form: entryForm,
       });
       if (mode === "correction") {
-        const patch: Record<string, unknown> = built.ok ? { ...built.proposal } : {};
-        if (!built.ok && built.code !== "WORKER_UNCHANGED") {
-          setMessage(proposalErrorMessage(built.code));
+        const directBuilt = buildDirectEditEntryFieldProposal({
+          baseline: entryBaseline,
+          form: entryForm,
+        });
+        const patch: Record<string, unknown> = directBuilt.ok ? { ...directBuilt.proposal } : {};
+        if (!directBuilt.ok && directBuilt.code !== "WORKER_UNCHANGED") {
+          setMessage(proposalErrorMessage(directBuilt.code));
           return;
         }
-        const baselinePaymentState: PaymentState = baseline.payment?.state ?? "omitted";
-        const baselineAccountNumber = baseline.payment?.account_number ?? "";
-        const baselineBankId = baseline.payment?.bank_id ?? "";
-        const baselineAccountHolder = baseline.payment?.account_holder_name ?? "";
-        const paymentDirty =
-          paymentState !== baselinePaymentState ||
-          (paymentState === "provided" &&
-            (accountNumber.trim() !== baselineAccountNumber ||
-              bankId.trim() !== baselineBankId ||
-              accountHolder.trim() !== baselineAccountHolder));
-        if (paymentDirty) {
-          const activeBankIds = new Set([
-            ...(catalog?.banks ?? []).map((bank) => bank.bank_id),
-            ...(entryCatalog?.banks ?? []).map((bank) => bank.bank_id),
-          ]);
-          const paymentBuilt = buildPaymentProposal({
-            baseline: baseline.payment === null ? null : projectPaymentInput({
-              state: baseline.payment.state,
-              account_number: baseline.payment.account_number,
-              bank_id: baseline.payment.bank_id,
-              account_holder_name: baseline.payment.account_holder_name,
-            }, activeBankIds),
-            draft: {
-              state: paymentState,
-              account_number: accountNumber === "" ? null : accountNumber,
-              bank_id: bankId === "" ? null : bankId,
-              account_holder_name: accountHolder === "" ? null : accountHolder,
-            },
-            activeBankIds,
-          });
-          if (!paymentBuilt.ok && paymentBuilt.code !== "PAYMENT_UNCHANGED") {
-            setMessage(proposalErrorMessage(paymentBuilt.code));
-            return;
-          }
-          if (paymentBuilt.ok) {
-            patch.payment = paymentBuilt.proposal;
-          }
+        const paymentBuilt = buildDirectEditPaymentPatch({
+          baseline: baseline.payment,
+          accountNumber,
+          bankId,
+          bankQueryText: bankQuery,
+          accountHolderName: accountHolder,
+          catalogBanks: [
+            ...(catalog?.banks ?? []),
+            ...(entryCatalog?.banks ?? []),
+          ],
+        });
+        if (paymentBuilt.kind === "invalid") {
+          setMessage(paymentBuilt.message);
+          return;
+        }
+        if (paymentBuilt.kind === "changed") {
+          patch.payment = paymentBuilt.proposal;
         }
         if (targetStatus !== "") {
           const status = buildWorkStatusProposal({
@@ -1288,13 +1312,13 @@ function ProposeDrawer({
                     : effectiveDate)
                 : baseline.effectiveDate;
             const nextPayment =
-              patch.payment !== undefined
+              paymentBuilt.kind === "changed"
                 ? {
-                    state: paymentState,
-                    account_number: paymentState === "provided" ? accountNumber.trim() : null,
-                    bank_id: paymentState === "provided" ? bankId.trim() : null,
-                    bank_name: baseline.payment?.bank_name ?? null,
-                    account_holder_name: paymentState === "provided" ? accountHolder.trim() : null,
+                    state: paymentBuilt.proposal.state,
+                    account_number: paymentBuilt.proposal.account_number,
+                    bank_id: paymentBuilt.proposal.bank_id,
+                    bank_name: paymentBuilt.proposal.bank_name ?? null,
+                    account_holder_name: paymentBuilt.proposal.account_holder_name,
                   }
                 : baseline.payment;
             setBaseline((prev) => prev === null ? null : {
@@ -1676,50 +1700,26 @@ function ProposeDrawer({
                       <label htmlFor={"worker-" + field} className="text-sm font-medium">
                         {WORKER_FIELD_LABELS[field]}
                       </label>
-                      <div className="grid gap-2 sm:grid-cols-[11rem_1fr]">
-                        <select id={"worker-" + field + "-state"} className={inputClass}
-                          aria-label={"Trạng thái " + WORKER_FIELD_LABELS[field]}
-                          value={entryForm.workerDetails[field].state}
-                          onChange={(event) => {
-                            const state = event.target.value as WorkerFieldForm["state"];
-                            setEntryForm({
+                      {mode === "correction" ? (
+                        field === "gender" ? (
+                          <select id="worker-gender" className={inputClass}
+                            aria-label="Giới tính người lao động"
+                            value={entryForm.workerDetails.gender.text}
+                            onChange={(event) => setEntryForm({
                               ...entryForm,
                               workerDetails: {
                                 ...entryForm.workerDetails,
-                                [field]: { state, text: state === "provided"
-                                  ? entryForm.workerDetails[field].text : "" },
+                                gender: { state: "provided", text: event.target.value },
                               },
-                            });
-                          }}>
-                          <option value="provided">Có giá trị</option>
-                          <option value="omitted">{OPTIONAL_STATE_LABELS.omitted}</option>
-                          <option value="unknown">{OPTIONAL_STATE_LABELS.unknown}</option>
-                           {field === "gender" ? null : (
-                             <option value="intentionally_blank">
-                               {OPTIONAL_STATE_LABELS.intentionally_blank}
-                             </option>
-                           )}
-                        </select>
-                        {field === "gender" ? (
-                          <select id="worker-gender" className={inputClass}
-                            aria-label="Giới tính người lao động"
-                            disabled={entryForm.workerDetails.gender.state !== "provided"}
-                            value={entryForm.workerDetails.gender.text}
-                            onChange={(event) => setEntryForm({ ...entryForm,
-                              workerDetails: { ...entryForm.workerDetails,
-                                gender: { state: "provided", text: event.target.value } } })}>
-                            <option value="">Chọn giới tính</option>
+                            })}>
+                            <option value="">Chưa chọn</option>
                             <option value="FEMALE">Nữ</option>
                             <option value="MALE">Nam</option>
                             <option value="OTHER">Khác</option>
                           </select>
-                        ) : (
-                          <input id={"worker-" + field} className={inputClass}
+                        ) : field === "date_of_birth" || field === "national_id_issued_at" ? (
+                          <input id={"worker-" + field} type="date" className={inputClass}
                             aria-label={WORKER_FIELD_LABELS[field] + " người lao động"}
-                            inputMode={field === "national_id" || field === "phone" ? "numeric" : undefined}
-                            placeholder={field === "date_of_birth" || field === "national_id_issued_at"
-                              ? "DD/MM/YYYY" : undefined}
-                            disabled={entryForm.workerDetails[field].state !== "provided"}
                             value={entryForm.workerDetails[field].text}
                             onChange={(event) => setEntryForm({
                               ...entryForm,
@@ -1728,8 +1728,75 @@ function ProposeDrawer({
                                 [field]: { state: "provided", text: event.target.value },
                               },
                             })} />
-                        )}
-                      </div>
+                        ) : (
+                          <input id={"worker-" + field} className={inputClass}
+                            aria-label={WORKER_FIELD_LABELS[field] + " người lao động"}
+                            inputMode={field === "national_id" || field === "phone" ? "numeric" : undefined}
+                            value={entryForm.workerDetails[field].text}
+                            onChange={(event) => setEntryForm({
+                              ...entryForm,
+                              workerDetails: {
+                                ...entryForm.workerDetails,
+                                [field]: { state: "provided", text: event.target.value },
+                              },
+                            })} />
+                        )
+                      ) : (
+                        <div className="grid gap-2 sm:grid-cols-[11rem_1fr]">
+                          <select id={"worker-" + field + "-state"} className={inputClass}
+                            aria-label={"Trạng thái " + WORKER_FIELD_LABELS[field]}
+                            value={entryForm.workerDetails[field].state}
+                            onChange={(event) => {
+                              const state = event.target.value as WorkerFieldForm["state"];
+                              setEntryForm({
+                                ...entryForm,
+                                workerDetails: {
+                                  ...entryForm.workerDetails,
+                                  [field]: { state, text: state === "provided"
+                                    ? entryForm.workerDetails[field].text : "" },
+                                },
+                              });
+                            }}>
+                            <option value="provided">Có giá trị</option>
+                            <option value="omitted">{OPTIONAL_STATE_LABELS.omitted}</option>
+                            <option value="unknown">{OPTIONAL_STATE_LABELS.unknown}</option>
+                             {field === "gender" ? null : (
+                               <option value="intentionally_blank">
+                                 {OPTIONAL_STATE_LABELS.intentionally_blank}
+                               </option>
+                             )}
+                          </select>
+                          {field === "gender" ? (
+                            <select id="worker-gender" className={inputClass}
+                              aria-label="Giới tính người lao động"
+                              disabled={entryForm.workerDetails.gender.state !== "provided"}
+                              value={entryForm.workerDetails.gender.text}
+                              onChange={(event) => setEntryForm({ ...entryForm,
+                                workerDetails: { ...entryForm.workerDetails,
+                                  gender: { state: "provided", text: event.target.value } } })}>
+                              <option value="">Chọn giới tính</option>
+                              <option value="FEMALE">Nữ</option>
+                              <option value="MALE">Nam</option>
+                              <option value="OTHER">Khác</option>
+                            </select>
+                          ) : (
+                            <input id={"worker-" + field} className={inputClass}
+                              aria-label={WORKER_FIELD_LABELS[field] + " người lao động"}
+                              inputMode={field === "national_id" || field === "phone" ? "numeric" : undefined}
+                              placeholder={field === "date_of_birth" || field === "national_id_issued_at"
+                                ? "DD/MM/YYYY" : undefined}
+                              disabled={entryForm.workerDetails[field].state !== "provided"}
+                              value={entryForm.workerDetails[field].text}
+                              onChange={(event) => setEntryForm({
+                                ...entryForm,
+                                workerDetails: {
+                                  ...entryForm.workerDetails,
+                                  [field]: { state: "provided", text: event.target.value },
+                                },
+                              })} />
+                          )}
+                        </div>
+                      )}
                     </div>
                   ))}
                 </section>
@@ -1749,44 +1816,78 @@ function ProposeDrawer({
                       Cập nhật tên chủ tài khoản, số tài khoản và ngân hàng.
                     </p>
                   </div>
-                  <div className="flex flex-col gap-1.5">
-                    <label htmlFor="bank-state" className="text-sm font-medium">
-                      Trạng thái thông tin tài khoản ngân hàng
-                    </label>
-                    <select id="bank-state" className={inputClass} value={paymentState}
-                      onChange={(event) => setPaymentState(event.target.value as PaymentState)}>
-                      <option value="omitted">{PAYMENT_STATE_LABELS.omitted}</option>
-                      <option value="unknown">{PAYMENT_STATE_LABELS.unknown}</option>
-                      <option value="intentionally_blank">{PAYMENT_STATE_LABELS.intentionally_blank}</option>
-                      <option value="provided">{PAYMENT_STATE_LABELS.provided}</option>
-                    </select>
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    <label htmlFor="bank-account" className="text-sm font-medium">Số tài khoản</label>
-                    <input id="bank-account" className={inputClass} value={accountNumber}
-                      disabled={paymentState !== "provided"}
-                      onChange={(event) => setAccountNumber(event.target.value)} />
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    <label htmlFor="bank-id" className="text-sm font-medium">Ngân hàng</label>
-                    <select id="bank-id" className={inputClass} value={bankId}
-                      disabled={paymentState !== "provided"}
-                      onChange={(event) => setBankId(event.target.value)}>
-                      <option value="">Chọn ngân hàng</option>
-                      {bankId !== "" && !(catalog?.banks ?? []).some((bank) => bank.bank_id === bankId) ? (
-                        <option value={bankId}>{baseline?.payment?.bank_name ?? "Ngân hàng hiện tại"}</option>
-                      ) : null}
-                      {(catalog?.banks ?? []).map((bank) => (
-                        <option key={bank.bank_id} value={bank.bank_id}>{bank.display_name}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    <label htmlFor="bank-holder" className="text-sm font-medium">Tên chủ tài khoản</label>
-                    <input id="bank-holder" className={inputClass} value={accountHolder}
-                      disabled={paymentState !== "provided"}
-                      onChange={(event) => setAccountHolder(event.target.value)} />
-                  </div>
+                  {mode === "correction" ? (
+                    <>
+                      <div className="flex flex-col gap-1.5">
+                        <label htmlFor="bank-account" className="text-sm font-medium">Số tài khoản</label>
+                        <input id="bank-account" className={inputClass} value={accountNumber}
+                          inputMode="numeric"
+                          placeholder="Nhập số tài khoản"
+                          onChange={(event) => setAccountNumber(event.target.value)} />
+                      </div>
+                      <div className="flex flex-col gap-1.5">
+                        <label htmlFor="bank-id" className="text-sm font-medium">Ngân hàng</label>
+                        <DirectEditBankCombobox
+                          id="bank-id"
+                          options={mergedBankOptions}
+                          selectedBankId={bankId}
+                          queryText={bankQuery}
+                          disabled={busy || loading}
+                          onChange={(nextBankId, nextQueryText) => {
+                            setBankId(nextBankId);
+                            setBankQuery(nextQueryText);
+                          }}
+                        />
+                      </div>
+                      <div className="flex flex-col gap-1.5">
+                        <label htmlFor="bank-holder" className="text-sm font-medium">Tên chủ tài khoản</label>
+                        <input id="bank-holder" className={inputClass} value={accountHolder}
+                          placeholder="Nhập tên chủ tài khoản"
+                          onChange={(event) => setAccountHolder(event.target.value)} />
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="flex flex-col gap-1.5">
+                        <label htmlFor="bank-state" className="text-sm font-medium">
+                          Trạng thái thông tin tài khoản ngân hàng
+                        </label>
+                        <select id="bank-state" className={inputClass} value={paymentState}
+                          onChange={(event) => setPaymentState(event.target.value as PaymentState)}>
+                          <option value="omitted">{PAYMENT_STATE_LABELS.omitted}</option>
+                          <option value="unknown">{PAYMENT_STATE_LABELS.unknown}</option>
+                          <option value="intentionally_blank">{PAYMENT_STATE_LABELS.intentionally_blank}</option>
+                          <option value="provided">{PAYMENT_STATE_LABELS.provided}</option>
+                        </select>
+                      </div>
+                      <div className="flex flex-col gap-1.5">
+                        <label htmlFor="bank-account" className="text-sm font-medium">Số tài khoản</label>
+                        <input id="bank-account" className={inputClass} value={accountNumber}
+                          disabled={paymentState !== "provided"}
+                          onChange={(event) => setAccountNumber(event.target.value)} />
+                      </div>
+                      <div className="flex flex-col gap-1.5">
+                        <label htmlFor="bank-id" className="text-sm font-medium">Ngân hàng</label>
+                        <select id="bank-id" className={inputClass} value={bankId}
+                          disabled={paymentState !== "provided"}
+                          onChange={(event) => setBankId(event.target.value)}>
+                          <option value="">Chọn ngân hàng</option>
+                          {bankId !== "" && !(catalog?.banks ?? []).some((bank) => bank.bank_id === bankId) ? (
+                            <option value={bankId}>{baseline?.payment?.bank_name ?? "Ngân hàng hiện tại"}</option>
+                          ) : null}
+                          {(catalog?.banks ?? []).map((bank) => (
+                            <option key={bank.bank_id} value={bank.bank_id}>{bank.display_name}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="flex flex-col gap-1.5">
+                        <label htmlFor="bank-holder" className="text-sm font-medium">Tên chủ tài khoản</label>
+                        <input id="bank-holder" className={inputClass} value={accountHolder}
+                          disabled={paymentState !== "provided"}
+                          onChange={(event) => setAccountHolder(event.target.value)} />
+                      </div>
+                    </>
+                  )}
                 </section>
               ) : null}
 
@@ -2182,5 +2283,166 @@ function DirectEditFilesSection({
         })}
       </div>
     </section>
+  );
+}
+
+function DirectEditBankCombobox({
+  id,
+  options,
+  selectedBankId,
+  queryText,
+  disabled,
+  onChange,
+}: {
+  id: string;
+  options: readonly MergedBankCatalogOption[];
+  selectedBankId: string;
+  queryText: string;
+  disabled: boolean;
+  onChange: (bankId: string, queryText: string) => void;
+}) {
+  const listboxId = useId();
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(0);
+
+  const searchItems = useMemo(
+    () =>
+      options.map((option) => ({
+        id: option.bank_id,
+        label: option.label,
+        keywords: option.keywords,
+      })),
+    [options],
+  );
+
+  const filteredItems = useMemo(
+    () => filterCatalogSearchOptions(searchItems, queryText),
+    [searchItems, queryText],
+  );
+
+  const optionById = useMemo(
+    () => new Map(options.map((option) => [option.bank_id, option])),
+    [options],
+  );
+
+  const selectedOption = useMemo(
+    () =>
+      (selectedBankId !== "" ? optionById.get(selectedBankId) : undefined) ??
+      resolveBankCatalogOption(options, queryText),
+    [optionById, options, queryText, selectedBankId],
+  );
+
+  useEffect(() => {
+    if (!open) return;
+    function onPointerDown(event: MouseEvent): void {
+      if (rootRef.current && !rootRef.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    }
+    window.addEventListener("mousedown", onPointerDown);
+    return () => window.removeEventListener("mousedown", onPointerDown);
+  }, [open]);
+
+  function selectBankOption(option: MergedBankCatalogOption): void {
+    onChange(option.bank_id, option.short_name);
+    setOpen(false);
+  }
+
+  return (
+    <div ref={rootRef} className="relative flex flex-col gap-1">
+      <input
+        id={id}
+        role="combobox"
+        aria-autocomplete="list"
+        aria-expanded={open}
+        aria-controls={listboxId}
+        disabled={disabled}
+        className={inputClass}
+        value={queryText}
+        placeholder="Tìm mã ngân hàng, tên thường gọi hoặc tên đầy đủ (VD: TCB, Techcombank)"
+        onFocus={() => {
+          if (!disabled) {
+            setOpen(true);
+            setActiveIndex(0);
+          }
+        }}
+        onChange={(event) => {
+          const nextText = event.target.value;
+          const resolved = resolveBankCatalogOption(options, nextText);
+          onChange(resolved?.bank_id ?? "", nextText);
+          setOpen(true);
+          setActiveIndex(0);
+        }}
+        onKeyDown={(event) => {
+          const action = typeaheadKeyAction(event.key, event.nativeEvent.isComposing);
+          if (action === "up" || action === "down") {
+            event.preventDefault();
+            setOpen(true);
+            setActiveIndex((current) =>
+              moveTypeaheadIndex(current, filteredItems.length, action),
+            );
+          } else if (action === "close" || action === "tab") {
+            setOpen(false);
+          } else if (action === "commit") {
+            const candidate = filteredItems[activeIndex];
+            const bankOption = candidate ? optionById.get(candidate.id) : undefined;
+            if (bankOption !== undefined) {
+              event.preventDefault();
+              selectBankOption(bankOption);
+            }
+          }
+        }}
+      />
+      {selectedOption !== null && selectedOption !== undefined ? (
+        <p className="text-xs text-muted" data-testid="direct-edit-bank-resolved">
+          {selectedOption.label}
+        </p>
+      ) : queryText.trim() !== "" ? (
+        <p className="text-xs text-muted" data-testid="direct-edit-bank-custom">
+          Chưa có trong danh mục — sẽ lưu tên ngân hàng dạng tham chiếu.
+        </p>
+      ) : null}
+      {open ? (
+        <div
+          id={listboxId}
+          role="listbox"
+          aria-label="Danh mục ngân hàng VietQR"
+          className="absolute left-0 right-0 top-full z-50 mt-1 max-h-60 overflow-y-auto rounded-xl border border-border bg-surface p-1 text-foreground shadow-lg"
+        >
+          {filteredItems.length === 0 ? (
+            <p className="px-3 py-2 text-xs text-muted">
+              Không khớp danh mục VietQR — nhấn Lưu để giữ tên ngân hàng đã nhập làm tham chiếu.
+            </p>
+          ) : (
+            filteredItems.slice(0, 30).map((item, index) => {
+              const bankOption = optionById.get(item.id);
+              if (bankOption === undefined) return null;
+              const isSelected = selectedOption?.bank_id === bankOption.bank_id;
+              return (
+                <button
+                  key={bankOption.bank_id}
+                  type="button"
+                  role="option"
+                  aria-selected={isSelected}
+                  className={
+                    "flex w-full flex-col items-start rounded-lg px-3 py-2 text-left text-sm " +
+                    (index === activeIndex ? "bg-muted/15 font-medium" : "hover:bg-muted/10")
+                  }
+                  onMouseEnter={() => setActiveIndex(index)}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => selectBankOption(bankOption)}
+                >
+                  <span>
+                    {bankOption.short_name} ({bankOption.bank_code})
+                  </span>
+                  <span className="text-xs text-muted">{bankOption.official_name}</span>
+                </button>
+              );
+            })
+          )}
+        </div>
+      ) : null}
+    </div>
   );
 }
