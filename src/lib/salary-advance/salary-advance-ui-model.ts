@@ -48,6 +48,8 @@ export type SalaryAdvanceWorkspaceTab = {
   description: string;
   queue: Extract<SalaryAdvanceQueue, "PM" | "ACCOUNTANT" | "SUPERVISORY">;
   badgeCount: number;
+  badgeCapped: boolean;
+  badgeDisplayText: string;
 };
 
 export type SalaryAdvanceBadgeTone =
@@ -369,45 +371,90 @@ export function canAccessSalaryAdvanceContext(
   );
 }
 
+export function formatTabBadgeDisplayText(
+  badgeCount: number,
+  badgeCapped?: boolean
+): string {
+  const normalized =
+    typeof badgeCount === "number" && Number.isFinite(badgeCount)
+      ? Math.max(0, Math.trunc(badgeCount))
+      : 0;
+  return badgeCapped ? `${normalized}+` : String(normalized);
+}
+
 export function resolveVisibleSalaryAdvanceTabs(
   context: Pick<
     SalaryAdvanceActorContext,
-    "is_project_manager" | "is_project_accountant" | "is_supervisory_viewer"
+    | "is_project_manager"
+    | "is_project_accountant"
+    | "is_supervisory_viewer"
+    | "badge_counts_capped"
   >,
-  badgeCounts?: Partial<Record<SalaryAdvanceWorkspaceTabId, number>>
+  badgeCounts?: Partial<Record<SalaryAdvanceWorkspaceTabId, number>>,
+  badgeCountsCapped?: Partial<Record<SalaryAdvanceWorkspaceTabId, boolean>>
 ): SalaryAdvanceWorkspaceTab[] {
   const tabs: SalaryAdvanceWorkspaceTab[] = [];
 
   if (context.is_project_manager) {
+    const pmCount = Math.max(0, Math.trunc(badgeCounts?.pm ?? 0));
+    const pmCapped = Boolean(
+      badgeCountsCapped?.pm ?? context.badge_counts_capped?.pm
+    );
     tabs.push({
       id: "pm",
       label: "Yêu cầu tôi tạo",
       description:
         "Tạo yêu cầu ứng lương cho NLĐ thuộc dự án quản lý, phản hồi thông tin và tải ảnh NLĐ nhận tiền mặt.",
       queue: "PM",
-      badgeCount: Math.max(0, Math.trunc(badgeCounts?.pm ?? 0)),
+      badgeCount: pmCount,
+      badgeCapped: pmCapped,
+      badgeDisplayText: formatTabBadgeDisplayText(pmCount, pmCapped),
     });
   }
 
   if (context.is_project_accountant) {
+    const accountantCount = Math.max(
+      0,
+      Math.trunc(badgeCounts?.accountant ?? 0)
+    );
+    const accountantCapped = Boolean(
+      badgeCountsCapped?.accountant ?? context.badge_counts_capped?.accountant
+    );
     tabs.push({
       id: "accountant",
       label: "Cần xử lý",
       description:
         "Hàng đợi Kế toán dự án tiếp nhận, trao đổi, phê duyệt/từ chối và đối chiếu ảnh nhận tiền mặt.",
       queue: "ACCOUNTANT",
-      badgeCount: Math.max(0, Math.trunc(badgeCounts?.accountant ?? 0)),
+      badgeCount: accountantCount,
+      badgeCapped: accountantCapped,
+      badgeDisplayText: formatTabBadgeDisplayText(
+        accountantCount,
+        accountantCapped
+      ),
     });
   }
 
   if (context.is_supervisory_viewer) {
+    const supervisoryCount = Math.max(
+      0,
+      Math.trunc(badgeCounts?.supervisory ?? 0)
+    );
+    const supervisoryCapped = Boolean(
+      badgeCountsCapped?.supervisory ?? context.badge_counts_capped?.supervisory
+    );
     tabs.push({
       id: "supervisory",
       label: "Giám sát toàn miền",
       description:
         "Tra cứu chỉ đọc toàn bộ yêu cầu ứng lương và lịch sử đối chiếu ảnh trên hệ thống.",
       queue: "SUPERVISORY",
-      badgeCount: Math.max(0, Math.trunc(badgeCounts?.supervisory ?? 0)),
+      badgeCount: supervisoryCount,
+      badgeCapped: supervisoryCapped,
+      badgeDisplayText: formatTabBadgeDisplayText(
+        supervisoryCount,
+        supervisoryCapped
+      ),
     });
   }
 
@@ -981,6 +1028,40 @@ export function updateTabBadgeCountsForTab(
   return {
     ...currentCounts,
     [tabId]: nextCount,
+  };
+}
+
+export type UpdateTabBadgeCappedOptions = {
+  serverBadgeCount?: number | null;
+  serverBadgeCapped?: boolean | null;
+  isUnfiltered?: boolean;
+  hasMore?: boolean;
+};
+
+export function updateTabBadgeCappedForTab(
+  currentCapped: Partial<Record<SalaryAdvanceWorkspaceTabId, boolean>>,
+  tabId: SalaryAdvanceWorkspaceTabId,
+  options?: UpdateTabBadgeCappedOptions
+): Partial<Record<SalaryAdvanceWorkspaceTabId, boolean>> {
+  let nextCapped: boolean;
+  if (
+    typeof options?.serverBadgeCount === "number" &&
+    Number.isFinite(options.serverBadgeCount) &&
+    options.serverBadgeCount >= 0
+  ) {
+    nextCapped = Boolean(options.serverBadgeCapped);
+  } else if (options?.isUnfiltered === false || options?.hasMore === true) {
+    return currentCapped;
+  } else {
+    nextCapped = false;
+  }
+
+  if (Boolean(currentCapped[tabId]) === nextCapped) {
+    return currentCapped;
+  }
+  return {
+    ...currentCapped,
+    [tabId]: nextCapped,
   };
 }
 

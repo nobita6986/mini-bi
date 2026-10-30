@@ -19,6 +19,7 @@ import {
   fetchSalaryAdvanceRequestListPage,
   filterSelectableProjectWorkers,
   formatFileSizeBytes,
+  formatTabBadgeDisplayText,
   formatVndAmount,
   getEvidenceKindLabel,
   getEvidenceReviewStateMeta,
@@ -42,6 +43,7 @@ import {
   resolveVisibleSalaryAdvanceTabs,
   salaryAdvanceErrorMessage,
   sortEventsChronologically,
+  updateTabBadgeCappedForTab,
   updateTabBadgeCountsForTab,
   uploadSalaryAdvanceEvidence,
   validateCreateSalaryAdvanceDraft,
@@ -1728,7 +1730,7 @@ test("updateTabBadgeCountsForTab and parseSalaryAdvanceRequestListPayload preser
     "Accountant 'Cần xử lý' badge must not be overwritten with 0 when user filters to an empty subset"
   );
 
-  // 4. parseSalaryAdvanceRequestListPayload preserves badge_count_capped and fetchSalaryAdvanceRequestListPage sends include_badge=1 only when requested
+  // 4. parseSalaryAdvanceRequestListPayload, updateTabBadgeCappedForTab, resolveVisibleSalaryAdvanceTabs, and formatTabBadgeDisplayText clearly surface capped badge counts (e.g. "1000+")
   const cappedPayload = parseSalaryAdvanceRequestListPayload({
     requests: firstPageRows,
     has_more: true,
@@ -1741,4 +1743,68 @@ test("updateTabBadgeCountsForTab and parseSalaryAdvanceRequestListPayload preser
     assert.equal(cappedPayload.data.badge_count, 1000);
     assert.equal(cappedPayload.data.badge_count_capped, true);
   }
+
+  assert.equal(formatTabBadgeDisplayText(32, false), "32");
+  assert.equal(formatTabBadgeDisplayText(1000, true), "1000+");
+
+  const initialCapped = {};
+  const pmCappedState = updateTabBadgeCappedForTab(initialCapped, "pm", {
+    serverBadgeCount: 1000,
+    serverBadgeCapped: true,
+    isUnfiltered: true,
+    hasMore: true,
+  });
+  assert.equal(pmCappedState.pm, true);
+
+  // Filtered or cursor-paginated loads without serverBadgeCount preserve the capped flag and object reference
+  const pmCappedAfterFilter = updateTabBadgeCappedForTab(pmCappedState, "pm", {
+    serverBadgeCount: undefined,
+    serverBadgeCapped: undefined,
+    isUnfiltered: false,
+    hasMore: false,
+  });
+  assert.equal(
+    pmCappedAfterFilter,
+    pmCappedState,
+    "Filtered load without serverBadgeCount must preserve capped flag and object reference"
+  );
+
+  const visibleTabsWithCap = resolveVisibleSalaryAdvanceTabs(
+    {
+      is_project_manager: true,
+      is_project_accountant: true,
+      is_supervisory_viewer: false,
+      badge_counts_capped: { accountant: true },
+    },
+    { pm: 1000, accountant: 2000 },
+    pmCappedAfterFilter
+  );
+  assert.equal(visibleTabsWithCap[0].id, "pm");
+  assert.equal(visibleTabsWithCap[0].badgeCount, 1000);
+  assert.equal(visibleTabsWithCap[0].badgeCapped, true);
+  assert.equal(visibleTabsWithCap[0].badgeDisplayText, "1000+");
+  assert.equal(visibleTabsWithCap[1].id, "accountant");
+  assert.equal(visibleTabsWithCap[1].badgeCount, 2000);
+  assert.equal(visibleTabsWithCap[1].badgeCapped, true);
+  assert.equal(visibleTabsWithCap[1].badgeDisplayText, "2000+");
+
+  // When a subsequent server badge refresh is no longer capped, capped resets to false and display text returns to exact number
+  const pmUncappedState = updateTabBadgeCappedForTab(pmCappedState, "pm", {
+    serverBadgeCount: 32,
+    serverBadgeCapped: false,
+    isUnfiltered: true,
+    hasMore: true,
+  });
+  assert.equal(pmUncappedState.pm, false);
+  const visibleTabsUncapped = resolveVisibleSalaryAdvanceTabs(
+    {
+      is_project_manager: true,
+      is_project_accountant: false,
+      is_supervisory_viewer: false,
+    },
+    { pm: 32 },
+    pmUncappedState
+  );
+  assert.equal(visibleTabsUncapped[0].badgeCapped, false);
+  assert.equal(visibleTabsUncapped[0].badgeDisplayText, "32");
 });

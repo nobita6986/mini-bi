@@ -345,15 +345,30 @@ test("SalaryAdvanceWorkspace places PM and Accountant queue tabs/badges in PageH
     "Export Excel button must NOT be inside role='tablist'"
   );
 
-  // Verify badge count updates use serverBadgeCount and guard against filtered/paginated truncation
+  // Verify badge count updates use serverBadgeCount, surface capped badge indicators (badge_count_capped / badge_counts_capped -> badgeDisplayText / data-badge-capped), and guard against filtered/paginated truncation
   assert.match(workspaceSource, /serverBadgeCount:\s*outcome\.data\.badge_count/);
+  assert.match(
+    workspaceSource,
+    /serverBadgeCapped:\s*outcome\.data\.badge_count_capped/
+  );
   assert.match(workspaceSource, /hasMore:\s*outcome\.data\.has_more/);
   assert.match(workspaceSource, /loadedContext\.badge_counts/);
+  assert.match(workspaceSource, /loadedContext\.badge_counts_capped/);
+  assert.match(workspaceSource, /updateTabBadgeCappedForTab/);
+  assert.match(
+    workspaceSource,
+    /data-badge-capped=\{tab\.badgeCapped\s*\?\s*"true"\s*:\s*"false"\}/
+  );
+  assert.match(
+    workspaceSource,
+    /<StatusBadge\s+tone=\{badgeTone\}>\{tab\.badgeDisplayText\}<\/StatusBadge>/
+  );
   assert.match(
     workspaceSource,
     /includeBadge:\s*Boolean\(options\?\.includeBadge\s*&&\s*!isAppend\)/
   );
   assert.match(uiModelSource, /queryParams\.set\("include_badge",\s*"1"\)/);
+  assert.match(uiModelSource, /formatTabBadgeDisplayText/);
 
   // 2. Dismissible "Lưu ý nghiệp vụ" banner
   assert.match(

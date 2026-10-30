@@ -60,6 +60,7 @@ import {
   resolveVisibleSalaryAdvanceTabs,
   salaryAdvanceErrorMessage,
   sortEventsChronologically,
+  updateTabBadgeCappedForTab,
   updateTabBadgeCountsForTab,
   uploadSalaryAdvanceEvidence,
   validateCreateSalaryAdvanceDraft,
@@ -134,6 +135,9 @@ function HeaderTabButton({
         ? "warning"
         : "info"
       : "neutral";
+  const badgeTitle = tab.badgeCapped
+    ? `Có trên ${tab.badgeCount} yêu cầu (đã chạm giới hạn đếm nhanh)`
+    : undefined;
   return (
     <button
       type="button"
@@ -149,8 +153,13 @@ function HeaderTabButton({
     >
       <span>{tab.label}</span>
       {showBadge ? (
-        <span data-testid={`salary-advance-tab-badge-${tab.id}`}>
-          <StatusBadge tone={badgeTone}>{tab.badgeCount}</StatusBadge>
+        <span
+          data-testid={`salary-advance-tab-badge-${tab.id}`}
+          data-badge-capped={tab.badgeCapped ? "true" : "false"}
+          title={badgeTitle}
+          aria-label={badgeTitle}
+        >
+          <StatusBadge tone={badgeTone}>{tab.badgeDisplayText}</StatusBadge>
         </span>
       ) : null}
     </button>
@@ -168,6 +177,9 @@ export function SalaryAdvanceWorkspace() {
   const [activeTab, setActiveTab] = useState<SalaryAdvanceWorkspaceTabId>("pm");
   const [tabBadgeCounts, setTabBadgeCounts] = useState<
     Partial<Record<SalaryAdvanceWorkspaceTabId, number>>
+  >({});
+  const [tabBadgeCapped, setTabBadgeCapped] = useState<
+    Partial<Record<SalaryAdvanceWorkspaceTabId, boolean>>
   >({});
   const [businessNoticeDismissed, setBusinessNoticeDismissed] = useState(false);
   const [exportingExcel, setExportingExcel] = useState(false);
@@ -326,8 +338,12 @@ export function SalaryAdvanceWorkspace() {
 
   const visibleTabs = useMemo(() => {
     if (!context) return [];
-    return resolveVisibleSalaryAdvanceTabs(context, tabBadgeCounts);
-  }, [context, tabBadgeCounts]);
+    return resolveVisibleSalaryAdvanceTabs(
+      context,
+      tabBadgeCounts,
+      tabBadgeCapped
+    );
+  }, [context, tabBadgeCounts, tabBadgeCapped]);
 
   const currentTabConfig = useMemo(() => {
     return (
@@ -409,6 +425,12 @@ export function SalaryAdvanceWorkspace() {
         setTabBadgeCounts((prev) => ({
           ...prev,
           ...loadedContext.badge_counts,
+        }));
+      }
+      if (loadedContext.badge_counts_capped) {
+        setTabBadgeCapped((prev) => ({
+          ...prev,
+          ...loadedContext.badge_counts_capped,
         }));
       }
 
@@ -499,6 +521,14 @@ export function SalaryAdvanceWorkspace() {
         setTabBadgeCounts((counts) =>
           updateTabBadgeCountsForTab(counts, currentTabId, combined, {
             serverBadgeCount: outcome.data.badge_count,
+            isUnfiltered: isUnfilteredView,
+            hasMore: outcome.data.has_more,
+          })
+        );
+        setTabBadgeCapped((capped) =>
+          updateTabBadgeCappedForTab(capped, currentTabId, {
+            serverBadgeCount: outcome.data.badge_count,
+            serverBadgeCapped: outcome.data.badge_count_capped,
             isUnfiltered: isUnfilteredView,
             hasMore: outcome.data.has_more,
           })
