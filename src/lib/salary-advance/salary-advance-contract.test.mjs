@@ -24,6 +24,7 @@ import {
   normalizeSalaryAdvancePersonName,
   parseCreateSalaryAdvanceRequestBody,
   parseEvidenceVersionParam,
+  parseExportSalaryAdvanceRequestsQuery,
   parseFinalizeSalaryAdvanceEvidenceBody,
   parseIdempotencyKeyHeader,
   parseListProjectWorkersQuery,
@@ -336,6 +337,27 @@ test("query and parameter parsers validate inputs strictly", () => {
     assert.equal(listQuery.value.evidence_review_state, "PENDING_REVIEW");
   }
 
+  const exportQuery = parseExportSalaryAdvanceRequestsQuery(
+    new URL(
+      `https://bi.local/api/salary-advance/requests/export?project_id=PRJ_01&request_state=approved&evidence_review_state=pending_review&search=NV001`,
+    ),
+  );
+  assert.deepEqual(exportQuery, {
+    ok: true,
+    value: {
+      project_id: "PRJ_01",
+      request_state: "APPROVED",
+      evidence_review_state: "PENDING_REVIEW",
+      search: "NV001",
+    },
+  });
+  assert.equal(
+    parseExportSalaryAdvanceRequestsQuery(
+      new URL("https://bi.local/api/salary-advance/requests/export?cursor=abc"),
+    ).ok,
+    false,
+  );
+
   const portraitQuery = parseWorkerPortraitQuery(
     new URL(
       `https://bi.local/api/salary-advance/requests/${REQ_ID}/worker-portrait?expected_document_id=${PORTRAIT_DOC_ID}`,
@@ -550,7 +572,9 @@ test("fingerprints and HTTP status mapping are deterministic", () => {
   assert.equal(salaryAdvanceHttpStatusForError("SALARY_ADVANCE_BANK_ACCOUNT_NOT_SELF_OWNED"), 409);
   assert.equal(salaryAdvanceHttpStatusForError("SALARY_ADVANCE_PAYMENT_METHOD_INVALID"), 400);
   assert.equal(salaryAdvanceHttpStatusForError("SALARY_ADVANCE_EVIDENCE_CONTENT_INVALID"), 422);
+  assert.equal(salaryAdvanceHttpStatusForError("SALARY_ADVANCE_EXPORT_LIMIT_EXCEEDED"), 422);
   assert.equal(salaryAdvanceHttpStatusForError("SALARY_ADVANCE_STORAGE_UNAVAILABLE"), 503);
+  assert.equal(salaryAdvanceHttpStatusForError("SALARY_ADVANCE_EXPORT_INCOMPLETE"), 503);
   assert.equal(
     parseReserveSalaryAdvanceEvidenceBody(
       {

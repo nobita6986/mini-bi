@@ -48,6 +48,8 @@ export type SalaryAdvanceWorkspaceTab = {
   description: string;
   queue: Extract<SalaryAdvanceQueue, "PM" | "ACCOUNTANT" | "SUPERVISORY">;
   badgeCount: number;
+  badgeCapped: boolean;
+  badgeDisplayText: string;
 };
 
 export type SalaryAdvanceBadgeTone =
@@ -369,45 +371,90 @@ export function canAccessSalaryAdvanceContext(
   );
 }
 
+export function formatTabBadgeDisplayText(
+  badgeCount: number,
+  badgeCapped?: boolean
+): string {
+  const normalized =
+    typeof badgeCount === "number" && Number.isFinite(badgeCount)
+      ? Math.max(0, Math.trunc(badgeCount))
+      : 0;
+  return badgeCapped ? `${normalized}+` : String(normalized);
+}
+
 export function resolveVisibleSalaryAdvanceTabs(
   context: Pick<
     SalaryAdvanceActorContext,
-    "is_project_manager" | "is_project_accountant" | "is_supervisory_viewer"
+    | "is_project_manager"
+    | "is_project_accountant"
+    | "is_supervisory_viewer"
+    | "badge_counts_capped"
   >,
-  badgeCounts?: Partial<Record<SalaryAdvanceWorkspaceTabId, number>>
+  badgeCounts?: Partial<Record<SalaryAdvanceWorkspaceTabId, number>>,
+  badgeCountsCapped?: Partial<Record<SalaryAdvanceWorkspaceTabId, boolean>>
 ): SalaryAdvanceWorkspaceTab[] {
   const tabs: SalaryAdvanceWorkspaceTab[] = [];
 
   if (context.is_project_manager) {
+    const pmCount = Math.max(0, Math.trunc(badgeCounts?.pm ?? 0));
+    const pmCapped = Boolean(
+      badgeCountsCapped?.pm ?? context.badge_counts_capped?.pm
+    );
     tabs.push({
       id: "pm",
       label: "Yêu cầu tôi tạo",
       description:
         "Tạo yêu cầu ứng lương cho NLĐ thuộc dự án quản lý, phản hồi thông tin và tải ảnh NLĐ nhận tiền mặt.",
       queue: "PM",
-      badgeCount: Math.max(0, Math.trunc(badgeCounts?.pm ?? 0)),
+      badgeCount: pmCount,
+      badgeCapped: pmCapped,
+      badgeDisplayText: formatTabBadgeDisplayText(pmCount, pmCapped),
     });
   }
 
   if (context.is_project_accountant) {
+    const accountantCount = Math.max(
+      0,
+      Math.trunc(badgeCounts?.accountant ?? 0)
+    );
+    const accountantCapped = Boolean(
+      badgeCountsCapped?.accountant ?? context.badge_counts_capped?.accountant
+    );
     tabs.push({
       id: "accountant",
       label: "Cần xử lý",
       description:
         "Hàng đợi Kế toán dự án tiếp nhận, trao đổi, phê duyệt/từ chối và đối chiếu ảnh nhận tiền mặt.",
       queue: "ACCOUNTANT",
-      badgeCount: Math.max(0, Math.trunc(badgeCounts?.accountant ?? 0)),
+      badgeCount: accountantCount,
+      badgeCapped: accountantCapped,
+      badgeDisplayText: formatTabBadgeDisplayText(
+        accountantCount,
+        accountantCapped
+      ),
     });
   }
 
   if (context.is_supervisory_viewer) {
+    const supervisoryCount = Math.max(
+      0,
+      Math.trunc(badgeCounts?.supervisory ?? 0)
+    );
+    const supervisoryCapped = Boolean(
+      badgeCountsCapped?.supervisory ?? context.badge_counts_capped?.supervisory
+    );
     tabs.push({
       id: "supervisory",
       label: "Giám sát toàn miền",
       description:
         "Tra cứu chỉ đọc toàn bộ yêu cầu ứng lương và lịch sử đối chiếu ảnh trên hệ thống.",
       queue: "SUPERVISORY",
-      badgeCount: Math.max(0, Math.trunc(badgeCounts?.supervisory ?? 0)),
+      badgeCount: supervisoryCount,
+      badgeCapped: supervisoryCapped,
+      badgeDisplayText: formatTabBadgeDisplayText(
+        supervisoryCount,
+        supervisoryCapped
+      ),
     });
   }
 
@@ -906,6 +953,24 @@ export function evaluateRequestAttentionForTab(
   return { needsAttention: false, label: null, tone: "neutral" };
 }
 
+export function isRequestOpenInStateMachine(
+  request: Pick<SalaryAdvanceRequestSummary, "request_state">
+): boolean {
+  return !getRequestStateMeta(request.request_state).isTerminal;
+}
+
+export function countOpenRequestsForPmTab(
+  requests: ReadonlyArray<Pick<SalaryAdvanceRequestSummary, "request_state">>
+): number {
+  let count = 0;
+  for (const item of requests) {
+    if (isRequestOpenInStateMachine(item)) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
 export function countActionableRequestsForTab(
   requests: ReadonlyArray<
     Pick<
@@ -915,6 +980,9 @@ export function countActionableRequestsForTab(
   >,
   tabId: SalaryAdvanceWorkspaceTabId
 ): number {
+  if (tabId === "pm") {
+    return countOpenRequestsForPmTab(requests);
+  }
   let count = 0;
   for (const item of requests) {
     if (evaluateRequestAttentionForTab(item, tabId).needsAttention) {
@@ -924,6 +992,12 @@ export function countActionableRequestsForTab(
   return count;
 }
 
+export type UpdateTabBadgeCountOptions = {
+  serverBadgeCount?: number | null;
+  isUnfiltered?: boolean;
+  hasMore?: boolean;
+};
+
 export function updateTabBadgeCountsForTab(
   currentCounts: Partial<Record<SalaryAdvanceWorkspaceTabId, number>>,
   tabId: SalaryAdvanceWorkspaceTabId,
@@ -932,15 +1006,62 @@ export function updateTabBadgeCountsForTab(
       SalaryAdvanceRequestSummary,
       "request_state" | "evidence_review_state" | "allowed_actions"
     >
-  >
+  >,
+  options?: UpdateTabBadgeCountOptions
 ): Partial<Record<SalaryAdvanceWorkspaceTabId, number>> {
-  const nextCount = countActionableRequestsForTab(requests, tabId);
+  let nextCount: number;
+  if (
+    typeof options?.serverBadgeCount === "number" &&
+    Number.isFinite(options.serverBadgeCount) &&
+    options.serverBadgeCount >= 0
+  ) {
+    nextCount = Math.trunc(options.serverBadgeCount);
+  } else if (options?.isUnfiltered === false || options?.hasMore === true) {
+    return currentCounts;
+  } else {
+    nextCount = countActionableRequestsForTab(requests, tabId);
+  }
+
   if (currentCounts[tabId] === nextCount) {
     return currentCounts;
   }
   return {
     ...currentCounts,
     [tabId]: nextCount,
+  };
+}
+
+export type UpdateTabBadgeCappedOptions = {
+  serverBadgeCount?: number | null;
+  serverBadgeCapped?: boolean | null;
+  isUnfiltered?: boolean;
+  hasMore?: boolean;
+};
+
+export function updateTabBadgeCappedForTab(
+  currentCapped: Partial<Record<SalaryAdvanceWorkspaceTabId, boolean>>,
+  tabId: SalaryAdvanceWorkspaceTabId,
+  options?: UpdateTabBadgeCappedOptions
+): Partial<Record<SalaryAdvanceWorkspaceTabId, boolean>> {
+  let nextCapped: boolean;
+  if (
+    typeof options?.serverBadgeCount === "number" &&
+    Number.isFinite(options.serverBadgeCount) &&
+    options.serverBadgeCount >= 0
+  ) {
+    nextCapped = Boolean(options.serverBadgeCapped);
+  } else if (options?.isUnfiltered === false || options?.hasMore === true) {
+    return currentCapped;
+  } else {
+    nextCapped = false;
+  }
+
+  if (Boolean(currentCapped[tabId]) === nextCapped) {
+    return currentCapped;
+  }
+  return {
+    ...currentCapped,
+    [tabId]: nextCapped,
   };
 }
 
@@ -1386,13 +1507,47 @@ export function parseSalaryAdvanceRequestListPayload(raw: unknown):
     };
   }
 
+  if (
+    raw.badge_count !== undefined &&
+    raw.badge_count !== null &&
+    (typeof raw.badge_count !== "number" ||
+      !Number.isFinite(raw.badge_count) ||
+      raw.badge_count < 0)
+  ) {
+    return {
+      ok: false,
+      code: "SALARY_ADVANCE_PAYLOAD_INVALID",
+      message: salaryAdvanceErrorMessage("SALARY_ADVANCE_PAYLOAD_INVALID"),
+    };
+  }
+
+  if (
+    raw.badge_count_capped !== undefined &&
+    raw.badge_count_capped !== null &&
+    typeof raw.badge_count_capped !== "boolean"
+  ) {
+    return {
+      ok: false,
+      code: "SALARY_ADVANCE_PAYLOAD_INVALID",
+      message: salaryAdvanceErrorMessage("SALARY_ADVANCE_PAYLOAD_INVALID"),
+    };
+  }
+
+  const parsedData: SalaryAdvanceRequestListResponse = {
+    requests: raw.requests,
+    has_more: raw.has_more,
+    next_cursor: typeof raw.next_cursor === "string" ? raw.next_cursor : null,
+  };
+  if (typeof raw.badge_count === "number") {
+    parsedData.badge_count = Math.trunc(raw.badge_count);
+  }
+  if (typeof raw.badge_count_capped === "boolean") {
+    parsedData.badge_count_capped = raw.badge_count_capped;
+  }
+
   return {
     ok: true,
-    data: {
-      requests: raw.requests,
-      has_more: raw.has_more,
-      next_cursor: typeof raw.next_cursor === "string" ? raw.next_cursor : null,
-    },
+    data: parsedData,
   };
 }
 
@@ -1419,6 +1574,7 @@ export async function fetchSalaryAdvanceRequestListPage(params: {
   appliedSearch: string;
   cursor?: string | null;
   append?: boolean;
+  includeBadge?: boolean;
   pageSize?: number;
   ticket: LatestRequestTicket;
   fetchImpl?: typeof fetch;
@@ -1442,6 +1598,9 @@ export async function fetchSalaryAdvanceRequestListPage(params: {
   }
   if (params.append && params.cursor) {
     queryParams.set("cursor", params.cursor);
+  }
+  if (params.includeBadge) {
+    queryParams.set("include_badge", "1");
   }
 
   try {
@@ -1501,6 +1660,62 @@ export async function fetchSalaryAdvanceRequestListPage(params: {
   }
 }
 
+export function buildSalaryAdvanceExportUrl(params: {
+  projectFilter: string;
+  requestStateFilter: "ALL" | SalaryAdvanceRequestState;
+  evidenceStateFilter: "ALL" | SalaryAdvanceEvidenceReviewState;
+  appliedSearch: string;
+}): string {
+  const queryParams = new URLSearchParams();
+  if (params.projectFilter !== "ALL") {
+    queryParams.set("project_id", params.projectFilter);
+  }
+  if (params.requestStateFilter !== "ALL") {
+    queryParams.set("request_state", params.requestStateFilter);
+  }
+  if (params.evidenceStateFilter !== "ALL") {
+    queryParams.set("evidence_review_state", params.evidenceStateFilter);
+  }
+  if (params.appliedSearch.trim().length > 0) {
+    queryParams.set("search", params.appliedSearch.trim());
+  }
+  const qs = queryParams.toString();
+  return qs.length > 0
+    ? `/api/salary-advance/requests/export?${qs}`
+    : "/api/salary-advance/requests/export";
+}
+
+export function isProjectWorkerHiddenFromPicker(
+  worker:
+    | Pick<
+        SalaryAdvanceWorkerOption,
+        "employment_status" | "ineligible_reasons"
+      >
+    | null
+    | undefined
+): boolean {
+  if (!worker) return true;
+  if (worker.employment_status === "OFF") {
+    return true;
+  }
+  if (
+    Array.isArray(worker.ineligible_reasons) &&
+    worker.ineligible_reasons.includes("WORKER_STATUS_OFF")
+  ) {
+    return true;
+  }
+  return false;
+}
+
+export function filterSelectableProjectWorkers<
+  T extends Pick<
+    SalaryAdvanceWorkerOption,
+    "employment_status" | "ineligible_reasons"
+  >,
+>(workers: ReadonlyArray<T>): T[] {
+  return workers.filter((worker) => !isProjectWorkerHiddenFromPicker(worker));
+}
+
 export function reconcileSelectedWorkerEntryId(
   currentWorkerEntryId: string,
   workers: ReadonlyArray<
@@ -1515,7 +1730,7 @@ export function reconcileSelectedWorkerEntryId(
     return "";
   }
   const match = workers.find((worker) => worker.worker_entry_id === trimmed);
-  if (!match) {
+  if (!match || isProjectWorkerHiddenFromPicker(match)) {
     return "";
   }
   return describeWorkerEligibility(match).isEligible ? trimmed : "";
@@ -2195,6 +2410,10 @@ export function salaryAdvanceErrorMessage(
       return "Người lao động chưa có ảnh chân dung chuẩn trong hồ sơ hệ thống nên chưa thể xác nhận «Đã đối chiếu».";
     case "SALARY_ADVANCE_WORKER_PORTRAIT_VERSION_CONFLICT":
       return "Ảnh chân dung hồ sơ của người lao động vừa thay đổi. Hệ thống đã tải lại ảnh mới nhất để bạn đối chiếu lại.";
+    case "SALARY_ADVANCE_EXPORT_LIMIT_EXCEEDED":
+      return "Số lượng dòng khớp bộ lọc vượt quá giới hạn xuất Excel cho phép (tối đa 5.000 dòng). Vui lòng thu hẹp bộ lọc theo dự án hoặc trạng thái.";
+    case "SALARY_ADVANCE_EXPORT_INCOMPLETE":
+      return "Không thể tải đầy đủ toàn bộ các trang dữ liệu để xuất Excel. Vui lòng thử lại.";
     case "SALARY_ADVANCE_STORAGE_UNAVAILABLE":
       return "Kho lưu trữ ảnh hiện tạm thời gián đoạn. Vui lòng thử lại sau ít phút.";
     case "SALARY_ADVANCE_QUERY_INVALID":

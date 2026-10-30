@@ -129,6 +129,8 @@ export type SalaryAdvanceBankIneligibleReason =
 
 export const SALARY_ADVANCE_EVIDENCE_MAX_BYTES = 10 * 1024 * 1024; // 10_485_760
 export const SALARY_ADVANCE_EVIDENCE_UPLOAD_URL_TTL_SECONDS = 900; // 15 minutes
+export const SALARY_ADVANCE_EXPORT_PAGE_SIZE = 100;
+export const MAX_SALARY_ADVANCE_EXPORT_ROWS = 5_000;
 export const MAX_PG_BIGINT = BigInt("9223372036854775807");
 
 export type SalaryAdvanceErrorCode =
@@ -181,6 +183,8 @@ export type SalaryAdvanceErrorCode =
   | "SALARY_ADVANCE_WORKER_PORTRAIT_MISSING"
   | "SALARY_ADVANCE_WORKER_PORTRAIT_NOT_FOUND"
   | "SALARY_ADVANCE_WORKER_PORTRAIT_VERSION_CONFLICT"
+  | "SALARY_ADVANCE_EXPORT_LIMIT_EXCEEDED"
+  | "SALARY_ADVANCE_EXPORT_INCOMPLETE"
   | "SALARY_ADVANCE_STORAGE_UNAVAILABLE"
   | "SALARY_ADVANCE_UNAVAILABLE";
 
@@ -223,7 +227,9 @@ export function salaryAdvanceHttpStatusForError(
     case "SALARY_ADVANCE_EVIDENCE_SIZE_INVALID":
     case "SALARY_ADVANCE_EVIDENCE_CHECKSUM_INVALID":
     case "SALARY_ADVANCE_EVIDENCE_CONTENT_INVALID":
+    case "SALARY_ADVANCE_EXPORT_LIMIT_EXCEEDED":
       return 422;
+    case "SALARY_ADVANCE_EXPORT_INCOMPLETE":
     case "SALARY_ADVANCE_STORAGE_UNAVAILABLE":
     case "SALARY_ADVANCE_UNAVAILABLE":
       return 503;
@@ -277,6 +283,10 @@ export type SalaryAdvanceActorContext = {
   accountant_projects: SalaryAdvanceProjectOption[];
   supervisory_projects: SalaryAdvanceProjectOption[];
   authorization_date: string;
+  badge_counts?: Partial<Record<"pm" | "accountant" | "supervisory", number>>;
+  badge_counts_capped?: Partial<
+    Record<"pm" | "accountant" | "supervisory", boolean>
+  >;
 };
 
 export type SalaryAdvanceWorkerBankAccountInfo = {
@@ -455,6 +465,8 @@ export type SalaryAdvanceRequestListResponse = {
   requests: SalaryAdvanceRequestSummary[];
   has_more: boolean;
   next_cursor: string | null;
+  badge_count?: number;
+  badge_count_capped?: boolean;
 };
 
 export type SalaryAdvanceEvidenceReserveResponse = {
@@ -700,6 +712,7 @@ export function parseListSalaryAdvanceRequestsQuery(
         search: string | null;
         cursor: string | null;
         page_size: number;
+        include_badge: boolean;
       };
     }
   | { ok: false; code: SalaryAdvanceErrorCode } {
@@ -711,6 +724,7 @@ export function parseListSalaryAdvanceRequestsQuery(
     "search",
     "cursor",
     "page_size",
+    "include_badge",
   ]);
   for (const key of url.searchParams.keys()) {
     if (!allowed.has(key)) {
@@ -803,6 +817,19 @@ export function parseListSalaryAdvanceRequestsQuery(
     pageSize = parsed;
   }
 
+  const rawIncludeBadge = url.searchParams.get("include_badge");
+  let includeBadge = false;
+  if (rawIncludeBadge !== null && rawIncludeBadge.trim().length > 0) {
+    const normalized = rawIncludeBadge.trim().toLowerCase();
+    if (normalized === "1" || normalized === "true") {
+      includeBadge = true;
+    } else if (normalized === "0" || normalized === "false") {
+      includeBadge = false;
+    } else {
+      return { ok: false, code: "SALARY_ADVANCE_QUERY_INVALID" };
+    }
+  }
+
   return {
     ok: true,
     value: {
@@ -813,6 +840,89 @@ export function parseListSalaryAdvanceRequestsQuery(
       search: searchRes.value,
       cursor,
       page_size: pageSize,
+      include_badge: includeBadge,
+    },
+  };
+}
+
+export function parseExportSalaryAdvanceRequestsQuery(
+  url: URL,
+):
+  | {
+      ok: true;
+      value: {
+        project_id: string | null;
+        request_state: SalaryAdvanceRequestState | null;
+        evidence_review_state: SalaryAdvanceEvidenceReviewState | null;
+        search: string | null;
+      };
+    }
+  | { ok: false; code: SalaryAdvanceErrorCode } {
+  const allowed = new Set([
+    "project_id",
+    "request_state",
+    "evidence_review_state",
+    "search",
+  ]);
+  for (const key of url.searchParams.keys()) {
+    if (!allowed.has(key)) {
+      return { ok: false, code: "SALARY_ADVANCE_QUERY_INVALID" };
+    }
+  }
+
+  const rawProjectId = url.searchParams.get("project_id");
+  let projectId: string | null = null;
+  if (rawProjectId !== null && rawProjectId.trim().length > 0) {
+    const parsedProj = parseProjectIdParam(rawProjectId);
+    if (!parsedProj.ok) return parsedProj;
+    projectId = parsedProj.project_id;
+  }
+
+  const rawReqState = url.searchParams.get("request_state");
+  let requestState: SalaryAdvanceRequestState | null = null;
+  if (rawReqState !== null && rawReqState.trim().length > 0) {
+    const upper = rawReqState.trim().toUpperCase();
+    if (
+      !SALARY_ADVANCE_REQUEST_STATES.includes(
+        upper as SalaryAdvanceRequestState,
+      )
+    ) {
+      return { ok: false, code: "SALARY_ADVANCE_QUERY_INVALID" };
+    }
+    requestState = upper as SalaryAdvanceRequestState;
+  }
+
+  const rawEvState = url.searchParams.get("evidence_review_state");
+  let evidenceReviewState: SalaryAdvanceEvidenceReviewState | null = null;
+  if (rawEvState !== null && rawEvState.trim().length > 0) {
+    const upper = rawEvState.trim().toUpperCase();
+    if (
+      !SALARY_ADVANCE_EVIDENCE_REVIEW_STATES.includes(
+        upper as SalaryAdvanceEvidenceReviewState,
+      )
+    ) {
+      return { ok: false, code: "SALARY_ADVANCE_QUERY_INVALID" };
+    }
+    evidenceReviewState = upper as SalaryAdvanceEvidenceReviewState;
+  }
+
+  const rawSearch = url.searchParams.get("search");
+  const searchRes = validateTextField(
+    rawSearch,
+    1,
+    120,
+    true,
+    "SALARY_ADVANCE_QUERY_INVALID",
+  );
+  if (!searchRes.ok) return searchRes;
+
+  return {
+    ok: true,
+    value: {
+      project_id: projectId,
+      request_state: requestState,
+      evidence_review_state: evidenceReviewState,
+      search: searchRes.value,
     },
   };
 }

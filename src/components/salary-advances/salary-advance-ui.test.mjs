@@ -299,3 +299,102 @@ test("SalaryAdvanceWorkspace renders mandatory payment method selection, self-ow
   assert.match(workspaceSource, /Đối chiếu chứng từ chuyển khoản/);
   assert.match(workspaceSource, /2\. Chứng từ chuyển khoản \(Bill\)/);
 });
+
+test("SalaryAdvanceWorkspace places PM and Accountant queue tabs/badges in PageHeader actions with role='tablist' strictly wrapping only tab buttons and CTA buttons outside tablist, supports dismissing 'Lưu ý nghiệp vụ', exports filtered Excel for accountants, and hides OFF workers in picker", () => {
+  // 1. Header action groups, accessible tablist isolation, & badges
+  assert.match(workspaceSource, /data-testid="salary-advance-header-actions"/);
+  assert.match(workspaceSource, /data-testid="salary-advance-header-tablist"/);
+  assert.match(
+    workspaceSource,
+    /data-testid="salary-advance-header-cta-actions"/
+  );
+  assert.match(
+    workspaceSource,
+    /data-testid=\{`salary-advance-tab-\$\{tab\.id\}`\}/
+  );
+  assert.match(
+    workspaceSource,
+    /data-testid=\{`salary-advance-tab-badge-\$\{tab\.id\}`\}/
+  );
+  assert.match(workspaceSource, /data-testid="salary-advance-open-create-btn"/);
+  assert.match(workspaceSource, /data-testid="salary-advance-export-excel-btn"/);
+  assert.match(workspaceSource, /Xuất Excel/);
+
+  // Verify role="tablist" wraps ONLY visibleTabs -> HeaderTabButton and does NOT contain CTA buttons
+  const tablistStart = workspaceSource.indexOf(
+    'data-testid="salary-advance-header-tablist"'
+  );
+  const ctaGroupStart = workspaceSource.indexOf(
+    'data-testid="salary-advance-header-cta-actions"'
+  );
+  assert.ok(tablistStart > 0, "Expected salary-advance-header-tablist in header");
+  assert.ok(
+    ctaGroupStart > tablistStart,
+    "Expected salary-advance-header-cta-actions to be rendered outside and after salary-advance-header-tablist"
+  );
+  const tablistBlock = workspaceSource.slice(tablistStart, ctaGroupStart);
+  assert.match(tablistBlock, /<HeaderTabButton/);
+  assert.equal(
+    tablistBlock.includes("salary-advance-open-create-btn"),
+    false,
+    "Create Request button must NOT be inside role='tablist'"
+  );
+  assert.equal(
+    tablistBlock.includes("salary-advance-export-excel-btn"),
+    false,
+    "Export Excel button must NOT be inside role='tablist'"
+  );
+
+  // Verify badge count updates use serverBadgeCount, surface capped badge indicators (badge_count_capped / badge_counts_capped -> badgeDisplayText / data-badge-capped), and guard against filtered/paginated truncation
+  assert.match(workspaceSource, /serverBadgeCount:\s*outcome\.data\.badge_count/);
+  assert.match(
+    workspaceSource,
+    /serverBadgeCapped:\s*outcome\.data\.badge_count_capped/
+  );
+  assert.match(workspaceSource, /hasMore:\s*outcome\.data\.has_more/);
+  assert.match(workspaceSource, /loadedContext\.badge_counts/);
+  assert.match(workspaceSource, /loadedContext\.badge_counts_capped/);
+  assert.match(workspaceSource, /updateTabBadgeCappedForTab/);
+  assert.match(
+    workspaceSource,
+    /data-badge-capped=\{tab\.badgeCapped\s*\?\s*"true"\s*:\s*"false"\}/
+  );
+  assert.match(
+    workspaceSource,
+    /<StatusBadge\s+tone=\{badgeTone\}>\{tab\.badgeDisplayText\}<\/StatusBadge>/
+  );
+  assert.match(
+    workspaceSource,
+    /includeBadge:\s*Boolean\(options\?\.includeBadge\s*&&\s*!isAppend\)/
+  );
+  assert.match(uiModelSource, /queryParams\.set\("include_badge",\s*"1"\)/);
+  assert.match(uiModelSource, /formatTabBadgeDisplayText/);
+
+  // 2. Dismissible "Lưu ý nghiệp vụ" banner
+  assert.match(
+    workspaceSource,
+    /dataTestId="salary-advance-business-notice-banner"/
+  );
+  assert.match(
+    workspaceSource,
+    /dismissTestId="salary-advance-dismiss-business-notice-btn"/
+  );
+  assert.match(workspaceSource, /dismissLabel="Đóng lưu ý nghiệp vụ"/);
+  assert.match(
+    workspaceSource,
+    /onDismiss=\{\(\)\s*=>\s*setBusinessNoticeDismissed\(true\)\}/
+  );
+
+  // 3. Accountant Excel export uses active filter state and buildSalaryAdvanceExportUrl
+  assert.match(workspaceSource, /buildSalaryAdvanceExportUrl/);
+  assert.match(workspaceSource, /handleExportExcel/);
+  assert.match(uiModelSource, /\/api\/salary-advance\/requests\/export/);
+
+  // 4. Worker picker filters out OFF workers while preserving remaining workers with explicit ineligibility reasons
+  assert.match(workspaceSource, /filterSelectableProjectWorkers/);
+  assert.match(
+    workspaceSource,
+    /\[Không đủ ĐK:\s*\$\{eligibility\.reasonLabels\.join\("; "\)\s*\|\|\s*eligibility\.statusLabel\}\]/
+  );
+  assert.match(uiModelSource, /isProjectWorkerHiddenFromPicker/);
+});

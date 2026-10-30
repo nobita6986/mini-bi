@@ -9,6 +9,8 @@ import {
   type SalaryAdvanceEvidenceStorage,
 } from "./r2-salary-advance-evidence-storage.ts";
 import {
+  MAX_SALARY_ADVANCE_EXPORT_ROWS,
+  SALARY_ADVANCE_EXPORT_PAGE_SIZE,
   computeCreateRequestFingerprint,
   computeFinalizeEvidenceFingerprint,
   computePostMessageFingerprint,
@@ -17,6 +19,7 @@ import {
   computeTransitionRequestFingerprint,
   parseCreateSalaryAdvanceRequestBody,
   parseEvidenceVersionParam,
+  parseExportSalaryAdvanceRequestsQuery,
   parseFinalizeSalaryAdvanceEvidenceBody,
   parseListProjectWorkersQuery,
   parseListSalaryAdvanceRequestsQuery,
@@ -31,8 +34,23 @@ import {
   salaryAdvanceHttpStatusForError,
   type SalaryAdvanceErrorCode,
   type SalaryAdvanceEvidenceReserveResponse,
+  type SalaryAdvanceEvidenceReviewState,
+  type SalaryAdvanceQueue,
+  type SalaryAdvanceRequestListResponse,
+  type SalaryAdvanceRequestState,
+  type SalaryAdvanceRequestSummary,
+  type SalaryAdvanceWorkerOption,
 } from "./salary-advance-contract.ts";
+import {
+  SALARY_ADVANCE_EXPORT_XLSX_CONTENT_TYPE,
+  buildSalaryAdvanceExportFilename,
+  buildSalaryAdvanceExportXlsx,
+} from "./salary-advance-export.ts";
 import type { SalaryAdvanceRepository } from "./salary-advance-repository.ts";
+import {
+  countActionableRequestsForTab,
+  type SalaryAdvanceWorkspaceTabId,
+} from "./salary-advance-ui-model.ts";
 
 export const MAX_SALARY_ADVANCE_MUTATION_JSON_BYTES = 8_192;
 
@@ -234,6 +252,176 @@ function inlineBinaryImageResponse(
   });
 }
 
+export const SERVER_BADGE_COUNT_PAGE_SIZE = 100;
+export const MAX_SERVER_BADGE_SLICE_PAGES = 10;
+
+export type ServerQueueBadgeCountResult = {
+  count: number;
+  capped: boolean;
+};
+
+type BadgeScanSlice = {
+  request_state: SalaryAdvanceRequestState | null;
+  evidence_review_state: SalaryAdvanceEvidenceReviewState | null;
+};
+
+function tabIdForQueue(
+  queue: Extract<SalaryAdvanceQueue, "PM" | "ACCOUNTANT" | "SUPERVISORY">,
+): SalaryAdvanceWorkspaceTabId {
+  if (queue === "PM") return "pm";
+  if (queue === "ACCOUNTANT") return "accountant";
+  return "supervisory";
+}
+
+function resolveBadgeScanSlicesForQueue(
+  queue: Extract<SalaryAdvanceQueue, "PM" | "ACCOUNTANT" | "SUPERVISORY">,
+): ReadonlyArray<BadgeScanSlice> {
+  if (queue === "PM") {
+    return [
+      { request_state: "OPEN", evidence_review_state: null },
+      { request_state: "NEEDS_INFO", evidence_review_state: null },
+    ];
+  }
+  if (queue === "ACCOUNTANT") {
+    return [
+      { request_state: "OPEN", evidence_review_state: null },
+      { request_state: null, evidence_review_state: "PENDING_REVIEW" },
+    ];
+  }
+  return [
+    { request_state: "OPEN", evidence_review_state: null },
+    { request_state: "NEEDS_INFO", evidence_review_state: null },
+    { request_state: null, evidence_review_state: "PENDING_REVIEW" },
+  ];
+}
+
+export async function computeServerQueueBadgeCount(params: {
+  repository: SalaryAdvanceRepository;
+  auth_subject: string;
+  app_user_id: string;
+  queue: Extract<SalaryAdvanceQueue, "PM" | "ACCOUNTANT" | "SUPERVISORY">;
+  initialUnfilteredFirstPage?: SalaryAdvanceRequestListResponse | null;
+  pageSize?: number;
+  maxPagesPerSlice?: number;
+}): Promise<ServerQueueBadgeCountResult | null> {
+  const tabId = tabIdForQueue(params.queue);
+  const effectivePageSize =
+    params.pageSize !== undefined &&
+    Number.isSafeInteger(params.pageSize) &&
+    params.pageSize >= 1 &&
+    params.pageSize <= 100
+      ? params.pageSize
+      : SERVER_BADGE_COUNT_PAGE_SIZE;
+  const maxPagesPerSlice =
+    params.maxPagesPerSlice !== undefined &&
+    Number.isSafeInteger(params.maxPagesPerSlice) &&
+    params.maxPagesPerSlice >= 1
+      ? params.maxPagesPerSlice
+      : MAX_SERVER_BADGE_SLICE_PAGES;
+
+  if (
+    params.initialUnfilteredFirstPage &&
+    !params.initialUnfilteredFirstPage.has_more
+  ) {
+    return {
+      count: countActionableRequestsForTab(
+        params.initialUnfilteredFirstPage.requests,
+        tabId,
+      ),
+      capped: false,
+    };
+  }
+
+  const slices = resolveBadgeScanSlicesForQueue(params.queue);
+  const sliceResults = await Promise.all(
+    slices.map(async (slice) => {
+      const rows: SalaryAdvanceRequestSummary[] = [];
+      const seenCursors = new Set<string>();
+      let cursor: string | null = null;
+      let capped = false;
+      let anyPageOk = false;
+
+      for (let pageIdx = 0; pageIdx < maxPagesPerSlice; pageIdx += 1) {
+        const pageResult = await params.repository.listRequests({
+          auth_subject: params.auth_subject,
+          app_user_id: params.app_user_id,
+          queue: params.queue,
+          project_id: null,
+          request_state: slice.request_state,
+          evidence_review_state: slice.evidence_review_state,
+          search: null,
+          cursor,
+          page_size: effectivePageSize,
+        });
+        if (!pageResult.ok) {
+          if (anyPageOk) {
+            capped = true;
+          }
+          break;
+        }
+
+        anyPageOk = true;
+        const page = pageResult.data;
+        rows.push(...page.requests);
+
+        if (!page.has_more) {
+          return { rows, capped: false, anyPageOk: true };
+        }
+
+        if (
+          pageIdx + 1 >= maxPagesPerSlice ||
+          page.requests.length === 0 ||
+          !page.next_cursor ||
+          seenCursors.has(page.next_cursor)
+        ) {
+          capped = true;
+          break;
+        }
+
+        seenCursors.add(page.next_cursor);
+        cursor = page.next_cursor;
+      }
+
+      return { rows, capped, anyPageOk };
+    }),
+  );
+
+  const anySliceSucceeded = sliceResults.some((res) => res.anyPageOk);
+  if (!anySliceSucceeded && !params.initialUnfilteredFirstPage) {
+    return null;
+  }
+
+  const allRows: SalaryAdvanceRequestSummary[] = [];
+  const seenRequestIds = new Set<string>();
+
+  if (params.initialUnfilteredFirstPage) {
+    for (const row of params.initialUnfilteredFirstPage.requests) {
+      if (!seenRequestIds.has(row.request_id)) {
+        seenRequestIds.add(row.request_id);
+        allRows.push(row);
+      }
+    }
+  }
+
+  for (const sliceResult of sliceResults) {
+    for (const row of sliceResult.rows) {
+      if (!seenRequestIds.has(row.request_id)) {
+        seenRequestIds.add(row.request_id);
+        allRows.push(row);
+      }
+    }
+  }
+
+  const capped =
+    !anySliceSucceeded ||
+    sliceResults.some((res) => res.capped || !res.anyPageOk);
+
+  return {
+    count: countActionableRequestsForTab(allRows, tabId),
+    capped,
+  };
+}
+
 // -----------------------------------------------------------------------------
 // 1. GET /api/salary-advance/context
 // -----------------------------------------------------------------------------
@@ -263,7 +451,82 @@ export async function handleGetSalaryAdvanceContext(
   });
   if (!result.ok) return salAdvError(result.code);
 
-  return salAdvOk(result.data, 200);
+  const badgeCounts: Partial<Record<SalaryAdvanceWorkspaceTabId, number>> = {};
+  const badgeCountsCapped: Partial<
+    Record<SalaryAdvanceWorkspaceTabId, boolean>
+  > = {};
+
+  const [pmBadge, accountantBadge, supervisoryBadge] = await Promise.all([
+    result.data.is_project_manager && result.data.managed_projects.length > 0
+      ? computeServerQueueBadgeCount({
+          repository: dependencies.repository,
+          auth_subject: actor.auth_subject,
+          app_user_id: actor.app_user_id,
+          queue: "PM",
+        })
+      : Promise.resolve(null),
+    result.data.is_project_accountant &&
+    result.data.accountant_projects.length > 0
+      ? computeServerQueueBadgeCount({
+          repository: dependencies.repository,
+          auth_subject: actor.auth_subject,
+          app_user_id: actor.app_user_id,
+          queue: "ACCOUNTANT",
+        })
+      : Promise.resolve(null),
+    result.data.is_supervisory_viewer
+      ? computeServerQueueBadgeCount({
+          repository: dependencies.repository,
+          auth_subject: actor.auth_subject,
+          app_user_id: actor.app_user_id,
+          queue: "SUPERVISORY",
+        })
+      : Promise.resolve(null),
+  ]);
+
+  if (pmBadge !== null) {
+    badgeCounts.pm = pmBadge.count;
+    if (pmBadge.capped) {
+      badgeCountsCapped.pm = true;
+    }
+  }
+  if (accountantBadge !== null) {
+    badgeCounts.accountant = accountantBadge.count;
+    if (accountantBadge.capped) {
+      badgeCountsCapped.accountant = true;
+    }
+  }
+  if (supervisoryBadge !== null) {
+    badgeCounts.supervisory = supervisoryBadge.count;
+    if (supervisoryBadge.capped) {
+      badgeCountsCapped.supervisory = true;
+    }
+  }
+
+  const hasBadgeCounts = Object.keys(badgeCounts).length > 0;
+  const hasCappedFlags = Object.keys(badgeCountsCapped).length > 0;
+
+  return salAdvOk(
+    {
+      ...result.data,
+      ...(hasBadgeCounts ? { badge_counts: badgeCounts } : {}),
+      ...(hasCappedFlags ? { badge_counts_capped: badgeCountsCapped } : {}),
+    },
+    200,
+  );
+}
+
+function isOffProjectWorkerOption(worker: SalaryAdvanceWorkerOption): boolean {
+  if (worker.employment_status === "OFF") {
+    return true;
+  }
+  if (
+    Array.isArray(worker.ineligible_reasons) &&
+    worker.ineligible_reasons.includes("WORKER_STATUS_OFF")
+  ) {
+    return true;
+  }
+  return false;
 }
 
 // -----------------------------------------------------------------------------
@@ -294,17 +557,70 @@ export async function handleGetSalaryAdvanceProjectWorkers(
   const actor = await resolveSalaryAdvanceActor(dependencies);
   if (!actor.ok) return actor.response;
 
-  const result = await dependencies.repository.listProjectWorkers({
-    auth_subject: actor.auth_subject,
-    app_user_id: actor.app_user_id,
-    project_id: parsedProjectId.project_id,
-    search: query.value.search,
-    cursor: query.value.cursor,
-    page_size: query.value.page_size,
-  });
-  if (!result.ok) return salAdvError(result.code);
+  const targetPageSize = query.value.page_size;
+  const collected: SalaryAdvanceWorkerOption[] = [];
+  const seenCursors = new Set<string>();
+  let cursor: string | null = query.value.cursor;
+  let lastHasMore = false;
+  let lastNextCursor: string | null = null;
+  let iterations = 0;
 
-  return salAdvOk(result.data, 200);
+  while (iterations < 25) {
+    iterations += 1;
+    const result = await dependencies.repository.listProjectWorkers({
+      auth_subject: actor.auth_subject,
+      app_user_id: actor.app_user_id,
+      project_id: parsedProjectId.project_id,
+      search: query.value.search,
+      cursor,
+      page_size: targetPageSize,
+    });
+    if (!result.ok) return salAdvError(result.code);
+
+    const visibleInPage = result.data.workers.filter(
+      (worker) => !isOffProjectWorkerOption(worker),
+    );
+    collected.push(...visibleInPage);
+    lastHasMore = result.data.has_more;
+    lastNextCursor = result.data.next_cursor;
+
+    if (
+      collected.length >= targetPageSize ||
+      !lastHasMore ||
+      !lastNextCursor ||
+      result.data.workers.length === 0 ||
+      seenCursors.has(lastNextCursor)
+    ) {
+      break;
+    }
+
+    seenCursors.add(lastNextCursor);
+    cursor = lastNextCursor;
+  }
+
+  if (collected.length > targetPageSize) {
+    const trimmed = collected.slice(0, targetPageSize);
+    const lastIncluded = trimmed[trimmed.length - 1];
+    return salAdvOk(
+      {
+        project_id: parsedProjectId.project_id,
+        workers: trimmed,
+        has_more: true,
+        next_cursor: `${lastIncluded.employee_code}|${lastIncluded.worker_entry_id}`,
+      },
+      200,
+    );
+  }
+
+  return salAdvOk(
+    {
+      project_id: parsedProjectId.project_id,
+      workers: collected,
+      has_more: lastHasMore,
+      next_cursor: lastHasMore ? lastNextCursor : null,
+    },
+    200,
+  );
 }
 
 // -----------------------------------------------------------------------------
@@ -344,7 +660,45 @@ export async function handleGetSalaryAdvanceRequests(
   });
   if (!result.ok) return salAdvError(result.code);
 
-  return salAdvOk(result.data, 200);
+  const isUnfilteredFirstPage =
+    query.value.project_id === null &&
+    query.value.request_state === null &&
+    query.value.evidence_review_state === null &&
+    query.value.search === null &&
+    query.value.cursor === null;
+
+  const shouldComputeBadge =
+    (query.value.queue === "PM" ||
+      query.value.queue === "ACCOUNTANT" ||
+      query.value.queue === "SUPERVISORY") &&
+    (isUnfilteredFirstPage || query.value.include_badge);
+
+  let badgeResult: ServerQueueBadgeCountResult | null = null;
+  if (
+    shouldComputeBadge &&
+    (query.value.queue === "PM" ||
+      query.value.queue === "ACCOUNTANT" ||
+      query.value.queue === "SUPERVISORY")
+  ) {
+    badgeResult = await computeServerQueueBadgeCount({
+      repository: dependencies.repository,
+      auth_subject: actor.auth_subject,
+      app_user_id: actor.app_user_id,
+      queue: query.value.queue,
+      initialUnfilteredFirstPage: isUnfilteredFirstPage ? result.data : null,
+    });
+  }
+
+  return salAdvOk(
+    badgeResult !== null
+      ? {
+          ...result.data,
+          badge_count: badgeResult.count,
+          ...(badgeResult.capped ? { badge_count_capped: true } : {}),
+        }
+      : result.data,
+    200,
+  );
 }
 
 // -----------------------------------------------------------------------------
@@ -1096,5 +1450,114 @@ export async function handleGetSalaryAdvanceWorkerPortrait(
   } catch {
     console.error("[salary-advance] worker portrait preview failed");
     return salAdvError("SALARY_ADVANCE_STORAGE_UNAVAILABLE");
+  }
+}
+
+// -----------------------------------------------------------------------------
+// 13. GET /api/salary-advance/requests/export
+// -----------------------------------------------------------------------------
+export async function handleGetExportSalaryAdvanceRequests(
+  request: Request,
+  enabledFlag: string | undefined,
+  dependencies: SalaryAdvanceApiDependencies,
+  options?: {
+    maxExportRows?: number;
+    pageSize?: number;
+  },
+): Promise<Response> {
+  const gate = directEntryFeatureGate(enabledFlag);
+  if (gate) return gate;
+
+  if (hasDisallowedAuthorityHeaders(request)) {
+    return salAdvError("CLIENT_AUTHORITY_FIELD_FORBIDDEN");
+  }
+
+  const url = parseRequestUrl(request);
+  if (!url) return salAdvError("SALARY_ADVANCE_QUERY_INVALID");
+
+  const query = parseExportSalaryAdvanceRequestsQuery(url);
+  if (!query.ok) return salAdvError(query.code);
+
+  const actor = await resolveSalaryAdvanceActor(dependencies);
+  if (!actor.ok) return actor.response;
+
+  const maxExportRows =
+    options?.maxExportRows !== undefined &&
+    Number.isSafeInteger(options.maxExportRows) &&
+    options.maxExportRows >= 1
+      ? options.maxExportRows
+      : MAX_SALARY_ADVANCE_EXPORT_ROWS;
+  const pageSize =
+    options?.pageSize !== undefined &&
+    Number.isSafeInteger(options.pageSize) &&
+    options.pageSize >= 1 &&
+    options.pageSize <= 100
+      ? options.pageSize
+      : SALARY_ADVANCE_EXPORT_PAGE_SIZE;
+
+  const allRows: SalaryAdvanceRequestSummary[] = [];
+  const seenRequestIds = new Set<string>();
+  const seenCursors = new Set<string>();
+  let cursor: string | null = null;
+
+  while (true) {
+    const result = await dependencies.repository.listRequests({
+      auth_subject: actor.auth_subject,
+      app_user_id: actor.app_user_id,
+      queue: "ACCOUNTANT",
+      project_id: query.value.project_id,
+      request_state: query.value.request_state,
+      evidence_review_state: query.value.evidence_review_state,
+      search: query.value.search,
+      cursor,
+      page_size: pageSize,
+    });
+    if (!result.ok) return salAdvError(result.code);
+
+    const page = result.data;
+    for (const row of page.requests) {
+      if (!seenRequestIds.has(row.request_id)) {
+        seenRequestIds.add(row.request_id);
+        allRows.push(row);
+      }
+    }
+
+    if (allRows.length > maxExportRows) {
+      return salAdvError("SALARY_ADVANCE_EXPORT_LIMIT_EXCEEDED");
+    }
+
+    if (!page.has_more) {
+      break;
+    }
+
+    if (
+      page.requests.length === 0 ||
+      !page.next_cursor ||
+      seenCursors.has(page.next_cursor)
+    ) {
+      console.error("[salary-advance] export pagination terminated incompletely");
+      return salAdvError("SALARY_ADVANCE_EXPORT_INCOMPLETE");
+    }
+
+    seenCursors.add(page.next_cursor);
+    cursor = page.next_cursor;
+  }
+
+  try {
+    const xlsxBytes = await buildSalaryAdvanceExportXlsx(allRows);
+    const filename = buildSalaryAdvanceExportFilename();
+    return new Response(Buffer.from(xlsxBytes), {
+      status: 200,
+      headers: {
+        "Content-Type": SALARY_ADVANCE_EXPORT_XLSX_CONTENT_TYPE,
+        "Content-Length": String(xlsxBytes.byteLength),
+        "Content-Disposition": `attachment; filename="${filename}"`,
+        "Cache-Control": "private, no-store",
+        "X-Content-Type-Options": "nosniff",
+      },
+    });
+  } catch {
+    console.error("[salary-advance] excel export generation failed");
+    return salAdvError("SALARY_ADVANCE_UNAVAILABLE");
   }
 }

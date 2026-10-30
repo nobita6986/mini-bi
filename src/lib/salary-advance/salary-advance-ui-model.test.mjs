@@ -5,9 +5,11 @@ import {
   SALARY_ADVANCE_MISSING_PORTRAIT_WARNING,
   SALARY_ADVANCE_NON_ACCOUNTING_NOTICE,
   buildEvidencePhotoPreviewUrl,
+  buildSalaryAdvanceExportUrl,
   buildWorkerPortraitPreviewUrl,
   canAccessSalaryAdvanceContext,
   countActionableRequestsForTab,
+  countOpenRequestsForPmTab,
   createLatestRequestTracker,
   decideSalaryAdvancePageAccess,
   describeWorkerBankTransferEligibility,
@@ -15,7 +17,9 @@ import {
   evaluateEvidenceComparisonPanel,
   evaluateRequestAttentionForTab,
   fetchSalaryAdvanceRequestListPage,
+  filterSelectableProjectWorkers,
   formatFileSizeBytes,
+  formatTabBadgeDisplayText,
   formatVndAmount,
   getEvidenceKindLabel,
   getEvidenceReviewStateMeta,
@@ -24,6 +28,8 @@ import {
   getSalaryAdvanceActorRoleLabel,
   getSalaryAdvanceEventTone,
   getSalaryAdvanceEventTypeLabel,
+  isProjectWorkerHiddenFromPicker,
+  isRequestOpenInStateMachine,
   isSalaryAdvanceConflictError,
   newSalaryAdvanceIdempotencyKey,
   normalizePositiveVndInput,
@@ -37,6 +43,7 @@ import {
   resolveVisibleSalaryAdvanceTabs,
   salaryAdvanceErrorMessage,
   sortEventsChronologically,
+  updateTabBadgeCappedForTab,
   updateTabBadgeCountsForTab,
   uploadSalaryAdvanceEvidence,
   validateCreateSalaryAdvanceDraft,
@@ -248,7 +255,11 @@ test("resolveAvailableRequestActions never enables actions outside server allowe
   assert.equal(accountantActions.hasAnyAccountantDecision, true);
 });
 
-test("evaluateRequestAttentionForTab and countActionableRequestsForTab highlight actionable items per queue", () => {
+test("evaluateRequestAttentionForTab and countActionableRequestsForTab count open non-terminal requests for PM badge and actionable items for Accountant badge", () => {
+  const pmOpen = makeRequestSummary({
+    request_state: "OPEN",
+    allowed_actions: makeAllowedActions({ can_withdraw: true }),
+  });
   const pmNeedsInfo = makeRequestSummary({
     request_state: "NEEDS_INFO",
     allowed_actions: makeAllowedActions({ can_provide_info: true }),
@@ -267,19 +278,60 @@ test("evaluateRequestAttentionForTab and countActionableRequestsForTab highlight
     request_state: "REJECTED",
     allowed_actions: makeAllowedActions(),
   });
+  const pmWithdrawn = makeRequestSummary({
+    request_state: "WITHDRAWN",
+    allowed_actions: makeAllowedActions(),
+  });
+  const pmHandledExternally = makeRequestSummary({
+    request_state: "HANDLED_EXTERNALLY",
+    allowed_actions: makeAllowedActions(),
+  });
 
+  // Row-level attention indicators for PM remain intact
   assert.equal(evaluateRequestAttentionForTab(pmNeedsInfo, "pm").needsAttention, true);
   assert.equal(evaluateRequestAttentionForTab(pmRetake, "pm").needsAttention, true);
   assert.equal(evaluateRequestAttentionForTab(pmWaitingUpload, "pm").needsAttention, true);
   assert.equal(evaluateRequestAttentionForTab(pmClosed, "pm").needsAttention, false);
+
+  // State machine open check: OPEN and NEEDS_INFO are non-terminal; APPROVED, REJECTED, WITHDRAWN, HANDLED_EXTERNALLY are terminal
+  assert.equal(isRequestOpenInStateMachine(pmOpen), true);
+  assert.equal(isRequestOpenInStateMachine(pmNeedsInfo), true);
+  assert.equal(isRequestOpenInStateMachine(pmRetake), false);
+  assert.equal(isRequestOpenInStateMachine(pmWaitingUpload), false);
+  assert.equal(isRequestOpenInStateMachine(pmClosed), false);
+  assert.equal(isRequestOpenInStateMachine(pmWithdrawn), false);
+  assert.equal(isRequestOpenInStateMachine(pmHandledExternally), false);
+
+  // PM tab badge ("Yêu cầu tôi tạo") counts open non-terminal requests (OPEN + NEEDS_INFO) and excludes terminal states
+  assert.equal(
+    countOpenRequestsForPmTab([
+      pmOpen,
+      pmNeedsInfo,
+      pmRetake,
+      pmWaitingUpload,
+      pmClosed,
+      pmWithdrawn,
+      pmHandledExternally,
+    ]),
+    2
+  );
   assert.equal(
     countActionableRequestsForTab(
-      [pmNeedsInfo, pmRetake, pmWaitingUpload, pmClosed],
+      [
+        pmOpen,
+        pmNeedsInfo,
+        pmRetake,
+        pmWaitingUpload,
+        pmClosed,
+        pmWithdrawn,
+        pmHandledExternally,
+      ],
       "pm"
     ),
-    3
+    2
   );
 
+  // Accountant tab badge ("Cần xử lý") continues to count actionable requests for the accountant
   const accOpen = makeRequestSummary({
     request_state: "OPEN",
     allowed_actions: makeAllowedActions({ can_approve: true, can_reject: true }),
@@ -1452,4 +1504,307 @@ test("describeWorkerBankTransferEligibility, validateCreateSalaryAdvanceDraft, a
     salaryAdvanceErrorMessage("SALARY_ADVANCE_BANK_ACCOUNT_NOT_SELF_OWNED"),
     /không chính chủ/
   );
+  assert.match(
+    salaryAdvanceErrorMessage("SALARY_ADVANCE_EXPORT_LIMIT_EXCEEDED"),
+    /vượt quá giới hạn xuất Excel/
+  );
+  assert.match(
+    salaryAdvanceErrorMessage("SALARY_ADVANCE_EXPORT_INCOMPLETE"),
+    /xuất Excel/
+  );
+});
+
+test("buildSalaryAdvanceExportUrl maps active accountant filters (project, request_state, evidence_review_state, search) and omits ALL/empty filters", () => {
+  assert.equal(
+    buildSalaryAdvanceExportUrl({
+      projectFilter: "ALL",
+      requestStateFilter: "ALL",
+      evidenceStateFilter: "ALL",
+      appliedSearch: "   ",
+    }),
+    "/api/salary-advance/requests/export"
+  );
+
+  assert.equal(
+    buildSalaryAdvanceExportUrl({
+      projectFilter: "PRJ_NORTH",
+      requestStateFilter: "APPROVED",
+      evidenceStateFilter: "PENDING_REVIEW",
+      appliedSearch: "  NV001  ",
+    }),
+    "/api/salary-advance/requests/export?project_id=PRJ_NORTH&request_state=APPROVED&evidence_review_state=PENDING_REVIEW&search=NV001"
+  );
+});
+
+test("filterSelectableProjectWorkers hides OFF workers while retaining UNCONFIRMED and fixable-ineligible workers with their ineligibility reasons", () => {
+  const onEligible = {
+    worker_entry_id: "33333333-3333-4333-8333-333333333331",
+    employee_code: "NV001",
+    display_name: "Nguyễn Văn A",
+    first_work_date: "2026-01-10",
+    has_portrait: true,
+    employment_status: "ON",
+    active_on_project_count: 1,
+    has_duplicate_cccd: false,
+    is_eligible: true,
+    ineligible_reasons: [],
+    bank_transfer_eligible: true,
+  };
+  const offWorker = {
+    worker_entry_id: "33333333-3333-4333-8333-333333333332",
+    employee_code: "NV002",
+    display_name: "Trần Văn Nghỉ",
+    first_work_date: "2026-01-11",
+    has_portrait: true,
+    employment_status: "OFF",
+    active_on_project_count: 0,
+    has_duplicate_cccd: false,
+    is_eligible: false,
+    ineligible_reasons: ["WORKER_STATUS_OFF"],
+    bank_transfer_eligible: true,
+  };
+  const unconfirmedWorker = {
+    worker_entry_id: "33333333-3333-4333-8333-333333333333",
+    employee_code: "NV003",
+    display_name: "Lê Thị Chưa Xác Nhận",
+    first_work_date: "2026-01-12",
+    has_portrait: true,
+    employment_status: "UNCONFIRMED",
+    active_on_project_count: 0,
+    has_duplicate_cccd: false,
+    is_eligible: false,
+    ineligible_reasons: ["WORKER_STATUS_UNCONFIRMED"],
+    bank_transfer_eligible: true,
+  };
+  const dupCccdAndMultiWorker = {
+    worker_entry_id: "33333333-3333-4333-8333-333333333334",
+    employee_code: "NV004",
+    display_name: "Phạm Văn Trùng Hồ Sơ",
+    first_work_date: "2026-01-13",
+    has_portrait: false,
+    employment_status: "ON",
+    active_on_project_count: 2,
+    has_duplicate_cccd: true,
+    is_eligible: false,
+    ineligible_reasons: ["WORKER_MULTI_PROJECT_ON", "WORKER_DUPLICATE_CCCD"],
+    bank_transfer_eligible: false,
+    bank_ineligible_reason: "BANK_ACCOUNT_MISSING",
+  };
+
+  assert.equal(isProjectWorkerHiddenFromPicker(offWorker), true);
+  assert.equal(isProjectWorkerHiddenFromPicker(onEligible), false);
+  assert.equal(isProjectWorkerHiddenFromPicker(unconfirmedWorker), false);
+  assert.equal(isProjectWorkerHiddenFromPicker(dupCccdAndMultiWorker), false);
+
+  const filtered = filterSelectableProjectWorkers([
+    onEligible,
+    offWorker,
+    unconfirmedWorker,
+    dupCccdAndMultiWorker,
+  ]);
+  assert.deepEqual(
+    filtered.map((w) => w.employee_code),
+    ["NV001", "NV003", "NV004"],
+    "OFF worker (NV002) must be hidden while ON, UNCONFIRMED (NV003), and fixable-ineligible (NV004) workers remain visible"
+  );
+
+  // UNCONFIRMED and fixable-ineligible workers still report their reasons clearly
+  const unconfirmedEligibility = describeWorkerEligibility(unconfirmedWorker);
+  assert.equal(unconfirmedEligibility.isEligible, false);
+  assert.ok(
+    unconfirmedEligibility.reasonLabels.some((r) => r.includes("UNCONFIRMED"))
+  );
+
+  const dupEligibility = describeWorkerEligibility(dupCccdAndMultiWorker);
+  assert.equal(dupEligibility.isEligible, false);
+  assert.ok(dupEligibility.reasonLabels.some((r) => r.includes("2 dự án")));
+  assert.ok(dupEligibility.reasonLabels.some((r) => r.includes("trùng CCCD")));
+});
+
+test("updateTabBadgeCountsForTab and parseSalaryAdvanceRequestListPayload preserve full server-side badge counts across >25 open requests, pagination, and active filters", () => {
+  // Simulate 32 open PM requests where page 1 only contains 25 rows (has_more = true)
+  const firstPageRows = Array.from({ length: 25 }, (_, idx) =>
+    makeRequestSummary({
+      request_id: `11111111-1111-4111-8111-${String(idx + 1).padStart(12, "0")}`,
+      request_state: idx % 2 === 0 ? "OPEN" : "NEEDS_INFO",
+    })
+  );
+
+  const parsedPage = parseSalaryAdvanceRequestListPayload({
+    requests: firstPageRows,
+    has_more: true,
+    next_cursor: "2026-10-29T10:00:00Z|11111111-1111-4111-8111-000000000025",
+    badge_count: 32,
+  });
+  assert.equal(parsedPage.ok, true);
+  if (parsedPage.ok) {
+    assert.equal(parsedPage.data.requests.length, 25);
+    assert.equal(parsedPage.data.has_more, true);
+    assert.equal(parsedPage.data.badge_count, 32);
+  }
+
+  // 1. Even though page 1 only has 25 rows (hasMore = true), serverBadgeCount (32) sets the exact total of 32
+  const initialCounts = {};
+  const afterPage1 = updateTabBadgeCountsForTab(
+    initialCounts,
+    "pm",
+    firstPageRows,
+    {
+      serverBadgeCount: 32,
+      isUnfiltered: true,
+      hasMore: true,
+    }
+  );
+  assert.equal(
+    afterPage1.pm,
+    32,
+    "PM badge must show all 32 open requests in scope, not just the 25 rows loaded on page 1"
+  );
+
+  // 2. When the user filters the list (e.g. requestStateFilter = APPROVED -> 0 open rows in filtered page),
+  // serverBadgeCount still keeps the badge at 32; and even if serverBadgeCount were omitted, isUnfiltered=false prevents overwriting with 0
+  const filteredApprovedRows = [
+    makeRequestSummary({
+      request_id: "99999999-9999-4999-8999-000000000001",
+      request_state: "APPROVED",
+    }),
+  ];
+  const afterFilteredWithServerBadge = updateTabBadgeCountsForTab(
+    afterPage1,
+    "pm",
+    filteredApprovedRows,
+    {
+      serverBadgeCount: 32,
+      isUnfiltered: false,
+      hasMore: false,
+    }
+  );
+  assert.equal(
+    afterFilteredWithServerBadge,
+    afterPage1,
+    "Filtering the list must not change the PM badge count or create a new object reference when count is unchanged"
+  );
+
+  const afterFilteredWithoutServerBadge = updateTabBadgeCountsForTab(
+    afterPage1,
+    "pm",
+    filteredApprovedRows,
+    {
+      serverBadgeCount: undefined,
+      isUnfiltered: false,
+      hasMore: false,
+    }
+  );
+  assert.equal(
+    afterFilteredWithoutServerBadge.pm,
+    32,
+    "Filtered view without serverBadgeCount must never overwrite the PM badge with the filtered subset count"
+  );
+
+  // 3. Same protection for Accountant 'Cần xử lý' badge when paginated (>25 rows) or filtered
+  const acctInitial = updateTabBadgeCountsForTab(
+    afterPage1,
+    "accountant",
+    [],
+    {
+      serverBadgeCount: 28,
+      isUnfiltered: true,
+      hasMore: true,
+    }
+  );
+  assert.equal(acctInitial.accountant, 28);
+
+  const acctAfterFiltered = updateTabBadgeCountsForTab(
+    acctInitial,
+    "accountant",
+    [],
+    {
+      serverBadgeCount: undefined,
+      isUnfiltered: false,
+      hasMore: false,
+    }
+  );
+  assert.equal(
+    acctAfterFiltered.accountant,
+    28,
+    "Accountant 'Cần xử lý' badge must not be overwritten with 0 when user filters to an empty subset"
+  );
+
+  // 4. parseSalaryAdvanceRequestListPayload, updateTabBadgeCappedForTab, resolveVisibleSalaryAdvanceTabs, and formatTabBadgeDisplayText clearly surface capped badge counts (e.g. "1000+")
+  const cappedPayload = parseSalaryAdvanceRequestListPayload({
+    requests: firstPageRows,
+    has_more: true,
+    next_cursor: "2026-10-29T10:00:00Z|11111111-1111-4111-8111-000000000025",
+    badge_count: 1000,
+    badge_count_capped: true,
+  });
+  assert.equal(cappedPayload.ok, true);
+  if (cappedPayload.ok) {
+    assert.equal(cappedPayload.data.badge_count, 1000);
+    assert.equal(cappedPayload.data.badge_count_capped, true);
+  }
+
+  assert.equal(formatTabBadgeDisplayText(32, false), "32");
+  assert.equal(formatTabBadgeDisplayText(1000, true), "1000+");
+
+  const initialCapped = {};
+  const pmCappedState = updateTabBadgeCappedForTab(initialCapped, "pm", {
+    serverBadgeCount: 1000,
+    serverBadgeCapped: true,
+    isUnfiltered: true,
+    hasMore: true,
+  });
+  assert.equal(pmCappedState.pm, true);
+
+  // Filtered or cursor-paginated loads without serverBadgeCount preserve the capped flag and object reference
+  const pmCappedAfterFilter = updateTabBadgeCappedForTab(pmCappedState, "pm", {
+    serverBadgeCount: undefined,
+    serverBadgeCapped: undefined,
+    isUnfiltered: false,
+    hasMore: false,
+  });
+  assert.equal(
+    pmCappedAfterFilter,
+    pmCappedState,
+    "Filtered load without serverBadgeCount must preserve capped flag and object reference"
+  );
+
+  const visibleTabsWithCap = resolveVisibleSalaryAdvanceTabs(
+    {
+      is_project_manager: true,
+      is_project_accountant: true,
+      is_supervisory_viewer: false,
+      badge_counts_capped: { accountant: true },
+    },
+    { pm: 1000, accountant: 2000 },
+    pmCappedAfterFilter
+  );
+  assert.equal(visibleTabsWithCap[0].id, "pm");
+  assert.equal(visibleTabsWithCap[0].badgeCount, 1000);
+  assert.equal(visibleTabsWithCap[0].badgeCapped, true);
+  assert.equal(visibleTabsWithCap[0].badgeDisplayText, "1000+");
+  assert.equal(visibleTabsWithCap[1].id, "accountant");
+  assert.equal(visibleTabsWithCap[1].badgeCount, 2000);
+  assert.equal(visibleTabsWithCap[1].badgeCapped, true);
+  assert.equal(visibleTabsWithCap[1].badgeDisplayText, "2000+");
+
+  // When a subsequent server badge refresh is no longer capped, capped resets to false and display text returns to exact number
+  const pmUncappedState = updateTabBadgeCappedForTab(pmCappedState, "pm", {
+    serverBadgeCount: 32,
+    serverBadgeCapped: false,
+    isUnfiltered: true,
+    hasMore: true,
+  });
+  assert.equal(pmUncappedState.pm, false);
+  const visibleTabsUncapped = resolveVisibleSalaryAdvanceTabs(
+    {
+      is_project_manager: true,
+      is_project_accountant: false,
+      is_supervisory_viewer: false,
+    },
+    { pm: 32 },
+    pmUncappedState
+  );
+  assert.equal(visibleTabsUncapped[0].badgeCapped, false);
+  assert.equal(visibleTabsUncapped[0].badgeDisplayText, "32");
 });
