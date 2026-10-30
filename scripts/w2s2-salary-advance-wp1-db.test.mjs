@@ -279,6 +279,18 @@ const SALARY_ADVANCE_RPC_BINDINGS = {
     ["p_cursor", "text"],
     ["p_page_size", "integer"],
   ],
+  salary_advance_list_project_worker_history: [
+    ["p_auth_subject", "uuid"],
+    ["p_app_user_id", "uuid"],
+    ["p_project_id", "text"],
+    ["p_worker_entry_id", "uuid"],
+    ["p_period_mode", "text"],
+    ["p_month", "text"],
+    ["p_from_date", "text"],
+    ["p_to_date", "text"],
+    ["p_cursor", "text"],
+    ["p_page_size", "integer"],
+  ],
 };
 
 function createPgliteSalaryAdvanceRepo(db) {
@@ -2826,18 +2838,26 @@ test("(#2) Full W2S2 Salary Advance WP1 acceptance across all 7 mandatory verifi
       "1800000",
     );
 
-    // Verify getRequestDetail as PM_1 (QLDA only, not accountant or supervisory) sets worker_advance_30d_summary = null
-    const pmDetailNo30d = await repo.getRequestDetail({
+    // Verify getRequestDetail as PM_1 (creator QLDA on PRJ_1) receives worker_advance_30d_summary scoped to PM_1's managed projects
+    const pmDetailWith30d = await repo.getRequestDetail({
       auth_subject: PM_1.auth,
       app_user_id: PM_1.app,
       request_id: histOpenReqId,
     });
-    assert.equal(pmDetailNo30d.ok, true);
-    assert.equal(pmDetailNo30d.data.worker_advance_30d_summary, null);
+    assert.equal(pmDetailWith30d.ok, true);
+    assert.ok(pmDetailWith30d.data.worker_advance_30d_summary);
+    assert.equal(
+      pmDetailWith30d.data.worker_advance_30d_summary.total_count,
+      1,
+    );
+    assert.equal(
+      pmDetailWith30d.data.worker_advance_30d_summary.total_amount_vnd,
+      "1800000",
+    );
 
-    // 3. Per-worker advance history (listWorkerHistory) across filters, pagination, and authorization scopes:
-    //    - PM_1 (QLDA) is denied with SALARY_ADVANCE_ACCESS_DENIED
-    const pmHistDenied = await repo.listWorkerHistory({
+    // 3. Per-worker advance history (listWorkerHistory & listProjectWorkerHistory) across filters, pagination, and authorization scopes:
+    //    - PM_1 (creator QLDA on PRJ_1) can view worker history for their own request
+    const pm1HistOk = await repo.listWorkerHistory({
       auth_subject: PM_1.auth,
       app_user_id: PM_1.app,
       request_id: histOpenReqId,
@@ -2848,10 +2868,28 @@ test("(#2) Full W2S2 Salary Advance WP1 acceptance across all 7 mandatory verifi
       cursor: null,
       page_size: 20,
     });
-    assert.deepEqual(pmHistDenied, {
-      ok: false,
-      code: "SALARY_ADVANCE_ACCESS_DENIED",
-    });
+    assert.equal(pm1HistOk.ok, true);
+    assert.equal(pm1HistOk.data.total_count, 2);
+    assert.equal(pm1HistOk.data.total_amount_vnd, "5000000");
+
+    //    - PM_1B (another QLDA on PRJ_1 who did NOT create histOpenReqId) and PM_2 (QLDA on PRJ_2) are denied listWorkerHistory on histOpenReqId
+    for (const otherPm of [PM_1B, PM_2]) {
+      const otherPmHistDenied = await repo.listWorkerHistory({
+        auth_subject: otherPm.auth,
+        app_user_id: otherPm.app,
+        request_id: histOpenReqId,
+        period_mode: "ALL",
+        month: null,
+        from_date: null,
+        to_date: null,
+        cursor: null,
+        page_size: 20,
+      });
+      assert.deepEqual(otherPmHistDenied, {
+        ok: false,
+        code: "SALARY_ADVANCE_ACCESS_DENIED",
+      });
+    }
 
     //    - ACCT_A (not assigned to PRJ_1 anymore) is denied with SALARY_ADVANCE_ACCESS_DENIED
     const acctAHistDenied = await repo.listWorkerHistory({
@@ -3102,6 +3140,299 @@ test("(#2) Full W2S2 Salary Advance WP1 acceptance across all 7 mandatory verifi
     assert.equal(bodHistSameCccdAll.ok, true);
     assert.equal(bodHistSameCccdAll.data.total_count, 4);
     assert.equal(bodHistSameCccdAll.data.total_amount_vnd, "11000000");
+
+    // 5. QLDA pre-create worker picker (`listProjectWorkers`) & pre-create worker history (`listProjectWorkerHistory`)
+    //    with multi-project QLDA scope isolation:
+    //    - Seed a worker on PRJ_NO_ACCT (which PM_1 ALSO manages, while PM_1B and ACCT_B do NOT manage PRJ_NO_ACCT)
+    //      with the same canonical CCCD (multiCccd) and a completed APPROVED + REVIEWED advance of 700,000 VND.
+    const prjNoAcctBatch = await db.query(
+      `select public.direct_entry_create_batch($1::uuid, $2::uuid, $3::jsonb, $4::text) as data`,
+      [
+        PM_1.auth,
+        PM_1.app,
+        JSON.stringify([
+          {
+            project_id: PRJ_NO_ACCT,
+            first_work_date: "2026-09-10",
+            employee_code: "hrp-2026-800955",
+            worker_details: makeWorkerDetails(
+              "Nguyễn Công Nhân Bắc 1 (Đợt Dự Án Phụ)",
+            ),
+            recruiter_id: PM_1.recruiter,
+            labor_type: "TEMPORARY",
+          },
+        ]),
+        "sal_adv_batch_prj_no_acct_worker",
+      ],
+    );
+    const prjNoAcctSubId = prjNoAcctBatch.rows[0].data.submission_id;
+    await db.query(
+      `select public.direct_entry_transition_submission($1::uuid, $2::uuid, $3::uuid, 1, 'SUBMITTED', 'sal_adv_submit_prj_no_acct_worker')`,
+      [PM_1.auth, PM_1.app, prjNoAcctSubId],
+    );
+    const { rows: prjNoAcctEntries } = await db.query(
+      `select entry_id from public.direct_entries where submission_id = $1::uuid`,
+      [prjNoAcctSubId],
+    );
+    const workerPrjNoAcct = prjNoAcctEntries[0].entry_id;
+    await db.query(
+      `update public.direct_entries
+          set worker_details = jsonb_set(
+                worker_details,
+                '{national_id}',
+                jsonb_build_object('state', 'provided', 'value', $1::text)
+              ),
+              version = version + 1
+        where entry_id = $2::uuid`,
+      [multiCccd, workerPrjNoAcct],
+    );
+    // Set workerPrjNoAcct to OFF so workerPrj1A remains ON in only 1 project
+    await db.query(
+      `insert into public.direct_entry_employment_status_events
+         (entry_id, status, effective_date, leave_date, leave_reason_text, version, actor_user_id, reason_id)
+       select entry_id, 'OFF', '2026-09-25'::date, '2026-09-25'::date, 'Kết thúc đợt dự án phụ',
+              version + 1, $2::uuid, reason_id
+         from public.direct_entry_employment_status_events
+        where entry_id = $1::uuid
+        order by version desc
+        limit 1`,
+      [workerPrjNoAcct, PM_1.app],
+    );
+
+    await db.exec("begin;");
+    await db.exec(
+      "select pg_catalog.set_config('salary_advance.write_marker', 'on', true);",
+    );
+    await db.query(
+      `insert into public.salary_advance_requests (
+         request_id, project_id, worker_entry_id, requested_amount_vnd, payment_method,
+         initial_content, request_state, evidence_review_state, version,
+         created_by_user_id, decided_by_user_id, decided_at,
+         current_evidence_version, current_evidence_event_id, current_evidence_storage_key, current_evidence_mime_type,
+         current_evidence_size_bytes, current_evidence_checksum_sha256,
+         current_evidence_uploaded_by_user_id, current_evidence_uploaded_at,
+         evidence_reviewed_by_user_id, evidence_reviewed_at,
+         reviewed_worker_portrait_document_id, reviewed_worker_portrait_version,
+         last_actor_user_id, last_activity_at, created_at, updated_at
+       )
+       select '88800000-0000-4000-8000-000000000888'::uuid,
+              $1,
+              $2::uuid,
+              700000,
+              payment_method,
+              'Ứng lương ở dự án thứ 2 do PM_1 quản lý (cùng CCCD)',
+              request_state,
+              evidence_review_state,
+              version,
+              $3::uuid,
+              $4::uuid,
+              decided_at,
+              current_evidence_version,
+              current_evidence_event_id,
+              replace(current_evidence_storage_key, request_id::text, '88800000-0000-4000-8000-000000000888'),
+              current_evidence_mime_type,
+              current_evidence_size_bytes,
+              current_evidence_checksum_sha256,
+              $3::uuid,
+              current_evidence_uploaded_at,
+              $4::uuid,
+              evidence_reviewed_at,
+              reviewed_worker_portrait_document_id,
+              reviewed_worker_portrait_version,
+              $4::uuid,
+              last_activity_at,
+              created_at,
+              updated_at
+         from public.salary_advance_requests
+        where request_id = $5::uuid`,
+      [PRJ_NO_ACCT, workerPrjNoAcct, PM_1.app, ACCT_A.app, histReq1Id],
+    );
+    await db.exec("commit;");
+
+    // 5a. PM_1 (manages PRJ_1 and PRJ_NO_ACCT, does NOT manage PRJ_2):
+    //     - In listProjectWorkers(PRJ_1), workerPrj1A's advance_30d_summary includes PRJ_1 (1,800,000 + 4,500,000) + PRJ_NO_ACCT (700,000) = 3 items, 7,000,000 VND (and excludes PRJ_2's 1,500,000 VND!)
+    const pm1WorkersWith30d = await repo.listProjectWorkers({
+      auth_subject: PM_1.auth,
+      app_user_id: PM_1.app,
+      project_id: PRJ_1,
+      search: "hrp-2026-800001",
+      cursor: null,
+      page_size: 20,
+    });
+    assert.equal(pm1WorkersWith30d.ok, true);
+    assert.equal(
+      JSON.stringify(pm1WorkersWith30d.data).includes(multiCccd),
+      false,
+      "listProjectWorkers must NEVER leak raw CCCD",
+    );
+    const pm1PickedWorkerA = pm1WorkersWith30d.data.workers.find(
+      (w) => w.worker_entry_id === workerPrj1A,
+    );
+    assert.ok(pm1PickedWorkerA);
+    assert.equal(pm1PickedWorkerA.first_work_date, "2026-10-01");
+    assert.equal(pm1PickedWorkerA.recruiter_display_name, PM_1.name);
+    assert.equal(pm1PickedWorkerA.recruiter_code, PM_1.code);
+    assert.equal(pm1PickedWorkerA.provider_type, "hrp");
+    assert.equal(pm1PickedWorkerA.advance_30d_summary?.total_count, 3);
+    assert.equal(
+      pm1PickedWorkerA.advance_30d_summary?.total_amount_vnd,
+      "7000000",
+    );
+
+    //     - In getRequestDetail(histOpenReqId), PM_1 also sees total_count = 3, total_amount_vnd = '7000000'
+    const pm1DetailMultiManaged = await repo.getRequestDetail({
+      auth_subject: PM_1.auth,
+      app_user_id: PM_1.app,
+      request_id: histOpenReqId,
+    });
+    assert.equal(pm1DetailMultiManaged.ok, true);
+    assert.equal(
+      pm1DetailMultiManaged.data.worker_advance_30d_summary?.total_count,
+      3,
+    );
+    assert.equal(
+      pm1DetailMultiManaged.data.worker_advance_30d_summary?.total_amount_vnd,
+      "7000000",
+    );
+
+    //     - In listProjectWorkerHistory(PRJ_1, workerPrj1A, ALL), PM_1 sees 4 items (histReq1 + histReq2 + bankReqId on PRJ_1, plus 700k on PRJ_NO_ACCT) = 10,200,000 VND, and NEVER sees PRJ_2!
+    const pm1ProjectWorkerHistAll = await repo.listProjectWorkerHistory({
+      auth_subject: PM_1.auth,
+      app_user_id: PM_1.app,
+      project_id: PRJ_1,
+      worker_entry_id: workerPrj1A,
+      period_mode: "ALL",
+      month: null,
+      from_date: null,
+      to_date: null,
+      cursor: null,
+      page_size: 20,
+    });
+    assert.equal(pm1ProjectWorkerHistAll.ok, true);
+    assert.equal(pm1ProjectWorkerHistAll.data.request_id, null);
+    assert.equal(pm1ProjectWorkerHistAll.data.worker_entry_id, workerPrj1A);
+    assert.equal(pm1ProjectWorkerHistAll.data.total_count, 4);
+    assert.equal(pm1ProjectWorkerHistAll.data.total_amount_vnd, "10200000");
+    assert.equal(
+      pm1ProjectWorkerHistAll.data.items.some((item) => item.project_id === PRJ_2),
+      false,
+      "QLDA must NEVER see worker history from projects they do not manage",
+    );
+    assert.equal(
+      JSON.stringify(pm1ProjectWorkerHistAll.data).includes(multiCccd),
+      false,
+      "listProjectWorkerHistory must NEVER leak raw CCCD",
+    );
+
+    //     - In listProjectWorkerHistory(PRJ_1, workerPrj1A, LAST_30_DAYS), PM_1 sees 3 items = 7,000,000 VND
+    const pm1ProjectWorkerHist30d = await repo.listProjectWorkerHistory({
+      auth_subject: PM_1.auth,
+      app_user_id: PM_1.app,
+      project_id: PRJ_1,
+      worker_entry_id: workerPrj1A,
+      period_mode: "LAST_30_DAYS",
+      month: null,
+      from_date: null,
+      to_date: null,
+      cursor: null,
+      page_size: 20,
+    });
+    assert.equal(pm1ProjectWorkerHist30d.ok, true);
+    assert.equal(pm1ProjectWorkerHist30d.data.total_count, 3);
+    assert.equal(pm1ProjectWorkerHist30d.data.total_amount_vnd, "7000000");
+
+    // 5b. PM_1B (manages ONLY PRJ_1, not PRJ_NO_ACCT and not PRJ_2):
+    //     - In listProjectWorkers(PRJ_1), PM_1B sees only PRJ_1's 2 items in 30d = 6,300,000 VND
+    const pm1bWorkersWith30d = await repo.listProjectWorkers({
+      auth_subject: PM_1B.auth,
+      app_user_id: PM_1B.app,
+      project_id: PRJ_1,
+      search: "hrp-2026-800001",
+      cursor: null,
+      page_size: 20,
+    });
+    assert.equal(pm1bWorkersWith30d.ok, true);
+    const pm1bPickedWorkerA = pm1bWorkersWith30d.data.workers.find(
+      (w) => w.worker_entry_id === workerPrj1A,
+    );
+    assert.equal(pm1bPickedWorkerA?.advance_30d_summary?.total_count, 2);
+    assert.equal(
+      pm1bPickedWorkerA?.advance_30d_summary?.total_amount_vnd,
+      "6300000",
+    );
+
+    //     - In listProjectWorkerHistory(PRJ_1, workerPrj1A, ALL), PM_1B sees only PRJ_1's 3 items = 9,500,000 VND (excludes both PRJ_NO_ACCT and PRJ_2!)
+    const pm1bProjectWorkerHistAll = await repo.listProjectWorkerHistory({
+      auth_subject: PM_1B.auth,
+      app_user_id: PM_1B.app,
+      project_id: PRJ_1,
+      worker_entry_id: workerPrj1A,
+      period_mode: "ALL",
+      month: null,
+      from_date: null,
+      to_date: null,
+      cursor: null,
+      page_size: 20,
+    });
+    assert.equal(pm1bProjectWorkerHistAll.ok, true);
+    assert.equal(pm1bProjectWorkerHistAll.data.total_count, 3);
+    assert.equal(pm1bProjectWorkerHistAll.data.total_amount_vnd, "9500000");
+    assert.equal(
+      pm1bProjectWorkerHistAll.data.items.every((item) => item.project_id === PRJ_1),
+      true,
+    );
+
+    // 5c. Out-of-scope QLDA (`PM_2` on `PRJ_1`), cross-project worker mismatch, and vendor-recruited worker rejection:
+    const pm2OutOfScopeProjectHist = await repo.listProjectWorkerHistory({
+      auth_subject: PM_2.auth,
+      app_user_id: PM_2.app,
+      project_id: PRJ_1,
+      worker_entry_id: workerPrj1A,
+      period_mode: "ALL",
+      month: null,
+      from_date: null,
+      to_date: null,
+      cursor: null,
+      page_size: 20,
+    });
+    assert.deepEqual(pm2OutOfScopeProjectHist, {
+      ok: false,
+      code: "SALARY_ADVANCE_ACCESS_DENIED",
+    });
+
+    const crossProjectMismatchHist = await repo.listProjectWorkerHistory({
+      auth_subject: PM_1.auth,
+      app_user_id: PM_1.app,
+      project_id: PRJ_1,
+      worker_entry_id: workerPrj2,
+      period_mode: "ALL",
+      month: null,
+      from_date: null,
+      to_date: null,
+      cursor: null,
+      page_size: 20,
+    });
+    assert.deepEqual(crossProjectMismatchHist, {
+      ok: false,
+      code: "SALARY_ADVANCE_WORKER_PROJECT_MISMATCH",
+    });
+
+    const vendorWorkerProjectHist = await repo.listProjectWorkerHistory({
+      auth_subject: PM_1.auth,
+      app_user_id: PM_1.app,
+      project_id: PRJ_1,
+      worker_entry_id: vendorWorkerEntry1,
+      period_mode: "ALL",
+      month: null,
+      from_date: null,
+      to_date: null,
+      cursor: null,
+      page_size: 20,
+    });
+    assert.deepEqual(vendorWorkerProjectHist, {
+      ok: false,
+      code: "SALARY_ADVANCE_WORKER_VENDOR_RECRUITED",
+    });
 
     // Append-only trigger on salary_advance_events blocks UPDATE and DELETE even with write_marker
     await assert.rejects(

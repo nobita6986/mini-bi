@@ -412,7 +412,7 @@ test("SalaryAdvanceWorkspace renders work information (first work date + recruit
   assert.match(workspaceSource, /formatWorkDateVi/);
   assert.match(workspaceSource, /formatWorkerRecruiterLabel/);
 
-  // 30-day advance summary card in Accountant / Supervisory detail view
+  // 30-day advance summary card in Detail view & QLDA Create Request dialog
   assert.match(
     workspaceSource,
     /data-testid="salary-advance-detail-30d-summary"/
@@ -429,6 +429,36 @@ test("SalaryAdvanceWorkspace renders work information (first work date + recruit
     workspaceSource,
     /data-testid="salary-advance-open-worker-history-btn"/
   );
+  assert.match(
+    workspaceSource,
+    /data-testid="salary-advance-create-worker-work-info"/
+  );
+  assert.match(
+    workspaceSource,
+    /data-testid="salary-advance-create-worker-first-work-date"/
+  );
+  assert.match(
+    workspaceSource,
+    /data-testid="salary-advance-create-worker-recruiter"/
+  );
+  assert.match(
+    workspaceSource,
+    /data-testid="salary-advance-create-worker-30d-summary"/
+  );
+  assert.match(
+    workspaceSource,
+    /data-testid="salary-advance-create-worker-30d-count"/
+  );
+  assert.match(
+    workspaceSource,
+    /data-testid="salary-advance-create-worker-30d-amount"/
+  );
+  assert.match(
+    workspaceSource,
+    /data-testid="salary-advance-create-open-worker-history-btn"/
+  );
+  assert.match(workspaceSource, /LAST_30_DAYS/);
+  assert.match(workspaceSource, /30 ngày gần nhất/);
   assert.match(workspaceSource, /sanitizeWorker30dSummary/);
   assert.match(workspaceSource, /Tóm tắt ứng lương 30 ngày gần nhất/);
   assert.match(workspaceSource, /SALARY_ADVANCE_30D_SUMMARY_RULE_NOTICE/);

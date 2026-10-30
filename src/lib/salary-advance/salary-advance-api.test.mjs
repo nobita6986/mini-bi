@@ -13,6 +13,7 @@ import {
   handleGetExportSalaryAdvanceRequests,
   handleGetPreviewSalaryAdvanceEvidence,
   handleGetSalaryAdvanceContext,
+  handleGetSalaryAdvanceProjectWorkerHistory,
   handleGetSalaryAdvanceProjectWorkers,
   handleGetSalaryAdvanceRequestDetail,
   handleGetSalaryAdvanceRequests,
@@ -734,6 +735,7 @@ test("all Next.js salary-advance API route files enforce nodejs runtime, force-d
     "src/app/api/salary-advance/requests/[requestId]/evidence/[evidenceRef]/preview/route.ts",
     "src/app/api/salary-advance/requests/[requestId]/worker-portrait/route.ts",
     "src/app/api/salary-advance/requests/[requestId]/worker-history/route.ts",
+    "src/app/api/salary-advance/projects/[projectId]/workers/[workerEntryId]/worker-history/route.ts",
   ];
 
   for (const rel of routeRelativePaths) {
@@ -1668,4 +1670,125 @@ test("handleGetSalaryAdvanceProjectWorkers excludes Vendor-recruited workers and
   assert.equal(historyCalls[historyCalls.length - 1].p_period_mode, "MONTH");
   assert.equal(historyCalls[historyCalls.length - 1].p_month, "2026-10");
   assert.equal(historyCalls[historyCalls.length - 1].p_page_size, 10);
+
+  // 6. QLDA pre-create project worker history endpoint (handleGetSalaryAdvanceProjectWorkerHistory):
+  const projectHistoryCalls = [];
+  const projectHistRepo = createSalaryAdvanceRepository(async (fn, args) => {
+    if (fn === "salary_advance_list_project_worker_history") {
+      projectHistoryCalls.push(args);
+      if (args.p_project_id === "PRJ_UNMANAGED") {
+        return {
+          data: null,
+          error: {
+            code: "42501",
+            message: "SALARY_ADVANCE_ACCESS_DENIED",
+          },
+        };
+      }
+      return {
+        data: {
+          request_id: null,
+          worker_entry_id: args.p_worker_entry_id,
+          worker_employee_code: "NV022",
+          worker_display_name: "Công Nhân Nội Bộ HRP",
+          period_mode: args.p_period_mode,
+          month: args.p_month,
+          from_date: "2026-10-01",
+          to_date: "2026-10-30",
+          qualifying_rule: "APPROVED_AND_EVIDENCE_REVIEWED",
+          timezone: "Asia/Ho_Chi_Minh",
+          total_count: 1,
+          total_amount_vnd: "3000000",
+          has_more: false,
+          next_cursor: null,
+          items: [
+            {
+              request_id: REQ_ID,
+              project_id: args.p_project_id,
+              project_display_name: "Dự án Bắc",
+              worker_entry_id: args.p_worker_entry_id,
+              worker_employee_code: "NV022",
+              worker_display_name: "Công Nhân Nội Bộ HRP",
+              effective_date: "2026-10-28",
+              effective_at: "2026-10-28T10:00:00Z",
+              requested_amount_vnd: "3000000",
+              payment_method: "BANK_TRANSFER",
+              initial_content: "Ứng lương đợt 2",
+              request_state: "APPROVED",
+              evidence_review_state: "REVIEWED",
+              created_by_display_name: "QLDA 01",
+              decided_by_display_name: "Kế toán A",
+              decided_at: "2026-10-28T09:00:00Z",
+              evidence_reviewed_by_display_name: "Kế toán A",
+              evidence_reviewed_at: "2026-10-28T10:00:00Z",
+              created_at: "2026-10-28T08:00:00Z",
+            },
+          ],
+        },
+        error: null,
+      };
+    }
+    return { data: null, error: { message: "UNEXPECTED_RPC" } };
+  });
+
+  // 6a. Feature gate disabled -> 404
+  const disabledPrjHistRes = await handleGetSalaryAdvanceProjectWorkerHistory(
+    new Request(
+      `${ORIGIN}/api/salary-advance/projects/PRJ_NORTH/workers/${WORKER_ID}/worker-history`,
+    ),
+    "PRJ_NORTH",
+    WORKER_ID,
+    "false",
+    {
+      resolveSession: makeActorSession(PM_USER_ID),
+      repository: projectHistRepo,
+    },
+  );
+  assert.equal(disabledPrjHistRes.status, 404);
+
+  // 6b. Out-of-scope QLDA -> 403 SALARY_ADVANCE_ACCESS_DENIED
+  const deniedPrjHistRes = await handleGetSalaryAdvanceProjectWorkerHistory(
+    new Request(
+      `${ORIGIN}/api/salary-advance/projects/PRJ_UNMANAGED/workers/${WORKER_ID}/worker-history`,
+    ),
+    "PRJ_UNMANAGED",
+    WORKER_ID,
+    "true",
+    {
+      resolveSession: makeActorSession(PM_USER_ID),
+      repository: projectHistRepo,
+    },
+  );
+  assert.equal(deniedPrjHistRes.status, 403);
+  assert.equal(
+    (await deniedPrjHistRes.json()).code,
+    "SALARY_ADVANCE_ACCESS_DENIED",
+  );
+
+  // 6c. In-scope QLDA -> 200 with request_id: null and scoped history items
+  const okPrjHistRes = await handleGetSalaryAdvanceProjectWorkerHistory(
+    new Request(
+      `${ORIGIN}/api/salary-advance/projects/PRJ_NORTH/workers/${WORKER_ID}/worker-history?period_mode=LAST_30_DAYS&page_size=15`,
+    ),
+    "PRJ_NORTH",
+    WORKER_ID,
+    "true",
+    {
+      resolveSession: makeActorSession(PM_USER_ID),
+      repository: projectHistRepo,
+    },
+  );
+  assert.equal(okPrjHistRes.status, 200);
+  const okPrjHistPayload = await okPrjHistRes.json();
+  assert.equal(okPrjHistPayload.ok, true);
+  assert.equal(okPrjHistPayload.data.request_id, null);
+  assert.equal(okPrjHistPayload.data.worker_entry_id, WORKER_ID);
+  assert.equal(okPrjHistPayload.data.total_count, 1);
+  assert.equal(okPrjHistPayload.data.total_amount_vnd, "3000000");
+  const lastProjectHistCall =
+    projectHistoryCalls[projectHistoryCalls.length - 1];
+  assert.equal(lastProjectHistCall.p_project_id, "PRJ_NORTH");
+  assert.equal(lastProjectHistCall.p_worker_entry_id, WORKER_ID);
+  assert.equal(lastProjectHistCall.p_period_mode, "LAST_30_DAYS");
+  assert.equal(lastProjectHistCall.p_page_size, 15);
 });

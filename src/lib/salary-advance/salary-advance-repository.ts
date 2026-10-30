@@ -229,6 +229,19 @@ export type SalaryAdvanceRepository = {
       page_size: number;
     },
   ): Promise<SalaryAdvanceRepoResult<SalaryAdvanceWorkerHistoryResponse>>;
+
+  listProjectWorkerHistory(
+    input: SalaryAdvanceActorRef & {
+      project_id: string;
+      worker_entry_id: string;
+      period_mode: SalaryAdvanceHistoryPeriodMode;
+      month: string | null;
+      from_date: string | null;
+      to_date: string | null;
+      cursor: string | null;
+      page_size: number;
+    },
+  ): Promise<SalaryAdvanceRepoResult<SalaryAdvanceWorkerHistoryResponse>>;
 };
 
 const KNOWN_ERROR_MESSAGES: ReadonlySet<SalaryAdvanceErrorCode> = new Set([
@@ -795,7 +808,46 @@ export function createSalaryAdvanceRepository(
         (raw) => {
           if (
             !isPlainObject(raw) ||
-            typeof raw.request_id !== "string" ||
+            (raw.request_id !== null && typeof raw.request_id !== "string") ||
+            typeof raw.worker_entry_id !== "string" ||
+            typeof raw.worker_employee_code !== "string" ||
+            typeof raw.worker_display_name !== "string" ||
+            typeof raw.period_mode !== "string" ||
+            typeof raw.total_count !== "number" ||
+            !Number.isSafeInteger(raw.total_count) ||
+            raw.total_count < 0 ||
+            typeof raw.total_amount_vnd !== "string" ||
+            !/^\d+$/.test(raw.total_amount_vnd) ||
+            !Array.isArray(raw.items) ||
+            typeof raw.has_more !== "boolean" ||
+            (raw.next_cursor !== null && typeof raw.next_cursor !== "string")
+          ) {
+            return null;
+          }
+          return raw as unknown as SalaryAdvanceWorkerHistoryResponse;
+        },
+      );
+    },
+
+    listProjectWorkerHistory(input) {
+      return invoke(
+        "salary_advance_list_project_worker_history",
+        {
+          p_auth_subject: input.auth_subject,
+          p_app_user_id: input.app_user_id,
+          p_project_id: input.project_id,
+          p_worker_entry_id: input.worker_entry_id,
+          p_period_mode: input.period_mode,
+          p_month: input.month,
+          p_from_date: input.from_date,
+          p_to_date: input.to_date,
+          p_cursor: input.cursor,
+          p_page_size: input.page_size,
+        },
+        (raw) => {
+          if (
+            !isPlainObject(raw) ||
+            (raw.request_id !== null && typeof raw.request_id !== "string") ||
             typeof raw.worker_entry_id !== "string" ||
             typeof raw.worker_employee_code !== "string" ||
             typeof raw.worker_display_name !== "string" ||

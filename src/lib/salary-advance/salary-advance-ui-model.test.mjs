@@ -1980,6 +1980,14 @@ test("formatWorkDateVi, formatWorkerRecruiterLabel, sanitizeWorker30dSummary, fo
     }),
     "/api/salary-advance/requests/11111111-1111-4111-8111-111111111111/worker-history?period_mode=CUSTOM_RANGE&page_size=20&from_date=2026-10-01&to_date=2026-10-30"
   );
+  assert.equal(
+    buildSalaryAdvanceWorkerHistoryUrl({
+      projectId: "PRJ_NORTH",
+      workerEntryId: "33333333-3333-4333-8333-333333333333",
+      periodMode: "LAST_30_DAYS",
+    }),
+    "/api/salary-advance/projects/PRJ_NORTH/workers/33333333-3333-4333-8333-333333333333/worker-history?period_mode=LAST_30_DAYS&page_size=20"
+  );
 
   const sampleHistoryPayload = {
     request_id: "11111111-1111-4111-8111-111111111111",
@@ -2024,6 +2032,15 @@ test("formatWorkDateVi, formatWorkerRecruiterLabel, sanitizeWorker30dSummary, fo
   const parsedHistory = parseSalaryAdvanceWorkerHistoryPayload(sampleHistoryPayload);
   assert.equal(parsedHistory.ok, true);
 
+  const parsedPreCreateHistory = parseSalaryAdvanceWorkerHistoryPayload({
+    ...sampleHistoryPayload,
+    request_id: null,
+  });
+  assert.equal(parsedPreCreateHistory.ok, true);
+  if (parsedPreCreateHistory.ok) {
+    assert.equal(parsedPreCreateHistory.data.request_id, null);
+  }
+
   const tracker = createLatestRequestTracker();
   const ticket = tracker.begin();
   const fetchedHistory = await fetchSalaryAdvanceWorkerHistoryPage({
@@ -2040,5 +2057,31 @@ test("formatWorkDateVi, formatWorkerRecruiterLabel, sanitizeWorker30dSummary, fo
     assert.equal(fetchedHistory.data.total_count, 2);
     assert.equal(fetchedHistory.data.total_amount_vnd, "4500000");
     assert.equal(fetchedHistory.data.items.length, 1);
+  }
+
+  const preCreateTicket = tracker.begin();
+  const fetchedPreCreateHistory = await fetchSalaryAdvanceWorkerHistoryPage({
+    projectId: "PRJ_NORTH",
+    workerEntryId: "33333333-3333-4333-8333-333333333333",
+    periodMode: "LAST_30_DAYS",
+    ticket: preCreateTicket,
+    fetchImpl: async (url) => {
+      assert.match(
+        String(url),
+        /\/api\/salary-advance\/projects\/PRJ_NORTH\/workers\/33333333-3333-4333-8333-333333333333\/worker-history\?period_mode=LAST_30_DAYS/
+      );
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          data: { ...sampleHistoryPayload, request_id: null },
+        }),
+        { status: 200 }
+      );
+    },
+  });
+  assert.equal(fetchedPreCreateHistory.status, "success");
+  if (fetchedPreCreateHistory.status === "success") {
+    assert.equal(fetchedPreCreateHistory.data.request_id, null);
+    assert.equal(fetchedPreCreateHistory.data.total_count, 2);
   }
 });
