@@ -4019,7 +4019,7 @@ export function SalaryAdvanceWorkspace() {
                 >
                   <thead>
                     <tr className="border-b border-[var(--color-border)] bg-[var(--color-surface-subtle)] text-xs font-semibold text-[var(--color-text-secondary)]">
-                      <th className="py-2 px-3">Ngày ứng</th>
+                      <th className="py-2 px-3">Ngày đối chiếu chứng từ</th>
                       <th className="py-2 px-3">Số tiền ứng</th>
                       <th className="py-2 px-3">Hình thức</th>
                       <th className="py-2 px-3">Dự án</th>
@@ -4040,14 +4040,18 @@ export function SalaryAdvanceWorkspace() {
                         >
                           <td className="py-2.5 px-3 align-top whitespace-nowrap">
                             <div className="font-semibold text-[var(--color-text-primary)]">
+                              Hoàn tất đối chiếu:{" "}
                               {formatWorkDateVi(item.effective_date)}
                             </div>
                             {item.evidence_reviewed_at ? (
                               <div className="text-[11px] text-[var(--color-text-secondary)]">
-                                Đối chiếu:{" "}
+                                Giờ đối chiếu:{" "}
                                 {formatDateTimeVi(item.evidence_reviewed_at)}
                               </div>
                             ) : null}
+                            <div className="text-[11px] text-[var(--color-text-secondary)]">
+                              Tạo yêu cầu: {formatDateTimeVi(item.created_at)}
+                            </div>
                           </td>
 
                           <td className="py-2.5 px-3 align-top font-semibold text-[var(--color-primary)] whitespace-nowrap">

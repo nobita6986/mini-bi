@@ -1880,7 +1880,7 @@ export function formatVndAmount(
 }
 
 export const SALARY_ADVANCE_30D_SUMMARY_RULE_NOTICE =
-  "Chỉ tính các yêu cầu ứng lương đã được Kế toán chấp thuận và đã xác nhận đối chiếu chứng từ nhận tiền (APPROVED + REVIEWED) trong 30 ngày gần nhất (múi giờ Asia/Ho_Chi_Minh). Không tính yêu cầu đang mở, chờ bổ sung, từ chối, đã rút, xử lý ngoài BI hoặc chưa đối chiếu nhận tiền.";
+  "Chỉ tính các yêu cầu ứng lương đã được Kế toán chấp thuận và đã xác nhận đối chiếu chứng từ nhận tiền (APPROVED + REVIEWED), tính theo ngày hoàn tất đối chiếu chứng từ (múi giờ Asia/Ho_Chi_Minh). Không tính yêu cầu đang mở, chờ bổ sung, từ chối, đã rút, xử lý ngoài BI hoặc chưa đối chiếu nhận tiền.";
 
 const ISO_CALENDAR_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
 

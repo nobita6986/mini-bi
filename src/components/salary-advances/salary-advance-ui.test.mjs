@@ -474,6 +474,9 @@ test("SalaryAdvanceWorkspace renders work information (first work date + recruit
     workspaceSource,
     /data-testid="salary-advance-worker-history-table"/
   );
+  assert.match(workspaceSource, /Ngày đối chiếu chứng từ/);
+  assert.match(workspaceSource, /Hoàn tất đối chiếu:/);
+  assert.match(workspaceSource, /Tạo yêu cầu:/);
   assert.match(workspaceSource, /fetchSalaryAdvanceWorkerHistoryPage/);
   assert.match(workspaceSource, /historyTrackerRef/);
 });

@@ -2957,6 +2957,152 @@ test("(#2) Full W2S2 Salary Advance WP1 acceptance across all 7 mandatory verifi
     assert.equal(bodHistAll.data.total_count, 2);
     assert.equal(bodHistAll.data.total_amount_vnd, "5000000");
 
+    // 4. Cross-episode same-CCCD matching (distinct worker_entry_id & candidate_id) + strict project scope:
+    //    - Set workerPrj1B (on PRJ_1, first_work_date '2026-10-02' != '2026-10-01') to have the same canonical CCCD (multiCccd)
+    //      so its existing bankReqId (4,500,000 VND on PRJ_1, already APPROVED + REVIEWED) matches the same worker by CCCD!
+    //    - End ACCT_B's assignment on PRJ_2 so ACCT_B is scoped strictly to PRJ_1, then insert a completed
+    //      APPROVED + REVIEWED advance (1,500,000 VND) on workerPrj2 (PRJ_2, which already has multiCccd, out of ACCT_B's scope).
+    await db.query(
+      `update public.direct_entries
+          set worker_details = jsonb_set(
+                worker_details,
+                '{national_id}',
+                jsonb_build_object('state', 'provided', 'value', $1::text)
+              ),
+              version = version + 1
+        where entry_id = $2::uuid`,
+      [multiCccd, workerPrj1B],
+    );
+    const { rows: acctBPrj2Rows } = await db.query(
+      `select assignment_id, version
+         from public.vendor_finance_project_accountants
+        where project_id = $1 and accountant_user_id = $2::uuid and valid_to is null`,
+      [PRJ_2, ACCT_B.app],
+    );
+    const endAcctBPrj2Reason = "Kết thúc phân công ACCT_B trên PRJ_2 để kiểm thử cô lập scope";
+    await db.query(
+      `select public.vendor_finance_end_project_accountant_admin(
+         $1::uuid, $2::uuid, $3::uuid, $4::integer, '2026-06-01'::date, $5::text, $6::uuid, $7::text
+       )`,
+      [
+        FULL_ADMIN.auth,
+        FULL_ADMIN.app,
+        acctBPrj2Rows[0].assignment_id,
+        acctBPrj2Rows[0].version,
+        endAcctBPrj2Reason,
+        nextUuid(),
+        computeEndProjectAccountantFingerprint({
+          assignment_id: acctBPrj2Rows[0].assignment_id,
+          expected_version: acctBPrj2Rows[0].version,
+          valid_to: "2026-06-01",
+          reason: endAcctBPrj2Reason,
+        }),
+      ],
+    );
+    await db.exec("begin;");
+    await db.exec(
+      "select pg_catalog.set_config('salary_advance.write_marker', 'on', true);",
+    );
+    await db.query(
+      `insert into public.salary_advance_requests (
+         request_id, project_id, worker_entry_id, requested_amount_vnd, payment_method,
+         initial_content, request_state, evidence_review_state, version,
+         created_by_user_id, decided_by_user_id, decided_at,
+         current_evidence_version, current_evidence_event_id, current_evidence_storage_key, current_evidence_mime_type,
+         current_evidence_size_bytes, current_evidence_checksum_sha256,
+         current_evidence_uploaded_by_user_id, current_evidence_uploaded_at,
+         evidence_reviewed_by_user_id, evidence_reviewed_at,
+         reviewed_worker_portrait_document_id, reviewed_worker_portrait_version,
+         last_actor_user_id, last_activity_at, created_at, updated_at
+       )
+       select '88800000-0000-4000-8000-000000000999'::uuid,
+              $1,
+              $2::uuid,
+              1500000,
+              payment_method,
+              'Ứng lương đợt trước ở dự án PRJ_2 cùng CCCD',
+              request_state,
+              evidence_review_state,
+              version,
+              $3::uuid,
+              $4::uuid,
+              decided_at,
+              current_evidence_version,
+              current_evidence_event_id,
+              replace(current_evidence_storage_key, request_id::text, '88800000-0000-4000-8000-000000000999'),
+              current_evidence_mime_type,
+              current_evidence_size_bytes,
+              current_evidence_checksum_sha256,
+              $3::uuid,
+              current_evidence_uploaded_at,
+              $4::uuid,
+              evidence_reviewed_at,
+              reviewed_worker_portrait_document_id,
+              reviewed_worker_portrait_version,
+              $4::uuid,
+              last_activity_at,
+              created_at,
+              updated_at
+         from public.salary_advance_requests
+        where request_id = $5::uuid`,
+      [PRJ_2, workerPrj2, PM_2.app, ACCT_A.app, histReq1Id],
+    );
+    await db.exec("commit;");
+
+    // ACCT_B (assigned to PRJ_1 only) now sees:
+    // - 30d summary: histReq1 (1,800,000 on workerPrj1A) + bankReqId (4,500,000 on workerPrj1B via same CCCD) = 2 items, 6,300,000 VND
+    // - ALL history: histReq1 + histReq2 + bankReqId = 3 items, 9,500,000 VND (excludes PRJ_2's 1,500,000 VND!)
+    const acctBDetailSameCccd = await repo.getRequestDetail({
+      auth_subject: ACCT_B.auth,
+      app_user_id: ACCT_B.app,
+      request_id: histOpenReqId,
+    });
+    assert.equal(acctBDetailSameCccd.ok, true);
+    assert.equal(
+      acctBDetailSameCccd.data.worker_advance_30d_summary?.total_count,
+      2,
+    );
+    assert.equal(
+      acctBDetailSameCccd.data.worker_advance_30d_summary?.total_amount_vnd,
+      "6300000",
+    );
+
+    const acctBHistSameCccdAll = await repo.listWorkerHistory({
+      auth_subject: ACCT_B.auth,
+      app_user_id: ACCT_B.app,
+      request_id: histOpenReqId,
+      period_mode: "ALL",
+      month: null,
+      from_date: null,
+      to_date: null,
+      cursor: null,
+      page_size: 20,
+    });
+    assert.equal(acctBHistSameCccdAll.ok, true);
+    assert.equal(acctBHistSameCccdAll.data.total_count, 3);
+    assert.equal(acctBHistSameCccdAll.data.total_amount_vnd, "9500000");
+    assert.equal(
+      acctBHistSameCccdAll.data.items.some((item) => item.project_id === PRJ_2),
+      false,
+      "Accountant must NEVER see worker history from projects outside their assigned scope",
+    );
+
+    // CANONICAL_BOD (supervisory viewer across all projects) sees all 4 items across PRJ_1 and PRJ_2 = 11,000,000 VND
+    const bodHistSameCccdAll = await repo.listWorkerHistory({
+      auth_subject: CANONICAL_BOD.auth,
+      app_user_id: CANONICAL_BOD.app,
+      request_id: histOpenReqId,
+      period_mode: "ALL",
+      month: null,
+      from_date: null,
+      to_date: null,
+      cursor: null,
+      page_size: 20,
+    });
+    assert.equal(bodHistSameCccdAll.ok, true);
+    assert.equal(bodHistSameCccdAll.data.total_count, 4);
+    assert.equal(bodHistSameCccdAll.data.total_amount_vnd, "11000000");
+
     // Append-only trigger on salary_advance_events blocks UPDATE and DELETE even with write_marker
     await assert.rejects(
       async () => {

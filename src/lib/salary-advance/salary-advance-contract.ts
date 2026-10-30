@@ -480,6 +480,12 @@ export type SalaryAdvanceEvidenceVersionItem = {
   uploaded_at: string;
 };
 
+/**
+ * 30-day rolling summary of completed salary advances for the same worker
+ * (matched by `worker_entry_id`, `candidate_id`, or canonical `national_id`),
+ * filtered by completion / evidence-review date (`coalesce(evidence_reviewed_at, decided_at, created_at)`)
+ * in `Asia/Ho_Chi_Minh` where `request_state = 'APPROVED' AND evidence_review_state = 'REVIEWED'`.
+ */
 export type SalaryAdvanceWorker30dSummary = {
   window_days: number;
   window_from_date: string;
@@ -502,10 +508,15 @@ export type SalaryAdvanceWorkerHistoryItem = {
   initial_content?: string | null;
   request_state: SalaryAdvanceRequestState;
   evidence_review_state: SalaryAdvanceEvidenceReviewState;
+  /** Completion / evidence-review calendar date (`YYYY-MM-DD` in `Asia/Ho_Chi_Minh`) used for period filtering. */
   effective_date: string;
+  /** Completion / evidence-review UTC timestamp (`coalesce(evidence_reviewed_at, decided_at, created_at)`). */
   effective_at: string;
+  /** Request creation UTC timestamp. */
   created_at: string;
+  /** Accountant approval UTC timestamp. */
   decided_at: string | null;
+  /** Evidence review completion UTC timestamp. */
   evidence_reviewed_at: string | null;
   created_by_display_name: string;
   decided_by_display_name: string | null;

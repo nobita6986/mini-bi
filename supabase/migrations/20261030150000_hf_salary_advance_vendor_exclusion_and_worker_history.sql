@@ -413,6 +413,7 @@ declare
   v_is_assigned_accountant boolean := false;
   v_is_supervisory boolean := false;
   v_entry public.direct_entries%rowtype;
+  v_cccd text := null;
   v_accountant_project_ids text[];
   v_today date;
   v_from_date date;
@@ -431,6 +432,15 @@ begin
     into v_entry
     from public.direct_entries e
    where e.entry_id = p_req.worker_entry_id;
+
+  if coalesce(v_entry.worker_details->'national_id'->>'state', '') = 'provided' then
+    v_cccd := public.direct_entry_canonical_national_id(
+      v_entry.worker_details->'national_id'->>'value'
+    );
+    if not public.direct_entry_is_canonical_national_id(v_cccd) then
+      v_cccd := null;
+    end if;
+  end if;
 
   v_accountant_project_ids := array(
     select pg_catalog.jsonb_array_elements_text(coalesce(p_auth->'accountant_project_ids', '[]'::jsonb))
@@ -452,6 +462,11 @@ begin
    where (
      r.worker_entry_id = p_req.worker_entry_id
      or (v_entry.candidate_id is not null and de.candidate_id = v_entry.candidate_id)
+     or (
+       v_cccd is not null
+       and coalesce(de.worker_details->'national_id'->>'state', '') = 'provided'
+       and public.direct_entry_canonical_national_id(de.worker_details->'national_id'->>'value') = v_cccd
+     )
    )
      and (
        v_is_supervisory
@@ -1194,6 +1209,7 @@ declare
   v_is_assigned_accountant boolean := false;
   v_is_supervisory boolean := false;
   v_entry public.direct_entries%rowtype;
+  v_cccd text := null;
   v_accountant_project_ids text[];
   v_today date;
   v_mode text;
@@ -1357,6 +1373,15 @@ begin
     from public.direct_entries e
    where e.entry_id = v_req.worker_entry_id;
 
+  if coalesce(v_entry.worker_details->'national_id'->>'state', '') = 'provided' then
+    v_cccd := public.direct_entry_canonical_national_id(
+      v_entry.worker_details->'national_id'->>'value'
+    );
+    if not public.direct_entry_is_canonical_national_id(v_cccd) then
+      v_cccd := null;
+    end if;
+  end if;
+
   v_accountant_project_ids := array(
     select pg_catalog.jsonb_array_elements_text(coalesce(v_auth->'accountant_project_ids', '[]'::jsonb))
   );
@@ -1389,6 +1414,11 @@ begin
      where (
        r.worker_entry_id = v_req.worker_entry_id
        or (v_entry.candidate_id is not null and de.candidate_id = v_entry.candidate_id)
+       or (
+         v_cccd is not null
+         and coalesce(de.worker_details->'national_id'->>'state', '') = 'provided'
+         and public.direct_entry_canonical_national_id(de.worker_details->'national_id'->>'value') = v_cccd
+       )
      )
        and (
          v_is_supervisory
