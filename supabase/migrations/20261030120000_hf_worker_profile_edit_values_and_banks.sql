@@ -32,6 +32,8 @@ begin;
 
 -- -----------------------------------------------------------------------------
 -- 1. Allow `intentionally_blank` on `gender` in `direct_entry_valid_worker_details`
+--    while preserving the `worker-profile/1.2` exception allowing `display_name = ''`
+--    when a valid 12-digit `national_id` is provided.
 -- -----------------------------------------------------------------------------
 create or replace function public.direct_entry_valid_worker_details(p_worker jsonb)
 returns boolean
@@ -54,7 +56,16 @@ begin
        'display_name','date_of_birth','national_id','address','phone'
      ])
      or jsonb_typeof(p_worker->'display_name') <> 'string'
-     or length(btrim(p_worker->>'display_name')) not between 1 and 256 then
+     or (
+       length(btrim(p_worker->>'display_name')) not between 1 and 256
+       and not (
+         p_worker->>'display_name' = ''
+         and jsonb_typeof(p_worker->'national_id') = 'object'
+         and p_worker->'national_id'->>'state' = 'provided'
+         and coalesce(p_worker->'national_id'->>'value', '') ~ '^[0-9]{12}$'
+         and p_worker->'national_id'->>'value' <> '000000000000'
+       )
+     ) then
     return false;
   end if;
 

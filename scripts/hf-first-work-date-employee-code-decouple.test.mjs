@@ -1515,6 +1515,42 @@ test("HF Worker Profile Direct Edit: banking (payment) in direct_entry_privilege
     assert.equal(entryReadCustom.payment.bank_id, null);
     assert.equal(entryReadCustom.payment.bank_name, "Ngân hàng Nông thôn Xã A");
     assert.equal(entryReadCustom.worker_details.gender.state, "intentionally_blank");
+
+    // 7. Regression guard: direct_entry_valid_worker_details preserves the worker-profile/1.2
+    //    exception allowing empty display_name ("") ONLY when a valid 12-digit national_id is provided,
+    //    while also accepting gender = intentionally_blank.
+    const validatorCheck = (
+      await db.query(`
+        select
+          public.direct_entry_valid_worker_details(jsonb_build_object(
+            'display_name', '',
+            'gender', jsonb_build_object('state', 'intentionally_blank'),
+            'date_of_birth', jsonb_build_object('state', 'omitted'),
+            'national_id', jsonb_build_object('state', 'provided', 'value', '079095000123'),
+            'address', jsonb_build_object('state', 'omitted'),
+            'phone', jsonb_build_object('state', 'omitted')
+          )) as valid_empty_name_with_12_digit_cccd,
+          public.direct_entry_valid_worker_details(jsonb_build_object(
+            'display_name', '',
+            'date_of_birth', jsonb_build_object('state', 'omitted'),
+            'national_id', jsonb_build_object('state', 'omitted'),
+            'address', jsonb_build_object('state', 'omitted'),
+            'phone', jsonb_build_object('state', 'omitted')
+          )) as invalid_empty_name_without_cccd,
+          public.direct_entry_valid_worker_details(jsonb_build_object(
+            'display_name', '',
+            'date_of_birth', jsonb_build_object('state', 'omitted'),
+            'national_id', jsonb_build_object('state', 'provided', 'value', '000000000000'),
+            'address', jsonb_build_object('state', 'omitted'),
+            'phone', jsonb_build_object('state', 'omitted')
+          )) as invalid_empty_name_with_zero_cccd
+      `)
+    ).rows[0];
+    assert.deepEqual(validatorCheck, {
+      valid_empty_name_with_12_digit_cccd: true,
+      invalid_empty_name_without_cccd: false,
+      invalid_empty_name_with_zero_cccd: false,
+    });
   } finally {
     await db.close();
   }
