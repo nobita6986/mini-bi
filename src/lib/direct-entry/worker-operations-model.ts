@@ -28,6 +28,40 @@ import {
   type ChangeRequestQueueFilter,
 } from "./change-request-read-contract.ts";
 import { WORK_STATUS_UI_LABELS, workStatusUiLabel } from "./display-labels.ts";
+import { isRealCalendarDate } from "../analytics/identity/identity-shared.mjs";
+import {
+  isCanonicalLaborTypeKey,
+  validateEmployeeCode,
+  validateWorkerDetails,
+  type OptionalValue,
+  type WorkerDetails,
+} from "../contracts/direct-entry-v1.ts";
+import { isPaymentText, type PaymentState } from "./payment-contract.ts";
+import { workerDetailsChanged } from "./change-request-read-projection.ts";
+import {
+  workerEntryFormFromBaseline,
+  type ProposalBuildResult,
+  type WorkerEntryFieldBaseline,
+  type WorkerEntryFieldForm,
+  type WorkerForm,
+} from "./change-request-proposal-builders.ts";
+import {
+  VIETQR_BANK_CATALOG,
+  formatBankReferenceDisplay,
+  mergeVietQrBankCatalog,
+  resolveBankCatalogOption,
+  type BankCatalogEntryInput,
+  type MergedBankCatalogOption,
+} from "./vietqr-bank-catalog.ts";
+
+export {
+  VIETQR_BANK_CATALOG,
+  formatBankReferenceDisplay,
+  mergeVietQrBankCatalog,
+  resolveBankCatalogOption,
+  type BankCatalogEntryInput,
+  type MergedBankCatalogOption,
+};
 
 export const WORKER_OPERATIONS_TABS = ["uploader", "recruited", "managed", "team", "all"] as const;
 export type WorkerOperationsTab = (typeof WORKER_OPERATIONS_TABS)[number];
@@ -953,6 +987,403 @@ export async function runDirectEditDocumentUploads(input: {
     entryVersion: currentVersion,
     results,
     allSucceeded: results.every((item) => item.ok),
+  };
+}
+
+/* ---------- HF-Worker-Profile-Edit-Values: Direct Edit Values & Bank Reference ---------- */
+
+const ISO_DATE_PATTERN = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
+const PROJECT_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/**
+ * Normalizes a stored raw date string (e.g. "DD/MM/YYYY", "DD-MM-YYYY", or "YYYY-MM-DD")
+ * into "YYYY-MM-DD" for `<input type="date">` in Direct Edit.
+ */
+export function toDirectEditDateInputValue(raw: string | null | undefined): string {
+  if (typeof raw !== "string") return "";
+  const trimmed = raw.trim();
+  if (!trimmed) return "";
+  if (ISO_DATE_PATTERN.test(trimmed) && isRealCalendarDate(trimmed)) {
+    return trimmed;
+  }
+  const dmyMatch = /^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/.exec(trimmed);
+  if (dmyMatch) {
+    const isoCandidate = `${dmyMatch[3]}-${dmyMatch[2].padStart(2, "0")}-${dmyMatch[1].padStart(2, "0")}`;
+    if (isRealCalendarDate(isoCandidate)) {
+      return isoCandidate;
+    }
+  }
+  return trimmed;
+}
+
+/**
+ * Builds the initial `WorkerEntryFieldForm` for Direct Edit (`mode === "correction"`),
+ * normalizing provided date fields (`date_of_birth`, `national_id_issued_at`) for `<input type="date">`.
+ */
+export function directEditWorkerFormFromBaseline(
+  baseline: WorkerEntryFieldBaseline,
+): WorkerEntryFieldForm {
+  const form = workerEntryFormFromBaseline(baseline);
+  return {
+    ...form,
+    workerDetails: {
+      ...form.workerDetails,
+      date_of_birth: {
+        ...form.workerDetails.date_of_birth,
+        text:
+          form.workerDetails.date_of_birth.state === "provided"
+            ? toDirectEditDateInputValue(form.workerDetails.date_of_birth.text)
+            : "",
+      },
+      national_id_issued_at: {
+        ...form.workerDetails.national_id_issued_at,
+        text:
+          form.workerDetails.national_id_issued_at.state === "provided"
+            ? toDirectEditDateInputValue(form.workerDetails.national_id_issued_at.text)
+            : "",
+      },
+    },
+  };
+}
+
+function resolveDirectEditOptionalField(
+  baseField: OptionalValue<string> | undefined,
+  rawInput: string,
+  isDateField: boolean,
+): OptionalValue<string> | undefined {
+  const trimmed = rawInput.trim();
+  if (trimmed === "") {
+    if (baseField?.state === "provided") {
+      return { state: "intentionally_blank" };
+    }
+    if (baseField === undefined) {
+      return undefined;
+    }
+    return { state: baseField.state };
+  }
+
+  if (baseField?.state === "provided") {
+    if (isDateField && toDirectEditDateInputValue(baseField.value) === trimmed) {
+      return { state: "provided", value: baseField.value };
+    }
+    if (baseField.value.trim() === trimmed) {
+      return { state: "provided", value: baseField.value };
+    }
+  }
+  return { state: "provided", value: trimmed };
+}
+
+/**
+ * Pure builder for `worker_details` in Direct Edit (`mode === "correction"`):
+ * - Untouched empty fields (`omitted`, `unknown`, `intentionally_blank`, or `undefined`)
+ *   keep their exact baseline state.
+ * - Existing `provided` fields cleared to empty transition to `intentionally_blank`.
+ */
+export function buildDirectEditWorkerDetailsProposal(
+  baseline: WorkerDetails,
+  form: WorkerForm,
+): ProposalBuildResult {
+  const genderResolved = resolveDirectEditOptionalField(
+    baseline.gender,
+    form.gender.text,
+    false,
+  );
+  if (
+    genderResolved?.state === "provided" &&
+    genderResolved.value !== "MALE" &&
+    genderResolved.value !== "FEMALE" &&
+    genderResolved.value !== "OTHER"
+  ) {
+    return { ok: false, code: "WORKER_INVALID" };
+  }
+
+  const dobResolved =
+    resolveDirectEditOptionalField(
+      baseline.date_of_birth,
+      form.date_of_birth.text,
+      true,
+    ) ?? { state: "omitted" as const };
+  const nationalIdResolved =
+    resolveDirectEditOptionalField(
+      baseline.national_id,
+      form.national_id.text,
+      false,
+    ) ?? { state: "omitted" as const };
+  const issuedAtResolved = resolveDirectEditOptionalField(
+    baseline.national_id_issued_at,
+    form.national_id_issued_at.text,
+    true,
+  );
+  const issuedPlaceResolved = resolveDirectEditOptionalField(
+    baseline.national_id_issued_place,
+    form.national_id_issued_place.text,
+    false,
+  );
+  const addressResolved =
+    resolveDirectEditOptionalField(
+      baseline.address,
+      form.address.text,
+      false,
+    ) ?? { state: "omitted" as const };
+  const phoneResolved =
+    resolveDirectEditOptionalField(
+      baseline.phone,
+      form.phone.text,
+      false,
+    ) ?? { state: "omitted" as const };
+
+  const candidate: WorkerDetails = {
+    display_name: form.display_name.trim(),
+    ...(genderResolved !== undefined
+      ? { gender: genderResolved as OptionalValue<"MALE" | "FEMALE" | "OTHER"> }
+      : {}),
+    date_of_birth: dobResolved,
+    national_id: nationalIdResolved,
+    ...(issuedAtResolved !== undefined
+      ? { national_id_issued_at: issuedAtResolved }
+      : {}),
+    ...(issuedPlaceResolved !== undefined
+      ? { national_id_issued_place: issuedPlaceResolved }
+      : {}),
+    address: addressResolved,
+    phone: phoneResolved,
+  };
+
+  if (validateWorkerDetails(candidate).length > 0) {
+    return { ok: false, code: "WORKER_INVALID" };
+  }
+  if (!workerDetailsChanged(baseline, candidate)) {
+    return { ok: false, code: "WORKER_UNCHANGED" };
+  }
+  return { ok: true, proposal: { worker_details: candidate } };
+}
+
+export function buildDirectEditEntryFieldProposal(input: {
+  baseline: WorkerEntryFieldBaseline;
+  form: WorkerEntryFieldForm;
+}): ProposalBuildResult {
+  const details = buildDirectEditWorkerDetailsProposal(
+    input.baseline.worker_details,
+    input.form.workerDetails,
+  );
+  if (!details.ok && details.code !== "WORKER_UNCHANGED") {
+    return details;
+  }
+  if (
+    !PROJECT_ID_PATTERN.test(input.form.project_id) ||
+    !isRealCalendarDate(input.form.first_work_date) ||
+    validateEmployeeCode(input.form.employee_code).length > 0 ||
+    !UUID_PATTERN.test(input.form.recruiter_id) ||
+    !isCanonicalLaborTypeKey(input.form.labor_type)
+  ) {
+    return { ok: false, code: "WORKER_INVALID" };
+  }
+
+  const proposal: Record<string, unknown> = {};
+  for (const field of [
+    "project_id",
+    "first_work_date",
+    "employee_code",
+    "recruiter_id",
+    "labor_type",
+  ] as const) {
+    if (input.form[field] !== input.baseline[field]) {
+      proposal[field] = input.form[field];
+    }
+  }
+  if (details.ok) {
+    proposal.worker_details = details.proposal.worker_details;
+  }
+  if (Object.keys(proposal).length === 0) {
+    return { ok: false, code: "WORKER_UNCHANGED" };
+  }
+  return { ok: true, proposal };
+}
+
+export type DirectEditBaselinePayment = {
+  state: PaymentState;
+  account_number: string | null;
+  bank_id: string | null;
+  bank_name: string | null;
+  account_holder_name: string | null;
+};
+
+export type DirectEditPaymentPatchPayload = {
+  state: PaymentState;
+  account_number: string | null;
+  bank_id: string | null;
+  bank_name?: string | null;
+  account_holder_name: string | null;
+};
+
+export type DirectEditPaymentPatchResult =
+  | { kind: "unchanged" }
+  | { kind: "changed"; proposal: DirectEditPaymentPatchPayload }
+  | { kind: "invalid"; message: string };
+
+export function initialDirectEditBankQueryText(
+  payment: DirectEditBaselinePayment | null | undefined,
+  catalogBanks: readonly BankCatalogEntryInput[] = [],
+): string {
+  if (!payment || payment.state !== "provided") return "";
+  const merged = mergeVietQrBankCatalog(catalogBanks);
+  if (payment.bank_id) {
+    const matched = resolveBankCatalogOption(merged, payment.bank_id);
+    if (matched) return matched.short_name;
+  }
+  if (payment.bank_name && payment.bank_name.trim().length > 0) {
+    return payment.bank_name.trim();
+  }
+  return payment.bank_id?.trim() ?? "";
+}
+
+/**
+ * Pure builder for `payment` patch in Direct Edit (`mode === "correction"`):
+ * - If all inputs are empty and baseline was not `provided` (`null`, `omitted`, `unknown`,
+ *   `intentionally_blank`), returns `{ kind: "unchanged" }` to preserve the original state.
+ * - If all inputs are cleared to empty and baseline had `state === "provided"`,
+ *   transitions to `state: "intentionally_blank"`.
+ * - Resolves bank selection against the merged VietQR + DB bank catalog; if the user enters
+ *   a bank name not found in the catalog, saves `bank_id: null` and `bank_name: <reference text>`.
+ */
+export function buildDirectEditPaymentPatch(input: {
+  baseline: DirectEditBaselinePayment | null;
+  accountNumber: string;
+  bankId: string;
+  bankQueryText: string;
+  accountHolderName: string;
+  catalogBanks?: readonly BankCatalogEntryInput[];
+}): DirectEditPaymentPatchResult {
+  const trimmedAccount = input.accountNumber.trim();
+  const trimmedHolder = input.accountHolderName.trim();
+  const trimmedBankId = input.bankId.trim();
+  const trimmedBankText = input.bankQueryText.trim();
+
+  const allEmpty =
+    trimmedAccount === "" &&
+    trimmedHolder === "" &&
+    trimmedBankId === "" &&
+    trimmedBankText === "";
+
+  if (allEmpty) {
+    if (input.baseline === null || input.baseline.state !== "provided") {
+      return { kind: "unchanged" };
+    }
+    return {
+      kind: "changed",
+      proposal: {
+        state: "intentionally_blank",
+        account_number: null,
+        bank_id: null,
+        bank_name: null,
+        account_holder_name: null,
+      },
+    };
+  }
+
+  if (trimmedAccount !== "" && !/^\d{1,64}$/.test(trimmedAccount)) {
+    return {
+      kind: "invalid",
+      message: "Số tài khoản ngân hàng chỉ gồm chữ số (tối đa 64 ký tự).",
+    };
+  }
+
+  if (trimmedHolder !== "" && !isPaymentText(trimmedHolder, 256)) {
+    return {
+      kind: "invalid",
+      message: "Tên chủ tài khoản không hợp lệ (tối đa 256 ký tự).",
+    };
+  }
+
+  const mergedBanks = mergeVietQrBankCatalog(input.catalogBanks ?? []);
+  const initialBankText = initialDirectEditBankQueryText(
+    input.baseline,
+    input.catalogBanks ?? [],
+  );
+
+  let resolvedBankId: string | null = null;
+  let resolvedBankName: string | null = null;
+
+  if (trimmedBankText !== "" || trimmedBankId !== "") {
+    if (
+      input.baseline?.state === "provided" &&
+      trimmedBankId === (input.baseline.bank_id ?? "") &&
+      trimmedBankText === initialBankText
+    ) {
+      resolvedBankId = input.baseline.bank_id;
+      resolvedBankName =
+        input.baseline.bank_name ??
+        (resolvedBankId
+          ? resolveBankCatalogOption(mergedBanks, resolvedBankId)?.short_name ?? null
+          : null);
+    } else {
+      const selectedById =
+        trimmedBankId !== ""
+          ? resolveBankCatalogOption(mergedBanks, trimmedBankId)
+          : null;
+      const matchedByText =
+        trimmedBankText !== ""
+          ? resolveBankCatalogOption(mergedBanks, trimmedBankText)
+          : null;
+
+      if (
+        selectedById !== null &&
+        (trimmedBankText === "" ||
+          matchedByText?.bank_id === selectedById.bank_id)
+      ) {
+        resolvedBankId = selectedById.bank_id;
+        resolvedBankName = selectedById.short_name;
+      } else if (matchedByText !== null) {
+        resolvedBankId = matchedByText.bank_id;
+        resolvedBankName = matchedByText.short_name;
+      } else if (trimmedBankText !== "") {
+        if (!isPaymentText(trimmedBankText, 256)) {
+          return {
+            kind: "invalid",
+            message: "Tên ngân hàng tham chiếu không hợp lệ (tối đa 256 ký tự).",
+          };
+        }
+        resolvedBankId = null;
+        resolvedBankName = trimmedBankText;
+      } else if (trimmedBankId !== "") {
+        resolvedBankId = trimmedBankId;
+        resolvedBankName = null;
+      }
+    }
+  }
+
+  const nextAccountNumber = trimmedAccount === "" ? null : trimmedAccount;
+  const nextAccountHolder = trimmedHolder === "" ? null : trimmedHolder;
+
+  if (input.baseline !== null && input.baseline.state === "provided") {
+    const baseAccount = input.baseline.account_number ?? null;
+    const baseBankId = input.baseline.bank_id ?? null;
+    const baseBankName = input.baseline.bank_name ?? null;
+    const baseHolder = input.baseline.account_holder_name ?? null;
+    const bankUnchanged =
+      baseBankId === resolvedBankId &&
+      (resolvedBankId !== null || baseBankName === resolvedBankName);
+    if (
+      baseAccount === nextAccountNumber &&
+      bankUnchanged &&
+      baseHolder === nextAccountHolder
+    ) {
+      return { kind: "unchanged" };
+    }
+  }
+
+  return {
+    kind: "changed",
+    proposal: {
+      state: "provided",
+      account_number: nextAccountNumber,
+      bank_id: resolvedBankId,
+      ...(resolvedBankName !== null || resolvedBankId === null
+        ? { bank_name: resolvedBankName }
+        : {}),
+      account_holder_name: nextAccountHolder,
+    },
   };
 }
 

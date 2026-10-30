@@ -429,3 +429,18 @@ test("HF Worker Profile: Xem chi tiết chỉ đọc; Sửa trực tiếp đủ 
   assert.doesNotMatch(source, /console\.(log|info|warn|error)/);
   assert.doesNotMatch(source, /\.name\b/);
 });
+
+test("HF Edit Values: Sửa trực tiếp bỏ các bộ chọn trạng thái dữ liệu, dùng ô nhập trực tiếp, type='date' và combobox ngân hàng VietQR", () => {
+  // mode === "correction" renders direct value inputs without state dropdowns
+  assert.match(source, /mode === "correction" \? \(\s*field === "gender"/);
+  assert.match(source, /field === "date_of_birth" \|\| field === "national_id_issued_at"/);
+  assert.match(source, /type="date"/);
+  assert.match(source, /<DirectEditBankCombobox/);
+  assert.match(source, /buildDirectEditEntryFieldProposal\(/);
+  assert.match(source, /buildDirectEditPaymentPatch\(/);
+  assert.match(source, /directEditWorkerFormFromBaseline\(entryBaseline\)/);
+  assert.match(source, /mergeVietQrBankCatalog\(/);
+  assert.match(source, /role="combobox"/);
+  assert.match(source, /Danh mục ngân hàng VietQR/);
+  assert.match(source, /Chưa có trong danh mục — sẽ lưu tên ngân hàng dạng tham chiếu\./);
+});

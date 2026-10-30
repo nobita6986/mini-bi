@@ -1416,6 +1416,105 @@ test("HF Worker Profile Direct Edit: banking (payment) in direct_entry_privilege
       ),
       (err) => err.code === "42501",
     );
+
+    // 6. HF Edit Values (20261030120000):
+    //    - gender state 'intentionally_blank' is accepted
+    //    - VietQR bank ('TCB') auto-registers in direct_entry_banks and populates bank_name ('Techcombank')
+    //    - Custom reference bank (bank_id: null, bank_name: 'Ngân hàng Nông thôn Xã A') is stored and projected
+    //    - Bank account without bank_id/bank_name is accepted and satisfies salary advance bank account check
+    assert.ok(
+      names.includes("20261030120000_hf_worker_profile_edit_values_and_banks.sql"),
+      "Hotfix migration 20261030120000 is present in supabase/migrations",
+    );
+
+    const editVietQrBank = (
+      await db.query(
+        "select public.direct_entry_privileged_edit($1::uuid, $2::uuid, $3::uuid, $4::integer, $5::jsonb, $6::text, $7::text) as data",
+        [
+          PM_A_AUTH,
+          PM_A_APP,
+          worker.entryId,
+          currentEntryVersion,
+          JSON.stringify({
+            worker_details: {
+              ...workerDetails("079095000088", "Nguyen Thi Ho So Moi"),
+              gender: { state: "intentionally_blank" },
+            },
+            payment: {
+              state: "provided",
+              account_number: "19038889990002",
+              bank_id: "TCB",
+              account_holder_name: "NGUYEN THI HO SO MOI",
+            },
+          }),
+          "Chon ngan hang TCB tu VietQR va xoa gioi tinh",
+          "hf-direct-edit-vietqr-tcb",
+        ],
+      )
+    ).rows[0].data;
+    currentEntryVersion = editVietQrBank.version;
+
+    const paymentRowTcb = (
+      await db.query(
+        "select state, account_number, bank_id, bank_name, account_holder_name from public.direct_entry_payments where entry_id = $1::uuid",
+        [worker.entryId],
+      )
+    ).rows[0];
+    assert.deepEqual(paymentRowTcb, {
+      state: "provided",
+      account_number: "19038889990002",
+      bank_id: "TCB",
+      bank_name: "Techcombank",
+      account_holder_name: "NGUYEN THI HO SO MOI",
+    });
+
+    const editCustomBank = (
+      await db.query(
+        "select public.direct_entry_privileged_edit($1::uuid, $2::uuid, $3::uuid, $4::integer, $5::jsonb, $6::text, $7::text) as data",
+        [
+          PM_A_AUTH,
+          PM_A_APP,
+          worker.entryId,
+          currentEntryVersion,
+          JSON.stringify({
+            payment: {
+              state: "provided",
+              account_number: "19038889990003",
+              bank_id: null,
+              bank_name: "Ngân hàng Nông thôn Xã A",
+              account_holder_name: "NGUYEN THI HO SO MOI",
+            },
+          }),
+          "Luu ten ngan hang ngoai danh muc",
+          "hf-direct-edit-custom-bank-name",
+        ],
+      )
+    ).rows[0].data;
+    currentEntryVersion = editCustomBank.version;
+
+    const paymentRowCustom = (
+      await db.query(
+        "select state, account_number, bank_id, bank_name, account_holder_name from public.direct_entry_payments where entry_id = $1::uuid",
+        [worker.entryId],
+      )
+    ).rows[0];
+    assert.deepEqual(paymentRowCustom, {
+      state: "provided",
+      account_number: "19038889990003",
+      bank_id: null,
+      bank_name: "Ngân hàng Nông thôn Xã A",
+      account_holder_name: "NGUYEN THI HO SO MOI",
+    });
+
+    const entryReadCustom = (
+      await db.query(
+        "select public.direct_entry_read_projection($1::uuid, $2::uuid, $3::uuid) as data",
+        [ADMIN_AUTH, ADMIN_APP, worker.entryId],
+      )
+    ).rows[0].data;
+    assert.equal(entryReadCustom.payment.bank_id, null);
+    assert.equal(entryReadCustom.payment.bank_name, "Ngân hàng Nông thôn Xã A");
+    assert.equal(entryReadCustom.worker_details.gender.state, "intentionally_blank");
   } finally {
     await db.close();
   }
