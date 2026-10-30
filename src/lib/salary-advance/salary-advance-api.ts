@@ -34,8 +34,10 @@ import {
   salaryAdvanceHttpStatusForError,
   type SalaryAdvanceErrorCode,
   type SalaryAdvanceEvidenceReserveResponse,
+  type SalaryAdvanceEvidenceReviewState,
   type SalaryAdvanceQueue,
   type SalaryAdvanceRequestListResponse,
+  type SalaryAdvanceRequestState,
   type SalaryAdvanceRequestSummary,
   type SalaryAdvanceWorkerOption,
 } from "./salary-advance-contract.ts";
@@ -250,8 +252,18 @@ function inlineBinaryImageResponse(
   });
 }
 
-const SERVER_BADGE_COUNT_PAGE_SIZE = 100;
-const MAX_SERVER_BADGE_COUNT_PAGES = 100;
+export const SERVER_BADGE_COUNT_PAGE_SIZE = 100;
+export const MAX_SERVER_BADGE_SLICE_PAGES = 10;
+
+export type ServerQueueBadgeCountResult = {
+  count: number;
+  capped: boolean;
+};
+
+type BadgeScanSlice = {
+  request_state: SalaryAdvanceRequestState | null;
+  evidence_review_state: SalaryAdvanceEvidenceReviewState | null;
+};
 
 function tabIdForQueue(
   queue: Extract<SalaryAdvanceQueue, "PM" | "ACCOUNTANT" | "SUPERVISORY">,
@@ -261,6 +273,28 @@ function tabIdForQueue(
   return "supervisory";
 }
 
+function resolveBadgeScanSlicesForQueue(
+  queue: Extract<SalaryAdvanceQueue, "PM" | "ACCOUNTANT" | "SUPERVISORY">,
+): ReadonlyArray<BadgeScanSlice> {
+  if (queue === "PM") {
+    return [
+      { request_state: "OPEN", evidence_review_state: null },
+      { request_state: "NEEDS_INFO", evidence_review_state: null },
+    ];
+  }
+  if (queue === "ACCOUNTANT") {
+    return [
+      { request_state: "OPEN", evidence_review_state: null },
+      { request_state: null, evidence_review_state: "PENDING_REVIEW" },
+    ];
+  }
+  return [
+    { request_state: "OPEN", evidence_review_state: null },
+    { request_state: "NEEDS_INFO", evidence_review_state: null },
+    { request_state: null, evidence_review_state: "PENDING_REVIEW" },
+  ];
+}
+
 export async function computeServerQueueBadgeCount(params: {
   repository: SalaryAdvanceRepository;
   auth_subject: string;
@@ -268,7 +302,8 @@ export async function computeServerQueueBadgeCount(params: {
   queue: Extract<SalaryAdvanceQueue, "PM" | "ACCOUNTANT" | "SUPERVISORY">;
   initialUnfilteredFirstPage?: SalaryAdvanceRequestListResponse | null;
   pageSize?: number;
-}): Promise<number | null> {
+  maxPagesPerSlice?: number;
+}): Promise<ServerQueueBadgeCountResult | null> {
   const tabId = tabIdForQueue(params.queue);
   const effectivePageSize =
     params.pageSize !== undefined &&
@@ -277,21 +312,87 @@ export async function computeServerQueueBadgeCount(params: {
     params.pageSize <= 100
       ? params.pageSize
       : SERVER_BADGE_COUNT_PAGE_SIZE;
+  const maxPagesPerSlice =
+    params.maxPagesPerSlice !== undefined &&
+    Number.isSafeInteger(params.maxPagesPerSlice) &&
+    params.maxPagesPerSlice >= 1
+      ? params.maxPagesPerSlice
+      : MAX_SERVER_BADGE_SLICE_PAGES;
 
   if (
     params.initialUnfilteredFirstPage &&
     !params.initialUnfilteredFirstPage.has_more
   ) {
-    return countActionableRequestsForTab(
-      params.initialUnfilteredFirstPage.requests,
-      tabId,
-    );
+    return {
+      count: countActionableRequestsForTab(
+        params.initialUnfilteredFirstPage.requests,
+        tabId,
+      ),
+      capped: false,
+    };
+  }
+
+  const slices = resolveBadgeScanSlicesForQueue(params.queue);
+  const sliceResults = await Promise.all(
+    slices.map(async (slice) => {
+      const rows: SalaryAdvanceRequestSummary[] = [];
+      const seenCursors = new Set<string>();
+      let cursor: string | null = null;
+      let capped = false;
+      let anyPageOk = false;
+
+      for (let pageIdx = 0; pageIdx < maxPagesPerSlice; pageIdx += 1) {
+        const pageResult = await params.repository.listRequests({
+          auth_subject: params.auth_subject,
+          app_user_id: params.app_user_id,
+          queue: params.queue,
+          project_id: null,
+          request_state: slice.request_state,
+          evidence_review_state: slice.evidence_review_state,
+          search: null,
+          cursor,
+          page_size: effectivePageSize,
+        });
+        if (!pageResult.ok) {
+          if (anyPageOk) {
+            capped = true;
+          }
+          break;
+        }
+
+        anyPageOk = true;
+        const page = pageResult.data;
+        rows.push(...page.requests);
+
+        if (!page.has_more) {
+          return { rows, capped: false, anyPageOk: true };
+        }
+
+        if (
+          pageIdx + 1 >= maxPagesPerSlice ||
+          page.requests.length === 0 ||
+          !page.next_cursor ||
+          seenCursors.has(page.next_cursor)
+        ) {
+          capped = true;
+          break;
+        }
+
+        seenCursors.add(page.next_cursor);
+        cursor = page.next_cursor;
+      }
+
+      return { rows, capped, anyPageOk };
+    }),
+  );
+
+  const anySliceSucceeded = sliceResults.some((res) => res.anyPageOk);
+  if (!anySliceSucceeded && !params.initialUnfilteredFirstPage) {
+    return null;
   }
 
   const allRows: SalaryAdvanceRequestSummary[] = [];
   const seenRequestIds = new Set<string>();
-  const seenCursors = new Set<string>();
-  let cursor: string | null = null;
 
   if (params.initialUnfilteredFirstPage) {
     for (const row of params.initialUnfilteredFirstPage.requests) {
@@ -300,54 +401,25 @@ export async function computeServerQueueBadgeCount(params: {
         allRows.push(row);
       }
     }
-    if (!params.initialUnfilteredFirstPage.next_cursor) {
-      return null;
-    }
-    cursor = params.initialUnfilteredFirstPage.next_cursor;
-    seenCursors.add(cursor);
   }
 
-  for (let pageIdx = 0; pageIdx < MAX_SERVER_BADGE_COUNT_PAGES; pageIdx += 1) {
-    const pageResult = await params.repository.listRequests({
-      auth_subject: params.auth_subject,
-      app_user_id: params.app_user_id,
-      queue: params.queue,
-      project_id: null,
-      request_state: null,
-      evidence_review_state: null,
-      search: null,
-      cursor,
-      page_size: effectivePageSize,
-    });
-    if (!pageResult.ok) {
-      return null;
-    }
-
-    const page = pageResult.data;
-    for (const row of page.requests) {
+  for (const sliceResult of sliceResults) {
+    for (const row of sliceResult.rows) {
       if (!seenRequestIds.has(row.request_id)) {
         seenRequestIds.add(row.request_id);
         allRows.push(row);
       }
     }
-
-    if (!page.has_more) {
-      return countActionableRequestsForTab(allRows, tabId);
-    }
-
-    if (
-      page.requests.length === 0 ||
-      !page.next_cursor ||
-      seenCursors.has(page.next_cursor)
-    ) {
-      return null;
-    }
-
-    seenCursors.add(page.next_cursor);
-    cursor = page.next_cursor;
   }
 
-  return null;
+  const capped =
+    !anySliceSucceeded ||
+    sliceResults.some((res) => res.capped || !res.anyPageOk);
+
+  return {
+    count: countActionableRequestsForTab(allRows, tabId),
+    capped,
+  };
 }
 
 // -----------------------------------------------------------------------------
@@ -380,50 +452,66 @@ export async function handleGetSalaryAdvanceContext(
   if (!result.ok) return salAdvError(result.code);
 
   const badgeCounts: Partial<Record<SalaryAdvanceWorkspaceTabId, number>> = {};
-  if (
-    result.data.is_project_manager &&
-    result.data.managed_projects.length > 0
-  ) {
-    const pmCount = await computeServerQueueBadgeCount({
-      repository: dependencies.repository,
-      auth_subject: actor.auth_subject,
-      app_user_id: actor.app_user_id,
-      queue: "PM",
-    });
-    if (pmCount !== null) {
-      badgeCounts.pm = pmCount;
-    }
-  }
-  if (
+  const badgeCountsCapped: Partial<
+    Record<SalaryAdvanceWorkspaceTabId, boolean>
+  > = {};
+
+  const [pmBadge, accountantBadge, supervisoryBadge] = await Promise.all([
+    result.data.is_project_manager && result.data.managed_projects.length > 0
+      ? computeServerQueueBadgeCount({
+          repository: dependencies.repository,
+          auth_subject: actor.auth_subject,
+          app_user_id: actor.app_user_id,
+          queue: "PM",
+        })
+      : Promise.resolve(null),
     result.data.is_project_accountant &&
     result.data.accountant_projects.length > 0
-  ) {
-    const accountantCount = await computeServerQueueBadgeCount({
-      repository: dependencies.repository,
-      auth_subject: actor.auth_subject,
-      app_user_id: actor.app_user_id,
-      queue: "ACCOUNTANT",
-    });
-    if (accountantCount !== null) {
-      badgeCounts.accountant = accountantCount;
+      ? computeServerQueueBadgeCount({
+          repository: dependencies.repository,
+          auth_subject: actor.auth_subject,
+          app_user_id: actor.app_user_id,
+          queue: "ACCOUNTANT",
+        })
+      : Promise.resolve(null),
+    result.data.is_supervisory_viewer
+      ? computeServerQueueBadgeCount({
+          repository: dependencies.repository,
+          auth_subject: actor.auth_subject,
+          app_user_id: actor.app_user_id,
+          queue: "SUPERVISORY",
+        })
+      : Promise.resolve(null),
+  ]);
+
+  if (pmBadge !== null) {
+    badgeCounts.pm = pmBadge.count;
+    if (pmBadge.capped) {
+      badgeCountsCapped.pm = true;
     }
   }
-  if (result.data.is_supervisory_viewer) {
-    const supervisoryCount = await computeServerQueueBadgeCount({
-      repository: dependencies.repository,
-      auth_subject: actor.auth_subject,
-      app_user_id: actor.app_user_id,
-      queue: "SUPERVISORY",
-    });
-    if (supervisoryCount !== null) {
-      badgeCounts.supervisory = supervisoryCount;
+  if (accountantBadge !== null) {
+    badgeCounts.accountant = accountantBadge.count;
+    if (accountantBadge.capped) {
+      badgeCountsCapped.accountant = true;
+    }
+  }
+  if (supervisoryBadge !== null) {
+    badgeCounts.supervisory = supervisoryBadge.count;
+    if (supervisoryBadge.capped) {
+      badgeCountsCapped.supervisory = true;
     }
   }
 
+  const hasBadgeCounts = Object.keys(badgeCounts).length > 0;
+  const hasCappedFlags = Object.keys(badgeCountsCapped).length > 0;
+
   return salAdvOk(
-    Object.keys(badgeCounts).length > 0
-      ? { ...result.data, badge_counts: badgeCounts }
-      : result.data,
+    {
+      ...result.data,
+      ...(hasBadgeCounts ? { badge_counts: badgeCounts } : {}),
+      ...(hasCappedFlags ? { badge_counts_capped: badgeCountsCapped } : {}),
+    },
     200,
   );
 }
@@ -579,13 +667,20 @@ export async function handleGetSalaryAdvanceRequests(
     query.value.search === null &&
     query.value.cursor === null;
 
-  let badgeCount: number | null = null;
+  const shouldComputeBadge =
+    (query.value.queue === "PM" ||
+      query.value.queue === "ACCOUNTANT" ||
+      query.value.queue === "SUPERVISORY") &&
+    (isUnfilteredFirstPage || query.value.include_badge);
+
+  let badgeResult: ServerQueueBadgeCountResult | null = null;
   if (
-    query.value.queue === "PM" ||
-    query.value.queue === "ACCOUNTANT" ||
-    query.value.queue === "SUPERVISORY"
+    shouldComputeBadge &&
+    (query.value.queue === "PM" ||
+      query.value.queue === "ACCOUNTANT" ||
+      query.value.queue === "SUPERVISORY")
   ) {
-    badgeCount = await computeServerQueueBadgeCount({
+    badgeResult = await computeServerQueueBadgeCount({
       repository: dependencies.repository,
       auth_subject: actor.auth_subject,
       app_user_id: actor.app_user_id,
@@ -595,8 +690,12 @@ export async function handleGetSalaryAdvanceRequests(
   }
 
   return salAdvOk(
-    badgeCount !== null
-      ? { ...result.data, badge_count: badgeCount }
+    badgeResult !== null
+      ? {
+          ...result.data,
+          badge_count: badgeResult.count,
+          ...(badgeResult.capped ? { badge_count_capped: true } : {}),
+        }
       : result.data,
     200,
   );

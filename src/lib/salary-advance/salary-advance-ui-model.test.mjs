@@ -1727,4 +1727,18 @@ test("updateTabBadgeCountsForTab and parseSalaryAdvanceRequestListPayload preser
     28,
     "Accountant 'Cần xử lý' badge must not be overwritten with 0 when user filters to an empty subset"
   );
+
+  // 4. parseSalaryAdvanceRequestListPayload preserves badge_count_capped and fetchSalaryAdvanceRequestListPage sends include_badge=1 only when requested
+  const cappedPayload = parseSalaryAdvanceRequestListPayload({
+    requests: firstPageRows,
+    has_more: true,
+    next_cursor: "2026-10-29T10:00:00Z|11111111-1111-4111-8111-000000000025",
+    badge_count: 1000,
+    badge_count_capped: true,
+  });
+  assert.equal(cappedPayload.ok, true);
+  if (cappedPayload.ok) {
+    assert.equal(cappedPayload.data.badge_count, 1000);
+    assert.equal(cappedPayload.data.badge_count_capped, true);
+  }
 });

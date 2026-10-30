@@ -284,6 +284,9 @@ export type SalaryAdvanceActorContext = {
   supervisory_projects: SalaryAdvanceProjectOption[];
   authorization_date: string;
   badge_counts?: Partial<Record<"pm" | "accountant" | "supervisory", number>>;
+  badge_counts_capped?: Partial<
+    Record<"pm" | "accountant" | "supervisory", boolean>
+  >;
 };
 
 export type SalaryAdvanceWorkerBankAccountInfo = {
@@ -463,6 +466,7 @@ export type SalaryAdvanceRequestListResponse = {
   has_more: boolean;
   next_cursor: string | null;
   badge_count?: number;
+  badge_count_capped?: boolean;
 };
 
 export type SalaryAdvanceEvidenceReserveResponse = {
@@ -708,6 +712,7 @@ export function parseListSalaryAdvanceRequestsQuery(
         search: string | null;
         cursor: string | null;
         page_size: number;
+        include_badge: boolean;
       };
     }
   | { ok: false; code: SalaryAdvanceErrorCode } {
@@ -719,6 +724,7 @@ export function parseListSalaryAdvanceRequestsQuery(
     "search",
     "cursor",
     "page_size",
+    "include_badge",
   ]);
   for (const key of url.searchParams.keys()) {
     if (!allowed.has(key)) {
@@ -811,6 +817,19 @@ export function parseListSalaryAdvanceRequestsQuery(
     pageSize = parsed;
   }
 
+  const rawIncludeBadge = url.searchParams.get("include_badge");
+  let includeBadge = false;
+  if (rawIncludeBadge !== null && rawIncludeBadge.trim().length > 0) {
+    const normalized = rawIncludeBadge.trim().toLowerCase();
+    if (normalized === "1" || normalized === "true") {
+      includeBadge = true;
+    } else if (normalized === "0" || normalized === "false") {
+      includeBadge = false;
+    } else {
+      return { ok: false, code: "SALARY_ADVANCE_QUERY_INVALID" };
+    }
+  }
+
   return {
     ok: true,
     value: {
@@ -821,6 +840,7 @@ export function parseListSalaryAdvanceRequestsQuery(
       search: searchRes.value,
       cursor,
       page_size: pageSize,
+      include_badge: includeBadge,
     },
   };
 }

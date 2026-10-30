@@ -445,7 +445,11 @@ export function SalaryAdvanceWorkspace() {
   }, [loadContext]);
 
   const loadRequests = useCallback(
-    async (options?: { cursor?: string | null; append?: boolean }) => {
+    async (options?: {
+      cursor?: string | null;
+      append?: boolean;
+      includeBadge?: boolean;
+    }) => {
       if (!currentTabId || !currentTabQueue) return;
 
       const req = getRequestTracker(requestsTrackerRef).begin();
@@ -466,6 +470,7 @@ export function SalaryAdvanceWorkspace() {
           appliedSearch,
           cursor: options?.cursor ?? null,
           append: isAppend,
+          includeBadge: Boolean(options?.includeBadge && !isAppend),
           pageSize: 25,
           ticket: req,
         });
@@ -486,6 +491,7 @@ export function SalaryAdvanceWorkspace() {
         requestsRef.current = combined;
         setRequests(combined);
         const isUnfilteredView =
+          !isAppend &&
           projectFilter === "ALL" &&
           requestStateFilter === "ALL" &&
           evidenceStateFilter === "ALL" &&
@@ -785,7 +791,7 @@ export function SalaryAdvanceWorkspace() {
   const handleConflictReload = useCallback(
     async (requestId: string, code: string) => {
       if (selectedRequestIdRef.current !== requestId) {
-        await loadRequests();
+        await loadRequests({ includeBadge: true });
         return;
       }
       const msg = salaryAdvanceErrorMessage(code);
@@ -796,7 +802,7 @@ export function SalaryAdvanceWorkspace() {
       });
       await Promise.all([
         loadRequestDetail(requestId, { preserveConflictBanner: true }),
-        loadRequests(),
+        loadRequests({ includeBadge: true }),
       ]);
     },
     [loadRequestDetail, loadRequests, notify]
@@ -986,7 +992,7 @@ export function SalaryAdvanceWorkspace() {
       });
 
       applyMutationDetailResponse(json.data, { forceSelect: true });
-      await loadRequests();
+      await loadRequests({ includeBadge: true });
     } catch {
       setCreateError(salaryAdvanceErrorMessage("SALARY_ADVANCE_UNAVAILABLE"));
     } finally {
@@ -1052,7 +1058,7 @@ export function SalaryAdvanceWorkspace() {
           selectedRequestIdRef.current !== targetRequest.request_id
         ) {
           if (failureOutcome.shouldReloadRequestList) {
-            await loadRequests();
+            await loadRequests({ includeBadge: true });
           }
           return;
         }
@@ -1245,7 +1251,7 @@ export function SalaryAdvanceWorkspace() {
           selectedRequestIdRef.current !== targetRequest.request_id
         ) {
           if (failureOutcome.shouldReloadRequestList) {
-            await loadRequests();
+            await loadRequests({ includeBadge: true });
           }
           return;
         }
@@ -1269,7 +1275,7 @@ export function SalaryAdvanceWorkspace() {
         title: "Đã cập nhật trạng thái yêu cầu",
         description: getRequestStateMeta(json.data.request.request_state).label,
       });
-      await loadRequests();
+      await loadRequests({ includeBadge: true });
     } catch {
       if (selectedRequestIdRef.current === targetRequest.request_id) {
         setTransitionError(
@@ -1347,7 +1353,7 @@ export function SalaryAdvanceWorkspace() {
           selectedRequestIdRef.current !== targetRequest.request_id
         ) {
           if (failureOutcome.shouldReloadRequestList) {
-            await loadRequests();
+            await loadRequests({ includeBadge: true });
           }
           return;
         }
@@ -1377,7 +1383,7 @@ export function SalaryAdvanceWorkspace() {
         description:
           "Ảnh NLĐ nhận tiền mặt đã được lưu và chuyển sang trạng thái chờ Kế toán đối chiếu.",
       });
-      await loadRequests();
+      await loadRequests({ includeBadge: true });
     } catch {
       if (selectedRequestIdRef.current === targetRequest.request_id) {
         setEvidenceUploadError(
@@ -1480,7 +1486,7 @@ export function SalaryAdvanceWorkspace() {
           selectedRequestIdRef.current !== targetRequest.request_id
         ) {
           if (failureOutcome.shouldReloadRequestList) {
-            await loadRequests();
+            await loadRequests({ includeBadge: true });
           }
           return;
         }
@@ -1507,7 +1513,7 @@ export function SalaryAdvanceWorkspace() {
           json.data.request.evidence_review_state
         ).label,
       });
-      await loadRequests();
+      await loadRequests({ includeBadge: true });
     } catch {
       if (selectedRequestIdRef.current === targetRequest.request_id) {
         setEvidenceReviewError(
@@ -1702,7 +1708,7 @@ export function SalaryAdvanceWorkspace() {
               size="sm"
               className="md:h-9 md:min-h-9 px-3 text-sm whitespace-nowrap shrink-0"
               onClick={() => {
-                void loadRequests();
+                void loadRequests({ includeBadge: true });
                 if (selectedRequestId) {
                   void loadRequestDetail(selectedRequestId);
                 }

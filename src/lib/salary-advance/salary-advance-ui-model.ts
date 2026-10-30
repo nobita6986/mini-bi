@@ -1440,6 +1440,18 @@ export function parseSalaryAdvanceRequestListPayload(raw: unknown):
     };
   }
 
+  if (
+    raw.badge_count_capped !== undefined &&
+    raw.badge_count_capped !== null &&
+    typeof raw.badge_count_capped !== "boolean"
+  ) {
+    return {
+      ok: false,
+      code: "SALARY_ADVANCE_PAYLOAD_INVALID",
+      message: salaryAdvanceErrorMessage("SALARY_ADVANCE_PAYLOAD_INVALID"),
+    };
+  }
+
   const parsedData: SalaryAdvanceRequestListResponse = {
     requests: raw.requests,
     has_more: raw.has_more,
@@ -1447,6 +1459,9 @@ export function parseSalaryAdvanceRequestListPayload(raw: unknown):
   };
   if (typeof raw.badge_count === "number") {
     parsedData.badge_count = Math.trunc(raw.badge_count);
+  }
+  if (typeof raw.badge_count_capped === "boolean") {
+    parsedData.badge_count_capped = raw.badge_count_capped;
   }
 
   return {
@@ -1478,6 +1493,7 @@ export async function fetchSalaryAdvanceRequestListPage(params: {
   appliedSearch: string;
   cursor?: string | null;
   append?: boolean;
+  includeBadge?: boolean;
   pageSize?: number;
   ticket: LatestRequestTicket;
   fetchImpl?: typeof fetch;
@@ -1501,6 +1517,9 @@ export async function fetchSalaryAdvanceRequestListPage(params: {
   }
   if (params.append && params.cursor) {
     queryParams.set("cursor", params.cursor);
+  }
+  if (params.includeBadge) {
+    queryParams.set("include_badge", "1");
   }
 
   try {

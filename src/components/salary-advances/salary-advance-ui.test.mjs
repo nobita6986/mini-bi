@@ -349,6 +349,11 @@ test("SalaryAdvanceWorkspace places PM and Accountant queue tabs/badges in PageH
   assert.match(workspaceSource, /serverBadgeCount:\s*outcome\.data\.badge_count/);
   assert.match(workspaceSource, /hasMore:\s*outcome\.data\.has_more/);
   assert.match(workspaceSource, /loadedContext\.badge_counts/);
+  assert.match(
+    workspaceSource,
+    /includeBadge:\s*Boolean\(options\?\.includeBadge\s*&&\s*!isAppend\)/
+  );
+  assert.match(uiModelSource, /queryParams\.set\("include_badge",\s*"1"\)/);
 
   // 2. Dismissible "Lưu ý nghiệp vụ" banner
   assert.match(

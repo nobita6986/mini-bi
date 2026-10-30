@@ -9,6 +9,7 @@ import ExcelJS from "exceljs";
 import { buildSalaryAdvanceEvidenceStorageKey } from "./r2-salary-advance-evidence-storage.ts";
 import {
   MAX_SALARY_ADVANCE_MUTATION_JSON_BYTES,
+  computeServerQueueBadgeCount,
   handleGetExportSalaryAdvanceRequests,
   handleGetPreviewSalaryAdvanceEvidence,
   handleGetSalaryAdvanceContext,
@@ -1255,7 +1256,9 @@ test("handleGetSalaryAdvanceRequests and handleGetSalaryAdvanceContext compute e
     };
   });
 
+  const rpcCalls = [];
   const repository = createSalaryAdvanceRepository(async (fn, args) => {
+    rpcCalls.push({ fn, args });
     if (fn === "salary_advance_get_actor_context") {
       return {
         data: {
@@ -1387,27 +1390,68 @@ test("handleGetSalaryAdvanceRequests and handleGetSalaryAdvanceContext compute e
     "PM badge_count must equal all 32 open requests across pages, not 25 from page 1",
   );
 
-  // 3. Filtered PM query (request_state=APPROVED -> only 3 terminal rows) still returns badge_count=32
-  const pmFilteredRes = await handleGetSalaryAdvanceRequests(
+  // 3. Normal filtered PM query or cursor load-more query does NOT re-scan the queue for badges (0 extra badge RPCs)
+  rpcCalls.length = 0;
+  const pmFilteredNoBadgeScanRes = await handleGetSalaryAdvanceRequests(
     new Request(
       `${ORIGIN}/api/salary-advance/requests?queue=PM&project_id=PRJ_NORTH&request_state=APPROVED&page_size=25`,
     ),
     "true",
     deps,
   );
-  assert.equal(pmFilteredRes.status, 200);
-  const pmFilteredPayload = await pmFilteredRes.json();
-  assert.ok(pmFilteredPayload.data.requests.length < 5);
+  assert.equal(pmFilteredNoBadgeScanRes.status, 200);
+  const pmFilteredNoBadgeScanPayload = await pmFilteredNoBadgeScanRes.json();
+  assert.ok(pmFilteredNoBadgeScanPayload.data.requests.length < 5);
   assert.equal(
-    pmFilteredPayload.data.badge_count,
-    32,
-    "Filtering PM list by project/state must not change badge_count from 32",
+    rpcCalls.length,
+    1,
+    "Filtered list request without include_badge=1 must execute only 1 RPC call and never re-scan the unfiltered queue",
+  );
+  assert.equal(pmFilteredNoBadgeScanPayload.data.badge_count, undefined);
+
+  rpcCalls.length = 0;
+  const pmCursorLoadMoreRes = await handleGetSalaryAdvanceRequests(
+    new Request(
+      `${ORIGIN}/api/salary-advance/requests?queue=PM&cursor=${encodeURIComponent(pmPage1Payload.data.next_cursor)}&page_size=25`,
+    ),
+    "true",
+    deps,
+  );
+  assert.equal(pmCursorLoadMoreRes.status, 200);
+  assert.equal(
+    rpcCalls.length,
+    1,
+    "Load-more cursor pagination must execute only 1 RPC call and never re-scan the queue for badges",
   );
 
-  // 4. Accountant list with page_size=25 and search filter still returns full actionable badge_count=27
+  // 4. Explicit badge refresh (include_badge=1) while filtered queries only active state slices and returns full badge_count
+  rpcCalls.length = 0;
+  const pmFilteredWithBadgeRes = await handleGetSalaryAdvanceRequests(
+    new Request(
+      `${ORIGIN}/api/salary-advance/requests?queue=PM&project_id=PRJ_NORTH&request_state=APPROVED&page_size=25&include_badge=1`,
+    ),
+    "true",
+    deps,
+  );
+  assert.equal(pmFilteredWithBadgeRes.status, 200);
+  const pmFilteredWithBadgePayload = await pmFilteredWithBadgeRes.json();
+  assert.equal(
+    pmFilteredWithBadgePayload.data.badge_count,
+    32,
+    "When include_badge=1 is requested on reload/refresh, PM badge_count returns all 32 open requests in scope",
+  );
+  // 1 filtered list RPC + 2 targeted slice RPCs (OPEN + NEEDS_INFO), never p_request_state=null unfiltered scan
+  assert.equal(rpcCalls.length, 3);
+  assert.deepEqual(
+    rpcCalls.slice(1).map((c) => c.args.p_request_state).sort(),
+    ["NEEDS_INFO", "OPEN"],
+  );
+
+  // 5. Accountant list with include_badge=1 and search filter returns full actionable badge_count=27 via targeted slices
+  rpcCalls.length = 0;
   const acctFilteredRes = await handleGetSalaryAdvanceRequests(
     new Request(
-      `${ORIGIN}/api/salary-advance/requests?queue=ACCOUNTANT&search=KT029&page_size=25`,
+      `${ORIGIN}/api/salary-advance/requests?queue=ACCOUNTANT&search=KT029&page_size=25&include_badge=1`,
     ),
     "true",
     deps,
@@ -1418,6 +1462,21 @@ test("handleGetSalaryAdvanceRequests and handleGetSalaryAdvanceContext compute e
   assert.equal(
     acctFilteredPayload.data.badge_count,
     27,
-    "Accountant 'Cần xử lý' badge_count must remain 27 across pages even when list is filtered",
+    "Accountant 'Cần xử lý' badge_count must remain 27 across pages when include_badge=1 is requested",
   );
+  assert.equal(rpcCalls.length, 3);
+
+  // 6. When active requests exceed maxPagesPerSlice, computeServerQueueBadgeCount returns a deterministic capped count instead of null
+  const cappedResult = await computeServerQueueBadgeCount({
+    repository,
+    auth_subject: AUTH_SUBJECT,
+    app_user_id: PM_USER_ID,
+    queue: "PM",
+    pageSize: 10,
+    maxPagesPerSlice: 2,
+  });
+  assert.deepEqual(cappedResult, {
+    count: 22, // 2 pages * 10 OPEN (= 20) + 2 NEEDS_INFO (= 2)
+    capped: true,
+  });
 });
