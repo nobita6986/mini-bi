@@ -283,6 +283,7 @@ export type SalaryAdvanceActorContext = {
   accountant_projects: SalaryAdvanceProjectOption[];
   supervisory_projects: SalaryAdvanceProjectOption[];
   authorization_date: string;
+  badge_counts?: Partial<Record<"pm" | "accountant" | "supervisory", number>>;
 };
 
 export type SalaryAdvanceWorkerBankAccountInfo = {
@@ -461,6 +462,7 @@ export type SalaryAdvanceRequestListResponse = {
   requests: SalaryAdvanceRequestSummary[];
   has_more: boolean;
   next_cursor: string | null;
+  badge_count?: number;
 };
 
 export type SalaryAdvanceEvidenceReserveResponse = {

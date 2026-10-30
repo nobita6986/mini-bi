@@ -300,16 +300,13 @@ test("SalaryAdvanceWorkspace renders mandatory payment method selection, self-ow
   assert.match(workspaceSource, /2\. Chứng từ chuyển khoản \(Bill\)/);
 });
 
-test("SalaryAdvanceWorkspace places PM and Accountant queue tabs/badges in PageHeader actions alongside primary CTA buttons, supports dismissing 'Lưu ý nghiệp vụ', exports filtered Excel for accountants, and hides OFF workers in picker", () => {
-  // 1. Header action groups & badges
+test("SalaryAdvanceWorkspace places PM and Accountant queue tabs/badges in PageHeader actions with role='tablist' strictly wrapping only tab buttons and CTA buttons outside tablist, supports dismissing 'Lưu ý nghiệp vụ', exports filtered Excel for accountants, and hides OFF workers in picker", () => {
+  // 1. Header action groups, accessible tablist isolation, & badges
   assert.match(workspaceSource, /data-testid="salary-advance-header-actions"/);
+  assert.match(workspaceSource, /data-testid="salary-advance-header-tablist"/);
   assert.match(
     workspaceSource,
-    /data-testid="salary-advance-pm-header-actions"/
-  );
-  assert.match(
-    workspaceSource,
-    /data-testid="salary-advance-accountant-header-actions"/
+    /data-testid="salary-advance-header-cta-actions"/
   );
   assert.match(
     workspaceSource,
@@ -322,6 +319,36 @@ test("SalaryAdvanceWorkspace places PM and Accountant queue tabs/badges in PageH
   assert.match(workspaceSource, /data-testid="salary-advance-open-create-btn"/);
   assert.match(workspaceSource, /data-testid="salary-advance-export-excel-btn"/);
   assert.match(workspaceSource, /Xuất Excel/);
+
+  // Verify role="tablist" wraps ONLY visibleTabs -> HeaderTabButton and does NOT contain CTA buttons
+  const tablistStart = workspaceSource.indexOf(
+    'data-testid="salary-advance-header-tablist"'
+  );
+  const ctaGroupStart = workspaceSource.indexOf(
+    'data-testid="salary-advance-header-cta-actions"'
+  );
+  assert.ok(tablistStart > 0, "Expected salary-advance-header-tablist in header");
+  assert.ok(
+    ctaGroupStart > tablistStart,
+    "Expected salary-advance-header-cta-actions to be rendered outside and after salary-advance-header-tablist"
+  );
+  const tablistBlock = workspaceSource.slice(tablistStart, ctaGroupStart);
+  assert.match(tablistBlock, /<HeaderTabButton/);
+  assert.equal(
+    tablistBlock.includes("salary-advance-open-create-btn"),
+    false,
+    "Create Request button must NOT be inside role='tablist'"
+  );
+  assert.equal(
+    tablistBlock.includes("salary-advance-export-excel-btn"),
+    false,
+    "Export Excel button must NOT be inside role='tablist'"
+  );
+
+  // Verify badge count updates use serverBadgeCount and guard against filtered/paginated truncation
+  assert.match(workspaceSource, /serverBadgeCount:\s*outcome\.data\.badge_count/);
+  assert.match(workspaceSource, /hasMore:\s*outcome\.data\.has_more/);
+  assert.match(workspaceSource, /loadedContext\.badge_counts/);
 
   // 2. Dismissible "Lưu ý nghiệp vụ" banner
   assert.match(

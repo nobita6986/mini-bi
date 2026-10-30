@@ -945,6 +945,12 @@ export function countActionableRequestsForTab(
   return count;
 }
 
+export type UpdateTabBadgeCountOptions = {
+  serverBadgeCount?: number | null;
+  isUnfiltered?: boolean;
+  hasMore?: boolean;
+};
+
 export function updateTabBadgeCountsForTab(
   currentCounts: Partial<Record<SalaryAdvanceWorkspaceTabId, number>>,
   tabId: SalaryAdvanceWorkspaceTabId,
@@ -953,9 +959,22 @@ export function updateTabBadgeCountsForTab(
       SalaryAdvanceRequestSummary,
       "request_state" | "evidence_review_state" | "allowed_actions"
     >
-  >
+  >,
+  options?: UpdateTabBadgeCountOptions
 ): Partial<Record<SalaryAdvanceWorkspaceTabId, number>> {
-  const nextCount = countActionableRequestsForTab(requests, tabId);
+  let nextCount: number;
+  if (
+    typeof options?.serverBadgeCount === "number" &&
+    Number.isFinite(options.serverBadgeCount) &&
+    options.serverBadgeCount >= 0
+  ) {
+    nextCount = Math.trunc(options.serverBadgeCount);
+  } else if (options?.isUnfiltered === false || options?.hasMore === true) {
+    return currentCounts;
+  } else {
+    nextCount = countActionableRequestsForTab(requests, tabId);
+  }
+
   if (currentCounts[tabId] === nextCount) {
     return currentCounts;
   }
@@ -1407,13 +1426,32 @@ export function parseSalaryAdvanceRequestListPayload(raw: unknown):
     };
   }
 
+  if (
+    raw.badge_count !== undefined &&
+    raw.badge_count !== null &&
+    (typeof raw.badge_count !== "number" ||
+      !Number.isFinite(raw.badge_count) ||
+      raw.badge_count < 0)
+  ) {
+    return {
+      ok: false,
+      code: "SALARY_ADVANCE_PAYLOAD_INVALID",
+      message: salaryAdvanceErrorMessage("SALARY_ADVANCE_PAYLOAD_INVALID"),
+    };
+  }
+
+  const parsedData: SalaryAdvanceRequestListResponse = {
+    requests: raw.requests,
+    has_more: raw.has_more,
+    next_cursor: typeof raw.next_cursor === "string" ? raw.next_cursor : null,
+  };
+  if (typeof raw.badge_count === "number") {
+    parsedData.badge_count = Math.trunc(raw.badge_count);
+  }
+
   return {
     ok: true,
-    data: {
-      requests: raw.requests,
-      has_more: raw.has_more,
-      next_cursor: typeof raw.next_cursor === "string" ? raw.next_cursor : null,
-    },
+    data: parsedData,
   };
 }
 

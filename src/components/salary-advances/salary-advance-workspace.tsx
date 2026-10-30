@@ -405,6 +405,12 @@ export function SalaryAdvanceWorkspace() {
 
       const loadedContext = json.data;
       setContext(loadedContext);
+      if (loadedContext.badge_counts) {
+        setTabBadgeCounts((prev) => ({
+          ...prev,
+          ...loadedContext.badge_counts,
+        }));
+      }
 
       const initialTabs = resolveVisibleSalaryAdvanceTabs(loadedContext);
       if (initialTabs.length > 0) {
@@ -485,9 +491,11 @@ export function SalaryAdvanceWorkspace() {
           evidenceStateFilter === "ALL" &&
           appliedSearch.trim().length === 0;
         setTabBadgeCounts((counts) =>
-          isUnfilteredView || counts[currentTabId] === undefined
-            ? updateTabBadgeCountsForTab(counts, currentTabId, combined)
-            : counts
+          updateTabBadgeCountsForTab(counts, currentTabId, combined, {
+            serverBadgeCount: outcome.data.badge_count,
+            isUnfiltered: isUnfilteredView,
+            hasMore: outcome.data.has_more,
+          })
         );
         setRequestsHasMore(outcome.data.has_more);
         setRequestsNextCursor(outcome.data.next_cursor ?? null);
@@ -1574,12 +1582,6 @@ export function SalaryAdvanceWorkspace() {
     );
   }
 
-  const pmTab = visibleTabs.find((tab) => tab.id === "pm") ?? null;
-  const accountantTab =
-    visibleTabs.find((tab) => tab.id === "accountant") ?? null;
-  const supervisoryTab =
-    visibleTabs.find((tab) => tab.id === "supervisory") ?? null;
-
   return (
     <PageShell>
       <PageHeader
@@ -1588,22 +1590,30 @@ export function SalaryAdvanceWorkspace() {
         actions={
           <div
             className="flex flex-wrap items-center justify-start gap-2 sm:justify-end"
-            role="tablist"
-            aria-label="Khu vực làm việc Ứng lương"
             data-testid="salary-advance-header-actions"
           >
-            {pmTab || context?.is_project_manager ? (
+            {visibleTabs.length > 0 ? (
               <div
                 className="flex flex-wrap items-center gap-2"
-                data-testid="salary-advance-pm-header-actions"
+                role="tablist"
+                aria-label="Khu vực làm việc Ứng lương"
+                data-testid="salary-advance-header-tablist"
               >
-                {pmTab ? (
+                {visibleTabs.map((tab) => (
                   <HeaderTabButton
-                    tab={pmTab}
-                    isSelected={currentTabConfig?.id === pmTab.id}
+                    key={tab.id}
+                    tab={tab}
+                    isSelected={currentTabConfig?.id === tab.id}
                     onSelect={handleTabChange}
                   />
-                ) : null}
+                ))}
+              </div>
+            ) : null}
+            {context?.is_project_manager || context?.is_project_accountant ? (
+              <div
+                className="flex flex-wrap items-center gap-2"
+                data-testid="salary-advance-header-cta-actions"
+              >
                 {context?.is_project_manager ? (
                   <Button
                     variant="primary"
@@ -1613,20 +1623,6 @@ export function SalaryAdvanceWorkspace() {
                   >
                     + Tạo yêu cầu ứng lương
                   </Button>
-                ) : null}
-              </div>
-            ) : null}
-            {accountantTab || context?.is_project_accountant ? (
-              <div
-                className="flex flex-wrap items-center gap-2"
-                data-testid="salary-advance-accountant-header-actions"
-              >
-                {accountantTab ? (
-                  <HeaderTabButton
-                    tab={accountantTab}
-                    isSelected={currentTabConfig?.id === accountantTab.id}
-                    onSelect={handleTabChange}
-                  />
                 ) : null}
                 {context?.is_project_accountant ? (
                   <Button
@@ -1641,13 +1637,6 @@ export function SalaryAdvanceWorkspace() {
                   </Button>
                 ) : null}
               </div>
-            ) : null}
-            {supervisoryTab ? (
-              <HeaderTabButton
-                tab={supervisoryTab}
-                isSelected={currentTabConfig?.id === supervisoryTab.id}
-                onSelect={handleTabChange}
-              />
             ) : null}
           </div>
         }

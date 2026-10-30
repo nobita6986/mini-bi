@@ -34,6 +34,8 @@ import {
   salaryAdvanceHttpStatusForError,
   type SalaryAdvanceErrorCode,
   type SalaryAdvanceEvidenceReserveResponse,
+  type SalaryAdvanceQueue,
+  type SalaryAdvanceRequestListResponse,
   type SalaryAdvanceRequestSummary,
   type SalaryAdvanceWorkerOption,
 } from "./salary-advance-contract.ts";
@@ -43,6 +45,10 @@ import {
   buildSalaryAdvanceExportXlsx,
 } from "./salary-advance-export.ts";
 import type { SalaryAdvanceRepository } from "./salary-advance-repository.ts";
+import {
+  countActionableRequestsForTab,
+  type SalaryAdvanceWorkspaceTabId,
+} from "./salary-advance-ui-model.ts";
 
 export const MAX_SALARY_ADVANCE_MUTATION_JSON_BYTES = 8_192;
 
@@ -244,6 +250,106 @@ function inlineBinaryImageResponse(
   });
 }
 
+const SERVER_BADGE_COUNT_PAGE_SIZE = 100;
+const MAX_SERVER_BADGE_COUNT_PAGES = 100;
+
+function tabIdForQueue(
+  queue: Extract<SalaryAdvanceQueue, "PM" | "ACCOUNTANT" | "SUPERVISORY">,
+): SalaryAdvanceWorkspaceTabId {
+  if (queue === "PM") return "pm";
+  if (queue === "ACCOUNTANT") return "accountant";
+  return "supervisory";
+}
+
+export async function computeServerQueueBadgeCount(params: {
+  repository: SalaryAdvanceRepository;
+  auth_subject: string;
+  app_user_id: string;
+  queue: Extract<SalaryAdvanceQueue, "PM" | "ACCOUNTANT" | "SUPERVISORY">;
+  initialUnfilteredFirstPage?: SalaryAdvanceRequestListResponse | null;
+  pageSize?: number;
+}): Promise<number | null> {
+  const tabId = tabIdForQueue(params.queue);
+  const effectivePageSize =
+    params.pageSize !== undefined &&
+    Number.isSafeInteger(params.pageSize) &&
+    params.pageSize >= 1 &&
+    params.pageSize <= 100
+      ? params.pageSize
+      : SERVER_BADGE_COUNT_PAGE_SIZE;
+
+  if (
+    params.initialUnfilteredFirstPage &&
+    !params.initialUnfilteredFirstPage.has_more
+  ) {
+    return countActionableRequestsForTab(
+      params.initialUnfilteredFirstPage.requests,
+      tabId,
+    );
+  }
+
+  const allRows: SalaryAdvanceRequestSummary[] = [];
+  const seenRequestIds = new Set<string>();
+  const seenCursors = new Set<string>();
+  let cursor: string | null = null;
+
+  if (params.initialUnfilteredFirstPage) {
+    for (const row of params.initialUnfilteredFirstPage.requests) {
+      if (!seenRequestIds.has(row.request_id)) {
+        seenRequestIds.add(row.request_id);
+        allRows.push(row);
+      }
+    }
+    if (!params.initialUnfilteredFirstPage.next_cursor) {
+      return null;
+    }
+    cursor = params.initialUnfilteredFirstPage.next_cursor;
+    seenCursors.add(cursor);
+  }
+
+  for (let pageIdx = 0; pageIdx < MAX_SERVER_BADGE_COUNT_PAGES; pageIdx += 1) {
+    const pageResult = await params.repository.listRequests({
+      auth_subject: params.auth_subject,
+      app_user_id: params.app_user_id,
+      queue: params.queue,
+      project_id: null,
+      request_state: null,
+      evidence_review_state: null,
+      search: null,
+      cursor,
+      page_size: effectivePageSize,
+    });
+    if (!pageResult.ok) {
+      return null;
+    }
+
+    const page = pageResult.data;
+    for (const row of page.requests) {
+      if (!seenRequestIds.has(row.request_id)) {
+        seenRequestIds.add(row.request_id);
+        allRows.push(row);
+      }
+    }
+
+    if (!page.has_more) {
+      return countActionableRequestsForTab(allRows, tabId);
+    }
+
+    if (
+      page.requests.length === 0 ||
+      !page.next_cursor ||
+      seenCursors.has(page.next_cursor)
+    ) {
+      return null;
+    }
+
+    seenCursors.add(page.next_cursor);
+    cursor = page.next_cursor;
+  }
+
+  return null;
+}
+
 // -----------------------------------------------------------------------------
 // 1. GET /api/salary-advance/context
 // -----------------------------------------------------------------------------
@@ -273,7 +379,53 @@ export async function handleGetSalaryAdvanceContext(
   });
   if (!result.ok) return salAdvError(result.code);
 
-  return salAdvOk(result.data, 200);
+  const badgeCounts: Partial<Record<SalaryAdvanceWorkspaceTabId, number>> = {};
+  if (
+    result.data.is_project_manager &&
+    result.data.managed_projects.length > 0
+  ) {
+    const pmCount = await computeServerQueueBadgeCount({
+      repository: dependencies.repository,
+      auth_subject: actor.auth_subject,
+      app_user_id: actor.app_user_id,
+      queue: "PM",
+    });
+    if (pmCount !== null) {
+      badgeCounts.pm = pmCount;
+    }
+  }
+  if (
+    result.data.is_project_accountant &&
+    result.data.accountant_projects.length > 0
+  ) {
+    const accountantCount = await computeServerQueueBadgeCount({
+      repository: dependencies.repository,
+      auth_subject: actor.auth_subject,
+      app_user_id: actor.app_user_id,
+      queue: "ACCOUNTANT",
+    });
+    if (accountantCount !== null) {
+      badgeCounts.accountant = accountantCount;
+    }
+  }
+  if (result.data.is_supervisory_viewer) {
+    const supervisoryCount = await computeServerQueueBadgeCount({
+      repository: dependencies.repository,
+      auth_subject: actor.auth_subject,
+      app_user_id: actor.app_user_id,
+      queue: "SUPERVISORY",
+    });
+    if (supervisoryCount !== null) {
+      badgeCounts.supervisory = supervisoryCount;
+    }
+  }
+
+  return salAdvOk(
+    Object.keys(badgeCounts).length > 0
+      ? { ...result.data, badge_counts: badgeCounts }
+      : result.data,
+    200,
+  );
 }
 
 function isOffProjectWorkerOption(worker: SalaryAdvanceWorkerOption): boolean {
@@ -420,7 +572,34 @@ export async function handleGetSalaryAdvanceRequests(
   });
   if (!result.ok) return salAdvError(result.code);
 
-  return salAdvOk(result.data, 200);
+  const isUnfilteredFirstPage =
+    query.value.project_id === null &&
+    query.value.request_state === null &&
+    query.value.evidence_review_state === null &&
+    query.value.search === null &&
+    query.value.cursor === null;
+
+  let badgeCount: number | null = null;
+  if (
+    query.value.queue === "PM" ||
+    query.value.queue === "ACCOUNTANT" ||
+    query.value.queue === "SUPERVISORY"
+  ) {
+    badgeCount = await computeServerQueueBadgeCount({
+      repository: dependencies.repository,
+      auth_subject: actor.auth_subject,
+      app_user_id: actor.app_user_id,
+      queue: query.value.queue,
+      initialUnfilteredFirstPage: isUnfilteredFirstPage ? result.data : null,
+    });
+  }
+
+  return salAdvOk(
+    badgeCount !== null
+      ? { ...result.data, badge_count: badgeCount }
+      : result.data,
+    200,
+  );
 }
 
 // -----------------------------------------------------------------------------

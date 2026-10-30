@@ -1195,3 +1195,229 @@ test("handleGetExportSalaryAdvanceRequests paginates all matching ACCOUNTANT row
     "SALARY_ADVANCE_ACCESS_DENIED",
   );
 });
+
+test("handleGetSalaryAdvanceRequests and handleGetSalaryAdvanceContext compute exact full-scope badge counts across >25 open requests independientemente of page_size=25 or active UI filters", async () => {
+  // Build 37 PM requests: 30 OPEN + 2 NEEDS_INFO (= 32 open in state machine) + 5 terminal (APPROVED/REJECTED/WITHDRAWN)
+  const allPmRequests = Array.from({ length: 37 }, (_, i) => {
+    const seq = i + 1;
+    const state =
+      seq <= 30
+        ? "OPEN"
+        : seq <= 32
+          ? "NEEDS_INFO"
+          : seq <= 35
+            ? "APPROVED"
+            : seq === 36
+              ? "REJECTED"
+              : "WITHDRAWN";
+    return {
+      ...makeSampleDetail().request,
+      request_id: `30000000-0000-4000-8000-${String(seq).padStart(12, "0")}`,
+      project_id: seq % 2 === 0 ? "PRJ_NORTH" : "PRJ_SOUTH",
+      worker_employee_code: `NV${String(seq).padStart(3, "0")}`,
+      worker_display_name: `Công Nhân ${seq}`,
+      request_state: state,
+      evidence_review_state: "NOT_UPLOADED",
+      allowed_actions: {
+        ...makeSampleDetail().request.allowed_actions,
+        can_withdraw: state === "OPEN" || state === "NEEDS_INFO",
+        can_provide_info: state === "NEEDS_INFO",
+      },
+      last_activity_at: `2026-10-29T10:${String(60 - seq).padStart(2, "0")}:00Z`,
+    };
+  });
+
+  // Build 29 Accountant requests: 27 actionable (20 OPEN + 7 APPROVED/PENDING_REVIEW) + 2 non-actionable
+  const allAccountantRequests = Array.from({ length: 29 }, (_, i) => {
+    const seq = i + 1;
+    const isOpen = seq <= 20;
+    const isPendingReview = seq > 20 && seq <= 27;
+    return {
+      ...makeSampleDetail().request,
+      request_id: `80000000-0000-4000-8000-${String(seq).padStart(12, "0")}`,
+      project_id: "PRJ_NORTH",
+      worker_employee_code: `KT${String(seq).padStart(3, "0")}`,
+      worker_display_name: `NLĐ Kế Toán ${seq}`,
+      request_state: isOpen ? "OPEN" : "APPROVED",
+      evidence_review_state: isPendingReview ? "PENDING_REVIEW" : "REVIEWED",
+      allowed_actions: {
+        can_post_message: true,
+        can_provide_info: false,
+        can_withdraw: false,
+        can_upload_evidence: false,
+        can_request_info: isOpen,
+        can_approve: isOpen,
+        can_reject: isOpen,
+        can_mark_handled_externally: !isOpen,
+        can_review_evidence: isPendingReview,
+      },
+      last_activity_at: `2026-10-29T11:${String(60 - seq).padStart(2, "0")}:00Z`,
+    };
+  });
+
+  const repository = createSalaryAdvanceRepository(async (fn, args) => {
+    if (fn === "salary_advance_get_actor_context") {
+      return {
+        data: {
+          app_user_id: args.p_app_user_id,
+          display_name: "QLDA Kiêm KT",
+          is_project_manager: true,
+          is_project_accountant: true,
+          is_supervisory_viewer: false,
+          is_full_admin: false,
+          is_bod: false,
+          managed_projects: [
+            {
+              project_id: "PRJ_NORTH",
+              display_name: "Dự án Bắc",
+              active: true,
+              has_active_accountant: true,
+              accountant_user_id: ACCT_USER_ID,
+              accountant_display_name: "Kế toán A",
+            },
+            {
+              project_id: "PRJ_SOUTH",
+              display_name: "Dự án Nam",
+              active: true,
+              has_active_accountant: true,
+              accountant_user_id: ACCT_USER_ID,
+              accountant_display_name: "Kế toán A",
+            },
+          ],
+          accountant_projects: [
+            {
+              project_id: "PRJ_NORTH",
+              display_name: "Dự án Bắc",
+              active: true,
+            },
+          ],
+          supervisory_projects: [],
+          authorization_date: "2026-10-29",
+        },
+        error: null,
+      };
+    }
+
+    if (fn === "salary_advance_list_requests") {
+      const source =
+        args.p_queue === "PM" ? allPmRequests : allAccountantRequests;
+      let filtered = source;
+      if (args.p_project_id) {
+        filtered = filtered.filter((r) => r.project_id === args.p_project_id);
+      }
+      if (args.p_request_state) {
+        filtered = filtered.filter(
+          (r) => r.request_state === args.p_request_state,
+        );
+      }
+      if (args.p_evidence_review_state) {
+        filtered = filtered.filter(
+          (r) => r.evidence_review_state === args.p_evidence_review_state,
+        );
+      }
+      if (args.p_search) {
+        const q = args.p_search.toLowerCase();
+        filtered = filtered.filter(
+          (r) =>
+            r.worker_employee_code.toLowerCase().includes(q) ||
+            r.worker_display_name.toLowerCase().includes(q),
+        );
+      }
+
+      let startIdx = 0;
+      if (args.p_cursor) {
+        const cursorId = String(args.p_cursor).split("|")[1];
+        const foundIdx = filtered.findIndex((r) => r.request_id === cursorId);
+        startIdx = foundIdx >= 0 ? foundIdx + 1 : filtered.length;
+      }
+
+      const pageSize = args.p_page_size ?? 25;
+      const slice = filtered.slice(startIdx, startIdx + pageSize);
+      const hasMore = startIdx + pageSize < filtered.length;
+      const lastItem = slice[slice.length - 1];
+      const nextCursor =
+        hasMore && lastItem
+          ? `${lastItem.last_activity_at}|${lastItem.request_id}`
+          : null;
+
+      return {
+        data: {
+          requests: slice,
+          has_more: hasMore,
+          next_cursor: nextCursor,
+        },
+        error: null,
+      };
+    }
+
+    return { data: null, error: { message: "UNEXPECTED_RPC" } };
+  });
+
+  const deps = {
+    resolveSession: makeActorSession(PM_USER_ID),
+    repository,
+  };
+
+  // 1. Context endpoint returns full-scope badge_counts for both PM (32) and Accountant (27)
+  const ctxRes = await handleGetSalaryAdvanceContext(
+    new Request(`${ORIGIN}/api/salary-advance/context`),
+    "true",
+    deps,
+  );
+  assert.equal(ctxRes.status, 200);
+  const ctxPayload = await ctxRes.json();
+  assert.deepEqual(ctxPayload.data.badge_counts, {
+    pm: 32,
+    accountant: 27,
+  });
+
+  // 2. Unfiltered PM page 1 (page_size=25) returns 25 rows with has_more=true AND badge_count=32 (>25 open requests)
+  const pmPage1Res = await handleGetSalaryAdvanceRequests(
+    new Request(`${ORIGIN}/api/salary-advance/requests?queue=PM&page_size=25`),
+    "true",
+    deps,
+  );
+  assert.equal(pmPage1Res.status, 200);
+  const pmPage1Payload = await pmPage1Res.json();
+  assert.equal(pmPage1Payload.data.requests.length, 25);
+  assert.equal(pmPage1Payload.data.has_more, true);
+  assert.equal(
+    pmPage1Payload.data.badge_count,
+    32,
+    "PM badge_count must equal all 32 open requests across pages, not 25 from page 1",
+  );
+
+  // 3. Filtered PM query (request_state=APPROVED -> only 3 terminal rows) still returns badge_count=32
+  const pmFilteredRes = await handleGetSalaryAdvanceRequests(
+    new Request(
+      `${ORIGIN}/api/salary-advance/requests?queue=PM&project_id=PRJ_NORTH&request_state=APPROVED&page_size=25`,
+    ),
+    "true",
+    deps,
+  );
+  assert.equal(pmFilteredRes.status, 200);
+  const pmFilteredPayload = await pmFilteredRes.json();
+  assert.ok(pmFilteredPayload.data.requests.length < 5);
+  assert.equal(
+    pmFilteredPayload.data.badge_count,
+    32,
+    "Filtering PM list by project/state must not change badge_count from 32",
+  );
+
+  // 4. Accountant list with page_size=25 and search filter still returns full actionable badge_count=27
+  const acctFilteredRes = await handleGetSalaryAdvanceRequests(
+    new Request(
+      `${ORIGIN}/api/salary-advance/requests?queue=ACCOUNTANT&search=KT029&page_size=25`,
+    ),
+    "true",
+    deps,
+  );
+  assert.equal(acctFilteredRes.status, 200);
+  const acctFilteredPayload = await acctFilteredRes.json();
+  assert.equal(acctFilteredPayload.data.requests.length, 1);
+  assert.equal(
+    acctFilteredPayload.data.badge_count,
+    27,
+    "Accountant 'Cần xử lý' badge_count must remain 27 across pages even when list is filtered",
+  );
+});
