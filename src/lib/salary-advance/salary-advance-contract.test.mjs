@@ -29,6 +29,7 @@ import {
   parseIdempotencyKeyHeader,
   parseListProjectWorkersQuery,
   parseListSalaryAdvanceRequestsQuery,
+  parseListWorkerHistoryQuery,
   parseNoQueryParams,
   parsePositiveAmountVnd,
   parsePostSalaryAdvanceMessageBody,
@@ -566,6 +567,7 @@ test("fingerprints and HTTP status mapping are deterministic", () => {
   assert.equal(salaryAdvanceHttpStatusForError("SALARY_ADVANCE_UPLOAD_SUPERSEDED"), 409);
   assert.equal(salaryAdvanceHttpStatusForError("SALARY_ADVANCE_WORKER_PORTRAIT_VERSION_CONFLICT"), 409);
   assert.equal(salaryAdvanceHttpStatusForError("SALARY_ADVANCE_WORKER_INELIGIBLE_STATUS"), 409);
+  assert.equal(salaryAdvanceHttpStatusForError("SALARY_ADVANCE_WORKER_VENDOR_RECRUITED"), 409);
   assert.equal(salaryAdvanceHttpStatusForError("SALARY_ADVANCE_WORKER_MULTI_PROJECT_ON"), 409);
   assert.equal(salaryAdvanceHttpStatusForError("SALARY_ADVANCE_WORKER_DUPLICATE_CCCD"), 409);
   assert.equal(salaryAdvanceHttpStatusForError("SALARY_ADVANCE_BANK_ACCOUNT_MISSING"), 409);
@@ -598,4 +600,84 @@ test("fingerprints and HTTP status mapping are deterministic", () => {
     ).ok,
     true,
   );
+});
+
+test("parseListWorkerHistoryQuery validates THIS_MONTH, LAST_30_DAYS, MONTH, ALL, CUSTOM_RANGE, cursor, and page_size strictly", () => {
+  // Default period_mode is THIS_MONTH
+  const defaultRes = parseListWorkerHistoryQuery(
+    new URL(`https://bi.local/api/salary-advance/requests/${REQ_ID}/worker-history`),
+  );
+  assert.deepEqual(defaultRes, {
+    ok: true,
+    value: {
+      period_mode: "THIS_MONTH",
+      month: null,
+      from_date: null,
+      to_date: null,
+      cursor: null,
+      page_size: 20,
+    },
+  });
+
+  // LAST_30_DAYS and ALL
+  for (const mode of ["LAST_30_DAYS", "ALL"]) {
+    const res = parseListWorkerHistoryQuery(
+      new URL(
+        `https://bi.local/api/salary-advance/requests/${REQ_ID}/worker-history?period_mode=${mode.toLowerCase()}&page_size=15`,
+      ),
+    );
+    assert.equal(res.ok, true);
+    if (res.ok) {
+      assert.equal(res.value.period_mode, mode);
+      assert.equal(res.value.page_size, 15);
+    }
+  }
+
+  // MONTH requires valid YYYY-MM and rejects extra date params
+  const monthOk = parseListWorkerHistoryQuery(
+    new URL(
+      `https://bi.local/api/salary-advance/requests/${REQ_ID}/worker-history?period_mode=MONTH&month=2026-10`,
+    ),
+  );
+  assert.equal(monthOk.ok, true);
+  if (monthOk.ok) {
+    assert.equal(monthOk.value.period_mode, "MONTH");
+    assert.equal(monthOk.value.month, "2026-10");
+  }
+
+  for (const badMonthUrl of [
+    `https://bi.local/api/salary-advance/requests/${REQ_ID}/worker-history?period_mode=MONTH`,
+    `https://bi.local/api/salary-advance/requests/${REQ_ID}/worker-history?period_mode=MONTH&month=2026-13`,
+    `https://bi.local/api/salary-advance/requests/${REQ_ID}/worker-history?period_mode=MONTH&month=2026-00`,
+    `https://bi.local/api/salary-advance/requests/${REQ_ID}/worker-history?period_mode=MONTH&month=10-2026`,
+    `https://bi.local/api/salary-advance/requests/${REQ_ID}/worker-history?period_mode=THIS_MONTH&month=2026-10`,
+  ]) {
+    const res = parseListWorkerHistoryQuery(new URL(badMonthUrl));
+    assert.equal(res.ok, false, `Expected ${badMonthUrl} to fail`);
+  }
+
+  // CUSTOM_RANGE requires valid calendar dates and from_date <= to_date
+  const customOk = parseListWorkerHistoryQuery(
+    new URL(
+      `https://bi.local/api/salary-advance/requests/${REQ_ID}/worker-history?period_mode=CUSTOM_RANGE&from_date=2026-10-01&to_date=2026-10-30&cursor=2026-10-15T10:00:00Z|${REQ_ID}`,
+    ),
+  );
+  assert.equal(customOk.ok, true);
+  if (customOk.ok) {
+    assert.equal(customOk.value.period_mode, "CUSTOM_RANGE");
+    assert.equal(customOk.value.from_date, "2026-10-01");
+    assert.equal(customOk.value.to_date, "2026-10-30");
+    assert.equal(customOk.value.cursor, `2026-10-15T10:00:00Z|${REQ_ID}`);
+  }
+
+  for (const badRangeUrl of [
+    `https://bi.local/api/salary-advance/requests/${REQ_ID}/worker-history?period_mode=CUSTOM_RANGE`,
+    `https://bi.local/api/salary-advance/requests/${REQ_ID}/worker-history?period_mode=CUSTOM_RANGE&from_date=2026-10-30&to_date=2026-10-01`,
+    `https://bi.local/api/salary-advance/requests/${REQ_ID}/worker-history?period_mode=CUSTOM_RANGE&from_date=2026-02-30&to_date=2026-03-01`,
+    `https://bi.local/api/salary-advance/requests/${REQ_ID}/worker-history?period_mode=ALL&from_date=2026-10-01`,
+    `https://bi.local/api/salary-advance/requests/${REQ_ID}/worker-history?period_mode=ALL&unknown=1`,
+  ]) {
+    const res = parseListWorkerHistoryQuery(new URL(badRangeUrl));
+    assert.equal(res.ok, false, `Expected ${badRangeUrl} to fail`);
+  }
 });

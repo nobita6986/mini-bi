@@ -114,10 +114,30 @@ export const SALARY_ADVANCE_WORKER_INELIGIBLE_REASONS = [
   "WORKER_STATUS_UNCONFIRMED",
   "WORKER_MULTI_PROJECT_ON",
   "WORKER_DUPLICATE_CCCD",
+  "WORKER_VENDOR_RECRUITED",
 ] as const;
 
 export type SalaryAdvanceWorkerIneligibleReason =
   (typeof SALARY_ADVANCE_WORKER_INELIGIBLE_REASONS)[number];
+
+export const SALARY_ADVANCE_WORKER_PROVIDER_TYPES = [
+  "hrp",
+  "vendor",
+] as const;
+
+export type SalaryAdvanceWorkerProviderType =
+  (typeof SALARY_ADVANCE_WORKER_PROVIDER_TYPES)[number];
+
+export const SALARY_ADVANCE_HISTORY_PERIOD_MODES = [
+  "LAST_30_DAYS",
+  "THIS_MONTH",
+  "MONTH",
+  "ALL",
+  "CUSTOM_RANGE",
+] as const;
+
+export type SalaryAdvanceHistoryPeriodMode =
+  (typeof SALARY_ADVANCE_HISTORY_PERIOD_MODES)[number];
 
 export const SALARY_ADVANCE_BANK_INELIGIBLE_REASONS = [
   "BANK_ACCOUNT_MISSING",
@@ -152,6 +172,7 @@ export type SalaryAdvanceErrorCode =
   | "SALARY_ADVANCE_WORKER_INELIGIBLE_STATUS"
   | "SALARY_ADVANCE_WORKER_MULTI_PROJECT_ON"
   | "SALARY_ADVANCE_WORKER_DUPLICATE_CCCD"
+  | "SALARY_ADVANCE_WORKER_VENDOR_RECRUITED"
   | "SALARY_ADVANCE_PAYMENT_METHOD_INVALID"
   | "SALARY_ADVANCE_BANK_ACCOUNT_MISSING"
   | "SALARY_ADVANCE_BANK_ACCOUNT_NOT_SELF_OWNED"
@@ -209,6 +230,7 @@ export function salaryAdvanceHttpStatusForError(
     case "SALARY_ADVANCE_WORKER_INELIGIBLE_STATUS":
     case "SALARY_ADVANCE_WORKER_MULTI_PROJECT_ON":
     case "SALARY_ADVANCE_WORKER_DUPLICATE_CCCD":
+    case "SALARY_ADVANCE_WORKER_VENDOR_RECRUITED":
     case "SALARY_ADVANCE_BANK_ACCOUNT_MISSING":
     case "SALARY_ADVANCE_BANK_ACCOUNT_NOT_SELF_OWNED":
     case "SALARY_ADVANCE_STATE_CONFLICT":
@@ -320,6 +342,9 @@ export type SalaryAdvanceWorkerOption = {
   employee_code: string;
   display_name: string;
   first_work_date: string;
+  provider_type?: SalaryAdvanceWorkerProviderType;
+  recruiter_display_name?: string | null;
+  recruiter_code?: string | null;
   has_portrait: boolean;
   employment_status?: SalaryAdvanceWorkerEmploymentStatus;
   active_on_project_count?: number;
@@ -382,6 +407,10 @@ export type SalaryAdvanceRequestSummary = {
   worker_entry_id: string;
   worker_employee_code: string;
   worker_display_name: string;
+  worker_first_work_date?: string | null;
+  worker_recruiter_display_name?: string | null;
+  worker_recruiter_code?: string | null;
+  worker_provider_type?: SalaryAdvanceWorkerProviderType | null;
   worker_portrait: SalaryAdvanceWorkerPortraitMeta | null;
   worker_eligibility?: SalaryAdvanceWorkerEligibilitySummary;
   requested_amount_vnd: string;
@@ -451,10 +480,72 @@ export type SalaryAdvanceEvidenceVersionItem = {
   uploaded_at: string;
 };
 
+/**
+ * 30-day rolling summary of completed salary advances for the same worker
+ * (matched by `worker_entry_id`, `candidate_id`, or canonical `national_id`),
+ * filtered by completion / evidence-review date (`coalesce(evidence_reviewed_at, decided_at, created_at)`)
+ * in `Asia/Ho_Chi_Minh` where `request_state = 'APPROVED' AND evidence_review_state = 'REVIEWED'`.
+ */
+export type SalaryAdvanceWorker30dSummary = {
+  window_days: number;
+  window_from_date: string;
+  window_to_date: string;
+  timezone: string;
+  qualifying_rule: "APPROVED_AND_EVIDENCE_REVIEWED";
+  total_count: number;
+  total_amount_vnd: string;
+};
+
+export type SalaryAdvanceWorkerHistoryItem = {
+  request_id: string;
+  project_id: string;
+  project_display_name: string;
+  worker_entry_id: string;
+  worker_employee_code: string;
+  worker_display_name: string;
+  requested_amount_vnd: string;
+  payment_method: SalaryAdvancePaymentMethod;
+  initial_content?: string | null;
+  request_state: SalaryAdvanceRequestState;
+  evidence_review_state: SalaryAdvanceEvidenceReviewState;
+  /** Completion / evidence-review calendar date (`YYYY-MM-DD` in `Asia/Ho_Chi_Minh`) used for period filtering. */
+  effective_date: string;
+  /** Completion / evidence-review UTC timestamp (`coalesce(evidence_reviewed_at, decided_at, created_at)`). */
+  effective_at: string;
+  /** Request creation UTC timestamp. */
+  created_at: string;
+  /** Accountant approval UTC timestamp. */
+  decided_at: string | null;
+  /** Evidence review completion UTC timestamp. */
+  evidence_reviewed_at: string | null;
+  created_by_display_name: string;
+  decided_by_display_name: string | null;
+  evidence_reviewed_by_display_name: string | null;
+};
+
+export type SalaryAdvanceWorkerHistoryResponse = {
+  request_id: string;
+  worker_entry_id: string;
+  worker_employee_code: string;
+  worker_display_name: string;
+  period_mode: SalaryAdvanceHistoryPeriodMode;
+  month: string | null;
+  from_date: string | null;
+  to_date: string | null;
+  timezone: string;
+  qualifying_rule: "APPROVED_AND_EVIDENCE_REVIEWED";
+  total_count: number;
+  total_amount_vnd: string;
+  items: SalaryAdvanceWorkerHistoryItem[];
+  has_more: boolean;
+  next_cursor: string | null;
+};
+
 export type SalaryAdvanceRequestDetail = {
   request: SalaryAdvanceRequestSummary;
   events: SalaryAdvanceEventItem[];
   evidence_versions: SalaryAdvanceEvidenceVersionItem[];
+  worker_advance_30d_summary?: SalaryAdvanceWorker30dSummary | null;
 };
 
 export type SalaryAdvanceMutationDetailResponse = SalaryAdvanceRequestDetail & {
@@ -945,6 +1036,166 @@ export function parseWorkerPortraitQuery(
   const parsed = parseUuidParam(rawDocId, "SALARY_ADVANCE_PORTRAIT_LOCK_INVALID");
   if (!parsed.ok) return parsed;
   return { ok: true, value: { expected_document_id: parsed.id } };
+}
+
+function isValidIsoCalendarDate(raw: string): boolean {
+  if (!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(raw)) {
+    return false;
+  }
+  const [yStr, mStr, dStr] = raw.split("-");
+  const year = Number(yStr);
+  const month = Number(mStr);
+  const day = Number(dStr);
+  if (
+    !Number.isSafeInteger(year) ||
+    year < 1970 ||
+    year > 9999 ||
+    !Number.isSafeInteger(month) ||
+    month < 1 ||
+    month > 12 ||
+    !Number.isSafeInteger(day) ||
+    day < 1 ||
+    day > 31
+  ) {
+    return false;
+  }
+  const dt = new Date(Date.UTC(year, month - 1, day));
+  return (
+    dt.getUTCFullYear() === year &&
+    dt.getUTCMonth() === month - 1 &&
+    dt.getUTCDate() === day
+  );
+}
+
+export function parseListWorkerHistoryQuery(
+  url: URL,
+):
+  | {
+      ok: true;
+      value: {
+        period_mode: SalaryAdvanceHistoryPeriodMode;
+        month: string | null;
+        from_date: string | null;
+        to_date: string | null;
+        cursor: string | null;
+        page_size: number;
+      };
+    }
+  | { ok: false; code: SalaryAdvanceErrorCode } {
+  const allowed = new Set([
+    "period_mode",
+    "month",
+    "from_date",
+    "to_date",
+    "cursor",
+    "page_size",
+  ]);
+  for (const key of url.searchParams.keys()) {
+    if (!allowed.has(key)) {
+      return { ok: false, code: "SALARY_ADVANCE_QUERY_INVALID" };
+    }
+  }
+
+  const rawMode = url.searchParams.get("period_mode");
+  let periodMode: SalaryAdvanceHistoryPeriodMode = "THIS_MONTH";
+  if (rawMode !== null && rawMode.trim().length > 0) {
+    const upper = rawMode.trim().toUpperCase();
+    if (
+      !SALARY_ADVANCE_HISTORY_PERIOD_MODES.includes(
+        upper as SalaryAdvanceHistoryPeriodMode,
+      )
+    ) {
+      return { ok: false, code: "SALARY_ADVANCE_QUERY_INVALID" };
+    }
+    periodMode = upper as SalaryAdvanceHistoryPeriodMode;
+  }
+
+  const rawMonth = url.searchParams.get("month");
+  const month =
+    rawMonth !== null && rawMonth.trim().length > 0 ? rawMonth.trim() : null;
+
+  const rawFromDate = url.searchParams.get("from_date");
+  const fromDate =
+    rawFromDate !== null && rawFromDate.trim().length > 0
+      ? rawFromDate.trim()
+      : null;
+
+  const rawToDate = url.searchParams.get("to_date");
+  const toDate =
+    rawToDate !== null && rawToDate.trim().length > 0
+      ? rawToDate.trim()
+      : null;
+
+  if (
+    periodMode === "LAST_30_DAYS" ||
+    periodMode === "THIS_MONTH" ||
+    periodMode === "ALL"
+  ) {
+    if (month !== null || fromDate !== null || toDate !== null) {
+      return { ok: false, code: "SALARY_ADVANCE_QUERY_INVALID" };
+    }
+  } else if (periodMode === "MONTH") {
+    if (
+      month === null ||
+      !/^[0-9]{4}-(0[1-9]|1[0-2])$/.test(month) ||
+      fromDate !== null ||
+      toDate !== null
+    ) {
+      return { ok: false, code: "SALARY_ADVANCE_QUERY_INVALID" };
+    }
+  } else if (periodMode === "CUSTOM_RANGE") {
+    if (month !== null || (fromDate === null && toDate === null)) {
+      return { ok: false, code: "SALARY_ADVANCE_QUERY_INVALID" };
+    }
+    if (fromDate !== null && !isValidIsoCalendarDate(fromDate)) {
+      return { ok: false, code: "SALARY_ADVANCE_QUERY_INVALID" };
+    }
+    if (toDate !== null && !isValidIsoCalendarDate(toDate)) {
+      return { ok: false, code: "SALARY_ADVANCE_QUERY_INVALID" };
+    }
+    if (fromDate !== null && toDate !== null && fromDate > toDate) {
+      return { ok: false, code: "SALARY_ADVANCE_QUERY_INVALID" };
+    }
+  }
+
+  const rawCursor = url.searchParams.get("cursor");
+  let cursor: string | null = null;
+  if (rawCursor !== null && rawCursor.trim().length > 0) {
+    const trimmed = rawCursor.trim();
+    if (
+      !/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z\|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        trimmed,
+      )
+    ) {
+      return { ok: false, code: "SALARY_ADVANCE_QUERY_INVALID" };
+    }
+    cursor = trimmed;
+  }
+
+  const rawPageSize = url.searchParams.get("page_size");
+  let pageSize = 20;
+  if (rawPageSize !== null && rawPageSize.trim().length > 0) {
+    if (!/^\d+$/.test(rawPageSize.trim())) {
+      return { ok: false, code: "SALARY_ADVANCE_QUERY_INVALID" };
+    }
+    const parsed = Number(rawPageSize.trim());
+    if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > 100) {
+      return { ok: false, code: "SALARY_ADVANCE_QUERY_INVALID" };
+    }
+    pageSize = parsed;
+  }
+
+  return {
+    ok: true,
+    value: {
+      period_mode: periodMode,
+      month,
+      from_date: fromDate,
+      to_date: toDate,
+      cursor,
+      page_size: pageSize,
+    },
+  };
 }
 
 export function normalizeSalaryAdvancePersonName(raw: unknown): string {

@@ -73,6 +73,8 @@ import {
   SALARY_ADVANCE_WP1_RPC_SIGNATURES,
   HF_SALARY_ADVANCE_ACTOR_DISPLAY_NAME_MIGRATION_NAME,
   HF_SALARY_ADVANCE_ACTOR_DISPLAY_NAME_RPC_SIGNATURE,
+  HF_SALARY_ADVANCE_VENDOR_EXCLUSION_AND_WORKER_HISTORY_MIGRATION_NAME,
+  HF_SALARY_ADVANCE_VENDOR_EXCLUSION_AND_WORKER_HISTORY_RPC_SIGNATURE,
   OFFBOARDING_REPORT_MIGRATION_NAME,
   OFFBOARDING_REPORT_RPC_SIGNATURES,
   migrationChecksum,
@@ -1026,7 +1028,8 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
         ...LEAVE_MANAGEMENT_WP1_RPC_SIGNATURES,
         LEAVE_ADMIN_ACCOUNT_STATUS_FILTER_RPC_SIGNATURE,
         ...SALARY_ADVANCE_WP1_RPC_SIGNATURES,
-        HF_SALARY_ADVANCE_ACTOR_DISPLAY_NAME_RPC_SIGNATURE);
+        HF_SALARY_ADVANCE_ACTOR_DISPLAY_NAME_RPC_SIGNATURE,
+        HF_SALARY_ADVANCE_VENDOR_EXCLUSION_AND_WORKER_HISTORY_RPC_SIGNATURE);
       assert.ok(expectedSignatures.length > 0, "the explicit server/invoker allowlist is not empty");
       assert.equal(new Set(expectedSignatures).size, expectedSignatures.length, "the allowlist has no duplicates");
       const { rows: resolvedExpected } = await client.query(
@@ -1068,8 +1071,23 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
           ...LEAVE_MANAGEMENT_WP1_RPC_SIGNATURES,
           LEAVE_ADMIN_ACCOUNT_STATUS_FILTER_RPC_SIGNATURE,
           ...SALARY_ADVANCE_WP1_RPC_SIGNATURES,
-          HF_SALARY_ADVANCE_ACTOR_DISPLAY_NAME_RPC_SIGNATURE].sort(),
+          HF_SALARY_ADVANCE_ACTOR_DISPLAY_NAME_RPC_SIGNATURE,
+          HF_SALARY_ADVANCE_VENDOR_EXCLUSION_AND_WORKER_HISTORY_RPC_SIGNATURE].sort(),
         "only explicitly reviewed post-S0 RPCs add service_role grants after the S0 baseline",
+      );
+      const hfSalaryAdvanceWorkerHistoryMigration = await readFile(
+        path.join(MIGRATION_DIR, HF_SALARY_ADVANCE_VENDOR_EXCLUSION_AND_WORKER_HISTORY_MIGRATION_NAME),
+        "utf8",
+      );
+      assert.match(
+        hfSalaryAdvanceWorkerHistoryMigration,
+        /revoke all on function[\s\S]*public\.salary_advance_list_worker_history\(uuid, uuid, uuid, text, text, text, text, text, integer\)[\s\S]*from public, anon, authenticated, service_role;/i,
+        "salary advance worker history migration revokes inherited RPC grants before granting service_role",
+      );
+      assert.match(
+        hfSalaryAdvanceWorkerHistoryMigration,
+        /grant execute on function[\s\S]*public\.salary_advance_list_worker_history\(uuid, uuid, uuid, text, text, text, text, text, integer\)[\s\S]*to service_role;/i,
+        "salary advance worker history migration grants RPC execution only to service_role",
       );
       const hfSalaryAdvanceActorMigration = await readFile(
         path.join(MIGRATION_DIR, HF_SALARY_ADVANCE_ACTOR_DISPLAY_NAME_MIGRATION_NAME),

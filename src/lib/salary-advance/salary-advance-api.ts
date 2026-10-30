@@ -23,6 +23,7 @@ import {
   parseFinalizeSalaryAdvanceEvidenceBody,
   parseListProjectWorkersQuery,
   parseListSalaryAdvanceRequestsQuery,
+  parseListWorkerHistoryQuery,
   parseNoQueryParams,
   parsePostSalaryAdvanceMessageBody,
   parseProjectIdParam,
@@ -520,9 +521,13 @@ function isOffProjectWorkerOption(worker: SalaryAdvanceWorkerOption): boolean {
   if (worker.employment_status === "OFF") {
     return true;
   }
+  if (worker.provider_type === "vendor") {
+    return true;
+  }
   if (
     Array.isArray(worker.ineligible_reasons) &&
-    worker.ineligible_reasons.includes("WORKER_STATUS_OFF")
+    (worker.ineligible_reasons.includes("WORKER_STATUS_OFF") ||
+      worker.ineligible_reasons.includes("WORKER_VENDOR_RECRUITED"))
   ) {
     return true;
   }
@@ -1560,4 +1565,51 @@ export async function handleGetExportSalaryAdvanceRequests(
     console.error("[salary-advance] excel export generation failed");
     return salAdvError("SALARY_ADVANCE_UNAVAILABLE");
   }
+}
+
+// -----------------------------------------------------------------------------
+// 14. GET /api/salary-advance/requests/[requestId]/worker-history
+// -----------------------------------------------------------------------------
+export async function handleGetSalaryAdvanceWorkerHistory(
+  request: Request,
+  requestId: string,
+  enabledFlag: string | undefined,
+  dependencies: SalaryAdvanceApiDependencies,
+): Promise<Response> {
+  const gate = directEntryFeatureGate(enabledFlag);
+  if (gate) return gate;
+
+  if (hasDisallowedAuthorityHeaders(request)) {
+    return salAdvError("CLIENT_AUTHORITY_FIELD_FORBIDDEN");
+  }
+
+  const url = parseRequestUrl(request);
+  if (!url) return salAdvError("SALARY_ADVANCE_QUERY_INVALID");
+
+  const parsedRequestId = parseUuidParam(
+    requestId,
+    "SALARY_ADVANCE_REQUEST_INVALID",
+  );
+  if (!parsedRequestId.ok) return salAdvError(parsedRequestId.code);
+
+  const query = parseListWorkerHistoryQuery(url);
+  if (!query.ok) return salAdvError(query.code);
+
+  const actor = await resolveSalaryAdvanceActor(dependencies);
+  if (!actor.ok) return actor.response;
+
+  const result = await dependencies.repository.listWorkerHistory({
+    auth_subject: actor.auth_subject,
+    app_user_id: actor.app_user_id,
+    request_id: parsedRequestId.id,
+    period_mode: query.value.period_mode,
+    month: query.value.month,
+    from_date: query.value.from_date,
+    to_date: query.value.to_date,
+    cursor: query.value.cursor,
+    page_size: query.value.page_size,
+  });
+  if (!result.ok) return salAdvError(result.code);
+
+  return salAdvOk(result.data, 200);
 }

@@ -5,6 +5,7 @@ import {
 } from "../auth/session-page-access.ts";
 import {
   SALARY_ADVANCE_EVIDENCE_MAX_BYTES,
+  SALARY_ADVANCE_HISTORY_PERIOD_MODES,
   SALARY_ADVANCE_PAYMENT_METHODS,
   isSelfOwnedBankAccountNameMatch,
   type SalaryAdvanceActorContext,
@@ -20,6 +21,7 @@ import {
   type SalaryAdvanceEvidenceReviewDecision,
   type SalaryAdvanceEvidenceReviewState,
   type SalaryAdvanceEvidenceVersionItem,
+  type SalaryAdvanceHistoryPeriodMode,
   type SalaryAdvanceMutationDetailResponse,
   type SalaryAdvancePaymentDestinationSnapshot,
   type SalaryAdvancePaymentMethod,
@@ -29,10 +31,14 @@ import {
   type SalaryAdvanceRequestState,
   type SalaryAdvanceRequestSummary,
   type SalaryAdvanceTransitionAction,
+  type SalaryAdvanceWorker30dSummary,
   type SalaryAdvanceWorkerEligibilitySummary,
   type SalaryAdvanceWorkerEmploymentStatus,
+  type SalaryAdvanceWorkerHistoryItem,
+  type SalaryAdvanceWorkerHistoryResponse,
   type SalaryAdvanceWorkerIneligibleReason,
   type SalaryAdvanceWorkerOption,
+  type SalaryAdvanceWorkerProviderType,
 } from "./salary-advance-contract.ts";
 
 export type SalaryAdvancePageAccessDecision =
@@ -491,6 +497,8 @@ const WORKER_INELIGIBLE_REASON_LABELS: Record<
 > = {
   WORKER_STATUS_OFF: "NLĐ đã nghỉ việc (OFF)",
   WORKER_STATUS_UNCONFIRMED: "Trạng thái làm việc chưa xác nhận (UNCONFIRMED)",
+  WORKER_VENDOR_RECRUITED:
+    "Người lao động do Vendor tuyển dụng không thuộc diện ứng lương trên BI",
   WORKER_MULTI_PROJECT_ON: "NLĐ đang ON tại từ 2 dự án trở lên",
   WORKER_DUPLICATE_CCCD: "Hồ sơ thuộc nhóm trùng CCCD cần rà soát",
 };
@@ -545,14 +553,16 @@ export function getBankIneligibleReasonLabel(
 
 export function describeWorkerEligibility(
   worker:
-    | Pick<
+    | (Pick<
         SalaryAdvanceWorkerOption,
         | "employment_status"
         | "active_on_project_count"
         | "has_duplicate_cccd"
         | "is_eligible"
         | "ineligible_reasons"
-      >
+      > & {
+        provider_type?: SalaryAdvanceWorkerProviderType | null;
+      })
     | SalaryAdvanceWorkerEligibilitySummary
     | null
     | undefined
@@ -590,6 +600,14 @@ export function describeWorkerEligibility(
     !derivedReasons.includes("WORKER_STATUS_UNCONFIRMED")
   ) {
     derivedReasons.push("WORKER_STATUS_UNCONFIRMED");
+  }
+  if (
+    worker &&
+    "provider_type" in worker &&
+    worker.provider_type === "vendor" &&
+    !derivedReasons.includes("WORKER_VENDOR_RECRUITED")
+  ) {
+    derivedReasons.push("WORKER_VENDOR_RECRUITED");
   }
   if (
     activeOnProjectCount >= 2 &&
@@ -1686,10 +1704,12 @@ export function buildSalaryAdvanceExportUrl(params: {
 
 export function isProjectWorkerHiddenFromPicker(
   worker:
-    | Pick<
+    | (Pick<
         SalaryAdvanceWorkerOption,
         "employment_status" | "ineligible_reasons"
-      >
+      > & {
+        provider_type?: SalaryAdvanceWorkerProviderType | null;
+      })
     | null
     | undefined
 ): boolean {
@@ -1697,9 +1717,13 @@ export function isProjectWorkerHiddenFromPicker(
   if (worker.employment_status === "OFF") {
     return true;
   }
+  if (worker.provider_type === "vendor") {
+    return true;
+  }
   if (
     Array.isArray(worker.ineligible_reasons) &&
-    worker.ineligible_reasons.includes("WORKER_STATUS_OFF")
+    (worker.ineligible_reasons.includes("WORKER_STATUS_OFF") ||
+      worker.ineligible_reasons.includes("WORKER_VENDOR_RECRUITED"))
   ) {
     return true;
   }
@@ -1710,7 +1734,9 @@ export function filterSelectableProjectWorkers<
   T extends Pick<
     SalaryAdvanceWorkerOption,
     "employment_status" | "ineligible_reasons"
-  >,
+  > & {
+    provider_type?: SalaryAdvanceWorkerProviderType | null;
+  },
 >(workers: ReadonlyArray<T>): T[] {
   return workers.filter((worker) => !isProjectWorkerHiddenFromPicker(worker));
 }
@@ -1720,8 +1746,15 @@ export function reconcileSelectedWorkerEntryId(
   workers: ReadonlyArray<
     Pick<
       SalaryAdvanceWorkerOption,
-      "worker_entry_id" | "is_eligible" | "ineligible_reasons" | "employment_status" | "active_on_project_count" | "has_duplicate_cccd"
-    >
+      | "worker_entry_id"
+      | "is_eligible"
+      | "ineligible_reasons"
+      | "employment_status"
+      | "active_on_project_count"
+      | "has_duplicate_cccd"
+    > & {
+      provider_type?: SalaryAdvanceWorkerProviderType | null;
+    }
   >
 ): string {
   const trimmed = currentWorkerEntryId.trim();
@@ -1822,10 +1855,21 @@ export function sortEventsChronologically(
 }
 
 export function formatVndAmount(
-  amountVnd: number | string | null | undefined
+  amountVnd: number | bigint | string | null | undefined
 ): string {
   if (amountVnd === null || amountVnd === undefined) {
     return "0 ₫";
+  }
+  if (typeof amountVnd === "bigint") {
+    return amountVnd < BigInt(0)
+      ? "0 ₫"
+      : `${amountVnd.toLocaleString("vi-VN")} ₫`;
+  }
+  if (typeof amountVnd === "string") {
+    const trimmed = amountVnd.trim();
+    if (/^\d+$/.test(trimmed)) {
+      return `${BigInt(trimmed).toLocaleString("vi-VN")} ₫`;
+    }
   }
   const numeric =
     typeof amountVnd === "string" ? Number(amountVnd.trim()) : amountVnd;
@@ -1833,6 +1877,350 @@ export function formatVndAmount(
     return "0 ₫";
   }
   return `${Math.trunc(numeric).toLocaleString("vi-VN")} ₫`;
+}
+
+export const SALARY_ADVANCE_30D_SUMMARY_RULE_NOTICE =
+  "Chỉ tính các yêu cầu ứng lương đã được Kế toán chấp thuận và đã xác nhận đối chiếu chứng từ nhận tiền (APPROVED + REVIEWED), tính theo ngày hoàn tất đối chiếu chứng từ (múi giờ Asia/Ho_Chi_Minh). Không tính yêu cầu đang mở, chờ bổ sung, từ chối, đã rút, xử lý ngoài BI hoặc chưa đối chiếu nhận tiền.";
+
+const ISO_CALENDAR_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+export function formatWorkDateVi(
+  isoDate: string | null | undefined,
+  fallbackLabel = "Chưa cập nhật"
+): string {
+  if (typeof isoDate !== "string") return fallbackLabel;
+  const trimmed = isoDate.trim();
+  if (!trimmed) return fallbackLabel;
+  const match = ISO_CALENDAR_DATE_PATTERN.exec(trimmed);
+  if (match) {
+    const [, yearStr, monthStr, dayStr] = match;
+    const year = Number(yearStr);
+    const month = Number(monthStr);
+    const day = Number(dayStr);
+    const dt = new Date(Date.UTC(year, month - 1, day));
+    if (
+      dt.getUTCFullYear() === year &&
+      dt.getUTCMonth() === month - 1 &&
+      dt.getUTCDate() === day
+    ) {
+      return `${dayStr}/${monthStr}/${yearStr}`;
+    }
+    return fallbackLabel;
+  }
+  return fallbackLabel;
+}
+
+export function formatWorkerRecruiterLabel(
+  input:
+    | {
+        recruiterDisplayName?: string | null;
+        recruiterCode?: string | null;
+        providerType?: SalaryAdvanceWorkerProviderType | string | null;
+      }
+    | null
+    | undefined,
+  fallbackLabel = "Chưa cập nhật"
+): string {
+  if (!input) return fallbackLabel;
+  const safeName = sanitizeNonUuidActorLabel(input.recruiterDisplayName);
+  const safeCode = sanitizeNonUuidActorLabel(input.recruiterCode);
+  const isVendor = input.providerType === "vendor";
+
+  let base = safeName ?? safeCode;
+  if (!base) {
+    return isVendor ? "Vendor (Chưa cập nhật tên)" : fallbackLabel;
+  }
+  if (safeName && safeCode && safeName.toLowerCase() !== safeCode.toLowerCase() && !safeName.includes(safeCode)) {
+    base = `${safeName} (${safeCode})`;
+  }
+  return isVendor && !base.toLowerCase().includes("vendor")
+    ? `${base} · Vendor`
+    : base;
+}
+
+export function sanitizeWorker30dSummary(
+  raw: SalaryAdvanceWorker30dSummary | unknown
+): SalaryAdvanceWorker30dSummary | null {
+  if (!isPlainRecord(raw)) return null;
+  if (
+    typeof raw.window_days !== "number" ||
+    !Number.isSafeInteger(raw.window_days) ||
+    raw.window_days <= 0 ||
+    typeof raw.window_from_date !== "string" ||
+    !ISO_CALENDAR_DATE_PATTERN.test(raw.window_from_date) ||
+    typeof raw.window_to_date !== "string" ||
+    !ISO_CALENDAR_DATE_PATTERN.test(raw.window_to_date) ||
+    typeof raw.total_count !== "number" ||
+    !Number.isSafeInteger(raw.total_count) ||
+    raw.total_count < 0 ||
+    typeof raw.total_amount_vnd !== "string" ||
+    !/^\d+$/.test(raw.total_amount_vnd)
+  ) {
+    return null;
+  }
+  return {
+    window_days: raw.window_days,
+    window_from_date: raw.window_from_date,
+    window_to_date: raw.window_to_date,
+    timezone:
+      typeof raw.timezone === "string" && raw.timezone.trim()
+        ? raw.timezone.trim()
+        : "Asia/Ho_Chi_Minh",
+    qualifying_rule: "APPROVED_AND_EVIDENCE_REVIEWED",
+    total_count: raw.total_count,
+    total_amount_vnd: raw.total_amount_vnd,
+  };
+}
+
+function isValidWorkerHistoryItem(
+  value: unknown
+): value is SalaryAdvanceWorkerHistoryItem {
+  if (!isPlainRecord(value)) return false;
+  if (typeof value.request_id !== "string" || !value.request_id.trim()) {
+    return false;
+  }
+  if (typeof value.project_id !== "string" || !value.project_id.trim()) {
+    return false;
+  }
+  if (
+    typeof value.project_display_name !== "string" ||
+    !value.project_display_name.trim()
+  ) {
+    return false;
+  }
+  if (
+    typeof value.effective_date !== "string" ||
+    !ISO_CALENDAR_DATE_PATTERN.test(value.effective_date)
+  ) {
+    return false;
+  }
+  if (
+    typeof value.requested_amount_vnd !== "string" ||
+    !/^[1-9]\d*$/.test(value.requested_amount_vnd)
+  ) {
+    return false;
+  }
+  if (
+    value.payment_method !== "CASH" &&
+    value.payment_method !== "BANK_TRANSFER"
+  ) {
+    return false;
+  }
+  if (
+    typeof value.request_state !== "string" ||
+    typeof value.evidence_review_state !== "string" ||
+    typeof value.created_at !== "string"
+  ) {
+    return false;
+  }
+  return true;
+}
+
+export function parseSalaryAdvanceWorkerHistoryPayload(raw: unknown):
+  | {
+      ok: true;
+      data: SalaryAdvanceWorkerHistoryResponse;
+    }
+  | {
+      ok: false;
+      code: string;
+      message: string;
+    } {
+  if (!isPlainRecord(raw)) {
+    return {
+      ok: false,
+      code: "SALARY_ADVANCE_PAYLOAD_INVALID",
+      message: salaryAdvanceErrorMessage("SALARY_ADVANCE_PAYLOAD_INVALID"),
+    };
+  }
+  if (
+    typeof raw.request_id !== "string" ||
+    !raw.request_id.trim() ||
+    typeof raw.worker_entry_id !== "string" ||
+    !raw.worker_entry_id.trim() ||
+    typeof raw.worker_employee_code !== "string" ||
+    typeof raw.worker_display_name !== "string" ||
+    typeof raw.period_mode !== "string" ||
+    !SALARY_ADVANCE_HISTORY_PERIOD_MODES.includes(
+      raw.period_mode as SalaryAdvanceHistoryPeriodMode
+    ) ||
+    typeof raw.total_count !== "number" ||
+    !Number.isSafeInteger(raw.total_count) ||
+    raw.total_count < 0 ||
+    typeof raw.total_amount_vnd !== "string" ||
+    !/^\d+$/.test(raw.total_amount_vnd) ||
+    !Array.isArray(raw.items) ||
+    typeof raw.has_more !== "boolean" ||
+    (raw.next_cursor !== null &&
+      raw.next_cursor !== undefined &&
+      typeof raw.next_cursor !== "string")
+  ) {
+    return {
+      ok: false,
+      code: "SALARY_ADVANCE_PAYLOAD_INVALID",
+      message: salaryAdvanceErrorMessage("SALARY_ADVANCE_PAYLOAD_INVALID"),
+    };
+  }
+
+  for (const item of raw.items) {
+    if (!isValidWorkerHistoryItem(item)) {
+      return {
+        ok: false,
+        code: "SALARY_ADVANCE_PAYLOAD_INVALID",
+        message: salaryAdvanceErrorMessage("SALARY_ADVANCE_PAYLOAD_INVALID"),
+      };
+    }
+  }
+
+  return {
+    ok: true,
+    data: {
+      request_id: raw.request_id,
+      worker_entry_id: raw.worker_entry_id,
+      worker_employee_code: raw.worker_employee_code,
+      worker_display_name: raw.worker_display_name,
+      period_mode: raw.period_mode as SalaryAdvanceHistoryPeriodMode,
+      month: typeof raw.month === "string" ? raw.month : null,
+      from_date: typeof raw.from_date === "string" ? raw.from_date : null,
+      to_date: typeof raw.to_date === "string" ? raw.to_date : null,
+      timezone:
+        typeof raw.timezone === "string" && raw.timezone.trim()
+          ? raw.timezone.trim()
+          : "Asia/Ho_Chi_Minh",
+      qualifying_rule: "APPROVED_AND_EVIDENCE_REVIEWED",
+      total_count: raw.total_count,
+      total_amount_vnd: raw.total_amount_vnd,
+      items: raw.items,
+      has_more: raw.has_more,
+      next_cursor: typeof raw.next_cursor === "string" ? raw.next_cursor : null,
+    },
+  };
+}
+
+export function buildSalaryAdvanceWorkerHistoryUrl(params: {
+  requestId: string;
+  periodMode: SalaryAdvanceHistoryPeriodMode;
+  month?: string | null;
+  fromDate?: string | null;
+  toDate?: string | null;
+  cursor?: string | null;
+  pageSize?: number;
+}): string {
+  const queryParams = new URLSearchParams();
+  queryParams.set("period_mode", params.periodMode);
+  queryParams.set("page_size", String(params.pageSize ?? 20));
+  if (params.periodMode === "MONTH" && params.month) {
+    queryParams.set("month", params.month.trim());
+  }
+  if (params.periodMode === "CUSTOM_RANGE") {
+    if (params.fromDate) {
+      queryParams.set("from_date", params.fromDate.trim());
+    }
+    if (params.toDate) {
+      queryParams.set("to_date", params.toDate.trim());
+    }
+  }
+  if (params.cursor) {
+    queryParams.set("cursor", params.cursor);
+  }
+  return `/api/salary-advance/requests/${encodeURIComponent(
+    params.requestId
+  )}/worker-history?${queryParams.toString()}`;
+}
+
+export type SalaryAdvanceWorkerHistoryFetchOutcome =
+  | {
+      status: "success";
+      data: SalaryAdvanceWorkerHistoryResponse;
+    }
+  | {
+      status: "error";
+      code: string;
+      message: string;
+    }
+  | {
+      status: "stale";
+    };
+
+export async function fetchSalaryAdvanceWorkerHistoryPage(params: {
+  requestId: string;
+  periodMode: SalaryAdvanceHistoryPeriodMode;
+  month?: string | null;
+  fromDate?: string | null;
+  toDate?: string | null;
+  cursor?: string | null;
+  append?: boolean;
+  pageSize?: number;
+  ticket: LatestRequestTicket;
+  fetchImpl?: typeof fetch;
+}): Promise<SalaryAdvanceWorkerHistoryFetchOutcome> {
+  const fetchFn = params.fetchImpl ?? globalThis.fetch;
+  const url = buildSalaryAdvanceWorkerHistoryUrl({
+    requestId: params.requestId,
+    periodMode: params.periodMode,
+    month: params.month,
+    fromDate: params.fromDate,
+    toDate: params.toDate,
+    cursor: params.append ? params.cursor ?? null : null,
+    pageSize: params.pageSize,
+  });
+
+  try {
+    const response = await fetchFn(url, {
+      method: "GET",
+      cache: "no-store",
+      signal: params.ticket.signal,
+    });
+
+    const json = (await response.json().catch(() => null)) as
+      | {
+          ok?: boolean;
+          data?: unknown;
+          code?: string;
+        }
+      | null;
+
+    if (!params.ticket.isCurrent()) {
+      return { status: "stale" };
+    }
+
+    if (
+      !response.ok ||
+      !json?.ok ||
+      json.data === undefined ||
+      json.data === null
+    ) {
+      const code = json?.code ?? "SALARY_ADVANCE_UNAVAILABLE";
+      return {
+        status: "error",
+        code,
+        message: salaryAdvanceErrorMessage(code),
+      };
+    }
+
+    const parsed = parseSalaryAdvanceWorkerHistoryPayload(json.data);
+    if (!parsed.ok) {
+      return {
+        status: "error",
+        code: parsed.code,
+        message: parsed.message,
+      };
+    }
+
+    return {
+      status: "success",
+      data: parsed.data,
+    };
+  } catch {
+    if (!params.ticket.isCurrent()) {
+      return { status: "stale" };
+    }
+    return {
+      status: "error",
+      code: "SALARY_ADVANCE_UNAVAILABLE",
+      message: salaryAdvanceErrorMessage("SALARY_ADVANCE_UNAVAILABLE"),
+    };
+  }
 }
 
 export function formatFileSizeBytes(
@@ -2361,6 +2749,8 @@ export function salaryAdvanceErrorMessage(
       return "Người lao động được chọn không thuộc phạm vi dự án này hoặc chưa có công hợp lệ.";
     case "SALARY_ADVANCE_WORKER_INELIGIBLE_STATUS":
       return "Người lao động hiện không ở trạng thái đang làm việc (ON) nên không đủ điều kiện ứng lương.";
+    case "SALARY_ADVANCE_WORKER_VENDOR_RECRUITED":
+      return "Người lao động do Vendor tuyển dụng không thuộc diện tạo yêu cầu ứng lương trên hệ thống.";
     case "SALARY_ADVANCE_WORKER_MULTI_PROJECT_ON":
       return "Người lao động đang ở trạng thái làm việc (ON) tại từ 2 dự án trở lên nên không đủ điều kiện ứng lương.";
     case "SALARY_ADVANCE_WORKER_DUPLICATE_CCCD":

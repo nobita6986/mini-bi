@@ -268,6 +268,17 @@ const SALARY_ADVANCE_RPC_BINDINGS = {
     ["p_request_id", "uuid"],
     ["p_expected_document_id", "uuid"],
   ],
+  salary_advance_list_worker_history: [
+    ["p_auth_subject", "uuid"],
+    ["p_app_user_id", "uuid"],
+    ["p_request_id", "uuid"],
+    ["p_period_mode", "text"],
+    ["p_month", "text"],
+    ["p_from_date", "text"],
+    ["p_to_date", "text"],
+    ["p_cursor", "text"],
+    ["p_page_size", "integer"],
+  ],
 };
 
 function createPgliteSalaryAdvanceRepo(db) {
@@ -2336,6 +2347,761 @@ test("(#2) Full W2S2 Salary Advance WP1 acceptance across all 7 mandatory verifi
       ok: false,
       code: "SALARY_ADVANCE_WORKER_DUPLICATE_CCCD",
     });
+
+    // Clear duplicate CCCD on draftWorkerPrj1 so workerPrj1A is eligible again for history tests
+    await db.query(
+      `update public.direct_entries
+          set worker_details = jsonb_set(
+                worker_details,
+                '{national_id}',
+                jsonb_build_object('state', 'unknown')
+              ),
+              version = version + 1
+        where entry_id = $1::uuid`,
+      [draftWorkerPrj1],
+    );
+
+    // =========================================================================
+    // HOTFIX VERIFICATION: Vendor-Recruited Worker Exclusion, Work Info,
+    // 30-Day Advance Summary & Scoped Per-Worker Advance History
+    // =========================================================================
+    // 1. Vendor-recruited worker exclusion (both direct_entries.provider_type = 'vendor'
+    //    and recruiter_provider_memberships with provider_type = 'vendor')
+    const VENDOR_1_ID = "VND_SAL_ADV_01";
+    const VENDOR_RECRUITER_1_ID = "39800000-0000-4000-8000-000000000098";
+    const VENDOR_RECRUITER_2_ID = "39800000-0000-4000-8000-000000000099";
+    await db.query(
+      `insert into public.vendors (vendor_id, display_name, active, version)
+       values ($1, 'Vendor Cung Ứng Minh Phát', true, 1)
+       on conflict (vendor_id) do nothing`,
+      [VENDOR_1_ID],
+    );
+    await db.query(
+      `insert into public.recruiters (recruiter_id, display_name, personnel_code, personnel_position, active)
+       values ($1::uuid, 'Nhân Sự Tuyển Dụng Thuộc Vendor 1', 'VND-REC-98', 'STAFF', true),
+              ($2::uuid, 'Nhân Sự Tuyển Dụng Thuộc Vendor 2', 'VND-REC-99', 'STAFF', true)`,
+      [VENDOR_RECRUITER_1_ID, VENDOR_RECRUITER_2_ID],
+    );
+    // VENDOR_RECRUITER_1_ID starts with provider_type = 'vendor' at entry creation time
+    // VENDOR_RECRUITER_2_ID starts with provider_type = 'hrp' at entry creation time, then switches membership to 'vendor'
+    await db.query(
+      `insert into public.recruiter_provider_memberships (recruiter_id, provider_type, vendor_id, valid_from, is_current)
+       values ($1::uuid, 'vendor', $3, '2026-01-01', true),
+              ($2::uuid, 'hrp', null, '2026-01-01', true)`,
+      [VENDOR_RECRUITER_1_ID, VENDOR_RECRUITER_2_ID, VENDOR_1_ID],
+    );
+    await db.query(
+      `insert into public.recruiter_team_memberships (recruiter_id, team_id, valid_from, is_current)
+       values ($1::uuid, $2::uuid, '2026-01-01', true)`,
+      [VENDOR_RECRUITER_2_ID, TEAM_ALPHA],
+    );
+
+    // Seed two ON workers on PRJ_1:
+    // - vendorWorkerEntry1: created with VENDOR_RECRUITER_1_ID -> direct_entries.provider_type = 'vendor'
+    // - vendorWorkerEntry2: created with VENDOR_RECRUITER_2_ID -> direct_entries.provider_type = 'hrp', then recruiter membership becomes 'vendor'
+    const vendorBatch = await db.query(
+      `select public.direct_entry_create_batch($1::uuid, $2::uuid, $3::jsonb, $4::text) as data`,
+      [
+        PM_1.auth,
+        PM_1.app,
+        JSON.stringify([
+          {
+            project_id: PRJ_1,
+            first_work_date: "2026-10-06",
+            employee_code: "hrp-2026-800051",
+            worker_details: makeWorkerDetails("Công Nhân Thuộc Vendor 1"),
+            recruiter_id: VENDOR_RECRUITER_1_ID,
+            labor_type: "TEMPORARY",
+          },
+          {
+            project_id: PRJ_1,
+            first_work_date: "2026-10-07",
+            employee_code: "hrp-2026-800052",
+            worker_details: makeWorkerDetails("Công Nhân Thuộc Vendor 2"),
+            recruiter_id: VENDOR_RECRUITER_2_ID,
+            labor_type: "TEMPORARY",
+          },
+        ]),
+        "sal_adv_batch_vendor_workers",
+      ],
+    );
+    const vendorSubId = vendorBatch.rows[0].data.submission_id;
+    await db.query(
+      `select public.direct_entry_transition_submission($1::uuid, $2::uuid, $3::uuid, 1, 'SUBMITTED', 'sal_adv_submit_vendor_workers')`,
+      [PM_1.auth, PM_1.app, vendorSubId],
+    );
+    const { rows: vendorEntries } = await db.query(
+      `select entry_id, employee_code, provider_type from public.direct_entries
+        where submission_id = $1::uuid order by employee_code`,
+      [vendorSubId],
+    );
+    const vendorWorkerEntry1 = vendorEntries[0].entry_id;
+    const vendorWorkerEntry2 = vendorEntries[1].entry_id;
+    assert.equal(vendorEntries[0].provider_type, "vendor");
+    assert.equal(vendorEntries[1].provider_type, "hrp");
+
+    // Create a historical request for vendorWorkerEntry2 while still HRP, then switch VENDOR_RECRUITER_2_ID membership to 'vendor'
+    const historicalBeforeVendorRes = await repo.createRequest({
+      auth_subject: PM_1.auth,
+      app_user_id: PM_1.app,
+      project_id: PRJ_1,
+      worker_entry_id: vendorWorkerEntry2,
+      requested_amount_vnd: "1100000",
+      payment_method: "CASH",
+      initial_content: "Yêu cầu lịch sử trước khi người tuyển chuyển sang Vendor",
+      idempotency_key: "idem-historical-before-vendor-001",
+      request_fingerprint: computeCreateRequestFingerprint({
+        project_id: PRJ_1,
+        worker_entry_id: vendorWorkerEntry2,
+        requested_amount_vnd: "1100000",
+        payment_method: "CASH",
+        initial_content: "Yêu cầu lịch sử trước khi người tuyển chuyển sang Vendor",
+      }),
+    });
+    assert.equal(historicalBeforeVendorRes.ok, true);
+    const historicalVendorReqId =
+      historicalBeforeVendorRes.data.request.request_id;
+
+    // Now switch VENDOR_RECRUITER_2_ID current membership to 'vendor' (ending HRP team membership first)
+    await db.query(
+      `update public.recruiter_team_memberships
+          set is_current = false,
+              valid_to = '2026-06-01'
+        where recruiter_id = $1::uuid and is_current = true`,
+      [VENDOR_RECRUITER_2_ID],
+    );
+    await db.query(
+      `update public.recruiter_provider_memberships
+          set provider_type = 'vendor',
+              vendor_id = $1
+        where recruiter_id = $2::uuid and is_current = true`,
+      [VENDOR_1_ID, VENDOR_RECRUITER_2_ID],
+    );
+
+    // Verify neither vendor-recruited worker appears in salary_advance_list_project_workers
+    const pickerExcludingVendor = await repo.listProjectWorkers({
+      auth_subject: PM_1.auth,
+      app_user_id: PM_1.app,
+      project_id: PRJ_1,
+      search: "hrp-2026-80005",
+      cursor: null,
+      page_size: 20,
+    });
+    assert.equal(pickerExcludingVendor.ok, true);
+    assert.deepEqual(
+      pickerExcludingVendor.data.workers.map((w) => w.employee_code),
+      [],
+      "Vendor-recruited workers (both entry provider_type='vendor' and recruiter vendor membership) must be excluded from QLDA worker picker",
+    );
+
+    // Verify direct/API creation attempt for either vendor-recruited worker fails with SALARY_ADVANCE_WORKER_VENDOR_RECRUITED
+    for (const [idx, vendorEntryId] of [
+      [1, vendorWorkerEntry1],
+      [2, vendorWorkerEntry2],
+    ]) {
+      const createForVendorRes = await repo.createRequest({
+        auth_subject: PM_1.auth,
+        app_user_id: PM_1.app,
+        project_id: PRJ_1,
+        worker_entry_id: vendorEntryId,
+        requested_amount_vnd: "1500000",
+        payment_method: "CASH",
+        initial_content: `Thử tạo yêu cầu cho NLĐ Vendor ${idx}`,
+        idempotency_key: `idem-create-vendor-worker-00${idx}`,
+        request_fingerprint: computeCreateRequestFingerprint({
+          project_id: PRJ_1,
+          worker_entry_id: vendorEntryId,
+          requested_amount_vnd: "1500000",
+          payment_method: "CASH",
+          initial_content: `Thử tạo yêu cầu cho NLĐ Vendor ${idx}`,
+        }),
+      });
+      assert.deepEqual(createForVendorRes, {
+        ok: false,
+        code: "SALARY_ADVANCE_WORKER_VENDOR_RECRUITED",
+      });
+    }
+
+    // Verify historical request preservation: historicalVendorReqId is NOT deleted, remains readable,
+    // and surfaces WORKER_VENDOR_RECRUITED in worker_eligibility + vendor info in detail.
+    const detailHistoricalVendorReq = await repo.getRequestDetail({
+      auth_subject: ACCT_B.auth,
+      app_user_id: ACCT_B.app,
+      request_id: historicalVendorReqId,
+    });
+    assert.equal(detailHistoricalVendorReq.ok, true);
+    assert.equal(
+      detailHistoricalVendorReq.data.request.worker_provider_type,
+      "vendor",
+    );
+    assert.equal(
+      detailHistoricalVendorReq.data.request.worker_recruiter_display_name,
+      "Vendor Cung Ứng Minh Phát",
+    );
+    assert.equal(
+      detailHistoricalVendorReq.data.request.worker_recruiter_code,
+      "VND-REC-99",
+    );
+    assert.equal(
+      detailHistoricalVendorReq.data.request.worker_eligibility?.is_eligible,
+      false,
+    );
+    assert.ok(
+      detailHistoricalVendorReq.data.request.worker_eligibility?.ineligible_reasons?.includes(
+        "WORKER_VENDOR_RECRUITED",
+      ),
+    );
+
+    // 2. Work information & 30-day advance summary in getRequestDetail:
+    //    req1Id (on workerPrj1A, amount 2,500,000 VND) was APPROVED -> REVIEWED -> HANDLED_EXTERNALLY today.
+    //    Because evidence_review_state = 'REVIEWED', wait: let's check our qualifying rule!
+    //    Qualifying rule: request_state = 'APPROVED' AND evidence_review_state = 'REVIEWED'.
+    //    Let's create two additional requests for workerPrj1A on PRJ_1:
+    //    - histReqApprovedReviewed1 (1,800,000 VND): APPROVED + REVIEWED (within last 30 days)
+    //    - histReqApprovedReviewed2 (3,200,000 VND): APPROVED + REVIEWED (45 days ago -> outside 30-day window, inside ALL / MONTH)
+    //    - histReqOpen (900,000 VND): OPEN + NOT_UPLOADED (must NOT be counted in 30d summary or worker history)
+    const createHistReq1 = await repo.createRequest({
+      auth_subject: PM_1.auth,
+      app_user_id: PM_1.app,
+      project_id: PRJ_1,
+      worker_entry_id: workerPrj1A,
+      requested_amount_vnd: "1800000",
+      payment_method: "CASH",
+      initial_content: "Ứng lương hoàn tất trong 30 ngày gần nhất",
+      idempotency_key: "idem-hist-req-1",
+      request_fingerprint: computeCreateRequestFingerprint({
+        project_id: PRJ_1,
+        worker_entry_id: workerPrj1A,
+        requested_amount_vnd: "1800000",
+        payment_method: "CASH",
+        initial_content: "Ứng lương hoàn tất trong 30 ngày gần nhất",
+      }),
+    });
+    assert.equal(createHistReq1.ok, true);
+    const histReq1Id = createHistReq1.data.request.request_id;
+
+    await repo.transitionRequest({
+      auth_subject: ACCT_B.auth,
+      app_user_id: ACCT_B.app,
+      request_id: histReq1Id,
+      action: "APPROVE",
+      expected_version: 1,
+      message_text: "Duyệt đợt 1",
+      idempotency_key: "idem-hist-approve-1",
+      request_fingerprint: computeTransitionRequestFingerprint({
+        request_id: histReq1Id,
+        action: "APPROVE",
+        expected_version: 1,
+        message_text: "Duyệt đợt 1",
+      }),
+    });
+    const resEvHist1 = await repo.reserveEvidence({
+      auth_subject: PM_1.auth,
+      app_user_id: PM_1.app,
+      request_id: histReq1Id,
+      expected_version: 2,
+      mime_type: "image/jpeg",
+      size_bytes: 1024,
+      checksum_sha256: "a".repeat(64),
+      caption_note: "Ảnh nhận tiền đợt 1",
+      idempotency_key: "idem-hist-res-1",
+      request_fingerprint: computeReserveEvidenceFingerprint({
+        request_id: histReq1Id,
+        expected_version: 2,
+        mime_type: "image/jpeg",
+        size_bytes: 1024,
+        checksum_sha256: "a".repeat(64),
+        caption_note: "Ảnh nhận tiền đợt 1",
+      }),
+    });
+    await repo.finalizeEvidence({
+      auth_subject: PM_1.auth,
+      app_user_id: PM_1.app,
+      request_id: histReq1Id,
+      upload_id: resEvHist1.data.upload_id,
+      expected_version: 2,
+      idempotency_key: "idem-hist-fin-1",
+      request_fingerprint: computeFinalizeEvidenceFingerprint({
+        request_id: histReq1Id,
+        upload_id: resEvHist1.data.upload_id,
+        expected_version: 2,
+      }),
+    });
+    const revHist1 = await repo.reviewEvidence({
+      auth_subject: ACCT_B.auth,
+      app_user_id: ACCT_B.app,
+      request_id: histReq1Id,
+      expected_version: 3,
+      evidence_version: 1,
+      decision: "REVIEWED",
+      expected_worker_portrait_document_id: portraitV2.document_id,
+      expected_worker_portrait_version: 2,
+      note: "Đã đối chiếu đợt 1",
+      idempotency_key: "idem-hist-rev-1",
+      request_fingerprint: computeReviewEvidenceFingerprint({
+        request_id: histReq1Id,
+        expected_version: 3,
+        evidence_version: 1,
+        decision: "REVIEWED",
+        expected_worker_portrait_document_id: portraitV2.document_id,
+        expected_worker_portrait_version: 2,
+        note: "Đã đối chiếu đợt 1",
+      }),
+    });
+    assert.equal(revHist1.ok, true);
+
+    // Create histReq2 (3,200,000 VND), approve & review it, then backdate its timestamps to 2026-08-15 (outside last 30 days)
+    const createHistReq2 = await repo.createRequest({
+      auth_subject: PM_1.auth,
+      app_user_id: PM_1.app,
+      project_id: PRJ_1,
+      worker_entry_id: workerPrj1A,
+      requested_amount_vnd: "3200000",
+      payment_method: "CASH",
+      initial_content: "Ứng lương tháng 08/2026",
+      idempotency_key: "idem-hist-req-2",
+      request_fingerprint: computeCreateRequestFingerprint({
+        project_id: PRJ_1,
+        worker_entry_id: workerPrj1A,
+        requested_amount_vnd: "3200000",
+        payment_method: "CASH",
+        initial_content: "Ứng lương tháng 08/2026",
+      }),
+    });
+    assert.equal(createHistReq2.ok, true);
+    const histReq2Id = createHistReq2.data.request.request_id;
+
+    await repo.transitionRequest({
+      auth_subject: ACCT_B.auth,
+      app_user_id: ACCT_B.app,
+      request_id: histReq2Id,
+      action: "APPROVE",
+      expected_version: 1,
+      message_text: "Duyệt tháng 8",
+      idempotency_key: "idem-hist-approve-2",
+      request_fingerprint: computeTransitionRequestFingerprint({
+        request_id: histReq2Id,
+        action: "APPROVE",
+        expected_version: 1,
+        message_text: "Duyệt tháng 8",
+      }),
+    });
+    const resEvHist2 = await repo.reserveEvidence({
+      auth_subject: PM_1.auth,
+      app_user_id: PM_1.app,
+      request_id: histReq2Id,
+      expected_version: 2,
+      mime_type: "image/jpeg",
+      size_bytes: 1024,
+      checksum_sha256: "a".repeat(64),
+      caption_note: "Ảnh nhận tiền tháng 8",
+      idempotency_key: "idem-hist-res-2",
+      request_fingerprint: computeReserveEvidenceFingerprint({
+        request_id: histReq2Id,
+        expected_version: 2,
+        mime_type: "image/jpeg",
+        size_bytes: 1024,
+        checksum_sha256: "a".repeat(64),
+        caption_note: "Ảnh nhận tiền tháng 8",
+      }),
+    });
+    await repo.finalizeEvidence({
+      auth_subject: PM_1.auth,
+      app_user_id: PM_1.app,
+      request_id: histReq2Id,
+      upload_id: resEvHist2.data.upload_id,
+      expected_version: 2,
+      idempotency_key: "idem-hist-fin-2",
+      request_fingerprint: computeFinalizeEvidenceFingerprint({
+        request_id: histReq2Id,
+        upload_id: resEvHist2.data.upload_id,
+        expected_version: 2,
+      }),
+    });
+    await repo.reviewEvidence({
+      auth_subject: ACCT_B.auth,
+      app_user_id: ACCT_B.app,
+      request_id: histReq2Id,
+      expected_version: 3,
+      evidence_version: 1,
+      decision: "REVIEWED",
+      expected_worker_portrait_document_id: portraitV2.document_id,
+      expected_worker_portrait_version: 2,
+      note: "Đã đối chiếu tháng 8",
+      idempotency_key: "idem-hist-rev-2",
+      request_fingerprint: computeReviewEvidenceFingerprint({
+        request_id: histReq2Id,
+        expected_version: 3,
+        evidence_version: 1,
+        decision: "REVIEWED",
+        expected_worker_portrait_document_id: portraitV2.document_id,
+        expected_worker_portrait_version: 2,
+        note: "Đã đối chiếu tháng 8",
+      }),
+    });
+
+    // Backdate histReq2 to 2026-08-15 in salary_advance_requests
+    await db.exec("begin;");
+    await db.exec(
+      "select pg_catalog.set_config('salary_advance.write_marker', 'on', true);",
+    );
+    await db.query(
+      `update public.salary_advance_requests
+          set created_at = '2026-08-15T03:00:00Z'::timestamptz,
+              decided_at = '2026-08-15T04:00:00Z'::timestamptz,
+              current_evidence_uploaded_at = '2026-08-15T05:00:00Z'::timestamptz,
+              evidence_reviewed_at = '2026-08-15T06:00:00Z'::timestamptz,
+              last_activity_at = '2026-08-15T06:00:00Z'::timestamptz,
+              updated_at = '2026-08-15T06:00:00Z'::timestamptz
+        where request_id = $1::uuid`,
+      [histReq2Id],
+    );
+    await db.exec("commit;");
+
+    // Also create an OPEN request for workerPrj1A (900,000 VND) -> must NOT be counted in 30d summary or history
+    const createHistOpen = await repo.createRequest({
+      auth_subject: PM_1.auth,
+      app_user_id: PM_1.app,
+      project_id: PRJ_1,
+      worker_entry_id: workerPrj1A,
+      requested_amount_vnd: "900000",
+      payment_method: "CASH",
+      initial_content: "Ứng lương đang chờ duyệt",
+      idempotency_key: "idem-hist-open-1",
+      request_fingerprint: computeCreateRequestFingerprint({
+        project_id: PRJ_1,
+        worker_entry_id: workerPrj1A,
+        requested_amount_vnd: "900000",
+        payment_method: "CASH",
+        initial_content: "Ứng lương đang chờ duyệt",
+      }),
+    });
+    assert.equal(createHistOpen.ok, true);
+    const histOpenReqId = createHistOpen.data.request.request_id;
+
+    // Verify getRequestDetail as ACCT_B (assigned Project Accountant for PRJ_1):
+    // - includes worker_first_work_date ('2026-10-01'), worker_recruiter_display_name (PM_1.name), worker_recruiter_code (PM_1.code), worker_provider_type ('hrp')
+    // - includes worker_advance_30d_summary with total_count = 1 and total_amount_vnd = '1800000'
+    //   (counts histReq1 [APPROVED + REVIEWED within 30d]; excludes histReq2 [2026-08-15], histOpenReq [OPEN], and req1Id [HANDLED_EXTERNALLY])
+    // - never leaks multiCccd
+    const acctDetailWith30d = await repo.getRequestDetail({
+      auth_subject: ACCT_B.auth,
+      app_user_id: ACCT_B.app,
+      request_id: histOpenReqId,
+    });
+    assert.equal(acctDetailWith30d.ok, true);
+    assert.equal(
+      JSON.stringify(acctDetailWith30d.data).includes(multiCccd),
+      false,
+      "Request detail must NEVER leak worker CCCD",
+    );
+    assert.equal(
+      acctDetailWith30d.data.request.worker_first_work_date,
+      "2026-10-01",
+    );
+    assert.equal(
+      acctDetailWith30d.data.request.worker_recruiter_display_name,
+      PM_1.name,
+    );
+    assert.equal(
+      acctDetailWith30d.data.request.worker_recruiter_code,
+      PM_1.code,
+    );
+    assert.equal(acctDetailWith30d.data.request.worker_provider_type, "hrp");
+    assert.ok(acctDetailWith30d.data.worker_advance_30d_summary);
+    assert.equal(
+      acctDetailWith30d.data.worker_advance_30d_summary.window_days,
+      30,
+    );
+    assert.equal(
+      acctDetailWith30d.data.worker_advance_30d_summary.qualifying_rule,
+      "APPROVED_AND_EVIDENCE_REVIEWED",
+    );
+    assert.equal(
+      acctDetailWith30d.data.worker_advance_30d_summary.total_count,
+      1,
+    );
+    assert.equal(
+      acctDetailWith30d.data.worker_advance_30d_summary.total_amount_vnd,
+      "1800000",
+    );
+
+    // Verify getRequestDetail as PM_1 (QLDA only, not accountant or supervisory) sets worker_advance_30d_summary = null
+    const pmDetailNo30d = await repo.getRequestDetail({
+      auth_subject: PM_1.auth,
+      app_user_id: PM_1.app,
+      request_id: histOpenReqId,
+    });
+    assert.equal(pmDetailNo30d.ok, true);
+    assert.equal(pmDetailNo30d.data.worker_advance_30d_summary, null);
+
+    // 3. Per-worker advance history (listWorkerHistory) across filters, pagination, and authorization scopes:
+    //    - PM_1 (QLDA) is denied with SALARY_ADVANCE_ACCESS_DENIED
+    const pmHistDenied = await repo.listWorkerHistory({
+      auth_subject: PM_1.auth,
+      app_user_id: PM_1.app,
+      request_id: histOpenReqId,
+      period_mode: "ALL",
+      month: null,
+      from_date: null,
+      to_date: null,
+      cursor: null,
+      page_size: 20,
+    });
+    assert.deepEqual(pmHistDenied, {
+      ok: false,
+      code: "SALARY_ADVANCE_ACCESS_DENIED",
+    });
+
+    //    - ACCT_A (not assigned to PRJ_1 anymore) is denied with SALARY_ADVANCE_ACCESS_DENIED
+    const acctAHistDenied = await repo.listWorkerHistory({
+      auth_subject: ACCT_A.auth,
+      app_user_id: ACCT_A.app,
+      request_id: histOpenReqId,
+      period_mode: "ALL",
+      month: null,
+      from_date: null,
+      to_date: null,
+      cursor: null,
+      page_size: 20,
+    });
+    assert.deepEqual(acctAHistDenied, {
+      ok: false,
+      code: "SALARY_ADVANCE_ACCESS_DENIED",
+    });
+
+    //    - ACCT_B (assigned to PRJ_1) queries ALL -> returns both histReq1 (1,800,000) and histReq2 (3,200,000) = 2 items, 5,000,000 VND
+    const acctBHistAllPage1 = await repo.listWorkerHistory({
+      auth_subject: ACCT_B.auth,
+      app_user_id: ACCT_B.app,
+      request_id: histOpenReqId,
+      period_mode: "ALL",
+      month: null,
+      from_date: null,
+      to_date: null,
+      cursor: null,
+      page_size: 1,
+    });
+    assert.equal(acctBHistAllPage1.ok, true);
+    assert.equal(acctBHistAllPage1.data.total_count, 2);
+    assert.equal(acctBHistAllPage1.data.total_amount_vnd, "5000000");
+    assert.equal(acctBHistAllPage1.data.items.length, 1);
+    assert.equal(acctBHistAllPage1.data.has_more, true);
+    assert.equal(acctBHistAllPage1.data.items[0].request_id, histReq1Id);
+
+    // Page 2 with cursor preserves exact total_count (2) and total_amount_vnd ('5000000')
+    const acctBHistAllPage2 = await repo.listWorkerHistory({
+      auth_subject: ACCT_B.auth,
+      app_user_id: ACCT_B.app,
+      request_id: histOpenReqId,
+      period_mode: "ALL",
+      month: null,
+      from_date: null,
+      to_date: null,
+      cursor: acctBHistAllPage1.data.next_cursor,
+      page_size: 1,
+    });
+    assert.equal(acctBHistAllPage2.ok, true);
+    assert.equal(acctBHistAllPage2.data.total_count, 2);
+    assert.equal(acctBHistAllPage2.data.total_amount_vnd, "5000000");
+    assert.equal(acctBHistAllPage2.data.items.length, 1);
+    assert.equal(acctBHistAllPage2.data.has_more, false);
+    assert.equal(acctBHistAllPage2.data.items[0].request_id, histReq2Id);
+
+    //    - ACCT_B queries MONTH = '2026-08' -> returns only histReq2 (1 item, 3,200,000 VND)
+    const acctBHistMonthAug = await repo.listWorkerHistory({
+      auth_subject: ACCT_B.auth,
+      app_user_id: ACCT_B.app,
+      request_id: histOpenReqId,
+      period_mode: "MONTH",
+      month: "2026-08",
+      from_date: null,
+      to_date: null,
+      cursor: null,
+      page_size: 20,
+    });
+    assert.equal(acctBHistMonthAug.ok, true);
+    assert.equal(acctBHistMonthAug.data.total_count, 1);
+    assert.equal(acctBHistMonthAug.data.total_amount_vnd, "3200000");
+    assert.equal(acctBHistMonthAug.data.items[0].request_id, histReq2Id);
+
+    //    - ACCT_B queries CUSTOM_RANGE = '2026-08-01'..'2026-08-31' -> returns only histReq2
+    const acctBHistCustomAug = await repo.listWorkerHistory({
+      auth_subject: ACCT_B.auth,
+      app_user_id: ACCT_B.app,
+      request_id: histOpenReqId,
+      period_mode: "CUSTOM_RANGE",
+      month: null,
+      from_date: "2026-08-01",
+      to_date: "2026-08-31",
+      cursor: null,
+      page_size: 20,
+    });
+    assert.equal(acctBHistCustomAug.ok, true);
+    assert.equal(acctBHistCustomAug.data.total_count, 1);
+    assert.equal(acctBHistCustomAug.data.total_amount_vnd, "3200000");
+
+    //    - Supervisory Viewer (CANONICAL_BOD) can also view worker history
+    const bodHistAll = await repo.listWorkerHistory({
+      auth_subject: CANONICAL_BOD.auth,
+      app_user_id: CANONICAL_BOD.app,
+      request_id: histOpenReqId,
+      period_mode: "ALL",
+      month: null,
+      from_date: null,
+      to_date: null,
+      cursor: null,
+      page_size: 20,
+    });
+    assert.equal(bodHistAll.ok, true);
+    assert.equal(bodHistAll.data.total_count, 2);
+    assert.equal(bodHistAll.data.total_amount_vnd, "5000000");
+
+    // 4. Cross-episode same-CCCD matching (distinct worker_entry_id & candidate_id) + strict project scope:
+    //    - Set workerPrj1B (on PRJ_1, first_work_date '2026-10-02' != '2026-10-01') to have the same canonical CCCD (multiCccd)
+    //      so its existing bankReqId (4,500,000 VND on PRJ_1, already APPROVED + REVIEWED) matches the same worker by CCCD!
+    //    - End ACCT_B's assignment on PRJ_2 so ACCT_B is scoped strictly to PRJ_1, then insert a completed
+    //      APPROVED + REVIEWED advance (1,500,000 VND) on workerPrj2 (PRJ_2, which already has multiCccd, out of ACCT_B's scope).
+    await db.query(
+      `update public.direct_entries
+          set worker_details = jsonb_set(
+                worker_details,
+                '{national_id}',
+                jsonb_build_object('state', 'provided', 'value', $1::text)
+              ),
+              version = version + 1
+        where entry_id = $2::uuid`,
+      [multiCccd, workerPrj1B],
+    );
+    const { rows: acctBPrj2Rows } = await db.query(
+      `select assignment_id, version
+         from public.vendor_finance_project_accountants
+        where project_id = $1 and accountant_user_id = $2::uuid and valid_to is null`,
+      [PRJ_2, ACCT_B.app],
+    );
+    const endAcctBPrj2Reason = "Kết thúc phân công ACCT_B trên PRJ_2 để kiểm thử cô lập scope";
+    await db.query(
+      `select public.vendor_finance_end_project_accountant_admin(
+         $1::uuid, $2::uuid, $3::uuid, $4::integer, '2026-06-01'::date, $5::text, $6::uuid, $7::text
+       )`,
+      [
+        FULL_ADMIN.auth,
+        FULL_ADMIN.app,
+        acctBPrj2Rows[0].assignment_id,
+        acctBPrj2Rows[0].version,
+        endAcctBPrj2Reason,
+        nextUuid(),
+        computeEndProjectAccountantFingerprint({
+          assignment_id: acctBPrj2Rows[0].assignment_id,
+          expected_version: acctBPrj2Rows[0].version,
+          valid_to: "2026-06-01",
+          reason: endAcctBPrj2Reason,
+        }),
+      ],
+    );
+    await db.exec("begin;");
+    await db.exec(
+      "select pg_catalog.set_config('salary_advance.write_marker', 'on', true);",
+    );
+    await db.query(
+      `insert into public.salary_advance_requests (
+         request_id, project_id, worker_entry_id, requested_amount_vnd, payment_method,
+         initial_content, request_state, evidence_review_state, version,
+         created_by_user_id, decided_by_user_id, decided_at,
+         current_evidence_version, current_evidence_event_id, current_evidence_storage_key, current_evidence_mime_type,
+         current_evidence_size_bytes, current_evidence_checksum_sha256,
+         current_evidence_uploaded_by_user_id, current_evidence_uploaded_at,
+         evidence_reviewed_by_user_id, evidence_reviewed_at,
+         reviewed_worker_portrait_document_id, reviewed_worker_portrait_version,
+         last_actor_user_id, last_activity_at, created_at, updated_at
+       )
+       select '88800000-0000-4000-8000-000000000999'::uuid,
+              $1,
+              $2::uuid,
+              1500000,
+              payment_method,
+              'Ứng lương đợt trước ở dự án PRJ_2 cùng CCCD',
+              request_state,
+              evidence_review_state,
+              version,
+              $3::uuid,
+              $4::uuid,
+              decided_at,
+              current_evidence_version,
+              current_evidence_event_id,
+              replace(current_evidence_storage_key, request_id::text, '88800000-0000-4000-8000-000000000999'),
+              current_evidence_mime_type,
+              current_evidence_size_bytes,
+              current_evidence_checksum_sha256,
+              $3::uuid,
+              current_evidence_uploaded_at,
+              $4::uuid,
+              evidence_reviewed_at,
+              reviewed_worker_portrait_document_id,
+              reviewed_worker_portrait_version,
+              $4::uuid,
+              last_activity_at,
+              created_at,
+              updated_at
+         from public.salary_advance_requests
+        where request_id = $5::uuid`,
+      [PRJ_2, workerPrj2, PM_2.app, ACCT_A.app, histReq1Id],
+    );
+    await db.exec("commit;");
+
+    // ACCT_B (assigned to PRJ_1 only) now sees:
+    // - 30d summary: histReq1 (1,800,000 on workerPrj1A) + bankReqId (4,500,000 on workerPrj1B via same CCCD) = 2 items, 6,300,000 VND
+    // - ALL history: histReq1 + histReq2 + bankReqId = 3 items, 9,500,000 VND (excludes PRJ_2's 1,500,000 VND!)
+    const acctBDetailSameCccd = await repo.getRequestDetail({
+      auth_subject: ACCT_B.auth,
+      app_user_id: ACCT_B.app,
+      request_id: histOpenReqId,
+    });
+    assert.equal(acctBDetailSameCccd.ok, true);
+    assert.equal(
+      acctBDetailSameCccd.data.worker_advance_30d_summary?.total_count,
+      2,
+    );
+    assert.equal(
+      acctBDetailSameCccd.data.worker_advance_30d_summary?.total_amount_vnd,
+      "6300000",
+    );
+
+    const acctBHistSameCccdAll = await repo.listWorkerHistory({
+      auth_subject: ACCT_B.auth,
+      app_user_id: ACCT_B.app,
+      request_id: histOpenReqId,
+      period_mode: "ALL",
+      month: null,
+      from_date: null,
+      to_date: null,
+      cursor: null,
+      page_size: 20,
+    });
+    assert.equal(acctBHistSameCccdAll.ok, true);
+    assert.equal(acctBHistSameCccdAll.data.total_count, 3);
+    assert.equal(acctBHistSameCccdAll.data.total_amount_vnd, "9500000");
+    assert.equal(
+      acctBHistSameCccdAll.data.items.some((item) => item.project_id === PRJ_2),
+      false,
+      "Accountant must NEVER see worker history from projects outside their assigned scope",
+    );
+
+    // CANONICAL_BOD (supervisory viewer across all projects) sees all 4 items across PRJ_1 and PRJ_2 = 11,000,000 VND
+    const bodHistSameCccdAll = await repo.listWorkerHistory({
+      auth_subject: CANONICAL_BOD.auth,
+      app_user_id: CANONICAL_BOD.app,
+      request_id: histOpenReqId,
+      period_mode: "ALL",
+      month: null,
+      from_date: null,
+      to_date: null,
+      cursor: null,
+      page_size: 20,
+    });
+    assert.equal(bodHistSameCccdAll.ok, true);
+    assert.equal(bodHistSameCccdAll.data.total_count, 4);
+    assert.equal(bodHistSameCccdAll.data.total_amount_vnd, "11000000");
 
     // Append-only trigger on salary_advance_events blocks UPDATE and DELETE even with write_marker
     await assert.rejects(

@@ -19,16 +19,20 @@ import type {
   SalaryAdvanceActorContext,
   SalaryAdvanceEvidenceReviewDecision,
   SalaryAdvanceEvidenceReviewState,
+  SalaryAdvanceHistoryPeriodMode,
   SalaryAdvanceMutationDetailResponse,
   SalaryAdvancePaymentMethod,
   SalaryAdvanceRequestDetail,
   SalaryAdvanceRequestState,
   SalaryAdvanceRequestSummary,
   SalaryAdvanceTransitionAction,
+  SalaryAdvanceWorkerHistoryItem,
+  SalaryAdvanceWorkerHistoryResponse,
   SalaryAdvanceWorkerListResponse,
   SalaryAdvanceWorkerOption,
 } from "@/lib/salary-advance/salary-advance-contract";
 import {
+  SALARY_ADVANCE_30D_SUMMARY_RULE_NOTICE,
   SALARY_ADVANCE_NON_ACCOUNTING_NOTICE,
   buildSalaryAdvanceExportUrl,
   canAccessSalaryAdvanceContext,
@@ -38,10 +42,13 @@ import {
   evaluateEvidenceComparisonPanel,
   evaluateRequestAttentionForTab,
   fetchSalaryAdvanceRequestListPage,
+  fetchSalaryAdvanceWorkerHistoryPage,
   filterSelectableProjectWorkers,
   formatDateTimeVi,
   formatFileSizeBytes,
   formatVndAmount,
+  formatWorkDateVi,
+  formatWorkerRecruiterLabel,
   getEvidenceReviewStateMeta,
   getPaymentMethodMeta,
   getRequestStateMeta,
@@ -59,6 +66,7 @@ import {
   resolveScopedMutationFailureOutcome,
   resolveVisibleSalaryAdvanceTabs,
   salaryAdvanceErrorMessage,
+  sanitizeWorker30dSummary,
   sortEventsChronologically,
   updateTabBadgeCappedForTab,
   updateTabBadgeCountsForTab,
@@ -275,6 +283,29 @@ export function SalaryAdvanceWorkspace() {
   const [evidenceReviewSubmitting, setEvidenceReviewSubmitting] =
     useState(false);
 
+  // Worker salary advance history dialog state (Accountant / Supervisory)
+  const [historyDialogOpen, setHistoryDialogOpen] = useState(false);
+  const [historyPeriodMode, setHistoryPeriodMode] =
+    useState<SalaryAdvanceHistoryPeriodMode>("THIS_MONTH");
+  const [historyMonth, setHistoryMonth] = useState<string>("");
+  const [historyFromDateInput, setHistoryFromDateInput] = useState<string>("");
+  const [historyToDateInput, setHistoryToDateInput] = useState<string>("");
+  const [appliedHistoryFromDate, setAppliedHistoryFromDate] =
+    useState<string>("");
+  const [appliedHistoryToDate, setAppliedHistoryToDate] = useState<string>("");
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyLoadingMore, setHistoryLoadingMore] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [historyData, setHistoryData] =
+    useState<SalaryAdvanceWorkerHistoryResponse | null>(null);
+  const [historyItems, setHistoryItems] = useState<
+    SalaryAdvanceWorkerHistoryItem[]
+  >([]);
+  const [historyHasMore, setHistoryHasMore] = useState(false);
+  const [historyNextCursor, setHistoryNextCursor] = useState<string | null>(
+    null
+  );
+
   // Idempotency key refs per user intent
   const createIdempotencyKeyRef = useRef<string>(
     newSalaryAdvanceIdempotencyKey("sa-create")
@@ -297,10 +328,15 @@ export function SalaryAdvanceWorkspace() {
   const requestsTrackerRef = useRef<LatestRequestTracker | null>(null);
   const detailTrackerRef = useRef<LatestRequestTracker | null>(null);
   const workersTrackerRef = useRef<LatestRequestTracker | null>(null);
+  const historyTrackerRef = useRef<LatestRequestTracker | null>(null);
   const selectedRequestIdRef = useRef<string | null>(null);
   const requestsRef = useRef<SalaryAdvanceRequestSummary[]>([]);
 
   const activeDetail = resolveActiveRequestDetail(detail, selectedRequestId);
+  const activeWorker30dSummary = useMemo(
+    () => sanitizeWorker30dSummary(activeDetail?.worker_advance_30d_summary),
+    [activeDetail?.worker_advance_30d_summary]
+  );
 
   const selectRequest = useCallback((nextRequestId: string | null) => {
     const previousRequestId = selectedRequestIdRef.current;
@@ -309,6 +345,7 @@ export function SalaryAdvanceWorkspace() {
 
     if (previousRequestId !== nextRequestId) {
       getRequestTracker(detailTrackerRef).cancelAll();
+      getRequestTracker(historyTrackerRef).cancelAll();
       setDetail((prev) =>
         prev && nextRequestId && prev.request.request_id === nextRequestId
           ? prev
@@ -322,6 +359,14 @@ export function SalaryAdvanceWorkspace() {
       setMessageError(null);
       setEvidenceUploadError(null);
       setEvidenceReviewError(null);
+      setHistoryDialogOpen(false);
+      setHistoryData(null);
+      setHistoryItems([]);
+      setHistoryHasMore(false);
+      setHistoryNextCursor(null);
+      setHistoryError(null);
+      setHistoryLoading(false);
+      setHistoryLoadingMore(false);
     }
   }, []);
 
@@ -329,10 +374,12 @@ export function SalaryAdvanceWorkspace() {
     const requestsTracker = getRequestTracker(requestsTrackerRef);
     const detailTracker = getRequestTracker(detailTrackerRef);
     const workersTracker = getRequestTracker(workersTrackerRef);
+    const historyTracker = getRequestTracker(historyTrackerRef);
     return () => {
       requestsTracker.cancelAll();
       detailTracker.cancelAll();
       workersTracker.cancelAll();
+      historyTracker.cancelAll();
     };
   }, []);
 
@@ -847,6 +894,8 @@ export function SalaryAdvanceWorkspace() {
         request: mutationData.request,
         events: mutationData.events,
         evidence_versions: mutationData.evidence_versions,
+        worker_advance_30d_summary:
+          mutationData.worker_advance_30d_summary ?? null,
       };
       if (options?.forceSelect) {
         getRequestTracker(detailTrackerRef).cancelAll();
@@ -859,7 +908,15 @@ export function SalaryAdvanceWorkspace() {
         options?.forceSelect ||
         selectedRequestIdRef.current === updatedDetail.request.request_id
       ) {
-        setDetail(updatedDetail);
+        setDetail((prev) => ({
+          ...updatedDetail,
+          worker_advance_30d_summary:
+            mutationData.worker_advance_30d_summary !== undefined
+              ? mutationData.worker_advance_30d_summary
+              : prev?.request.request_id === updatedDetail.request.request_id
+                ? prev.worker_advance_30d_summary ?? null
+                : null,
+        }));
         setSelectedEvidenceVersion(
           updatedDetail.request.current_evidence?.evidence_version ??
             updatedDetail.evidence_versions[0]?.evidence_version ??
@@ -879,6 +936,145 @@ export function SalaryAdvanceWorkspace() {
     },
     []
   );
+
+  const loadWorkerHistory = useCallback(
+    async (
+      requestId: string,
+      periodMode: SalaryAdvanceHistoryPeriodMode,
+      params: {
+        month: string;
+        fromDate: string;
+        toDate: string;
+        cursor?: string | null;
+        append?: boolean;
+      }
+    ) => {
+      if (!requestId) return;
+      if (periodMode === "MONTH" && !/^\d{4}-\d{2}$/.test(params.month.trim())) {
+        setHistoryError("Vui lòng chọn tháng hợp lệ (YYYY-MM).");
+        return;
+      }
+      if (periodMode === "CUSTOM_RANGE") {
+        const fromTrimmed = params.fromDate.trim();
+        const toTrimmed = params.toDate.trim();
+        if (
+          !/^\d{4}-\d{2}-\d{2}$/.test(fromTrimmed) ||
+          !/^\d{4}-\d{2}-\d{2}$/.test(toTrimmed)
+        ) {
+          setHistoryError("Vui lòng chọn đầy đủ từ ngày và đến ngày hợp lệ.");
+          return;
+        }
+        if (fromTrimmed > toTrimmed) {
+          setHistoryError("Ngày bắt đầu không được lớn hơn ngày kết thúc.");
+          return;
+        }
+      }
+
+      const req = getRequestTracker(historyTrackerRef).begin();
+      const isAppend = Boolean(params.append && params.cursor);
+      if (isAppend) {
+        setHistoryLoadingMore(true);
+      } else {
+        setHistoryLoading(true);
+        setHistoryError(null);
+      }
+
+      try {
+        const outcome = await fetchSalaryAdvanceWorkerHistoryPage({
+          requestId,
+          periodMode,
+          month: periodMode === "MONTH" ? params.month.trim() : null,
+          fromDate:
+            periodMode === "CUSTOM_RANGE" ? params.fromDate.trim() : null,
+          toDate: periodMode === "CUSTOM_RANGE" ? params.toDate.trim() : null,
+          cursor: params.cursor ?? null,
+          append: isAppend,
+          pageSize: 20,
+          ticket: req,
+        });
+
+        if (outcome.status === "stale") {
+          return;
+        }
+
+        if (outcome.status === "error") {
+          setHistoryError(outcome.message);
+          return;
+        }
+
+        const page = outcome.data;
+        setHistoryData(page);
+        setHistoryItems((prev) =>
+          isAppend ? [...prev, ...page.items] : page.items
+        );
+        setHistoryHasMore(page.has_more);
+        setHistoryNextCursor(page.next_cursor);
+      } finally {
+        if (req.isCurrent()) {
+          setHistoryLoading(false);
+          setHistoryLoadingMore(false);
+        }
+      }
+    },
+    []
+  );
+
+  const handleOpenWorkerHistoryDialog = () => {
+    if (!activeDetail) return;
+    const defaultMonth =
+      context?.authorization_date?.slice(0, 7) ??
+      new Date().toISOString().slice(0, 7);
+    const defaultFromDate =
+      activeWorker30dSummary?.window_from_date ??
+      `${defaultMonth}-01`;
+    const defaultToDate =
+      activeWorker30dSummary?.window_to_date ??
+      context?.authorization_date ??
+      new Date().toISOString().slice(0, 10);
+
+    setHistoryPeriodMode("THIS_MONTH");
+    setHistoryMonth(defaultMonth);
+    setHistoryFromDateInput(defaultFromDate);
+    setHistoryToDateInput(defaultToDate);
+    setAppliedHistoryFromDate(defaultFromDate);
+    setAppliedHistoryToDate(defaultToDate);
+    setHistoryError(null);
+    setHistoryData(null);
+    setHistoryItems([]);
+    setHistoryHasMore(false);
+    setHistoryNextCursor(null);
+    setHistoryDialogOpen(true);
+  };
+
+  useEffect(() => {
+    if (!historyDialogOpen || !activeDetail) {
+      getRequestTracker(historyTrackerRef).cancelAll();
+      return;
+    }
+    const targetRequestId = activeDetail.request.request_id;
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) {
+        void loadWorkerHistory(targetRequestId, historyPeriodMode, {
+          month: historyMonth,
+          fromDate: appliedHistoryFromDate,
+          toDate: appliedHistoryToDate,
+        });
+      }
+    });
+    return () => {
+      cancelled = true;
+      getRequestTracker(historyTrackerRef).cancelAll();
+    };
+  }, [
+    historyDialogOpen,
+    activeDetail,
+    historyPeriodMode,
+    historyMonth,
+    appliedHistoryFromDate,
+    appliedHistoryToDate,
+    loadWorkerHistory,
+  ]);
 
   const handleOpenCreateDialog = () => {
     const defaultProject =
@@ -2243,6 +2439,117 @@ export function SalaryAdvanceWorkspace() {
                     </div>
                   </div>
 
+                  {/* Worker Work Info: First Work Date & Recruiter */}
+                  <div
+                    className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-subtle)] p-3.5 text-sm"
+                    data-testid="salary-advance-detail-work-info"
+                  >
+                    <div>
+                      <div className="text-xs text-[var(--color-text-secondary)]">
+                        Ngày đầu tiên làm việc
+                      </div>
+                      <div
+                        className="font-medium text-[var(--color-text-primary)]"
+                        data-testid="salary-advance-detail-first-work-date"
+                      >
+                        {formatWorkDateVi(
+                          activeDetail.request.worker_first_work_date
+                        )}
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="text-xs text-[var(--color-text-secondary)]">
+                        Người tuyển dụng
+                      </div>
+                      <div
+                        className="font-medium text-[var(--color-text-primary)]"
+                        data-testid="salary-advance-detail-recruiter"
+                      >
+                        {formatWorkerRecruiterLabel({
+                          recruiterDisplayName:
+                            activeDetail.request.worker_recruiter_display_name,
+                          recruiterCode:
+                            activeDetail.request.worker_recruiter_code,
+                          providerType:
+                            activeDetail.request.worker_provider_type,
+                        })}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 30-day Salary Advance Summary for Accountant / Supervisory */}
+                  {activeWorker30dSummary ? (
+                    <div
+                      className="mt-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-subtle)] p-3.5 text-sm"
+                      data-testid="salary-advance-detail-30d-summary"
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <div className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-secondary)]">
+                            Tóm tắt ứng lương 30 ngày gần nhất (Đã duyệt &amp; đối
+                            chiếu nhận tiền)
+                          </div>
+                          <div className="mt-0.5 text-xs text-[var(--color-text-secondary)]">
+                            Khoảng ngày:{" "}
+                            <strong>
+                              {formatWorkDateVi(
+                                activeWorker30dSummary.window_from_date
+                              )}
+                            </strong>{" "}
+                            –{" "}
+                            <strong>
+                              {formatWorkDateVi(
+                                activeWorker30dSummary.window_to_date
+                              )}
+                            </strong>
+                          </div>
+                        </div>
+
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={handleOpenWorkerHistoryDialog}
+                          data-testid="salary-advance-open-worker-history-btn"
+                        >
+                          Xem lịch sử ứng lương
+                        </Button>
+                      </div>
+
+                      <div className="mt-2.5 grid grid-cols-1 sm:grid-cols-2 gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
+                        <div>
+                          <div className="text-xs text-[var(--color-text-secondary)]">
+                            Số lần đã ứng trong 30 ngày gần nhất
+                          </div>
+                          <div
+                            className="text-base font-bold text-[var(--color-text-primary)]"
+                            data-testid="salary-advance-detail-30d-count"
+                          >
+                            {activeWorker30dSummary.total_count} lần
+                          </div>
+                        </div>
+
+                        <div>
+                          <div className="text-xs text-[var(--color-text-secondary)]">
+                            Tổng số tiền đã ứng trong 30 ngày gần nhất
+                          </div>
+                          <div
+                            className="text-base font-bold text-[var(--color-primary)]"
+                            data-testid="salary-advance-detail-30d-amount"
+                          >
+                            {formatVndAmount(
+                              activeWorker30dSummary.total_amount_vnd
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      <p className="mt-2 text-xs text-[var(--color-text-secondary)]">
+                        {SALARY_ADVANCE_30D_SUMMARY_RULE_NOTICE}
+                      </p>
+                    </div>
+                  ) : null}
+
                   {activeDetail.request.payment_method === "BANK_TRANSFER" &&
                   activeDetail.request.payment_destination_snapshot ? (
                     <div
@@ -3490,6 +3797,335 @@ export function SalaryAdvanceWorkspace() {
               data-testid="salary-advance-confirm-transition-btn"
             >
               {transitionDialog?.submitLabel ?? "Xác nhận"}
+            </Button>
+          </div>
+        </div>
+      </FormDialog>
+
+      {/* Worker Salary Advance History Dialog (Accountant / Supervisory) */}
+      <FormDialog
+        open={historyDialogOpen}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) {
+            setHistoryDialogOpen(false);
+          }
+        }}
+        contentClassName="sm:w-[min(56rem,calc(100vw-2rem))]"
+        title={
+          activeDetail
+            ? `Lịch sử ứng lương — ${activeDetail.request.worker_display_name} (${activeDetail.request.worker_employee_code})`
+            : "Lịch sử ứng lương của người lao động"
+        }
+        description="Danh sách các lần đã ứng lương (Đã chấp thuận & Đã đối chiếu chứng từ nhận tiền) trong phạm vi dự án được phân quyền."
+      >
+        <div
+          className="flex flex-col gap-4"
+          data-testid="salary-advance-worker-history-dialog"
+        >
+          {/* Period Filter Controls */}
+          <div className="flex flex-col gap-2.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-subtle)] p-3">
+            <div className="flex flex-wrap items-center gap-2">
+              {(
+                [
+                  { mode: "THIS_MONTH", label: "Tháng này" },
+                  { mode: "MONTH", label: "Chọn tháng" },
+                  { mode: "ALL", label: "Toàn bộ" },
+                  { mode: "CUSTOM_RANGE", label: "Tùy chỉnh khoảng ngày" },
+                ] as const
+              ).map((opt) => {
+                const isSelected = historyPeriodMode === opt.mode;
+                return (
+                  <button
+                    key={opt.mode}
+                    type="button"
+                    data-testid={`salary-advance-history-mode-${opt.mode}`}
+                    onClick={() => {
+                      setHistoryError(null);
+                      setHistoryPeriodMode(opt.mode);
+                    }}
+                    className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
+                      isSelected
+                        ? "border-[var(--color-primary-border)] bg-[var(--color-primary-bg)] text-[var(--color-primary)]"
+                        : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-subtle)]"
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {historyPeriodMode === "MONTH" ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <label
+                  htmlFor="salary-advance-history-month-input"
+                  className="text-xs font-medium text-[var(--color-text-secondary)]"
+                >
+                  Tháng cần xem:
+                </label>
+                <input
+                  id="salary-advance-history-month-input"
+                  data-testid="salary-advance-history-month-input"
+                  type="month"
+                  value={historyMonth}
+                  onChange={(event) => {
+                    setHistoryError(null);
+                    setHistoryMonth(event.target.value);
+                  }}
+                  className="h-8 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 text-xs text-[var(--color-text-primary)]"
+                />
+              </div>
+            ) : null}
+
+            {historyPeriodMode === "CUSTOM_RANGE" ? (
+              <div className="flex flex-wrap items-end gap-2">
+                <div className="flex flex-col gap-1">
+                  <label
+                    htmlFor="salary-advance-history-from-date"
+                    className="text-xs font-medium text-[var(--color-text-secondary)]"
+                  >
+                    Từ ngày
+                  </label>
+                  <input
+                    id="salary-advance-history-from-date"
+                    data-testid="salary-advance-history-from-date"
+                    type="date"
+                    value={historyFromDateInput}
+                    onChange={(event) =>
+                      setHistoryFromDateInput(event.target.value)
+                    }
+                    className="h-8 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 text-xs text-[var(--color-text-primary)]"
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label
+                    htmlFor="salary-advance-history-to-date"
+                    className="text-xs font-medium text-[var(--color-text-secondary)]"
+                  >
+                    Đến ngày
+                  </label>
+                  <input
+                    id="salary-advance-history-to-date"
+                    data-testid="salary-advance-history-to-date"
+                    type="date"
+                    value={historyToDateInput}
+                    onChange={(event) =>
+                      setHistoryToDateInput(event.target.value)
+                    }
+                    className="h-8 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 text-xs text-[var(--color-text-primary)]"
+                  />
+                </div>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  data-testid="salary-advance-history-apply-range-btn"
+                  onClick={() => {
+                    const fromTrimmed = historyFromDateInput.trim();
+                    const toTrimmed = historyToDateInput.trim();
+                    if (
+                      !/^\d{4}-\d{2}-\d{2}$/.test(fromTrimmed) ||
+                      !/^\d{4}-\d{2}-\d{2}$/.test(toTrimmed)
+                    ) {
+                      setHistoryError(
+                        "Vui lòng chọn đầy đủ từ ngày và đến ngày hợp lệ."
+                      );
+                      return;
+                    }
+                    if (fromTrimmed > toTrimmed) {
+                      setHistoryError(
+                        "Ngày bắt đầu không được lớn hơn ngày kết thúc."
+                      );
+                      return;
+                    }
+                    setHistoryError(null);
+                    if (
+                      fromTrimmed === appliedHistoryFromDate &&
+                      toTrimmed === appliedHistoryToDate &&
+                      activeDetail
+                    ) {
+                      void loadWorkerHistory(
+                        activeDetail.request.request_id,
+                        "CUSTOM_RANGE",
+                        {
+                          month: historyMonth,
+                          fromDate: fromTrimmed,
+                          toDate: toTrimmed,
+                        }
+                      );
+                    } else {
+                      setAppliedHistoryFromDate(fromTrimmed);
+                      setAppliedHistoryToDate(toTrimmed);
+                    }
+                  }}
+                >
+                  Áp dụng khoảng ngày
+                </Button>
+              </div>
+            ) : null}
+          </div>
+
+          {/* Totals Summary for Active Filter */}
+          <div
+            className="grid grid-cols-1 sm:grid-cols-2 gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-sm"
+            data-testid="salary-advance-worker-history-totals"
+          >
+            <div>
+              <div className="text-xs text-[var(--color-text-secondary)]">
+                Tổng số lần đã ứng (theo bộ lọc)
+              </div>
+              <div
+                className="text-base font-bold text-[var(--color-text-primary)]"
+                data-testid="salary-advance-worker-history-total-count"
+              >
+                {historyData ? `${historyData.total_count} lần` : "0 lần"}
+              </div>
+            </div>
+
+            <div>
+              <div className="text-xs text-[var(--color-text-secondary)]">
+                Tổng số tiền đã ứng (theo bộ lọc)
+              </div>
+              <div
+                className="text-base font-bold text-[var(--color-primary)]"
+                data-testid="salary-advance-worker-history-total-amount"
+              >
+                {formatVndAmount(historyData?.total_amount_vnd ?? "0")}
+              </div>
+            </div>
+          </div>
+
+          {historyError ? (
+            <StatusBanner tone="error">{historyError}</StatusBanner>
+          ) : null}
+
+          {historyLoading ? (
+            <div className="p-4 text-sm text-[var(--color-text-secondary)]">
+              Đang tải lịch sử ứng lương của người lao động...
+            </div>
+          ) : historyItems.length === 0 ? (
+            <div
+              className="rounded-lg border border-dashed border-[var(--color-border)] p-6 text-center text-sm text-[var(--color-text-secondary)]"
+              data-testid="salary-advance-worker-history-empty"
+            >
+              Chưa có lần ứng lương nào (đã duyệt &amp; đối chiếu nhận tiền) trong
+              khoảng thời gian đã chọn.
+            </div>
+          ) : (
+            <>
+              <DataTableContainer>
+                <table
+                  className="w-full text-left border-collapse r22-card-table"
+                  data-testid="salary-advance-worker-history-table"
+                >
+                  <thead>
+                    <tr className="border-b border-[var(--color-border)] bg-[var(--color-surface-subtle)] text-xs font-semibold text-[var(--color-text-secondary)]">
+                      <th className="py-2 px-3">Ngày đối chiếu chứng từ</th>
+                      <th className="py-2 px-3">Số tiền ứng</th>
+                      <th className="py-2 px-3">Hình thức</th>
+                      <th className="py-2 px-3">Dự án</th>
+                      <th className="py-2 px-3">Trạng thái / Ghi chú</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--color-border)] text-xs">
+                    {historyItems.map((item) => {
+                      const payMeta = getPaymentMethodMeta(item.payment_method);
+                      const reqMeta = getRequestStateMeta(item.request_state);
+                      const evMeta = getEvidenceReviewStateMeta(
+                        item.evidence_review_state
+                      );
+                      return (
+                        <tr
+                          key={item.request_id}
+                          data-testid={`salary-advance-history-row-${item.request_id}`}
+                        >
+                          <td className="py-2.5 px-3 align-top whitespace-nowrap">
+                            <div className="font-semibold text-[var(--color-text-primary)]">
+                              Hoàn tất đối chiếu:{" "}
+                              {formatWorkDateVi(item.effective_date)}
+                            </div>
+                            {item.evidence_reviewed_at ? (
+                              <div className="text-[11px] text-[var(--color-text-secondary)]">
+                                Giờ đối chiếu:{" "}
+                                {formatDateTimeVi(item.evidence_reviewed_at)}
+                              </div>
+                            ) : null}
+                            <div className="text-[11px] text-[var(--color-text-secondary)]">
+                              Tạo yêu cầu: {formatDateTimeVi(item.created_at)}
+                            </div>
+                          </td>
+
+                          <td className="py-2.5 px-3 align-top font-semibold text-[var(--color-primary)] whitespace-nowrap">
+                            {formatVndAmount(item.requested_amount_vnd)}
+                          </td>
+
+                          <td className="py-2.5 px-3 align-top whitespace-nowrap">
+                            <StatusBadge tone={payMeta.tone}>
+                              {payMeta.shortLabel}
+                            </StatusBadge>
+                          </td>
+
+                          <td className="py-2.5 px-3 align-top">
+                            <div className="font-medium text-[var(--color-text-primary)]">
+                              {item.project_display_name}
+                            </div>
+                          </td>
+
+                          <td className="py-2.5 px-3 align-top">
+                            <div className="flex flex-wrap items-center gap-1">
+                              <StatusBadge tone={reqMeta.tone}>
+                                {reqMeta.shortLabel}
+                              </StatusBadge>
+                              <StatusBadge tone={evMeta.tone}>
+                                {evMeta.shortLabel}
+                              </StatusBadge>
+                            </div>
+                            {item.initial_content ? (
+                              <div className="mt-1 text-[var(--color-text-secondary)] line-clamp-2">
+                                {item.initial_content}
+                              </div>
+                            ) : null}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </DataTableContainer>
+
+              {historyHasMore ? (
+                <div>
+                  <CursorLoadMore
+                    hasMore={historyHasMore}
+                    loading={historyLoadingMore}
+                    onLoadMore={() => {
+                      if (!activeDetail) return;
+                      void loadWorkerHistory(
+                        activeDetail.request.request_id,
+                        historyPeriodMode,
+                        {
+                          month: historyMonth,
+                          fromDate: appliedHistoryFromDate,
+                          toDate: appliedHistoryToDate,
+                          cursor: historyNextCursor,
+                          append: true,
+                        }
+                      );
+                    }}
+                    label="Tải thêm lịch sử ứng lương"
+                  />
+                </div>
+              ) : null}
+            </>
+          )}
+
+          <div className="flex justify-end border-t border-[var(--color-border)] pt-3">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setHistoryDialogOpen(false)}
+              data-testid="salary-advance-close-worker-history-btn"
+            >
+              Đóng
             </Button>
           </div>
         </div>
