@@ -57,23 +57,41 @@ test("T1A: recruited gui dung body, filter rong => null", () => {
     project_id: null,
     recruiter_id: null,
     employment_status: null,
+    search: null,
+    first_work_date_from: null,
+    first_work_date_to: null,
+    provider_type: null,
     reason: "Kiểm tra định kỳ",
   });
-  assert.deepEqual(Object.keys(built.body).sort(),
-    ["employment_status", "project_id", "reason", "recruiter_id", "scope"]);
+  assert.deepEqual(Object.keys(built.body).sort(), [
+    "employment_status", "first_work_date_from", "first_work_date_to",
+    "project_id", "provider_type", "reason", "recruiter_id", "scope", "search",
+  ]);
 });
 
 test("action reason may be omitted and is canonicalized before export submission", () => {
   assert.deepEqual(buildWorkerExportRequest({ scope: "team", filters: EMPTY_FILTERS }), {
-    ok: true, body: { scope: "team", project_id: null, recruiter_id: null,
-      employment_status: null, reason: null },
+    ok: true, body: {
+      scope: "team", project_id: null, recruiter_id: null,
+      employment_status: null, search: null,
+      first_work_date_from: null, first_work_date_to: null, provider_type: null,
+      reason: null,
+    },
   });
 });
 
 test("T1A: managed gui dung body voi bo loc hien tai", () => {
   const built = buildWorkerExportRequest({
     scope: "managed",
-    filters: { status: "ON", projectId: "proj_a", recruiterId: "22222222-2222-4222-8222-222222222222" },
+    filters: {
+      search: "  Nguyễn  ",
+      status: "ON",
+      projectId: "proj_a",
+      recruiterId: "22222222-2222-4222-8222-222222222222",
+      firstWorkDateFrom: "2026-10-01",
+      firstWorkDateTo: "2026-10-31",
+      providerType: "hrp",
+    },
     reason: "Đối soát nhân sự dự án",
   });
   assert.equal(built.ok, true);
@@ -82,33 +100,46 @@ test("T1A: managed gui dung body voi bo loc hien tai", () => {
     project_id: "proj_a",
     recruiter_id: "22222222-2222-4222-8222-222222222222",
     employment_status: "ON",
+    search: "Nguyễn",
+    first_work_date_from: "2026-10-01",
+    first_work_date_to: "2026-10-31",
+    provider_type: "hrp",
     reason: "Đối soát nhân sự dự án",
   });
 });
 
 test("T1A: scope all/team duoc gui; invalid scope va reason bi tu choi fail-closed", () => {
+  const nullFilterBody = {
+    project_id: null, recruiter_id: null, employment_status: null,
+    search: null, first_work_date_from: null, first_work_date_to: null, provider_type: null,
+  };
   assert.deepEqual(buildWorkerExportRequest({ scope: "all", filters: EMPTY_FILTERS, reason: "x" }),
-    { ok: true, body: { scope: "all", project_id: null, recruiter_id: null,
-      employment_status: null, reason: "x" } });
+    { ok: true, body: { scope: "all", ...nullFilterBody, reason: "x" } });
   assert.deepEqual(buildWorkerExportRequest({ scope: "team", filters: EMPTY_FILTERS, reason: null }),
-    { ok: true, body: { scope: "team", project_id: null, recruiter_id: null,
-      employment_status: null, reason: null } });
+    { ok: true, body: { scope: "team", ...nullFilterBody, reason: null } });
   assert.deepEqual(buildWorkerExportRequest({ scope: "everything", filters: EMPTY_FILTERS, reason: "x" }),
     { ok: false, code: "SCOPE_INVALID" });
   assert.deepEqual(buildWorkerExportRequest({ scope: "", filters: EMPTY_FILTERS, reason: "x" }),
     { ok: false, code: "SCOPE_INVALID" });
   assert.deepEqual(buildWorkerExportRequest({ scope: "recruited", filters: EMPTY_FILTERS, reason: "   " }),
-    { ok: true, body: { scope: "recruited", project_id: null, recruiter_id: null,
-      employment_status: null, reason: null } });
+    { ok: true, body: { scope: "recruited", ...nullFilterBody, reason: null } });
   assert.deepEqual(buildWorkerExportRequest({ scope: "recruited", filters: EMPTY_FILTERS, reason: "" }),
-    { ok: true, body: { scope: "recruited", project_id: null, recruiter_id: null,
-      employment_status: null, reason: null } });
+    { ok: true, body: { scope: "recruited", ...nullFilterBody, reason: null } });
   assert.deepEqual(buildWorkerExportRequest({
     scope: "recruited", filters: EMPTY_FILTERS, reason: "x".repeat(WORKER_EXPORT_REASON_MAX + 1),
   }), { ok: false, code: "REASON_TOO_LONG" });
   // Mot status la se bi am tham loai bo => xuat thua; phai tu choi.
   assert.deepEqual(buildWorkerExportRequest({
     scope: "recruited", filters: { status: "MAYBE", projectId: "", recruiterId: "" }, reason: "x",
+  }), { ok: false, code: "FILTER_INVALID" });
+  assert.deepEqual(buildWorkerExportRequest({
+    scope: "recruited",
+    filters: {
+      ...EMPTY_FILTERS,
+      firstWorkDateFrom: "2026-10-15",
+      firstWorkDateTo: "2026-10-01",
+    },
+    reason: "x",
   }), { ok: false, code: "FILTER_INVALID" });
 });
 

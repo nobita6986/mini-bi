@@ -181,8 +181,11 @@ test("an XLSX build failure is a sanitized 503", async () => {
 
 test("the request is forwarded to the repository with the server actor only", async () => {
   const deps = dependencies();
-  await callApi({ scope: "managed", project_id: "proj_a", employment_status: "ON", reason: "x" },
-    { deps });
+  await callApi({
+    scope: "managed", project_id: "proj_a", employment_status: "ON",
+    search: "000021", first_work_date_from: "2026-10-01", first_work_date_to: "2026-10-31",
+    provider_type: "vendor", reason: "x",
+  }, { deps });
   assert.deepEqual(deps.calls, [{
     name: "exportWorkers",
     input: {
@@ -192,6 +195,10 @@ test("the request is forwarded to the repository with the server actor only", as
       project_id: "proj_a",
       recruiter_id: null,
       employment_status: "ON",
+      search: "000021",
+      first_work_date_from: "2026-10-01",
+      first_work_date_to: "2026-10-31",
+      provider_type: "vendor",
       reason: "x",
     },
   }]);
@@ -209,6 +216,10 @@ test("the all scope is accepted by the body allowlist (authority stays server-si
       project_id: null,
       recruiter_id: null,
       employment_status: null,
+      search: null,
+      first_work_date_from: null,
+      first_work_date_to: null,
+      provider_type: null,
       reason: "audit all",
     },
   }]);

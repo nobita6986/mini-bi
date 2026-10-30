@@ -127,7 +127,7 @@ async function assignManager(db, { project, recruiter, key }) {
 let entrySeq = 0;
 async function addWorker(db, {
   project = PROJ_A, recruiter = REC_A, workDate = "2026-10-01", state = "SUBMITTED",
-  payment = null, employment = null, generalNote = undefined,
+  payment = null, employment = null, generalNote = undefined, providerType = "hrp",
 }) {
   entrySeq += 1;
   const n = entrySeq;
@@ -151,10 +151,10 @@ async function addWorker(db, {
       "insert into public.direct_entries (entry_id, submission_id, candidate_id, created_by_user_id," +
       " project_id, first_work_date, employee_code, worker_details, recruiter_id, team_id," +
       " provider_type, labor_type, general_note)" +
-      " values ($1,$2,$3,$4,$5,$6::date,$7,$8,$9,$10,'hrp','TEMPORARY',$11)",
+      " values ($1,$2,$3,$4,$5,$6::date,$7,$8,$9,$10,$11,'TEMPORARY',$12)",
       [entry, submission, candidate, UPLOADER_APP, project, workDate,
         "hrp-" + year + "-" + String(300000 + n), JSON.stringify(workerDetails), recruiter, TEAM,
-        generalNote ?? null]);
+        providerType, generalNote ?? null]);
     if (state !== "DRAFT") {
       await seedLegacyReviewSubmission(db, submission);
     }
@@ -536,6 +536,129 @@ test("PRE-W2-HF-E: change_review + all scope exports all workers with the Ghi ch
     await grantExportCaps(db, MGR_APP);
     await assert.rejects(() => runExport(db, { scope: "all" }),
       (error) => error.code === "42501", "recruiter/PM must not export all");
+  } finally {
+    await db.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 8. HF: first_work_date range, provider_type (hrp/vendor), and search filters
+//    keep directory rows, summary counts, and export rows in sync.
+// ---------------------------------------------------------------------------
+test("HF: worker directory and export filters support first_work_date range, provider_type, and search", async () => {
+  const db = await buildDb();
+  try {
+    await seed(db);
+
+    const w1 = await addWorker(db, {
+      project: PROJ_A,
+      recruiter: REC_A,
+      workDate: "2026-10-01",
+    });
+    const w2 = await addWorker(db, {
+      project: PROJ_A,
+      recruiter: REC_A,
+      workDate: "2026-10-10",
+    });
+    await db.query(
+      "update public.recruiter_provider_memberships set provider_type = 'vendor' where recruiter_id = $1",
+      [REC_B],
+    );
+    const w3 = await addWorker(db, {
+      project: PROJ_B,
+      recruiter: REC_B,
+      workDate: "2026-10-15",
+      providerType: "vendor",
+    });
+    assert.ok(w1 && w2 && w3);
+
+    // 1. Date range filter [2026-10-05 .. 2026-10-20] returns w2 and w3
+    const listRange = (await db.query(
+      "select public.direct_entry_list_workers(" +
+        "$1::uuid,$2::uuid,'all',null,null,null,null,25,null," +
+        "'2026-10-05'::date,'2026-10-20'::date,null" +
+      ") as data",
+      [ADMIN_AUTH, ADMIN_APP],
+    )).rows[0].data;
+    assert.equal(listRange.items.length, 2);
+    assert.deepEqual(listRange.summary, {
+      total_workers: 2,
+      project_count: 2,
+      recruiter_count: 2,
+    });
+
+    const expRange = (await db.query(
+      "select public.direct_entry_export_workers(" +
+        "$1::uuid,$2::uuid,'all',null,null,null,'range export',null," +
+        "'2026-10-05'::date,'2026-10-20'::date,null" +
+      ") as data",
+      [ADMIN_AUTH, ADMIN_APP],
+    )).rows[0].data;
+    assert.equal(expRange.status, "ok");
+    assert.equal(expRange.rows.length, 2);
+    assert.deepEqual(
+      expRange.rows.map((r) => r.employee_code),
+      listRange.items.map((r) => r.employee_code),
+    );
+
+    // 2. Provider type filter ('vendor') returns only w3
+    const listVendor = (await db.query(
+      "select public.direct_entry_list_workers(" +
+        "$1::uuid,$2::uuid,'all',null,null,null,null,25,null," +
+        "null,null,'vendor'" +
+      ") as data",
+      [ADMIN_AUTH, ADMIN_APP],
+    )).rows[0].data;
+    assert.equal(listVendor.items.length, 1);
+    assert.equal(listVendor.items[0].entry_id, w3);
+    assert.deepEqual(listVendor.summary, {
+      total_workers: 1,
+      project_count: 1,
+      recruiter_count: 1,
+    });
+
+    const expVendor = (await db.query(
+      "select public.direct_entry_export_workers(" +
+        "$1::uuid,$2::uuid,'all',null,null,null,'vendor export',null," +
+        "null,null,'vendor'" +
+      ") as data",
+      [ADMIN_AUTH, ADMIN_APP],
+    )).rows[0].data;
+    assert.equal(expVendor.status, "ok");
+    assert.equal(expVendor.rows.length, 1);
+    assert.equal(expVendor.rows[0].provider_type, "Vendor");
+
+    // 3. Invalid date range (from > to) or invalid provider_type raises 22023
+    await assert.rejects(
+      () => db.query(
+        "select public.direct_entry_list_workers(" +
+          "$1::uuid,$2::uuid,'all',null,null,null,null,25,null," +
+          "'2026-10-20'::date,'2026-10-05'::date,null" +
+        ")",
+        [ADMIN_AUTH, ADMIN_APP],
+      ),
+      (err) => err.code === "22023",
+    );
+    await assert.rejects(
+      () => db.query(
+        "select public.direct_entry_export_workers(" +
+          "$1::uuid,$2::uuid,'all',null,null,null,'bad range',null," +
+          "'2026-10-20'::date,'2026-10-05'::date,null" +
+        ")",
+        [ADMIN_AUTH, ADMIN_APP],
+      ),
+      (err) => err.code === "22023",
+    );
+    await assert.rejects(
+      () => db.query(
+        "select public.direct_entry_list_workers(" +
+          "$1::uuid,$2::uuid,'all',null,null,null,null,25,null," +
+          "null,null,'invalid'" +
+        ")",
+        [ADMIN_AUTH, ADMIN_APP],
+      ),
+      (err) => err.code === "22023",
+    );
   } finally {
     await db.close();
   }

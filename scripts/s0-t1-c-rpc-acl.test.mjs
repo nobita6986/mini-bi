@@ -77,6 +77,8 @@ import {
   HF_SALARY_ADVANCE_VENDOR_EXCLUSION_AND_WORKER_HISTORY_RPC_SIGNATURE,
   HF_SALARY_ADVANCE_PM_WORKER_HISTORY_MIGRATION_NAME,
   HF_SALARY_ADVANCE_PM_WORKER_HISTORY_RPC_SIGNATURE,
+  HF_DUPLICATE_CCCD_RESIGNED_WITHDRAW_AND_WORKER_FILTERS_MIGRATION_NAME,
+  HF_DUPLICATE_CCCD_RESIGNED_WITHDRAW_AND_WORKER_FILTERS_RPC_SIGNATURES,
   OFFBOARDING_REPORT_MIGRATION_NAME,
   OFFBOARDING_REPORT_RPC_SIGNATURES,
   migrationChecksum,
@@ -1032,7 +1034,8 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
         ...SALARY_ADVANCE_WP1_RPC_SIGNATURES,
         HF_SALARY_ADVANCE_ACTOR_DISPLAY_NAME_RPC_SIGNATURE,
         HF_SALARY_ADVANCE_VENDOR_EXCLUSION_AND_WORKER_HISTORY_RPC_SIGNATURE,
-        HF_SALARY_ADVANCE_PM_WORKER_HISTORY_RPC_SIGNATURE);
+        HF_SALARY_ADVANCE_PM_WORKER_HISTORY_RPC_SIGNATURE,
+        ...HF_DUPLICATE_CCCD_RESIGNED_WITHDRAW_AND_WORKER_FILTERS_RPC_SIGNATURES);
       assert.ok(expectedSignatures.length > 0, "the explicit server/invoker allowlist is not empty");
       assert.equal(new Set(expectedSignatures).size, expectedSignatures.length, "the allowlist has no duplicates");
       const { rows: resolvedExpected } = await client.query(
@@ -1076,9 +1079,32 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
           ...SALARY_ADVANCE_WP1_RPC_SIGNATURES,
           HF_SALARY_ADVANCE_ACTOR_DISPLAY_NAME_RPC_SIGNATURE,
           HF_SALARY_ADVANCE_VENDOR_EXCLUSION_AND_WORKER_HISTORY_RPC_SIGNATURE,
-          HF_SALARY_ADVANCE_PM_WORKER_HISTORY_RPC_SIGNATURE].sort(),
+          HF_SALARY_ADVANCE_PM_WORKER_HISTORY_RPC_SIGNATURE,
+          ...HF_DUPLICATE_CCCD_RESIGNED_WITHDRAW_AND_WORKER_FILTERS_RPC_SIGNATURES].sort(),
         "only explicitly reviewed post-S0 RPCs add service_role grants after the S0 baseline",
       );
+      const hfDuplicateCccdResignedWithdrawAndWorkerFiltersMigration = await readFile(
+        path.join(MIGRATION_DIR, HF_DUPLICATE_CCCD_RESIGNED_WITHDRAW_AND_WORKER_FILTERS_MIGRATION_NAME),
+        "utf8",
+      );
+      const hfDuplicateCccdResignedWithdrawAndWorkerFiltersNormalized =
+        hfDuplicateCccdResignedWithdrawAndWorkerFiltersMigration
+          .replace(/\s+/g, " ")
+          .replace(/\(\s+/g, "(")
+          .replace(/\s+\)/g, ")")
+          .toLowerCase();
+      for (const sig of HF_DUPLICATE_CCCD_RESIGNED_WITHDRAW_AND_WORKER_FILTERS_RPC_SIGNATURES) {
+        const sigGrant = `grant execute on function ${sig.toLowerCase()} to service_role;`;
+        const sigRevoke = `revoke all on function ${sig.toLowerCase()} from public, anon, authenticated, service_role;`;
+        assert.ok(
+          hfDuplicateCccdResignedWithdrawAndWorkerFiltersNormalized.includes(sigRevoke),
+          `duplicate CCCD resigned withdraw / worker filters RPC ${sig} revokes inherited RPC grants before granting service_role`,
+        );
+        assert.ok(
+          hfDuplicateCccdResignedWithdrawAndWorkerFiltersNormalized.includes(sigGrant),
+          `duplicate CCCD resigned withdraw / worker filters RPC ${sig} grants RPC execution only to service_role`,
+        );
+      }
       const hfSalaryAdvancePmWorkerHistoryMigration = await readFile(
         path.join(MIGRATION_DIR, HF_SALARY_ADVANCE_PM_WORKER_HISTORY_MIGRATION_NAME),
         "utf8",

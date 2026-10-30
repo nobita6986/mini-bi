@@ -18,7 +18,10 @@ import {
   checkDirectEditDocumentFile,
   directEditDocumentErrorMessage,
   emptyTabPage,
+  EMPTY_WORKER_DIRECTORY_FILTERS,
   failLoad,
+  fallbackWorkerTab,
+  hasActiveWorkerDirectoryFilters,
   initialWorkerTab,
   isWorkerOperationsTab,
   parseChangeRequestPageResponse,
@@ -29,6 +32,8 @@ import {
   submissionRowKey,
   submissionsQuery,
   uploadDirectEditDocument,
+  validateWorkerDirectoryDateRange,
+  workerProviderTypeLabel,
   workerRowKey,
   workersQuery,
   lastDecisionLabel,
@@ -128,22 +133,23 @@ test("W06-R2: helper phan trang ton tai (0e2cbba khong co -> test that bai that 
   }
 });
 
-test("W06-R2: initial tab tu actor projection — reviewer vao thang scope=all", () => {
+test("W06-R2: initial tab tu actor projection — mac dinh mo tab 'Du an toi quan ly' (managed)", () => {
   const all = [{ kind: "all" }];
-  // Reviewer bundle toi thieu + all => "all" (khong roi vao uploader).
-  assert.equal(initialWorkerTab({ capabilities: ["change_review"], scopes: all }, true), "all");
-  assert.equal(initialWorkerTab({ capabilities: ["entry_admin"], scopes: all }, true), "all");
-  // PM-only (change_request_create, khong phai entry actor) => "managed".
+  // Moi actor da xac thuc khi "managed" kha dung deu mac dinh vao "managed" ("Dự án tôi quản lý").
+  assert.equal(initialWorkerTab({ capabilities: ["change_review"], scopes: all }, true), "managed");
+  assert.equal(initialWorkerTab({ capabilities: ["entry_admin"], scopes: all }, true), "managed");
   assert.equal(initialWorkerTab({ capabilities: ["change_request_create"], scopes: [{ kind: "own" }] }, false), "managed");
-  assert.equal(initialWorkerTab({ capabilities: ["team_manager_assign"], scopes: [{ kind: "team" }] }, false, true), "team");
-  assert.equal(initialWorkerTab({ capabilities: ["team_manager_assign"], scopes: [{ kind: "team" }] }, false), "uploader",
-    "client-side capabilities/scope alone do not enable the team audience tab");
-  // entry_* thong thuong => "uploader".
-  assert.equal(initialWorkerTab({ capabilities: ["entry_own"], scopes: [{ kind: "own" }] }, false), "uploader");
-  assert.equal(initialWorkerTab({ capabilities: ["entry_team"], scopes: [{ kind: "team" }] }, false), "uploader");
-  // Reviewer nhung server KHONG cho scope=all => khong duoc vao "all".
-  assert.equal(initialWorkerTab({ capabilities: ["change_review"], scopes: all }, false), "uploader");
+  assert.equal(initialWorkerTab({ capabilities: ["team_manager_assign"], scopes: [{ kind: "team" }] }, false, true), "managed");
+  assert.equal(initialWorkerTab({ capabilities: ["team_manager_assign"], scopes: [{ kind: "team" }] }, false), "managed");
+  assert.equal(initialWorkerTab({ capabilities: ["entry_own"], scopes: [{ kind: "own" }] }, false), "managed");
+  assert.equal(initialWorkerTab({ capabilities: ["entry_team"], scopes: [{ kind: "team" }] }, false), "managed");
+  assert.equal(initialWorkerTab({ capabilities: ["change_review"], scopes: all }, false), "managed");
+  // Fallback khi canSeeManagedWorkers === false hoac actor === null:
+  assert.equal(initialWorkerTab({ capabilities: ["change_review"], scopes: all }, true, false, false), "all");
+  assert.equal(initialWorkerTab({ capabilities: ["team_manager_assign"], scopes: [{ kind: "team" }] }, false, true, false), "team");
+  assert.equal(initialWorkerTab({ capabilities: ["entry_own"], scopes: [{ kind: "own" }] }, false, false, false), "uploader");
   assert.equal(initialWorkerTab(null, true), "uploader");
+  assert.equal(fallbackWorkerTab({ capabilities: ["entry_admin"], scopes: all }, true, false), "all");
 });
 
 test("W06-R2: append page dedupe theo stable id, khong trung/khong sot", () => {
@@ -203,15 +209,28 @@ test("W06-R2: query builder chi gui cursor khi co (khong mang cursor scope cu)",
   assert.equal(workersQuery({ scope: "all", status: "ON", cursor: "c1" }),
     "?scope=all&page_size=25&employment_status=ON&cursor=c1");
   assert.equal(workersQuery({ scope: "managed", search: "  Nguyễn  ", status: "ON",
-    projectId: "proj_a", recruiterId: RECRUITER, cursor: null }),
+    projectId: "proj_a", recruiterId: RECRUITER,
+    firstWorkDateFrom: "2026-10-01", firstWorkDateTo: "2026-10-31", providerType: "hrp",
+    cursor: null }),
   "?scope=managed&page_size=25&employment_status=ON&search=Nguy%E1%BB%85n&project_id=proj_a&recruiter_id=" +
-    RECRUITER);
+    RECRUITER + "&first_work_date_from=2026-10-01&first_work_date_to=2026-10-31&provider_type=hrp");
   assert.equal(submissionsQuery(null), "?page_size=25");
   assert.equal(submissionsQuery("c2"), "?page_size=25&cursor=c2");
   assert.equal(requestsQuery(null), "?page_size=20&state=PENDING");
   assert.equal(requestsQuery("c3"), "?page_size=20&state=PENDING&cursor=c3");
   assert.equal(requestsQuery(null, "RESOLVED"), "?page_size=20&state=RESOLVED");
   assert.equal(workersQuery({ scope: "managed", status: "", cursor: null }).includes("cursor"), false);
+  assert.equal(validateWorkerDirectoryDateRange({ firstWorkDateFrom: "", firstWorkDateTo: "" }), null);
+  assert.equal(validateWorkerDirectoryDateRange({ firstWorkDateFrom: "2026-10-01", firstWorkDateTo: "2026-10-31" }), null);
+  assert.match(
+    validateWorkerDirectoryDateRange({ firstWorkDateFrom: "2026-10-31", firstWorkDateTo: "2026-10-01" }) ?? "",
+    /Từ ngày.*Đến ngày/,
+  );
+  assert.equal(hasActiveWorkerDirectoryFilters(EMPTY_WORKER_DIRECTORY_FILTERS), false);
+  assert.equal(hasActiveWorkerDirectoryFilters({ ...EMPTY_WORKER_DIRECTORY_FILTERS, providerType: "vendor" }), true);
+  assert.equal(workerProviderTypeLabel("hrp"), "HRP");
+  assert.equal(workerProviderTypeLabel("vendor"), "Vendor");
+  assert.equal(workerProviderTypeLabel(""), "Tất cả");
 });
 
 test("HF-R4: project and recruiter filters stay server-side and reset the page cursor", () => {

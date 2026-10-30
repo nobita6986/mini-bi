@@ -87,10 +87,21 @@ test("W06-R2: phan trang that - cursor, Tai them, append dedupe, reset khi doi t
 test("worker directory displays server-filtered totals, not only the loaded page", () => {
   assert.match(source, /summary: parsed\.summary/);
   assert.match(source, /data-testid="worker-filter-summary"/);
+  assert.match(
+    source,
+    /data-testid="worker-filter-summary"[\s\S]{0,120}font-bold text-foreground/,
+    "filter summary row must be styled bold and prominent",
+  );
   for (const field of ["total_workers", "project_count", "recruiter_count"]) {
     assert.match(source, new RegExp("workerSummary\\." + field));
   }
   assert.match(source, /filters\.status === "" \? "Tất cả" : workerStatusLabel\(filters\.status\)/);
+  assert.match(source, /workerProviderTypeLabel\(filters\.providerType\)/);
+  assert.match(source, /data-testid="worker-filter-provider-type"/);
+  assert.match(source, /data-testid="worker-filter-date-from"/);
+  assert.match(source, /data-testid="worker-filter-date-to"/);
+  assert.match(source, /data-testid="worker-clear-filters"/);
+  assert.match(source, /validateWorkerDirectoryDateRange/);
   assert.match(source, /setWorkerSummary\(null\)/,
     "filter/tab changes clear the previous query's summary while the next response loads");
 });

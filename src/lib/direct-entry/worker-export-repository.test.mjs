@@ -13,6 +13,7 @@ const actor = {
 };
 const request = {
   scope: "recruited", project_id: null, recruiter_id: null, employment_status: null,
+  search: null, first_work_date_from: null, first_work_date_to: null, provider_type: null,
   reason: "export test",
 };
 const row = {
@@ -56,7 +57,9 @@ test("exportWorkers calls only its RPC with the server actor and exact request",
     return { data: { status: "ok", rows: [row] }, error: null };
   });
   const result = await repository.exportWorkers({ ...actor, ...request, scope: "managed",
-    project_id: "proj_a", recruiter_id: null, employment_status: "OFF", reason: "ly do" });
+    project_id: "proj_a", recruiter_id: null, employment_status: "OFF",
+    search: "000021", first_work_date_from: "2026-10-01", first_work_date_to: "2026-10-31",
+    provider_type: "hrp", reason: "ly do" });
   assert.equal(result.ok, true);
   assert.equal(result.envelope.status, "ok");
   assert.equal(result.envelope.rows[0].national_id, "012345678901");
@@ -70,6 +73,10 @@ test("exportWorkers calls only its RPC with the server actor and exact request",
       p_recruiter_id: null,
       p_employment_status: "OFF",
       p_reason: "ly do",
+      p_search: "000021",
+      p_first_work_date_from: "2026-10-01",
+      p_first_work_date_to: "2026-10-31",
+      p_provider_type: "hrp",
     },
   }]);
 });

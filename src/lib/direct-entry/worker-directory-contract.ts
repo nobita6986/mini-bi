@@ -10,16 +10,22 @@
  * allowed_actions la tin hieu authority duy nhat cua row do server sinh; UI khong tu suy
  * quyen. RPC van kiem tra lai moi mutation.
  */
+import { isRealCalendarDate } from "../analytics/identity/identity-shared.mjs";
 import { isCanonicalLaborTypeKey, type LaborType } from "../contracts/direct-entry-v1.ts";
 import { isPaymentAccountNumber, isPaymentText } from "./payment-contract.ts";
 
 export const WORKER_DIRECTORY_SCOPES = ["recruited", "managed", "team", "all"] as const;
 export type WorkerDirectoryScope = (typeof WORKER_DIRECTORY_SCOPES)[number];
 
+export const WORKER_PROVIDER_TYPES = ["hrp", "vendor"] as const;
+export type WorkerProviderType = (typeof WORKER_PROVIDER_TYPES)[number];
+
 export const WORKER_DIRECTORY_DEFAULT_PAGE_SIZE = 25;
 export const WORKER_DIRECTORY_MAX_PAGE_SIZE = 100;
 export const WORKER_DIRECTORY_QUERY_KEYS = [
-  "scope", "project_id", "recruiter_id", "employment_status", "search", "cursor", "page_size",
+  "scope", "project_id", "recruiter_id", "employment_status", "search",
+  "first_work_date_from", "first_work_date_to", "provider_type",
+  "cursor", "page_size",
 ] as const;
 
 export const WORKER_DIRECTORY_PAGE_KEYS = [
@@ -74,6 +80,9 @@ export type WorkerDirectoryQuery = {
   recruiter_id: string | null;
   employment_status: (typeof WORKER_EMPLOYMENT_STATUSES)[number] | null;
   search: string | null;
+  first_work_date_from: string | null;
+  first_work_date_to: string | null;
+  provider_type: WorkerProviderType | null;
   cursor: string | null;
   page_size: number;
 };
@@ -86,8 +95,9 @@ const QUERY_INVALID = { ok: false, code: "WORKER_QUERY_INVALID" } as const;
 
 /**
  * Query directory: chi nhan dung scope | project_id | recruiter_id | employment_status |
- * search | cursor | page_size. Tham so khac (order, offset, limit, column, sql...) bi tu choi de
- * client khong dieu khien duoc SQL/sort/paging.
+ * search | first_work_date_from | first_work_date_to | provider_type | cursor | page_size.
+ * Tham so khac (order, offset, limit, column, sql...) bi tu choi de client khong dieu khien
+ * duoc SQL/sort/paging.
  */
 export function projectWorkerDirectoryQuery(
   searchParams: URLSearchParams,
@@ -109,6 +119,18 @@ export function projectWorkerDirectoryQuery(
   const rawEmployment = searchParams.get("employment_status");
   if (rawEmployment !== null &&
       !(WORKER_EMPLOYMENT_STATUSES as readonly string[]).includes(rawEmployment)) {
+    return QUERY_INVALID;
+  }
+  const rawDateFrom = searchParams.get("first_work_date_from");
+  if (rawDateFrom !== null && !isRealCalendarDate(rawDateFrom)) return QUERY_INVALID;
+  const rawDateTo = searchParams.get("first_work_date_to");
+  if (rawDateTo !== null && !isRealCalendarDate(rawDateTo)) return QUERY_INVALID;
+  if (rawDateFrom !== null && rawDateTo !== null && rawDateFrom > rawDateTo) {
+    return QUERY_INVALID;
+  }
+  const rawProviderType = searchParams.get("provider_type");
+  if (rawProviderType !== null &&
+      !(WORKER_PROVIDER_TYPES as readonly string[]).includes(rawProviderType)) {
     return QUERY_INVALID;
   }
   const rawCursor = searchParams.get("cursor");
@@ -138,6 +160,9 @@ export function projectWorkerDirectoryQuery(
       recruiter_id: rawRecruiter,
       employment_status: rawEmployment as WorkerDirectoryQuery["employment_status"],
       search,
+      first_work_date_from: rawDateFrom,
+      first_work_date_to: rawDateTo,
+      provider_type: rawProviderType as WorkerProviderType | null,
       cursor: rawCursor,
       page_size: pageSize,
     },

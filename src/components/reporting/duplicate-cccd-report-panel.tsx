@@ -452,16 +452,17 @@ export function DuplicateCccdReportPanel() {
       <Alert tone="info" title="Thao tác có kiểm soát">
         <p>
           Số CCCD được che, chỉ hiển thị 4 chữ số cuối. Chỉ những dòng bạn được cấp quyền mới hiện
-          thao tác: người đã nhập hồ sơ hoặc tài khoản được cấp quyền rút trùng toàn công ty có thể
-          Rút trùng (giữ nguyên lịch sử kiểm toán và điều chỉnh số tuyển mới), người phụ trách phạm
-          vi có thể đổi Đang làm sang Đã nghỉ kèm lý do nghỉ việc bắt buộc.
+          thao tác: người đã nhập hồ sơ, QLDA đang phụ trách dự án của hồ sơ hoặc tài khoản được cấp
+          quyền rút trùng toàn công ty có thể Rút trùng cho cả hồ sơ Đang làm và Đã nghỉ khi nhóm
+          trùng còn ít nhất 2 hồ sơ hợp lệ (giữ nguyên lịch sử kiểm toán và điều chỉnh số tuyển mới);
+          người phụ trách phạm vi có thể đổi Đang làm sang Đã nghỉ kèm lý do nghỉ việc bắt buộc.
         </p>
       </Alert>
 
       <Card className="p-4">
         <CardHeader
           title="Hồ sơ có CCCD trùng"
-          description="Danh sách các hồ sơ đang làm việc dùng chung một số CCCD. Không gộp và không xóa hồ sơ gốc — mọi thao tác đều lưu lịch sử kiểm toán."
+          description="Danh sách các nhóm hồ sơ trùng CCCD cùng dự án và ngày vào làm (bao gồm cả Đang làm và Đã nghỉ). Không gộp và không xóa hồ sơ gốc — mọi thao tác đều lưu lịch sử kiểm toán."
         />
         <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
@@ -671,7 +672,7 @@ export function DuplicateCccdReportPanel() {
         }}
         closeDisabled={withdrawSubmitting}
         title="Xác nhận rút trùng hồ sơ"
-        description="Người nhập hồ sơ hoặc tài khoản được cấp quyền có thể thực hiện thao tác này. Hệ thống lưu người thực hiện và lý do vào lịch sử kiểm toán."
+        description="Người nhập hồ sơ, QLDA đang phụ trách dự án của hồ sơ hoặc tài khoản được cấp quyền rút trùng toàn cục có thể thực hiện thao tác này. Hệ thống lưu người thực hiện và lý do vào lịch sử kiểm toán."
       >
         {withdrawTarget ? (
           <form onSubmit={submitSelfWithdraw} className="space-y-4">
@@ -683,8 +684,8 @@ export function DuplicateCccdReportPanel() {
 
             <Alert tone="warning" title="Lưu ý trước khi rút trùng">
               <p>
-                Hồ sơ này sẽ được rút khỏi số liệu tuyển mới và nhóm CCCD trùng đang làm việc. Hệ
-                thống không xóa hồ sơ gốc và vẫn giữ nguyên toàn bộ lịch sử kiểm toán.
+                Hồ sơ này sẽ được rút khỏi số liệu tuyển mới và nhóm CCCD trùng. Hệ thống không xóa
+                hồ sơ gốc và vẫn giữ nguyên toàn bộ lịch sử kiểm toán.
               </p>
             </Alert>
 

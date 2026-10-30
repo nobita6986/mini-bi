@@ -11,10 +11,12 @@
  */
 
 import {
+  WORKER_PROVIDER_TYPES,
   projectWorkerDirectoryPage,
   type WorkerDirectoryPage,
   type WorkerDirectoryRow,
   type WorkerDirectoryScope,
+  type WorkerProviderType,
 } from "./worker-directory-contract.ts";
 import {
   projectSubmissionListPage,
@@ -56,11 +58,13 @@ import {
 
 export {
   VIETQR_BANK_CATALOG,
+  WORKER_PROVIDER_TYPES,
   formatBankReferenceDisplay,
   mergeVietQrBankCatalog,
   resolveBankCatalogOption,
   type BankCatalogEntryInput,
   type MergedBankCatalogOption,
+  type WorkerProviderType,
 };
 
 export const WORKER_OPERATIONS_TABS = ["uploader", "recruited", "managed", "team", "all"] as const;
@@ -216,6 +220,18 @@ export function workerStatusLabel(status: string | null): string {
   return workStatusUiLabel(status);
 }
 
+export const WORKER_PROVIDER_TYPE_LABELS: Readonly<Record<WorkerProviderType, string>> =
+  Object.freeze({
+    hrp: "HRP",
+    vendor: "Vendor",
+  });
+
+export function workerProviderTypeLabel(providerType: string | null | undefined): string {
+  if (providerType === "hrp") return WORKER_PROVIDER_TYPE_LABELS.hrp;
+  if (providerType === "vendor") return WORKER_PROVIDER_TYPE_LABELS.vendor;
+  return "Tất cả";
+}
+
 export type BankAccountSummary = {
   state: string;
   accountNumber: string | null;
@@ -298,11 +314,10 @@ export type WorkerOperationsActor = {
 };
 
 /**
- * Chon tab BAN DAU tu actor projection server-side. Chi la lua chon UI ban dau;
- * API/RPC van la authority. Reviewer toi thieu mo thang "Toan bo NLD" thay vi
- * roi vao uploader (submissions 403 => ca trang AccessDenied o 0e2cbba).
+ * Fallback tab khi tab mặc định "Dự án tôi quản lý" ("managed") không khả dụng
+ * hoặc tài khoản chưa được phân giải.
  */
-export function initialWorkerTab(
+export function fallbackWorkerTab(
   actor: WorkerOperationsActor | null,
   canSeeAllWorkers: boolean,
   canSeeTeamWorkers = false,
@@ -314,10 +329,27 @@ export function initialWorkerTab(
     return "all";
   }
   if (canSeeTeamWorkers) return "team";
-  const isEntryActor = actor.capabilities.some((capability) =>
-    ["entry_own", "entry_team", "entry_admin"].includes(capability));
-  if (!isEntryActor && actor.capabilities.includes("change_request_create")) return "managed";
   return "uploader";
+}
+
+/**
+ * Chon tab BAN DAU khi mo trang /direct-entry/workers.
+ * Mac dinh uu tien "Dự án tôi quản lý" ("managed"); neu "managed" khong kha dung
+ * hoac actor chua duoc phan giai thi roi ve fallbackWorkerTab (all -> team -> uploader)
+ * de khong bao gio tao man hinh trong. API/RPC van la authority cuoi cung.
+ */
+export function initialWorkerTab(
+  actor: WorkerOperationsActor | null,
+  canSeeAllWorkers: boolean,
+  canSeeTeamWorkers = false,
+  canSeeManagedWorkers = true,
+): WorkerOperationsTab {
+  if (actor === null) return "uploader";
+  const tabs = visibleWorkerTabs(canSeeAllWorkers, canSeeTeamWorkers);
+  if (canSeeManagedWorkers && tabs.includes("managed")) {
+    return "managed";
+  }
+  return fallbackWorkerTab(actor, canSeeAllWorkers, canSeeTeamWorkers);
 }
 
 /* ---------- W06-R2: pagination (page state thuan) ---------- */
@@ -351,7 +383,53 @@ export type WorkerDirectoryFilters = {
   status: string;
   projectId: string;
   recruiterId: string;
+  firstWorkDateFrom?: string;
+  firstWorkDateTo?: string;
+  providerType?: string;
 };
+
+export const EMPTY_WORKER_DIRECTORY_FILTERS: Readonly<WorkerDirectoryFilters> = Object.freeze({
+  search: "",
+  status: "",
+  projectId: "",
+  recruiterId: "",
+  firstWorkDateFrom: "",
+  firstWorkDateTo: "",
+  providerType: "",
+});
+
+export const WORKER_DATE_RANGE_INVALID_MESSAGE =
+  "Khoảng ngày vào làm không hợp lệ: Từ ngày không được lớn hơn Đến ngày.";
+
+export function validateWorkerDirectoryDateRange(filters: {
+  firstWorkDateFrom?: string;
+  firstWorkDateTo?: string;
+}): string | null {
+  const from = (filters.firstWorkDateFrom ?? "").trim();
+  const to = (filters.firstWorkDateTo ?? "").trim();
+  if (from !== "" && !isRealCalendarDate(from)) {
+    return "Từ ngày không đúng định dạng YYYY-MM-DD.";
+  }
+  if (to !== "" && !isRealCalendarDate(to)) {
+    return "Đến ngày không đúng định dạng YYYY-MM-DD.";
+  }
+  if (from !== "" && to !== "" && from > to) {
+    return WORKER_DATE_RANGE_INVALID_MESSAGE;
+  }
+  return null;
+}
+
+export function hasActiveWorkerDirectoryFilters(filters: WorkerDirectoryFilters): boolean {
+  return (
+    filters.search.trim() !== "" ||
+    filters.status !== "" ||
+    filters.projectId !== "" ||
+    filters.recruiterId !== "" ||
+    (filters.firstWorkDateFrom ?? "").trim() !== "" ||
+    (filters.firstWorkDateTo ?? "").trim() !== "" ||
+    (filters.providerType ?? "").trim() !== ""
+  );
+}
 
 export function updateWorkerDirectoryFilter<T>(input: {
   page: TabPage<T>;
@@ -419,6 +497,9 @@ export function workersQuery(input: {
   status: string;
   projectId?: string;
   recruiterId?: string;
+  firstWorkDateFrom?: string;
+  firstWorkDateTo?: string;
+  providerType?: string;
   cursor: string | null;
 }): string {
   let query = "?scope=" + input.scope + "&page_size=" + String(WORKER_PAGE_SIZE);
@@ -426,6 +507,15 @@ export function workersQuery(input: {
   if (input.search?.trim()) query += "&search=" + encodeURIComponent(input.search.trim());
   if (input.projectId) query += "&project_id=" + encodeURIComponent(input.projectId);
   if (input.recruiterId) query += "&recruiter_id=" + encodeURIComponent(input.recruiterId);
+  if (input.firstWorkDateFrom?.trim()) {
+    query += "&first_work_date_from=" + encodeURIComponent(input.firstWorkDateFrom.trim());
+  }
+  if (input.firstWorkDateTo?.trim()) {
+    query += "&first_work_date_to=" + encodeURIComponent(input.firstWorkDateTo.trim());
+  }
+  if (input.providerType?.trim()) {
+    query += "&provider_type=" + encodeURIComponent(input.providerType.trim());
+  }
   if (input.cursor !== null) query += "&cursor=" + encodeURIComponent(input.cursor);
   return query;
 }
