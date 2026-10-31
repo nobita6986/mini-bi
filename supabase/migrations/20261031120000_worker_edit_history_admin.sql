@@ -53,6 +53,7 @@ alter table public.direct_entry_capability_grants
   check (
     capability in (
       'entry_create', 'entry_own', 'entry_team', 'entry_admin',
+      'entry_restore',
       'submission_create', 'change_request_create', 'change_review', 'entry_privileged_edit',
       'employment_status.request', 'employment_status.review', 'employment_status.apply',
       'document_upload', 'document_view', 'payment_view', 'payment_edit',

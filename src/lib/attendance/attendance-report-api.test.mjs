@@ -198,7 +198,9 @@ function makePutRequest(
 
 test("Attendance Report navigation, Admin shell, and page-gate matrix enforces Admin & canonical BoD only", () => {
   const allSections = ADMIN_SECTIONS.map(({ id, label, href }) => ({ id, label, href }));
-  const catalogSections = allSections.filter(
+  const workerEditHistorySection = allSections.filter(({ id }) => id === "worker-edit-history");
+  const allSectionsWithoutWorkerHistory = allSections.filter(({ id }) => id !== "worker-edit-history");
+  const catalogSections = allSectionsWithoutWorkerHistory.filter(
     ({ id }) => !["departments", "accounts", "project-team-scopes", "attendance"].includes(id),
   );
   const attendanceOnlySection = allSections.filter(({ id }) => id === "attendance");
@@ -207,6 +209,16 @@ test("Attendance Report navigation, Admin shell, and page-gate matrix enforces A
     {
       name: "Full Admin (@ all)",
       caps: FULL_ADMIN_CAPS,
+      scopes: ALL_SCOPE,
+      reportAllowed: true,
+      adminShellAllowed: true,
+      personnelAllowed: true,
+      accountsAllowed: true,
+      expectedSections: allSectionsWithoutWorkerHistory,
+    },
+    {
+      name: "Allowlisted Full Admin with worker_edit_history_view (@ all)",
+      caps: [...FULL_ADMIN_CAPS, "worker_edit_history_view"],
       scopes: ALL_SCOPE,
       reportAllowed: true,
       adminShellAllowed: true,
@@ -263,6 +275,16 @@ test("Attendance Report navigation, Admin shell, and page-gate matrix enforces A
       personnelAllowed: true,
       accountsAllowed: false,
       expectedSections: catalogSections,
+    },
+    {
+      name: "Worker history reader without catalog/Full Admin authority (@ all)",
+      caps: ["worker_edit_history_view"],
+      scopes: ALL_SCOPE,
+      reportAllowed: false,
+      adminShellAllowed: true,
+      personnelAllowed: false,
+      accountsAllowed: false,
+      expectedSections: workerEditHistorySection,
     },
     {
       name: "Team Leader (team_manager_assign + report_* @ team)",

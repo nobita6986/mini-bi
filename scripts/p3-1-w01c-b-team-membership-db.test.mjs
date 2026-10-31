@@ -1083,7 +1083,7 @@ test("W01A, W01B and W01C-A contracts keep their semantics", async () => {
     + " and c.conname = 'direct_entry_capability_grants_capability_check'");
   const tokens = [...String(capabilityRows[0].definition).matchAll(/'([^']+)'::text/g)]
     .map((match) => match[1]);
-  assert.equal(tokens.length, 32, "the capability vocabulary includes W01A, F1, F2, VFIN-01, and duplicate CCCD tokens");
+  assert.equal(tokens.length, 33, "the capability vocabulary includes W01A, F1, F2, VFIN-01, duplicate CCCD, and worker history tokens");
 
   const personnelSnapshot = (await db.query(
     "select pg_get_function_arguments(p.oid) as args from pg_proc p"
