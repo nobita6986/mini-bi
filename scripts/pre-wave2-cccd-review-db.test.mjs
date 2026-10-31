@@ -1011,8 +1011,9 @@ test("Hồ sơ thiếu & Lịch sử chỉnh sửa NLĐ: enforces Recruiter view
   for (const deniedActor of [nonAllowlistedAdmin, ACTORS.owner, recruiterOnly]) {
     await assert.rejects(
       db.query(
-        "select public.worker_edit_history_search($1::uuid, $2::uuid, '079098001234', null, null, null, null, null, null, 50, null)",
-        [deniedActor.auth_subject, deniedActor.app_user_id],
+        "select public.worker_edit_history_search($1::uuid, $2::uuid, null, null, " +
+          "current_date - 92, current_date, $3::text, $4::text, null, 50, null)",
+        [deniedActor.auth_subject, deniedActor.app_user_id, projectId, recruiterId],
       ),
       (err) => err.code === "42501",
     );
@@ -1020,15 +1021,17 @@ test("Hồ sơ thiếu & Lịch sử chỉnh sửa NLĐ: enforces Recruiter view
 
   // - Allowed to allowlistedAdmin (lienvu@hrpartner.vn): returns NEW_ENTRY and DOCUMENT_CHANGE revisions
   const historySearchRes = await db.query(
-    "select public.worker_edit_history_search($1::uuid, $2::uuid, '079098001234', null, null, null, null, null, null, 50, null) as data",
-    [allowlistedAdmin.auth_subject, allowlistedAdmin.app_user_id],
+    "select public.worker_edit_history_search($1::uuid, $2::uuid, null, null, " +
+      "current_date - 92, current_date, $3::text, $4::text, null, 50, null) as data",
+    [allowlistedAdmin.auth_subject, allowlistedAdmin.app_user_id, projectId, recruiterId],
   );
   const historySearch = historySearchRes.rows[0].data;
-  assert.ok(historySearch.rows.length >= 5, "Expected initial creation + 4 supplementary document revisions");
-  assert.ok(historySearch.rows.some((r) => r.action_group === "NEW_ENTRY"));
-  assert.ok(historySearch.rows.some((r) => r.action_group === "DOCUMENT_CHANGE"));
-  assert.ok(historySearch.rows.every((r) => r.national_id === "079098001234"));
-  assert.ok(historySearch.rows.every((r) => r.snapshot_state === "COMPLETE"));
+  const targetHistory = historySearch.rows.filter((row) => row.entry_id === targetEntryId);
+  assert.ok(targetHistory.length >= 5, "Expected initial creation + 4 supplementary document revisions");
+  assert.ok(targetHistory.some((r) => r.action_group === "NEW_ENTRY"));
+  assert.ok(targetHistory.some((r) => r.action_group === "DOCUMENT_CHANGE"));
+  assert.ok(targetHistory.every((r) => r.national_id === "079098001234"));
+  assert.ok(targetHistory.every((r) => r.snapshot_state === "COMPLETE"));
 
   const latestRevisionId = historySearch.rows[0].revision_id;
   const historyDetailRes = await db.query(
@@ -1053,8 +1056,9 @@ test("Hồ sơ thiếu & Lịch sử chỉnh sửa NLĐ: enforces Recruiter view
   );
   assert.equal(legacyRevision.rowCount, 1);
   const legacyHistory = await db.query(
-    "select public.worker_edit_history_search($1::uuid, $2::uuid, '079098009876', null, null, null, null, null, null, 50, null) as data",
-    [allowlistedAdmin.auth_subject, allowlistedAdmin.app_user_id],
+    "select public.worker_edit_history_search($1::uuid, $2::uuid, null, null, " +
+      "current_date - 92, current_date, $3::text, $4::text, null, 50, null) as data",
+    [allowlistedAdmin.auth_subject, allowlistedAdmin.app_user_id, projectId, recruiterId],
   );
   assert.ok(
     legacyHistory.rows[0].data.rows.some(
