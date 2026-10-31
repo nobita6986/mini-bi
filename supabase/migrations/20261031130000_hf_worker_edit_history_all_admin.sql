@@ -315,7 +315,6 @@ end;
 $function$;
 revoke all on function public.worker_edit_history_is_allowlisted_admin(uuid, uuid)
   from public, anon, authenticated, service_role;
-grant execute on function public.worker_edit_history_is_allowlisted_admin(uuid, uuid) to service_role;
 
 revoke all on function public.worker_edit_history_search(
   uuid, uuid, text, text, date, date, text, text, text, integer, text

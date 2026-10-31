@@ -774,7 +774,7 @@ test("Hồ sơ thiếu contract & API: parses filters, projects missing document
   assert.equal(deniedRes.status, 403);
 });
 
-test("Lịch sử chỉnh sửa NLĐ contract & API: enforces 3-Admin capability gate, requires filters, and rejects storage_key leaks", async () => {
+test("Lịch sử chỉnh sửa NLĐ contract & API: enforces 3-Admin capability gate, requires a date window, and rejects storage_key leaks", async () => {
   // 1. Page & API gate only admits actor with worker_edit_history_view @ all
   assert.equal(
     decideWorkerEditHistoryPageAccess({
@@ -810,18 +810,41 @@ test("Lịch sử chỉnh sửa NLĐ contract & API: enforces 3-Admin capability
     "ALLOW",
   );
 
-  // 2. Query parsing requires national_id or full_name+date window
+  // 2. Global history is searched by date window and optional exact catalog filters.
   const emptyQuery = parseWorkerEditHistorySearchQuery(new URL("https://app.example/api/admin/worker-edit-history"));
   assert.deepEqual(emptyQuery, {
     ok: false,
     code: "WORKER_EDIT_HISTORY_QUERY_INVALID",
   });
 
-  const cccdQuery = parseWorkerEditHistorySearchQuery(
-    new URL("https://app.example/api/admin/worker-edit-history?national_id=079095008811"),
+  const globalQuery = parseWorkerEditHistorySearchQuery(
+    new URL("https://app.example/api/admin/worker-edit-history?from_date=2026-10-01&to_date=2026-10-31"),
   );
-  assert.equal(cccdQuery.ok, true);
-  assert.equal(cccdQuery.value.national_id, "079095008811");
+  assert.deepEqual(globalQuery, {
+    ok: true,
+    value: {
+      from_date: "2026-10-01",
+      to_date: "2026-10-31",
+      action_group: null,
+      project_id: null,
+      recruiter_id: null,
+      page_size: 50,
+      cursor: null,
+    },
+  });
+  const filteredQuery = parseWorkerEditHistorySearchQuery(
+    new URL(`https://app.example/api/admin/worker-edit-history?from_date=2026-10-01&to_date=2026-10-31&project_id=project-1&recruiter_id=${USER_ID}&action_group=PROFILE_EDIT`),
+  );
+  assert.equal(filteredQuery.ok, true);
+  assert.equal(filteredQuery.value.project_id, "project-1");
+  assert.equal(filteredQuery.value.recruiter_id, USER_ID);
+  assert.equal(filteredQuery.value.action_group, "PROFILE_EDIT");
+  assert.equal(
+    parseWorkerEditHistorySearchQuery(
+      new URL("https://app.example/api/admin/worker-edit-history?national_id=079095008811"),
+    ).ok,
+    false,
+  );
 
   // 3. Detail projection fails closed if storage_key is present, and succeeds when clean
   const REV_ID = "77777777-7777-4777-8777-777777777777";
@@ -911,7 +934,7 @@ test("Lịch sử chỉnh sửa NLĐ contract & API: enforces 3-Admin capability
   }));
 
   const forbiddenList = await getWorkerEditHistory(
-    new Request("https://app.example/api/admin/worker-edit-history?national_id=079095008811"),
+    new Request("https://app.example/api/admin/worker-edit-history?from_date=2026-10-01&to_date=2026-10-31"),
     {
       resolveSession: async () => ({
         actor: {
