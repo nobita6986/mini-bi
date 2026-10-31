@@ -527,4 +527,429 @@ export function isValidReviewEntryId(value: unknown): value is string {
   return typeof value === "string" && UUID_REGEX.test(value.trim());
 }
 
+export const REVIEW_PANEL_MODES = ["CCCD_RECONCILIATION", "MISSING_DOCUMENTS"] as const;
+export type ReviewPanelMode = (typeof REVIEW_PANEL_MODES)[number];
+
+export const MISSING_DOCUMENT_TYPES = [
+  "WORKER_PORTRAIT",
+  "CCCD_FRONT",
+  "CCCD_BACK",
+  "EMPLOYMENT_CONTRACT",
+] as const;
+export type MissingDocumentType = (typeof MISSING_DOCUMENT_TYPES)[number];
+
+export const MISSING_DOCUMENT_FILTER_TYPES = ["ALL", ...MISSING_DOCUMENT_TYPES] as const;
+export type MissingDocumentFilterType = (typeof MISSING_DOCUMENT_FILTER_TYPES)[number];
+
+export const MISSING_DOCUMENT_EMPLOYMENT_STATUSES = ["ALL", "ON", "UNCONFIRMED"] as const;
+export type MissingDocumentEmploymentStatus =
+  (typeof MISSING_DOCUMENT_EMPLOYMENT_STATUSES)[number];
+
+export const MISSING_DOCUMENT_TYPE_LABELS: Readonly<Record<MissingDocumentType, string>> =
+  Object.freeze({
+    WORKER_PORTRAIT: "Ảnh NLĐ",
+    CCCD_FRONT: "CCCD mặt trước",
+    CCCD_BACK: "CCCD mặt sau",
+    EMPLOYMENT_CONTRACT: "Hợp đồng lao động",
+  });
+
+export const MISSING_DOCUMENT_FILTER_LABELS: Readonly<Record<MissingDocumentFilterType, string>> =
+  Object.freeze({
+    ALL: "Tất cả hồ sơ thiếu",
+    WORKER_PORTRAIT: "Thiếu Ảnh NLĐ",
+    CCCD_FRONT: "Thiếu CCCD mặt trước",
+    CCCD_BACK: "Thiếu CCCD mặt sau",
+    EMPLOYMENT_CONTRACT: "Thiếu Hợp đồng lao động",
+  });
+
+export const MISSING_DOCUMENT_EMPLOYMENT_STATUS_LABELS: Readonly<
+  Record<MissingDocumentEmploymentStatus, string>
+> = Object.freeze({
+  ALL: "Tất cả (Đang làm + Chưa xác nhận)",
+  ON: "Đang làm việc (ON)",
+  UNCONFIRMED: "Chưa xác nhận (UNCONFIRMED)",
+});
+
+export type MissingDocumentExistingDoc = {
+  document_id: string;
+  document_type: MissingDocumentType;
+  document_version: number;
+  mime_type: string;
+  size_bytes: number;
+  updated_at: string;
+};
+
+export type MissingDocumentWorkerItem = {
+  entry_id: string;
+  entry_version: number;
+  employee_code: string;
+  display_name: string;
+  national_id: string | null;
+  project_id: string;
+  project_display: string;
+  recruiter_id: string;
+  recruiter_display: string;
+  first_work_date: string;
+  employment_status: "ON" | "UNCONFIRMED";
+  created_by_user_id: string;
+  created_by_display: string;
+  missing_documents: MissingDocumentType[];
+  can_upload: boolean;
+  documents: MissingDocumentExistingDoc[];
+};
+
+export type MissingDocumentSummary = {
+  total_workers: number;
+  missing_worker_portrait: number;
+  missing_cccd_front: number;
+  missing_cccd_back: number;
+  missing_employment_contract: number;
+};
+
+export type MissingDocumentProjectOption = {
+  project_id: string;
+  project_display: string;
+};
+
+export type MissingDocumentWorkersResponse = {
+  scope_kind: "all" | "project" | "recruited";
+  can_upload: boolean;
+  filter_missing_type: MissingDocumentFilterType;
+  filter_employment_status: MissingDocumentEmploymentStatus;
+  filter_project_id: string | null;
+  filter_search: string | null;
+  page: number;
+  page_size: number;
+  total_count: number;
+  has_more: boolean;
+  summary: MissingDocumentSummary;
+  project_options: MissingDocumentProjectOption[];
+  items: MissingDocumentWorkerItem[];
+};
+
+export function isMissingDocumentType(value: unknown): value is MissingDocumentType {
+  return (
+    typeof value === "string" &&
+    (MISSING_DOCUMENT_TYPES as readonly string[]).includes(value)
+  );
+}
+
+export function isMissingDocumentFilterType(value: unknown): value is MissingDocumentFilterType {
+  return (
+    typeof value === "string" &&
+    (MISSING_DOCUMENT_FILTER_TYPES as readonly string[]).includes(value)
+  );
+}
+
+export function isMissingDocumentEmploymentStatus(
+  value: unknown,
+): value is MissingDocumentEmploymentStatus {
+  return (
+    typeof value === "string" &&
+    (MISSING_DOCUMENT_EMPLOYMENT_STATUSES as readonly string[]).includes(value)
+  );
+}
+
+export function hasMissingDocumentWorkersFilter(input: {
+  missing_type?: MissingDocumentFilterType;
+  employment_status?: MissingDocumentEmploymentStatus;
+  project_id?: string | null;
+  q?: string | null;
+}): boolean {
+  return (
+    (input.missing_type ?? "ALL") !== "ALL" ||
+    (input.employment_status ?? "ALL") !== "ALL" ||
+    Boolean(input.project_id?.trim()) ||
+    Boolean(input.q?.trim())
+  );
+}
+
+export function buildMissingDocumentWorkersQuery(input: {
+  missing_type?: MissingDocumentFilterType;
+  employment_status?: MissingDocumentEmploymentStatus;
+  project_id?: string | null;
+  q?: string | null;
+  page?: number;
+  page_size?: number;
+}): URLSearchParams | null {
+  const missingType = input.missing_type ?? "ALL";
+  const employmentStatus = input.employment_status ?? "ALL";
+  if (
+    !isMissingDocumentFilterType(missingType) ||
+    !isMissingDocumentEmploymentStatus(employmentStatus)
+  ) {
+    return null;
+  }
+  const page = input.page ?? 1;
+  const pageSize = input.page_size ?? 25;
+  if (
+    !Number.isSafeInteger(page) ||
+    page < 1 ||
+    page > 1000 ||
+    !Number.isSafeInteger(pageSize) ||
+    pageSize < 1 ||
+    pageSize > 100
+  ) {
+    return null;
+  }
+  const params = new URLSearchParams();
+  params.set("missing_type", missingType);
+  params.set("employment_status", employmentStatus);
+  if (typeof input.project_id === "string" && input.project_id.trim() !== "") {
+    params.set("project_id", input.project_id.trim());
+  }
+  if (typeof input.q === "string" && input.q.trim() !== "") {
+    params.set("q", input.q.trim());
+  }
+  params.set("page", String(page));
+  params.set("page_size", String(pageSize));
+  return params;
+}
+
+export function parseMissingDocumentWorkersQuery(searchParams: URLSearchParams):
+  | {
+      ok: true;
+      value: {
+        missing_type: MissingDocumentFilterType;
+        employment_status: MissingDocumentEmploymentStatus;
+        project_id: string | null;
+        search: string | null;
+        page: number;
+        page_size: number;
+      };
+    }
+  | {
+      ok: false;
+      code: string;
+    } {
+  const rawMissingType = searchParams.get("missing_type")?.trim().toUpperCase() || "ALL";
+  if (!isMissingDocumentFilterType(rawMissingType)) {
+    return { ok: false, code: "MISSING_DOCUMENTS_FILTER_INVALID" };
+  }
+
+  const rawEmploymentStatus = searchParams.get("employment_status")?.trim().toUpperCase() || "ALL";
+  if (!isMissingDocumentEmploymentStatus(rawEmploymentStatus)) {
+    return { ok: false, code: "MISSING_DOCUMENTS_FILTER_INVALID" };
+  }
+
+  let projectId: string | null = null;
+  const rawProjectId = searchParams.get("project_id");
+  if (rawProjectId !== null && rawProjectId.trim() !== "") {
+    const trimmed = rawProjectId.trim();
+    if (trimmed.length > 128 || /[\u0000-\u001f\u007f]/.test(trimmed)) {
+      return { ok: false, code: "MISSING_DOCUMENTS_FILTER_INVALID" };
+    }
+    projectId = trimmed;
+  }
+
+  let search: string | null = null;
+  const rawSearch = searchParams.get("q");
+  if (rawSearch !== null && rawSearch.trim() !== "") {
+    const trimmed = rawSearch.trim();
+    if (trimmed.length > 100 || /[\u0000-\u001f\u007f]/.test(trimmed)) {
+      return { ok: false, code: "MISSING_DOCUMENTS_FILTER_INVALID" };
+    }
+    search = trimmed;
+  }
+
+  if (
+    !hasMissingDocumentWorkersFilter({
+      missing_type: rawMissingType,
+      employment_status: rawEmploymentStatus,
+      project_id: projectId,
+      q: search,
+    })
+  ) {
+    return { ok: false, code: "MISSING_DOCUMENTS_FILTER_REQUIRED" };
+  }
+
+  let page = 1;
+  const rawPage = searchParams.get("page");
+  if (rawPage !== null && rawPage.trim() !== "") {
+    const parsedPage = Number(rawPage);
+    if (!Number.isSafeInteger(parsedPage) || parsedPage < 1 || parsedPage > 1000) {
+      return { ok: false, code: "MISSING_DOCUMENTS_PAGINATION_INVALID" };
+    }
+    page = parsedPage;
+  }
+
+  let pageSize = 25;
+  const rawPageSize = searchParams.get("page_size");
+  if (rawPageSize !== null && rawPageSize.trim() !== "") {
+    const parsedPageSize = Number(rawPageSize);
+    if (!Number.isSafeInteger(parsedPageSize) || parsedPageSize < 1 || parsedPageSize > 100) {
+      return { ok: false, code: "MISSING_DOCUMENTS_PAGINATION_INVALID" };
+    }
+    pageSize = parsedPageSize;
+  }
+
+  return {
+    ok: true,
+    value: {
+      missing_type: rawMissingType,
+      employment_status: rawEmploymentStatus,
+      project_id: projectId,
+      search,
+      page,
+      page_size: pageSize,
+    },
+  };
+}
+
+export function projectMissingDocumentWorkersResponse(
+  body: unknown,
+): MissingDocumentWorkersResponse | null {
+  if (!isRecord(body)) return null;
+  const scopeKind = body.scope_kind;
+  if (scopeKind !== "all" && scopeKind !== "project" && scopeKind !== "recruited") {
+    return null;
+  }
+  if (
+    typeof body.can_upload !== "boolean" ||
+    !isMissingDocumentFilterType(body.filter_missing_type) ||
+    !isMissingDocumentEmploymentStatus(body.filter_employment_status) ||
+    (body.filter_project_id !== null && typeof body.filter_project_id !== "string") ||
+    (body.filter_search !== null && typeof body.filter_search !== "string") ||
+    typeof body.page !== "number" ||
+    !Number.isSafeInteger(body.page) ||
+    body.page < 1 ||
+    typeof body.page_size !== "number" ||
+    !Number.isSafeInteger(body.page_size) ||
+    body.page_size < 1 ||
+    typeof body.total_count !== "number" ||
+    !Number.isSafeInteger(body.total_count) ||
+    body.total_count < 0 ||
+    typeof body.has_more !== "boolean" ||
+    !isRecord(body.summary) ||
+    !Array.isArray(body.project_options) ||
+    !Array.isArray(body.items)
+  ) {
+    return null;
+  }
+
+  const summary: MissingDocumentSummary = {
+    total_workers: Number(body.summary.total_workers ?? 0) || 0,
+    missing_worker_portrait: Number(body.summary.missing_worker_portrait ?? 0) || 0,
+    missing_cccd_front: Number(body.summary.missing_cccd_front ?? 0) || 0,
+    missing_cccd_back: Number(body.summary.missing_cccd_back ?? 0) || 0,
+    missing_employment_contract: Number(body.summary.missing_employment_contract ?? 0) || 0,
+  };
+
+  const projectOptions: MissingDocumentProjectOption[] = [];
+  for (const rawOpt of body.project_options) {
+    if (
+      !isRecord(rawOpt) ||
+      typeof rawOpt.project_id !== "string" ||
+      rawOpt.project_id.trim() === "" ||
+      typeof rawOpt.project_display !== "string"
+    ) {
+      return null;
+    }
+    projectOptions.push({
+      project_id: rawOpt.project_id,
+      project_display: rawOpt.project_display,
+    });
+  }
+
+  const items: MissingDocumentWorkerItem[] = [];
+  for (const rawItem of body.items) {
+    if (
+      !isRecord(rawItem) ||
+      typeof rawItem.entry_id !== "string" ||
+      !UUID_REGEX.test(rawItem.entry_id) ||
+      typeof rawItem.entry_version !== "number" ||
+      !Number.isSafeInteger(rawItem.entry_version) ||
+      rawItem.entry_version < 1 ||
+      typeof rawItem.employee_code !== "string" ||
+      typeof rawItem.display_name !== "string" ||
+      (rawItem.national_id !== null && typeof rawItem.national_id !== "string") ||
+      typeof rawItem.project_id !== "string" ||
+      typeof rawItem.project_display !== "string" ||
+      typeof rawItem.recruiter_id !== "string" ||
+      !UUID_REGEX.test(rawItem.recruiter_id) ||
+      typeof rawItem.recruiter_display !== "string" ||
+      typeof rawItem.first_work_date !== "string" ||
+      (rawItem.employment_status !== "ON" && rawItem.employment_status !== "UNCONFIRMED") ||
+      typeof rawItem.created_by_user_id !== "string" ||
+      !UUID_REGEX.test(rawItem.created_by_user_id) ||
+      typeof rawItem.created_by_display !== "string" ||
+      typeof rawItem.can_upload !== "boolean" ||
+      !Array.isArray(rawItem.missing_documents) ||
+      !Array.isArray(rawItem.documents)
+    ) {
+      return null;
+    }
+
+    const missingDocs: MissingDocumentType[] = [];
+    for (const m of rawItem.missing_documents) {
+      if (!isMissingDocumentType(m)) return null;
+      missingDocs.push(m);
+    }
+
+    const docs: MissingDocumentExistingDoc[] = [];
+    for (const d of rawItem.documents) {
+      if (
+        !isRecord(d) ||
+        "storage_key" in d ||
+        typeof d.document_id !== "string" ||
+        !UUID_REGEX.test(d.document_id) ||
+        !isMissingDocumentType(d.document_type) ||
+        typeof d.document_version !== "number" ||
+        !Number.isSafeInteger(d.document_version) ||
+        d.document_version < 1 ||
+        typeof d.mime_type !== "string" ||
+        typeof d.size_bytes !== "number" ||
+        !Number.isSafeInteger(d.size_bytes) ||
+        d.size_bytes < 1 ||
+        typeof d.updated_at !== "string"
+      ) {
+        return null;
+      }
+      docs.push({
+        document_id: d.document_id,
+        document_type: d.document_type,
+        document_version: d.document_version,
+        mime_type: d.mime_type,
+        size_bytes: d.size_bytes,
+        updated_at: d.updated_at,
+      });
+    }
+
+    items.push({
+      entry_id: rawItem.entry_id,
+      entry_version: rawItem.entry_version,
+      employee_code: rawItem.employee_code,
+      display_name: rawItem.display_name,
+      national_id: rawItem.national_id ?? null,
+      project_id: rawItem.project_id,
+      project_display: rawItem.project_display,
+      recruiter_id: rawItem.recruiter_id,
+      recruiter_display: rawItem.recruiter_display,
+      first_work_date: rawItem.first_work_date,
+      employment_status: rawItem.employment_status,
+      created_by_user_id: rawItem.created_by_user_id,
+      created_by_display: rawItem.created_by_display,
+      missing_documents: missingDocs,
+      can_upload: rawItem.can_upload,
+      documents: docs,
+    });
+  }
+
+  return {
+    scope_kind: scopeKind,
+    can_upload: body.can_upload,
+    filter_missing_type: body.filter_missing_type,
+    filter_employment_status: body.filter_employment_status,
+    filter_project_id: body.filter_project_id ?? null,
+    filter_search: body.filter_search ?? null,
+    page: body.page,
+    page_size: body.page_size,
+    total_count: body.total_count,
+    has_more: body.has_more,
+    summary,
+    project_options: projectOptions,
+    items,
+  };
+}
+
 export { isCccdQrDocumentType, isCccdReconciliationStatus };

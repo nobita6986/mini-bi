@@ -18,6 +18,7 @@ import {
 } from "@/lib/direct-entry/cccd-qr-contract";
 import {
   buildCccdReviewQueueQuery,
+  buildMissingDocumentWorkersQuery,
   CCCD_REVIEW_DEFAULT_PAGE_SIZE,
   CCCD_REVIEW_FILTER_LABELS,
   CCCD_REVIEW_FILTER_STATUSES,
@@ -25,16 +26,39 @@ import {
   CCCD_REVIEW_STANDARDIZE_FIELD_LABELS,
   CCCD_REVIEW_STANDARDIZE_FIELDS,
   cccdReviewErrorMessage,
+  hasMissingDocumentWorkersFilter,
+  MISSING_DOCUMENT_EMPLOYMENT_STATUS_LABELS,
+  MISSING_DOCUMENT_EMPLOYMENT_STATUSES,
+  MISSING_DOCUMENT_FILTER_LABELS,
+  MISSING_DOCUMENT_FILTER_TYPES,
+  MISSING_DOCUMENT_TYPE_LABELS,
+  MISSING_DOCUMENT_TYPES,
   projectCccdReviewQueueResponse,
+  projectMissingDocumentWorkersResponse,
   type CccdReviewFilterStatus,
   type CccdReviewQueueItem,
   type CccdReviewQueuePage,
   type CccdReviewStandardizeField,
+  type MissingDocumentEmploymentStatus,
+  type MissingDocumentFilterType,
+  type MissingDocumentType,
+  type MissingDocumentWorkerItem,
+  type MissingDocumentWorkersResponse,
+  type ReviewPanelMode,
 } from "@/lib/direct-entry/cccd-review-contract";
 
 type PanelState =
   | { kind: "loading" }
   | { kind: "loaded"; page: CccdReviewQueuePage }
+  | { kind: "denied" }
+  | { kind: "unavailable" }
+  | { kind: "error" };
+
+type MissingPanelState =
+  | { kind: "idle" }
+  | { kind: "filter_required" }
+  | { kind: "loading" }
+  | { kind: "loaded"; data: MissingDocumentWorkersResponse }
   | { kind: "denied" }
   | { kind: "unavailable" }
   | { kind: "error" };
@@ -147,6 +171,7 @@ function enteredValueForField(
 }
 
 export function CccdReviewPanel() {
+  const [panelMode, setPanelMode] = useState<ReviewPanelMode>("CCCD_RECONCILIATION");
   const [state, setState] = useState<PanelState>({ kind: "loading" });
   const [statusFilter, setStatusFilter] = useState<CccdReviewFilterStatus>("NEEDS_REVIEW");
   const [page, setPage] = useState(1);
@@ -184,6 +209,23 @@ export function CccdReviewPanel() {
   const [previewLoadingId, setPreviewLoadingId] = useState<string | null>(null);
   const [uploadingSide, setUploadingSide] = useState<"CCCD_FRONT" | "CCCD_BACK" | null>(null);
   const [retryingQr, setRetryingQr] = useState(false);
+
+  // "Hồ sơ thiếu" conditional load state (does NOT auto-query on open)
+  const [missingState, setMissingState] = useState<MissingPanelState>({ kind: "idle" });
+  const [missingTypeFilter, setMissingTypeFilter] = useState<MissingDocumentFilterType>("ALL");
+  const [missingStatusFilter, setMissingStatusFilter] =
+    useState<MissingDocumentEmploymentStatus>("ALL");
+  const [missingProjectFilter, setMissingProjectFilter] = useState<string>("");
+  const [missingSearchInput, setMissingSearchInput] = useState<string>("");
+  const [missingPageSize, setMissingPageSize] = useState<number>(25);
+  const [selectedMissingItem, setSelectedMissingItem] = useState<MissingDocumentWorkerItem | null>(
+    null,
+  );
+  const [uploadingMissingType, setUploadingMissingType] = useState<MissingDocumentType | null>(
+    null,
+  );
+  const [missingActionError, setMissingActionError] = useState<string | null>(null);
+  const missingAbortRef = useRef<AbortController | null>(null);
 
   // Revoke object URLs when dialog closes or unmounts
   useEffect(() => {
@@ -415,8 +457,9 @@ export function CccdReviewPanel() {
           body: JSON.stringify({
             document_type: documentType,
             expected_entry_version: item.entry_version,
-            content_type: file.type,
+            mime_type: file.type,
             size_bytes: file.size,
+            reason: "Tải lại ảnh CCCD từ màn Review thông tin NLĐ",
           }),
         },
       );
@@ -426,12 +469,19 @@ export function CccdReviewPanel() {
         return;
       }
       const reserved = (await reserveRes.json()) as {
+        document_id?: string;
+        entry_version?: number;
+        upload?: { url?: string; headers?: Record<string, string> } | null;
         document?: { document_id?: string; entry_version?: number };
         direct_upload?: { upload_url?: string; headers?: Record<string, string> };
       };
-      const documentId = reserved.document?.document_id;
-      const nextEntryVersion = reserved.document?.entry_version ?? item.entry_version + 1;
-      const uploadUrl = reserved.direct_upload?.upload_url;
+      const documentId = reserved.document_id ?? reserved.document?.document_id;
+      const nextEntryVersion =
+        reserved.entry_version ?? reserved.document?.entry_version ?? item.entry_version + 1;
+      const uploadUrl = reserved.upload?.url ?? reserved.direct_upload?.upload_url;
+      const uploadHeaders =
+        reserved.upload?.headers ??
+        reserved.direct_upload?.headers ?? { "Content-Type": file.type };
       if (!documentId || !uploadUrl) {
         setActionError("Không khởi tạo được phiên tải ảnh CCCD.");
         return;
@@ -439,7 +489,7 @@ export function CccdReviewPanel() {
 
       const putRes = await fetch(uploadUrl, {
         method: "PUT",
-        headers: reserved.direct_upload?.headers ?? { "Content-Type": file.type },
+        headers: uploadHeaders,
         body: file,
       });
       if (!putRes.ok) {
@@ -619,16 +669,335 @@ export function CccdReviewPanel() {
     );
   }
 
+  async function loadMissingDocumentWorkers(overrides?: {
+    missing_type?: MissingDocumentFilterType;
+    employment_status?: MissingDocumentEmploymentStatus;
+    project_id?: string | null;
+    q?: string | null;
+    page?: number;
+    page_size?: number;
+  }): Promise<void> {
+    const filters = {
+      missing_type: overrides?.missing_type ?? missingTypeFilter,
+      employment_status: overrides?.employment_status ?? missingStatusFilter,
+      project_id:
+        overrides?.project_id !== undefined
+          ? overrides.project_id
+          : missingProjectFilter || null,
+      q: overrides?.q !== undefined ? overrides.q : missingSearchInput || null,
+    };
+    if (!hasMissingDocumentWorkersFilter(filters)) {
+      missingAbortRef.current?.abort();
+      setMissingState({ kind: "filter_required" });
+      return;
+    }
+
+    missingAbortRef.current?.abort();
+    const controller = new AbortController();
+    missingAbortRef.current = controller;
+
+    const query = buildMissingDocumentWorkersQuery({
+      ...filters,
+      page: overrides?.page ?? 1,
+      page_size: overrides?.page_size ?? missingPageSize,
+    });
+    if (!query) {
+      setMissingState({ kind: "error" });
+      return;
+    }
+
+    setMissingState({ kind: "loading" });
+    let response: Response;
+    try {
+      response = await fetch(
+        `/api/direct-entry/cccd-review/missing-documents?${query.toString()}`,
+        {
+          method: "GET",
+          cache: "no-store",
+          credentials: "same-origin",
+          signal: controller.signal,
+          headers: { Accept: "application/json" },
+        },
+      );
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      setMissingState({ kind: "unavailable" });
+      return;
+    }
+
+    if (response.status === 401 || response.status === 403) {
+      setMissingState({ kind: "denied" });
+      return;
+    }
+    if (response.status !== 200) {
+      setMissingState(
+        response.status === 404 || response.status >= 500
+          ? { kind: "unavailable" }
+          : { kind: "error" },
+      );
+      return;
+    }
+
+    try {
+      const body = await response.json();
+      const projected = projectMissingDocumentWorkersResponse(body);
+      if (!projected) {
+        setMissingState({ kind: "error" });
+        return;
+      }
+      setMissingState({ kind: "loaded", data: projected });
+      setSelectedMissingItem((current) => {
+        if (!current) return null;
+        return projected.items.find((item) => item.entry_id === current.entry_id) ?? current;
+      });
+    } catch {
+      setMissingState({ kind: "error" });
+    }
+  }
+
+  function openMissingDocumentItem(item: MissingDocumentWorkerItem): void {
+    for (const url of Object.values(previewUrls)) {
+      URL.revokeObjectURL(url);
+    }
+    setPreviewUrls({});
+    setMissingActionError(null);
+    setSelectedMissingItem(item);
+  }
+
+  function closeMissingDocumentDialog(): void {
+    if (uploadingMissingType !== null) return;
+    for (const url of Object.values(previewUrls)) {
+      URL.revokeObjectURL(url);
+    }
+    setPreviewUrls({});
+    setMissingActionError(null);
+    setSelectedMissingItem(null);
+  }
+
+  async function loadMissingPreview(
+    entryId: string,
+    documentId: string,
+    documentType: MissingDocumentType,
+  ): Promise<void> {
+    if (previewUrls[documentId] || previewLoadingId !== null) return;
+    setPreviewLoadingId(documentId);
+    setMissingActionError(null);
+    try {
+      const endpoint =
+        documentType === "WORKER_PORTRAIT"
+          ? `/api/direct-entry/entries/${encodeURIComponent(entryId)}/documents/${encodeURIComponent(documentId)}/preview`
+          : `/api/direct-entry/entries/${encodeURIComponent(entryId)}/documents/${encodeURIComponent(documentId)}/cccd-preview`;
+      const response = await fetch(endpoint, {
+        method: "GET",
+        cache: "no-store",
+        credentials: "same-origin",
+      });
+      if (!response.ok) {
+        const code = await readErrorCode(response);
+        setMissingActionError(cccdReviewErrorMessage(code));
+        return;
+      }
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      setPreviewUrls((current) => ({ ...current, [documentId]: objectUrl }));
+    } catch {
+      setMissingActionError("Không tải được ảnh xem trước. Hãy thử lại.");
+    } finally {
+      setPreviewLoadingId(null);
+    }
+  }
+
+  async function handleUploadMissingDocumentFile(
+    item: MissingDocumentWorkerItem,
+    documentType: MissingDocumentType,
+    event: ChangeEvent<HTMLInputElement>,
+  ): Promise<void> {
+    const file = event.currentTarget.files?.[0] ?? null;
+    event.currentTarget.value = "";
+    if (!file || uploadingMissingType !== null) return;
+
+    const allowedMimes =
+      documentType === "WORKER_PORTRAIT"
+        ? ["image/jpeg", "image/png"]
+        : ["image/jpeg", "image/png", "application/pdf"];
+    if (!allowedMimes.includes(file.type)) {
+      setMissingActionError(
+        documentType === "WORKER_PORTRAIT"
+          ? "Ảnh NLĐ chỉ chấp nhận định dạng JPEG hoặc PNG."
+          : "Hồ sơ chỉ chấp nhận định dạng JPEG, PNG hoặc PDF.",
+      );
+      return;
+    }
+    if (file.size < 1 || file.size > 10 * 1024 * 1024) {
+      setMissingActionError("Dung lượng tệp phải lớn hơn 0 và không vượt quá 10 MiB.");
+      return;
+    }
+
+    setUploadingMissingType(documentType);
+    setMissingActionError(null);
+    try {
+      const reserveRes = await fetch(
+        `/api/direct-entry/entries/${encodeURIComponent(item.entry_id)}/documents`,
+        {
+          method: "POST",
+          cache: "no-store",
+          credentials: "same-origin",
+          headers: {
+            "Content-Type": "application/json",
+            "Idempotency-Key": makeIdempotencyKey(),
+          },
+          body: JSON.stringify({
+            document_type: documentType,
+            expected_entry_version: item.entry_version,
+            mime_type: file.type,
+            size_bytes: file.size,
+            reason: `Bổ sung hồ sơ thiếu (${MISSING_DOCUMENT_TYPE_LABELS[documentType]})`,
+          }),
+        },
+      );
+      if (!reserveRes.ok) {
+        const code = await readErrorCode(reserveRes);
+        setMissingActionError(cccdReviewErrorMessage(code));
+        return;
+      }
+
+      const reserved = (await reserveRes.json()) as {
+        document_id?: string;
+        version?: number;
+        entry_version?: number;
+        upload?: { url?: string; headers?: Record<string, string> } | null;
+      };
+      const documentId = reserved.document_id;
+      const nextEntryVersion = reserved.entry_version ?? item.entry_version + 1;
+      const uploadUrl = reserved.upload?.url;
+      if (!documentId || !uploadUrl) {
+        setMissingActionError("Không khởi tạo được phiên tải hồ sơ lên kho lưu trữ.");
+        return;
+      }
+
+      const putRes = await fetch(uploadUrl, {
+        method: "PUT",
+        headers: reserved.upload?.headers ?? { "Content-Type": file.type },
+        body: file,
+      });
+      if (!putRes.ok) {
+        setMissingActionError("Không tải được tệp hồ sơ lên kho lưu trữ.");
+        return;
+      }
+
+      const finalizeRes = await fetch(
+        `/api/direct-entry/entries/${encodeURIComponent(item.entry_id)}/documents/${encodeURIComponent(documentId)}/finalize`,
+        {
+          method: "POST",
+          cache: "no-store",
+          credentials: "same-origin",
+          headers: {
+            "Content-Type": "application/json",
+            "Idempotency-Key": makeIdempotencyKey(),
+          },
+          body: JSON.stringify({
+            expected_entry_version: nextEntryVersion,
+          }),
+        },
+      );
+      if (!finalizeRes.ok) {
+        const code = await readErrorCode(finalizeRes);
+        setMissingActionError(cccdReviewErrorMessage(code));
+        return;
+      }
+
+      const finalized = (await finalizeRes.json()) as {
+        document_id?: string;
+        version?: number;
+        entry_version?: number;
+      };
+      const updatedVersion = finalized.entry_version ?? nextEntryVersion + 1;
+      const updatedDocVersion = finalized.version ?? reserved.version ?? 1;
+      const nowIso = new Date().toISOString();
+
+      setSelectedMissingItem((current) => {
+        if (!current || current.entry_id !== item.entry_id) return current;
+        const nextMissing = current.missing_documents.filter((t) => t !== documentType);
+        const filteredDocs = current.documents.filter((d) => d.document_type !== documentType);
+        filteredDocs.push({
+          document_id: documentId,
+          document_type: documentType,
+          document_version: updatedDocVersion,
+          mime_type: file.type,
+          size_bytes: file.size,
+          updated_at: nowIso,
+        });
+        return {
+          ...current,
+          entry_version: updatedVersion,
+          missing_documents: nextMissing,
+          documents: filteredDocs,
+        };
+      });
+
+      notify.success({
+        title: `Đã bổ sung ${MISSING_DOCUMENT_TYPE_LABELS[documentType]} cho ${item.display_name}.`,
+      });
+      if (missingState.kind === "loaded") {
+        await loadMissingDocumentWorkers({ page: missingState.data.page });
+      }
+    } catch {
+      setMissingActionError("Không hoàn tất được việc tải hồ sơ bổ sung. Hãy thử lại.");
+    } finally {
+      setUploadingMissingType(null);
+    }
+  }
+
   const counts = state.kind === "loaded" ? state.page.summary : null;
+  const missingProjectOptions =
+    missingState.kind === "loaded" ? missingState.data.project_options : [];
 
   return (
     <div className="space-y-4" data-testid="cccd-review-panel">
       <Card>
         <CardHeader
           title="Review thông tin NLĐ"
-          description="Đối chiếu số CCCD đã nhập với dữ liệu giải mã từ QR trên ảnh CCCD, bổ sung trường còn trống hoặc xử lý sai lệch trong phạm vi được phân quyền."
+          description="Đối chiếu số CCCD đã nhập với dữ liệu giải mã từ QR trên ảnh CCCD, hoặc rà soát và bổ sung 4 loại hồ sơ bắt buộc còn thiếu trong phạm vi được phân quyền."
         />
 
+        <div
+          className="mb-4 flex flex-wrap gap-2 border-b border-border pb-3"
+          role="tablist"
+          aria-label="Chế độ Review thông tin NLĐ"
+        >
+          <button
+            type="button"
+            role="tab"
+            data-testid="review-mode-tab-CCCD_RECONCILIATION"
+            aria-selected={panelMode === "CCCD_RECONCILIATION"}
+            onClick={() => setPanelMode("CCCD_RECONCILIATION")}
+            className={panelMode === "CCCD_RECONCILIATION" ? primaryButtonClass : buttonClass}
+          >
+            <span>Đối chiếu CCCD</span>
+            {counts !== null ? (
+              <span className="ml-1.5 rounded-full bg-black/10 px-1.5 py-0.5 text-xs tabular-nums">
+                {counts.needs_review_count}
+              </span>
+            ) : null}
+          </button>
+          <button
+            type="button"
+            role="tab"
+            data-testid="review-mode-tab-MISSING_DOCUMENTS"
+            aria-selected={panelMode === "MISSING_DOCUMENTS"}
+            onClick={() => setPanelMode("MISSING_DOCUMENTS")}
+            className={panelMode === "MISSING_DOCUMENTS" ? primaryButtonClass : buttonClass}
+          >
+            <span>Hồ sơ thiếu</span>
+            {missingState.kind === "loaded" ? (
+              <span className="ml-1.5 rounded-full bg-black/10 px-1.5 py-0.5 text-xs tabular-nums">
+                {missingState.data.summary.total_workers}
+              </span>
+            ) : null}
+          </button>
+        </div>
+
+        {panelMode === "CCCD_RECONCILIATION" ? (
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap gap-2" role="group" aria-label="Bộ lọc trạng thái đối chiếu CCCD">
             {CCCD_REVIEW_FILTER_STATUSES.map((status) => {
@@ -704,9 +1073,416 @@ export function CccdReviewPanel() {
             </button>
           </div>
         </div>
+        ) : (
+          <form
+            className="space-y-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void loadMissingDocumentWorkers({ page: 1 });
+            }}
+          >
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <label className="block space-y-1 text-xs font-medium text-muted">
+                <span>Loại hồ sơ còn thiếu</span>
+                <select
+                  data-testid="missing-documents-filter-type"
+                  value={missingTypeFilter}
+                  onChange={(event) =>
+                    setMissingTypeFilter(event.currentTarget.value as MissingDocumentFilterType)
+                  }
+                  className="min-h-10 w-full rounded-md border border-border bg-surface px-3 text-sm text-foreground"
+                >
+                  {MISSING_DOCUMENT_FILTER_TYPES.map((typeKey) => (
+                    <option key={typeKey} value={typeKey}>
+                      {MISSING_DOCUMENT_FILTER_LABELS[typeKey]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="block space-y-1 text-xs font-medium text-muted">
+                <span>Dự án</span>
+                <select
+                  data-testid="missing-documents-filter-project"
+                  value={missingProjectFilter}
+                  onChange={(event) => setMissingProjectFilter(event.currentTarget.value)}
+                  className="min-h-10 w-full rounded-md border border-border bg-surface px-3 text-sm text-foreground"
+                >
+                  <option value="">Tất cả dự án trong phạm vi</option>
+                  {missingProjectOptions.map((proj) => (
+                    <option key={proj.project_id} value={proj.project_id}>
+                      {proj.project_display} ({proj.project_id})
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="block space-y-1 text-xs font-medium text-muted">
+                <span>Trạng thái làm việc</span>
+                <select
+                  data-testid="missing-documents-filter-status"
+                  value={missingStatusFilter}
+                  onChange={(event) =>
+                    setMissingStatusFilter(
+                      event.currentTarget.value as MissingDocumentEmploymentStatus,
+                    )
+                  }
+                  className="min-h-10 w-full rounded-md border border-border bg-surface px-3 text-sm text-foreground"
+                >
+                  {MISSING_DOCUMENT_EMPLOYMENT_STATUSES.map((st) => (
+                    <option key={st} value={st}>
+                      {MISSING_DOCUMENT_EMPLOYMENT_STATUS_LABELS[st]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="block space-y-1 text-xs font-medium text-muted">
+                <span>Tìm theo Tên / CCCD / Mã NLĐ</span>
+                <input
+                  type="text"
+                  data-testid="missing-documents-filter-search"
+                  maxLength={100}
+                  value={missingSearchInput}
+                  onChange={(event) => setMissingSearchInput(event.currentTarget.value)}
+                  placeholder="Nhập họ tên, 12 số CCCD hoặc mã NV…"
+                  className="min-h-10 w-full rounded-md border border-border bg-surface px-3 text-sm text-foreground"
+                />
+              </label>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-xs text-muted">
+                Chỉ thống kê NLĐ có trạng thái hiện tại là <strong>Đang làm việc (ON)</strong> hoặc{" "}
+                <strong>Chưa xác nhận (UNCONFIRMED)</strong> còn thiếu ít nhất 1 trong 4 hồ sơ (Ảnh NLĐ, CCCD mặt trước, CCCD mặt sau, Hợp đồng lao động).
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <label className="flex items-center gap-1.5 text-sm text-muted">
+                  <span>Hiển thị</span>
+                  <select
+                    value={missingPageSize}
+                    onChange={(event) => setMissingPageSize(Number(event.currentTarget.value))}
+                    className="min-h-10 rounded-md border border-border bg-surface px-2 text-sm text-foreground"
+                  >
+                    {CCCD_REVIEW_PAGE_SIZE_OPTIONS.map((size) => (
+                      <option key={size} value={size}>
+                        {size} dòng
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  data-testid="missing-documents-reset-filters"
+                  onClick={() => {
+                    setMissingTypeFilter("ALL");
+                    setMissingStatusFilter("ALL");
+                    setMissingProjectFilter("");
+                    setMissingSearchInput("");
+                  }}
+                  className={buttonClass}
+                >
+                  Xóa bộ lọc
+                </button>
+                <button
+                  type="submit"
+                  data-testid="missing-documents-load-submit"
+                  disabled={
+                    missingState.kind === "loading" ||
+                    !hasMissingDocumentWorkersFilter({
+                      missing_type: missingTypeFilter,
+                      employment_status: missingStatusFilter,
+                      project_id: missingProjectFilter,
+                      q: missingSearchInput,
+                    })
+                  }
+                  className={primaryButtonClass}
+                >
+                  {missingState.kind === "loading" ? "Đang tải…" : "Tải danh sách"}
+                </button>
+              </div>
+            </div>
+          </form>
+        )}
       </Card>
 
-      {state.kind === "loading" ? (
+      {panelMode === "MISSING_DOCUMENTS" ? (
+        missingState.kind === "idle" || missingState.kind === "filter_required" ? (
+          <EmptyState
+            title="Chọn ít nhất một điều kiện lọc"
+            description="Chọn loại hồ sơ, trạng thái làm việc, dự án hoặc nhập từ khóa rồi bấm “Tải danh sách”."
+          />
+        ) : missingState.kind === "loading" ? (
+          <Card>
+            <p className="py-6 text-center text-sm text-muted" role="status">
+              Đang tải danh sách NLĐ thiếu hồ sơ…
+            </p>
+          </Card>
+        ) : missingState.kind === "denied" ? (
+          <ErrorState
+            title="Không có quyền truy cập"
+            detail="Tài khoản hiện tại không thuộc nhóm được phép xem danh sách Hồ sơ thiếu (Người tuyển, QLDA dự án, hoặc Admin được cấp quyền)."
+          />
+        ) : missingState.kind === "unavailable" ? (
+          <ErrorState
+            title="Danh sách Hồ sơ thiếu hiện không khả dụng"
+            detail="Hệ thống chưa thể tải danh sách NLĐ thiếu hồ sơ lúc này. Vui lòng thử bấm Tải danh sách lại."
+          />
+        ) : missingState.kind === "error" ? (
+          <ErrorState
+            title="Không tải được danh sách Hồ sơ thiếu"
+            detail="Phản hồi từ máy chủ không hợp lệ. Vui lòng kiểm tra bộ lọc và thử lại."
+          />
+        ) : (
+          <>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+              <button
+                type="button"
+                onClick={() => {
+                  setMissingTypeFilter("ALL");
+                  void loadMissingDocumentWorkers({ missing_type: "ALL", page: 1 });
+                }}
+                className={`rounded-xl border p-3 text-left transition ${
+                  missingState.data.filter_missing_type === "ALL"
+                    ? "border-primary bg-primary/5"
+                    : "border-border bg-surface hover:bg-surface-hover"
+                }`}
+              >
+                <div className="text-xs text-muted">Tổng NLĐ thiếu hồ sơ</div>
+                <div className="mt-1 text-xl font-bold tabular-nums text-foreground">
+                  {missingState.data.summary.total_workers}
+                </div>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMissingTypeFilter("WORKER_PORTRAIT");
+                  void loadMissingDocumentWorkers({ missing_type: "WORKER_PORTRAIT", page: 1 });
+                }}
+                className={`rounded-xl border p-3 text-left transition ${
+                  missingState.data.filter_missing_type === "WORKER_PORTRAIT"
+                    ? "border-primary bg-primary/5"
+                    : "border-border bg-surface hover:bg-surface-hover"
+                }`}
+              >
+                <div className="text-xs text-muted">Thiếu Ảnh NLĐ</div>
+                <div className="mt-1 text-xl font-bold tabular-nums text-foreground">
+                  {missingState.data.summary.missing_worker_portrait}
+                </div>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMissingTypeFilter("CCCD_FRONT");
+                  void loadMissingDocumentWorkers({ missing_type: "CCCD_FRONT", page: 1 });
+                }}
+                className={`rounded-xl border p-3 text-left transition ${
+                  missingState.data.filter_missing_type === "CCCD_FRONT"
+                    ? "border-primary bg-primary/5"
+                    : "border-border bg-surface hover:bg-surface-hover"
+                }`}
+              >
+                <div className="text-xs text-muted">Thiếu CCCD mặt trước</div>
+                <div className="mt-1 text-xl font-bold tabular-nums text-foreground">
+                  {missingState.data.summary.missing_cccd_front}
+                </div>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMissingTypeFilter("CCCD_BACK");
+                  void loadMissingDocumentWorkers({ missing_type: "CCCD_BACK", page: 1 });
+                }}
+                className={`rounded-xl border p-3 text-left transition ${
+                  missingState.data.filter_missing_type === "CCCD_BACK"
+                    ? "border-primary bg-primary/5"
+                    : "border-border bg-surface hover:bg-surface-hover"
+                }`}
+              >
+                <div className="text-xs text-muted">Thiếu CCCD mặt sau</div>
+                <div className="mt-1 text-xl font-bold tabular-nums text-foreground">
+                  {missingState.data.summary.missing_cccd_back}
+                </div>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMissingTypeFilter("EMPLOYMENT_CONTRACT");
+                  void loadMissingDocumentWorkers({
+                    missing_type: "EMPLOYMENT_CONTRACT",
+                    page: 1,
+                  });
+                }}
+                className={`rounded-xl border p-3 text-left transition ${
+                  missingState.data.filter_missing_type === "EMPLOYMENT_CONTRACT"
+                    ? "border-primary bg-primary/5"
+                    : "border-border bg-surface hover:bg-surface-hover"
+                }`}
+              >
+                <div className="text-xs text-muted">Thiếu Hợp đồng lao động</div>
+                <div className="mt-1 text-xl font-bold tabular-nums text-foreground">
+                  {missingState.data.summary.missing_employment_contract}
+                </div>
+              </button>
+            </div>
+
+            {missingState.data.items.length === 0 ? (
+              <EmptyState
+                title="Không có NLĐ nào thiếu hồ sơ theo điều kiện lọc"
+                description="Tất cả NLĐ thuộc bộ lọc hiện tại đã đủ 4 loại hồ sơ hoặc không có hồ sơ nào khớp điều kiện."
+              />
+            ) : (
+              <Card>
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted">
+                  <span>
+                    Phạm vi hiển thị:{" "}
+                    <strong className="text-foreground">
+                      {missingState.data.scope_kind === "all"
+                        ? "Toàn hệ thống (Admin)"
+                        : missingState.data.scope_kind === "project"
+                          ? "Dự án đang quản lý (QLDA)"
+                          : "NLĐ do bạn tuyển (Người tuyển — chỉ xem)"}
+                    </strong>
+                  </span>
+                  <span>
+                    Quyền thao tác:{" "}
+                    <strong className="text-foreground">
+                      {missingState.data.can_upload
+                        ? "Được phép upload bổ sung hồ sơ"
+                        : "Chỉ xem (không được phép upload)"}
+                    </strong>
+                  </span>
+                </div>
+
+                <div className="overflow-x-auto rounded-xl border border-border bg-surface">
+                  <table
+                    className="r22-report-table w-full min-w-[780px] text-left text-sm"
+                    data-testid="missing-documents-table"
+                  >
+                    <caption className="sr-only">
+                      Danh sách người lao động còn thiếu hồ sơ bắt buộc
+                    </caption>
+                    <thead className="bg-surface-muted text-xs uppercase tracking-wide text-muted">
+                      <tr>
+                        <th scope="col" className="px-3 py-3">Tên NLĐ</th>
+                        <th scope="col" className="px-3 py-3">CCCD</th>
+                        <th scope="col" className="px-3 py-3">Hồ sơ còn thiếu</th>
+                        <th scope="col" className="px-3 py-3">Dự án / Trạng thái</th>
+                        <th scope="col" className="px-3 py-3">Thao tác</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border">
+                      {missingState.data.items.map((item) => (
+                        <tr
+                          key={item.entry_id}
+                          className="transition-colors duration-[var(--ui-motion-hover,160ms)] motion-reduce:transition-none hover:bg-surface-hover"
+                        >
+                          <td className="px-3 py-3">
+                            <div className="font-medium text-foreground">{item.display_name}</div>
+                            <div className="font-mono text-xs tabular-nums text-muted">
+                              {item.employee_code}
+                            </div>
+                          </td>
+                          <td className="px-3 py-3 font-mono text-xs tabular-nums">
+                            {item.national_id ?? "—"}
+                          </td>
+                          <td className="px-3 py-3">
+                            <div className="flex flex-wrap gap-1.5">
+                              {item.missing_documents.map((docType) => (
+                                <span
+                                  key={docType}
+                                  className="inline-flex rounded-full border border-status-warning-border bg-status-warning-bg px-2.5 py-0.5 text-xs font-medium text-status-warning-text"
+                                >
+                                  {MISSING_DOCUMENT_TYPE_LABELS[docType]}
+                                </span>
+                              ))}
+                            </div>
+                            <div className="mt-1 text-xs text-muted">
+                              Đã có {4 - item.missing_documents.length}/4 hồ sơ
+                            </div>
+                          </td>
+                          <td className="px-3 py-3">
+                            <div>{item.project_display}</div>
+                            <div className="text-xs text-muted">
+                              Vào làm:{" "}
+                              <span className="font-mono tabular-nums">{item.first_work_date}</span>
+                              {item.recruiter_display ? ` · Tuyển: ${item.recruiter_display}` : ""}
+                              {" · "}
+                              <span className="font-medium text-foreground">
+                                {item.employment_status === "ON"
+                                  ? "Đang làm việc"
+                                  : "Chưa xác nhận"}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="px-3 py-3">
+                            {item.can_upload ? (
+                              <button
+                                type="button"
+                                data-testid={`missing-documents-open-upload-${item.entry_id}`}
+                                onClick={() => openMissingDocumentItem(item)}
+                                className={buttonClasses({ variant: "secondary", size: "sm" })}
+                              >
+                                Bổ sung
+                              </button>
+                            ) : (
+                              <span
+                                data-testid={`missing-documents-readonly-${item.entry_id}`}
+                                className="inline-flex rounded-full border border-border bg-surface-muted px-2.5 py-1 text-xs text-muted"
+                              >
+                                Chỉ xem (Người tuyển)
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm text-muted">
+                  <span>
+                    Tổng số:{" "}
+                    <strong className="font-semibold tabular-nums text-foreground">
+                      {missingState.data.total_count}
+                    </strong>{" "}
+                    NLĐ · Trang{" "}
+                    <strong className="font-semibold tabular-nums text-foreground">
+                      {missingState.data.page}
+                    </strong>
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={missingState.data.page <= 1}
+                      onClick={() =>
+                        void loadMissingDocumentWorkers({
+                          page: Math.max(1, missingState.data.page - 1),
+                        })
+                      }
+                      className={buttonClass}
+                    >
+                      Trang trước
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!missingState.data.has_more}
+                      onClick={() =>
+                        void loadMissingDocumentWorkers({
+                          page: missingState.data.page + 1,
+                        })
+                      }
+                      className={buttonClass}
+                    >
+                      Trang sau
+                    </button>
+                  </div>
+                </div>
+              </Card>
+            )}
+          </>
+        )
+      ) : state.kind === "loading" ? (
         <Card>
           <p className="py-6 text-center text-sm text-muted" role="status">
             Đang tải danh sách hồ sơ cần Review thông tin NLĐ…
@@ -1355,6 +2131,185 @@ export function CccdReviewPanel() {
                   </div>
                 )}
               </div>
+          </div>
+        </FormDialog>
+      ) : null}
+
+      {selectedMissingItem ? (
+        <FormDialog
+          open={true}
+          onOpenChange={(open) => {
+            if (!open) closeMissingDocumentDialog();
+          }}
+          title={`Bổ sung hồ sơ thiếu · ${selectedMissingItem.display_name}`}
+          description={`Mã NV: ${selectedMissingItem.employee_code} · CCCD: ${selectedMissingItem.national_id ?? "—"} · Dự án: ${selectedMissingItem.project_display}`}
+        >
+          <div className="space-y-4 text-sm" data-testid="missing-documents-upload-dialog">
+            {missingActionError ? (
+              <Alert tone="error" title="Không thể thực hiện">
+                {missingActionError}
+              </Alert>
+            ) : null}
+
+            <div className="rounded-xl border border-border bg-surface p-3 text-xs text-muted">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                <div>
+                  Người tuyển:{" "}
+                  <strong className="text-foreground">
+                    {selectedMissingItem.recruiter_display || "—"}
+                  </strong>
+                </div>
+                <div>
+                  Ngày vào làm:{" "}
+                  <strong className="font-mono text-foreground">
+                    {selectedMissingItem.first_work_date}
+                  </strong>
+                </div>
+                <div>
+                  Trạng thái:{" "}
+                  <strong className="text-foreground">
+                    {selectedMissingItem.employment_status === "ON"
+                      ? "Đang làm việc (ON)"
+                      : "Chưa xác nhận (UNCONFIRMED)"}
+                  </strong>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {MISSING_DOCUMENT_TYPES.map((docType) => {
+                const isMissing = selectedMissingItem.missing_documents.includes(docType);
+                const existingDoc =
+                  selectedMissingItem.documents.find((d) => d.document_type === docType) ?? null;
+                const label = MISSING_DOCUMENT_TYPE_LABELS[docType];
+                const previewUrl = existingDoc ? previewUrls[existingDoc.document_id] : undefined;
+                const acceptTypes =
+                  docType === "WORKER_PORTRAIT"
+                    ? "image/jpeg,image/png"
+                    : "image/jpeg,image/png,application/pdf";
+                const canInlinePreview =
+                  existingDoc !== null &&
+                  docType !== "EMPLOYMENT_CONTRACT" &&
+                  (existingDoc.mime_type === "image/jpeg" || existingDoc.mime_type === "image/png");
+
+                return (
+                  <div
+                    key={docType}
+                    data-testid={`missing-documents-slot-${docType}`}
+                    className="rounded-lg border border-border bg-surface-muted/40 p-3 space-y-2"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-medium text-foreground">{label}</span>
+                      <span
+                        className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium ${
+                          isMissing
+                            ? "border-status-warning-border bg-status-warning-bg text-status-warning-text"
+                            : "border-status-success-border bg-status-success-bg text-status-success-text"
+                        }`}
+                      >
+                        {isMissing
+                          ? "Còn thiếu"
+                          : `Đã có (v${existingDoc?.document_version ?? 1})`}
+                      </span>
+                    </div>
+
+                    {existingDoc ? (
+                      <div className="text-xs text-muted">
+                        Định dạng: <span className="font-mono">{existingDoc.mime_type}</span> ·{" "}
+                        {Math.max(1, Math.round(existingDoc.size_bytes / 1024))} KB
+                      </div>
+                    ) : (
+                      <div className="text-xs text-muted">
+                        Chưa có tệp hợp lệ cho {label.toLowerCase()}.
+                      </div>
+                    )}
+
+                    {previewUrl ? (
+                      <img
+                        src={previewUrl}
+                        alt={`Ảnh ${label}`}
+                        className="max-h-48 w-full rounded border border-border bg-black/5 object-contain"
+                      />
+                    ) : null}
+
+                    <div className="flex flex-wrap items-center gap-2 pt-1">
+                      {existingDoc ? (
+                        canInlinePreview ? (
+                          <button
+                            type="button"
+                            disabled={previewLoadingId === existingDoc.document_id}
+                            onClick={() =>
+                              void loadMissingPreview(
+                                selectedMissingItem.entry_id,
+                                existingDoc.document_id,
+                                docType,
+                              )
+                            }
+                            className={buttonClass}
+                          >
+                            {previewLoadingId === existingDoc.document_id
+                              ? "Đang tải ảnh…"
+                              : previewUrl
+                                ? "Đã hiển thị ảnh"
+                                : "Xem ảnh"}
+                          </button>
+                        ) : (
+                          <a
+                            href={`/api/direct-entry/entries/${encodeURIComponent(selectedMissingItem.entry_id)}/documents/${encodeURIComponent(existingDoc.document_id)}/download`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className={buttonClass}
+                          >
+                            Tải / Xem tệp
+                          </a>
+                        )
+                      ) : null}
+
+                      {selectedMissingItem.can_upload ? (
+                        <label
+                          className={`${
+                            isMissing ? primaryButtonClass : buttonClass
+                          } cursor-pointer`}
+                        >
+                          <span>
+                            {uploadingMissingType === docType
+                              ? "Đang tải lên…"
+                              : isMissing
+                                ? "Bổ sung ngay"
+                                : "Tải bản thay thế"}
+                          </span>
+                          <input
+                            type="file"
+                            data-testid={`missing-documents-input-${docType}`}
+                            accept={acceptTypes}
+                            hidden
+                            disabled={uploadingMissingType !== null}
+                            onChange={(event) =>
+                              void handleUploadMissingDocumentFile(
+                                selectedMissingItem,
+                                docType,
+                                event,
+                              )
+                            }
+                          />
+                        </label>
+                      ) : null}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <button
+                type="button"
+                disabled={uploadingMissingType !== null}
+                onClick={closeMissingDocumentDialog}
+                className={buttonClass}
+              >
+                Đóng
+              </button>
+            </div>
           </div>
         </FormDialog>
       ) : null}

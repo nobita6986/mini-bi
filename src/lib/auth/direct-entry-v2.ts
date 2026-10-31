@@ -2,7 +2,7 @@ import { isRealCalendarDate } from "../analytics/identity/identity-shared.mjs";
 import type { TeamIdentity } from "../analytics/identity/contracts.ts";
 import type { ExplicitRecruiterLink } from "../contracts/direct-entry-v1.ts";
 
-export const DIRECT_ENTRY_AUTH_CONTRACT_VERSION = "direct-entry-auth/1.6" as const;
+export const DIRECT_ENTRY_AUTH_CONTRACT_VERSION = "direct-entry-auth/1.7" as const;
 
 export const CAPABILITIES = [
   "entry_create",
@@ -37,6 +37,7 @@ export const CAPABILITIES = [
   "vendor_finance_view",
   "vendor_finance_record",
   "duplicate_cccd_withdraw",
+  "worker_edit_history_view",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];

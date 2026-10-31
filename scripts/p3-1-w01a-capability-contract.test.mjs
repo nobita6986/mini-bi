@@ -2,8 +2,8 @@
  * P3.1-W01A - capability contract foundation (focused lane).
  *
  * Proves the append-only migration #67 (20261009030000_p3_1_w01a_capability_contract_foundation.sql)
- * keeps all stored grant tokens while the active direct-entry-auth/1.4 contract agrees on the
- * 19 non-retired capability tokens, that the
+ * keeps all stored grant tokens while the active direct-entry-auth contract agrees on the
+ * current non-retired capability tokens, that the
  * extension keeps every existing grant, that unknown tokens are still rejected, and that the two
  * new tokens carry the locked reason / expected version / scope-kind policy without opening
  * Direct Entry or full-Admin surfaces.
@@ -50,10 +50,12 @@ const F1_WORK_REPORT_TOKENS = [
 const F2_WORK_REPORT_TOKENS = ["report_review", "report_delegate"];
 const VFIN_TOKENS = ["vendor_finance_view", "vendor_finance_record"];
 const DUPLICATE_CCCD_TOKENS = ["duplicate_cccd_withdraw"];
+const WORKER_EDIT_HISTORY_MIGRATION = "20261031120000_worker_edit_history_admin.sql";
+const WORKER_EDIT_HISTORY_TOKENS = ["worker_edit_history_view"];
 const LEGACY_TOKEN_COUNT = 21;
 const RETIRED_TOKENS = ["pii_view", "pii_export", "payment_view", "payment_edit"];
-const TOKEN_COUNT = 32;
-const ACTIVE_TOKEN_COUNT = 28;
+const TOKEN_COUNT = 33;
+const ACTIVE_TOKEN_COUNT = 29;
 const UNKNOWN_TOKEN = "unknown_capability_probe";
 
 const AUTH_SUBJECT = "10000000-0000-4000-8000-00000000c001";
@@ -139,8 +141,8 @@ function resourceFor(kind) {
   };
 }
 
-test("the auth contract is versioned as direct-entry-auth/1.6 without retired capabilities", () => {
-  assert.equal(DIRECT_ENTRY_AUTH_CONTRACT_VERSION, "direct-entry-auth/1.6");
+test("the auth contract is versioned as direct-entry-auth/1.7 without retired capabilities", () => {
+  assert.equal(DIRECT_ENTRY_AUTH_CONTRACT_VERSION, "direct-entry-auth/1.7");
   assert.equal(CAPABILITIES.length, ACTIVE_TOKEN_COUNT);
   for (const token of RETIRED_TOKENS) assert.equal(CAPABILITIES.includes(token), false, token);
   for (const token of NEW_TOKENS) assert.ok(CAPABILITIES.includes(token), token);
@@ -148,6 +150,7 @@ test("the auth contract is versioned as direct-entry-auth/1.6 without retired ca
   for (const token of F2_WORK_REPORT_TOKENS) assert.ok(CAPABILITIES.includes(token), token);
   for (const token of VFIN_TOKENS) assert.ok(CAPABILITIES.includes(token), token);
   for (const token of DUPLICATE_CCCD_TOKENS) assert.ok(CAPABILITIES.includes(token), token);
+  for (const token of WORKER_EDIT_HISTORY_TOKENS) assert.ok(CAPABILITIES.includes(token), token);
 });
 
 test("database preserves legacy grant storage while active SQL and TypeScript agree", async () => {
@@ -169,6 +172,7 @@ test("database preserves legacy grant storage while active SQL and TypeScript ag
 test("migration 67 is append-only: the frozen foundation vocabulary is untouched", async () => {
   const names = await migrationNames();
   assert.ok(names.includes(NEW_MIGRATION), "migration #67 must exist");
+  assert.ok(names.includes(WORKER_EDIT_HISTORY_MIGRATION), "worker history capability migration must exist");
   assert.ok(NEW_MIGRATION > FOUNDATION_MIGRATION, "migration #67 must sort after the foundation");
 
   // No historical migration was edited to know about the new tokens. Migrations
@@ -177,6 +181,16 @@ test("migration 67 is append-only: the frozen foundation vocabulary is untouched
     if (name >= NEW_MIGRATION) continue;
     const sql = await readMigration(name);
     for (const token of NEW_TOKENS) {
+      assert.equal(sql.includes(token), false, token + " must not appear in " + name);
+    }
+  }
+
+  // The later worker-history capability belongs only to its own forward migration; it must not
+  // be retrofitted into the frozen #67 foundation or any intervening migration.
+  for (const name of names) {
+    if (name >= WORKER_EDIT_HISTORY_MIGRATION) continue;
+    const sql = await readMigration(name);
+    for (const token of WORKER_EDIT_HISTORY_TOKENS) {
       assert.equal(sql.includes(token), false, token + " must not appear in " + name);
     }
   }
@@ -192,7 +206,8 @@ test("migration 67 is append-only: the frozen foundation vocabulary is untouched
           !F1_WORK_REPORT_TOKENS.includes(token) &&
           !F2_WORK_REPORT_TOKENS.includes(token) &&
           !VFIN_TOKENS.includes(token) &&
-          !DUPLICATE_CCCD_TOKENS.includes(token),
+          !DUPLICATE_CCCD_TOKENS.includes(token) &&
+          !WORKER_EDIT_HISTORY_TOKENS.includes(token),
       )
       .concat(RETIRED_TOKENS)
       .sort(),
@@ -203,7 +218,7 @@ test("migration 67 is append-only: the frozen foundation vocabulary is untouched
   assert.deepEqual(
     schemaTokens.filter((token) => !foundationTokens.includes(token)).sort(),
     [...NEW_TOKENS, ...F1_WORK_REPORT_TOKENS, ...F2_WORK_REPORT_TOKENS, ...VFIN_TOKENS,
-      ...DUPLICATE_CCCD_TOKENS].sort(),
+      ...DUPLICATE_CCCD_TOKENS, ...WORKER_EDIT_HISTORY_TOKENS].sort(),
   );
   await db.close();
 });

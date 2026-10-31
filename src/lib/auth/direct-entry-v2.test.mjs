@@ -20,10 +20,11 @@ const timestamp = fixture.as_of;
 const resourceRef = "00000000-0000-4000-8000-00000000a001";
 
 test("authorization hardening is versioned", () => {
-  assert.equal(DIRECT_ENTRY_AUTH_CONTRACT_VERSION, "direct-entry-auth/1.6");
+  assert.equal(DIRECT_ENTRY_AUTH_CONTRACT_VERSION, "direct-entry-auth/1.7");
   const retired = ["pii_view", "pii_export", "payment_view", "payment_edit"];
   assert.equal(CAPABILITIES.some((capability) => retired.includes(capability)), false);
   assert.ok(CAPABILITIES.includes("duplicate_cccd_withdraw"));
+  assert.ok(CAPABILITIES.includes("worker_edit_history_view"));
 });
 
 function repositoryFor(person) {
