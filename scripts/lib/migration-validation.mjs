@@ -286,6 +286,15 @@ export const HF_DUPLICATE_CCCD_RESIGNED_WITHDRAW_AND_WORKER_FILTERS_RPC_SIGNATUR
   "public.direct_entry_list_workers(uuid, uuid, text, text, uuid, text, text, integer, text, date, date, text)",
   "public.direct_entry_export_workers(uuid, uuid, text, text, uuid, text, text, text, date, date, text)",
 ]);
+export const WORKER_EDIT_HISTORY_ADMIN_MIGRATION_NAME =
+  "20261031120000_worker_edit_history_admin.sql";
+export const MISSING_DOCUMENT_WORKERS_REVIEW_RPC_SIGNATURE =
+  "public.direct_entry_list_missing_document_workers(uuid, uuid, text, text, text, text, integer, integer)";
+export const WORKER_EDIT_HISTORY_ADMIN_RPC_SIGNATURES = Object.freeze([
+  "public.worker_edit_history_search(uuid, uuid, text, text, date, date, text, text, text, integer, text)",
+  "public.worker_edit_history_get_revision(uuid, uuid, uuid, uuid)",
+  MISSING_DOCUMENT_WORKERS_REVIEW_RPC_SIGNATURE,
+]);
 export const F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES = Object.freeze([
   "public.work_report_list_templates(uuid, uuid)",
   "public.work_report_get_template(uuid, uuid, uuid)",
@@ -304,7 +313,7 @@ export const F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES = Object.freeze([
   "public.work_report_submit(uuid, uuid, uuid, jsonb, integer, text)",
 ]);
 export const S0_T1_C_TARGET_ROUTINE_PATTERN =
-  "^(direct_entry_|work_report_|attendance_|org_department_|vendor_finance_|leave_management_|salary_advance_|ai_report_|ai_provider_config_|recruitment_|(expand|replace|reject|upsert)_daily_recruitment|record_recruitment_source_failure_|set_updated_at$)";
+  "^(direct_entry_|worker_edit_history_|work_report_|attendance_|org_department_|vendor_finance_|leave_management_|salary_advance_|ai_report_|ai_provider_config_|recruitment_|(expand|replace|reject|upsert)_daily_recruitment|record_recruitment_source_failure_|set_updated_at$)";
 
 export function migrationChecksum(text) {
   // Git may materialize SQL files as CRLF on Windows even though the same
@@ -525,7 +534,8 @@ export async function verifyS0T1CHistoricalCompatibility(
     hfSalaryAdvanceActorDisplayNameApplied = false,
     hfSalaryAdvanceVendorExclusionAndWorkerHistoryApplied = false,
     hfSalaryAdvancePmWorkerHistoryApplied = false,
-    hfDuplicateCccdResignedWithdrawAndWorkerFiltersApplied = false } = {},
+    hfDuplicateCccdResignedWithdrawAndWorkerFiltersApplied = false,
+    workerEditHistoryAdminApplied = false } = {},
 ) {
   const baseAllowlist = extractS0T1CAllowlistSignatures(migrationSql);
   if (baseAllowlist.length === 0) {
@@ -605,6 +615,7 @@ export async function verifyS0T1CHistoricalCompatibility(
     ...(hfDuplicateCccdResignedWithdrawAndWorkerFiltersApplied
       ? HF_DUPLICATE_CCCD_RESIGNED_WITHDRAW_AND_WORKER_FILTERS_RPC_SIGNATURES
       : []),
+    ...(workerEditHistoryAdminApplied ? WORKER_EDIT_HISTORY_ADMIN_RPC_SIGNATURES : []),
   ];
 
   const { rows } = await client.query(
@@ -663,7 +674,7 @@ export async function verifyS0T1CHistoricalCompatibility(
           join pg_catalog.pg_namespace n on n.oid = p.pronamespace
          where n.nspname = 'public'
            and p.prokind in ('f', 'p')
-           and p.proname ~ '^(direct_entry_|attendance_|org_department_|vendor_finance_|leave_management_|salary_advance_)'
+           and p.proname ~ '^(direct_entry_|worker_edit_history_|attendance_|org_department_|vendor_finance_|leave_management_|salary_advance_)'
            and p.prosecdef
            and not coalesce(
              'search_path=pg_catalog, public' = any(p.proconfig)
@@ -855,6 +866,8 @@ export async function verifyAppliedMigrationChecksum(
           appliedMap.has(HF_SALARY_ADVANCE_PM_WORKER_HISTORY_MIGRATION_NAME),
         hfDuplicateCccdResignedWithdrawAndWorkerFiltersApplied:
           appliedMap.has(HF_DUPLICATE_CCCD_RESIGNED_WITHDRAW_AND_WORKER_FILTERS_MIGRATION_NAME),
+        workerEditHistoryAdminApplied:
+          appliedMap.has(WORKER_EDIT_HISTORY_ADMIN_MIGRATION_NAME),
       },
     );
     if (postconditions.ok) {

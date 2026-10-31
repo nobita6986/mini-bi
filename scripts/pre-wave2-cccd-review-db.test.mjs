@@ -773,3 +773,294 @@ test("PRE-W2-HF migration aligns owners and keeps direct_entry_create_full_profi
   assert.equal(replayedCall.rows[0].data.replayed, true);
 });
 
+test("Hồ sơ thiếu & Lịch sử chỉnh sửa NLĐ: enforces Recruiter view-only, QLDA cross-creator upload in managed project, 3-Admin allowlist, and complete revision history without storage_key", async () => {
+  assert.ok(
+    migrations.migrationNames.includes("20261031120000_worker_edit_history_admin.sql"),
+    "migration inventory includes 20261031120000_worker_edit_history_admin.sql",
+  );
+
+  // 1. Verify Forced RLS on direct_entry_worker_revision_snapshots and service_role-only RPC ACLs
+  const { rows: snapMeta } = await db.query(
+    `select c.relrowsecurity, c.relforcerowsecurity,
+            (select count(*)::int from pg_catalog.pg_policy pol where pol.polrelid = c.oid) as policy_count
+       from pg_catalog.pg_class c
+      where c.oid = 'public.direct_entry_worker_revision_snapshots'::pg_catalog.regclass`,
+  );
+  assert.deepEqual(snapMeta[0], {
+    relrowsecurity: true,
+    relforcerowsecurity: true,
+    policy_count: 0,
+  });
+
+  // 2. Seed actors:
+  // - recruiterOnly: linked to RECRUITER_A, NOT a QLDA, has document_upload grant (to prove server still blocks Recruiter upload on non-created entry!)
+  // - allowlistedAdmin: lienvu@hrpartner.vn with worker_edit_history_view + entry_admin + document_upload @ all
+  // - nonAllowlistedAdmin: otheradmin@hrpartner.vn with entry_admin @ all (NOT in 3-Admin allowlist, NOT QLDA, NOT recruiter)
+  const recruiterOnly = {
+    auth_subject: "11000000-0000-4000-8000-000000000091",
+    app_user_id: "21000000-0000-4000-8000-000000000091",
+  };
+  const allowlistedAdmin = {
+    auth_subject: "11000000-0000-4000-8000-000000000092",
+    app_user_id: "21000000-0000-4000-8000-000000000092",
+  };
+  const nonAllowlistedAdmin = {
+    auth_subject: "11000000-0000-4000-8000-000000000093",
+    app_user_id: "21000000-0000-4000-8000-000000000093",
+  };
+
+  await db.query(
+    "insert into auth.users(id, email) values ($1, 'recruiter.a@hrpartner.vn'), ($2, 'lienvu@hrpartner.vn'), ($3, 'otheradmin@hrpartner.vn')",
+    [recruiterOnly.auth_subject, allowlistedAdmin.auth_subject, nonAllowlistedAdmin.auth_subject],
+  );
+  await db.query(
+    "insert into public.direct_entry_app_users(app_user_id, auth_subject, enabled, display_name) values " +
+      "($1, $2, true, 'Người Tuyển A'), ($3, $4, true, 'Liên Vũ'), ($5, $6, true, 'Admin Khác')",
+    [
+      recruiterOnly.app_user_id,
+      recruiterOnly.auth_subject,
+      allowlistedAdmin.app_user_id,
+      allowlistedAdmin.auth_subject,
+      nonAllowlistedAdmin.app_user_id,
+      nonAllowlistedAdmin.auth_subject,
+    ],
+  );
+
+  // Link recruiterOnly to RECRUITER_A
+  await db.query(
+    "insert into public.direct_entry_app_user_recruiter_links(app_user_id, recruiter_id, verified, valid_from, is_current) " +
+      "values ($1, $2, true, '2020-01-01', true)",
+    [recruiterOnly.app_user_id, recruiterId],
+  );
+  await db.query(
+    "insert into public.direct_entry_capability_grants(app_user_id, capability, valid_from, is_current) " +
+      "values ($1, 'entry_own', '2020-01-01', true), ($1, 'document_upload', '2020-01-01', true)",
+    [recruiterOnly.app_user_id],
+  );
+  await db.query(
+    "insert into public.direct_entry_scope_grants(app_user_id, scope_kind, valid_from, is_current) " +
+      "values ($1, 'own', '2020-01-01', true)",
+    [recruiterOnly.app_user_id],
+  );
+
+  // Grant allowlistedAdmin full admin + worker_edit_history_view + document_upload @ all
+  await db.query(
+    "insert into public.direct_entry_capability_grants(app_user_id, capability, valid_from, is_current) values " +
+      "($1, 'entry_admin', '2020-01-01', true), " +
+      "($1, 'recruiter_master_manage', '2020-01-01', true), " +
+      "($1, 'team_master_manage', '2020-01-01', true), " +
+      "($1, 'worker_edit_history_view', '2020-01-01', true), " +
+      "($1, 'document_upload', '2020-01-01', true)",
+    [allowlistedAdmin.app_user_id],
+  );
+  await db.query(
+    "insert into public.direct_entry_scope_grants(app_user_id, scope_kind, valid_from, is_current) " +
+      "values ($1, 'all', '2020-01-01', true)",
+    [allowlistedAdmin.app_user_id],
+  );
+
+  const allowlistOnlyDirectEdit = await db.query(
+    "select public.direct_entry_resolve_direct_edit_authority(" +
+      "$1::uuid, $2::uuid, $3::uuid, null, $4::text, false, null) as authority",
+    [allowlistedAdmin.auth_subject, allowlistedAdmin.app_user_id, recruiterId, projectId],
+  );
+  assert.equal(
+    allowlistOnlyDirectEdit.rows[0].authority,
+    null,
+    "History allowlist must not grant general direct-edit authority",
+  );
+  const fullAdminDirectEdit = await db.query(
+    "select public.direct_entry_resolve_direct_edit_authority(" +
+      "$1::uuid, $2::uuid, $3::uuid, null, $4::text, true, null) as authority",
+    [allowlistedAdmin.auth_subject, allowlistedAdmin.app_user_id, recruiterId, projectId],
+  );
+  assert.equal(fullAdminDirectEdit.rows[0].authority, "admin_all");
+
+  // Grant nonAllowlistedAdmin entry_admin + worker_edit_history_view @ all (still blocked because email is not in 3-Admin allowlist!)
+  await db.query(
+    "insert into public.direct_entry_capability_grants(app_user_id, capability, valid_from, is_current) values " +
+      "($1, 'entry_admin', '2020-01-01', true), " +
+      "($1, 'recruiter_master_manage', '2020-01-01', true), " +
+      "($1, 'team_master_manage', '2020-01-01', true), " +
+      "($1, 'worker_edit_history_view', '2020-01-01', true)",
+    [nonAllowlistedAdmin.app_user_id],
+  );
+  await db.query(
+    "insert into public.direct_entry_scope_grants(app_user_id, scope_kind, valid_from, is_current) " +
+      "values ($1, 'all', '2020-01-01', true)",
+    [nonAllowlistedAdmin.app_user_id],
+  );
+
+  // 3. Create a worker in PROJECT_ID (managed by ACTORS.owner QLDA), entered by ACTORS.otherOwner (a DIFFERENT creator!), recruited by RECRUITER_A
+  const crossCreatorBatch = await createBatchV2(
+    ACTORS.otherOwner,
+    "worker-profile/1.2",
+    [
+      {
+        project_id: projectId,
+        first_work_date: "2026-04-12",
+        recruiter_id: recruiterId,
+        provider_type: "hrp",
+        labor_type: "TEMPORARY",
+        display_name: "Phạm Thị Thiếu Hồ Sơ",
+        worker_details: {
+          gender: { state: "provided", value: "FEMALE" },
+          date_of_birth: { state: "provided", value: "1998-05-20" },
+          national_id: { state: "provided", value: "079098001234" },
+          national_id_issued_at: { state: "omitted" },
+          national_id_issued_place: { state: "omitted" },
+          address: { state: "provided", value: "Quận 7, TP.HCM" },
+          phone: { state: "provided", value: "0912345678" },
+        },
+        general_note: { state: "omitted" },
+        payment: null,
+        employment: { initial_status: "UNCONFIRMED" },
+      },
+    ],
+    "eb000000-0000-4000-8000-000000000001",
+  );
+  const targetEntryId = crossCreatorBatch.entry_ids[0];
+
+  // 4. Recruiter (recruiterOnly):
+  // - Sees the worker in Hồ sơ thiếu with scope_kind = 'recruited' and can_upload = false
+  // - Cannot upload documents (server rejects with 42501)
+  const recruiterMissingRes = await db.query(
+    "select public.direct_entry_list_missing_document_workers($1::uuid, $2::uuid, 'ALL', $3::text, 'UNCONFIRMED', '079098001234', 1, 25) as data",
+    [recruiterOnly.auth_subject, recruiterOnly.app_user_id, projectId],
+  );
+  const recruiterMissing = recruiterMissingRes.rows[0].data;
+  assert.equal(recruiterMissing.scope_kind, "recruited");
+  assert.equal(recruiterMissing.can_upload, false);
+  assert.equal(recruiterMissing.items.length, 1);
+  assert.equal(recruiterMissing.items[0].entry_id, targetEntryId);
+  assert.equal(recruiterMissing.items[0].can_upload, false);
+  assert.deepEqual(recruiterMissing.items[0].missing_documents, [
+    "WORKER_PORTRAIT",
+    "CCCD_FRONT",
+    "CCCD_BACK",
+    "EMPLOYMENT_CONTRACT",
+  ]);
+
+  await assert.rejects(
+    db.query(
+      "select public.direct_entry_reserve_document_direct_upload($1::uuid, $2::uuid, $3::uuid, 1, 'WORKER_PORTRAIT', 'recruiter-upload-attempt', 512, 'image/jpeg', 'Bổ sung hồ sơ còn thiếu từ màn Review thông tin NLĐ')",
+      [recruiterOnly.auth_subject, recruiterOnly.app_user_id, targetEntryId],
+    ),
+    (err) => err.code === "42501",
+    "Recruiter must be rejected by server when attempting to upload documents",
+  );
+
+  // 5. Other roles not in (Recruiter, QLDA, 3-Admin allowlist) are rejected from Hồ sơ thiếu
+  await assert.rejects(
+    db.query(
+      "select public.direct_entry_list_missing_document_workers($1::uuid, $2::uuid, 'ALL', null, 'ALL', null, 1, 25)",
+      [nonAllowlistedAdmin.auth_subject, nonAllowlistedAdmin.app_user_id],
+    ),
+    (err) => err.code === "42501",
+    "Non-allowlisted admin without QLDA/recruiter link must be denied missing documents list",
+  );
+
+  // 6. QLDA (ACTORS.owner, assigned project manager of projectId):
+  // - Sees the worker in Hồ sơ thiếu with scope_kind = 'project' and can_upload = true
+  // - CAN upload all 4 document types even though the worker was entered by ACTORS.otherOwner!
+  const qldaMissingBeforeRes = await db.query(
+    "select public.direct_entry_list_missing_document_workers($1::uuid, $2::uuid, 'ALL', $3::text, 'UNCONFIRMED', '079098001234', 1, 25) as data",
+    [ACTORS.owner.auth_subject, ACTORS.owner.app_user_id, projectId],
+  );
+  const qldaMissingBefore = qldaMissingBeforeRes.rows[0].data;
+  assert.equal(qldaMissingBefore.scope_kind, "project");
+  assert.equal(qldaMissingBefore.can_upload, true);
+  assert.equal(qldaMissingBefore.items.length, 1);
+  assert.equal(qldaMissingBefore.items[0].entry_id, targetEntryId);
+  assert.equal(qldaMissingBefore.items[0].can_upload, true);
+
+  let currentVersion = qldaMissingBefore.items[0].entry_version;
+  for (const [idx, docType] of [
+    "WORKER_PORTRAIT",
+    "CCCD_FRONT",
+    "CCCD_BACK",
+    "EMPLOYMENT_CONTRACT",
+  ].entries()) {
+    const up = await reserveAndFinalizeCccd(
+      targetEntryId,
+      currentVersion,
+      docType,
+      `qlda-supp-${idx}-${docType}`,
+    );
+    currentVersion = up.entryVersion;
+  }
+
+  // Once all 4 documents are uploaded and finalized, the worker disappears from Hồ sơ thiếu
+  const qldaMissingAfterRes = await db.query(
+    "select public.direct_entry_list_missing_document_workers($1::uuid, $2::uuid, 'ALL', $3::text, 'UNCONFIRMED', '079098001234', 1, 25) as data",
+    [ACTORS.owner.auth_subject, ACTORS.owner.app_user_id, projectId],
+  );
+  assert.equal(qldaMissingAfterRes.rows[0].data.items.length, 0);
+
+  // 7. 3-Admin allowlist (allowlistedAdmin = lienvu@hrpartner.vn):
+  // - Can view Hồ sơ thiếu with scope_kind = 'all' and can_upload = true
+  const adminMissingRes = await db.query(
+    "select public.direct_entry_list_missing_document_workers($1::uuid, $2::uuid, 'ALL', null, 'ALL', null, 1, 25) as data",
+    [allowlistedAdmin.auth_subject, allowlistedAdmin.app_user_id],
+  );
+  assert.equal(adminMissingRes.rows[0].data.scope_kind, "all");
+  assert.equal(adminMissingRes.rows[0].data.can_upload, true);
+
+  // 8. Lịch sử chỉnh sửa NLĐ:
+  // - Denied to nonAllowlistedAdmin, QLDA, and Recruiter
+  for (const deniedActor of [nonAllowlistedAdmin, ACTORS.owner, recruiterOnly]) {
+    await assert.rejects(
+      db.query(
+        "select public.worker_edit_history_search($1::uuid, $2::uuid, '079098001234', null, null, null, null, null, null, 50, null)",
+        [deniedActor.auth_subject, deniedActor.app_user_id],
+      ),
+      (err) => err.code === "42501",
+    );
+  }
+
+  // - Allowed to allowlistedAdmin (lienvu@hrpartner.vn): returns NEW_ENTRY and DOCUMENT_CHANGE revisions
+  const historySearchRes = await db.query(
+    "select public.worker_edit_history_search($1::uuid, $2::uuid, '079098001234', null, null, null, null, null, null, 50, null) as data",
+    [allowlistedAdmin.auth_subject, allowlistedAdmin.app_user_id],
+  );
+  const historySearch = historySearchRes.rows[0].data;
+  assert.ok(historySearch.rows.length >= 5, "Expected initial creation + 4 supplementary document revisions");
+  assert.ok(historySearch.rows.some((r) => r.action_group === "NEW_ENTRY"));
+  assert.ok(historySearch.rows.some((r) => r.action_group === "DOCUMENT_CHANGE"));
+  assert.ok(historySearch.rows.every((r) => r.national_id === "079098001234"));
+  assert.ok(historySearch.rows.every((r) => r.snapshot_state === "COMPLETE"));
+
+  const latestRevisionId = historySearch.rows[0].revision_id;
+  const historyDetailRes = await db.query(
+    "select public.worker_edit_history_get_revision($1::uuid, $2::uuid, $3::uuid, $4::uuid) as data",
+    [allowlistedAdmin.auth_subject, allowlistedAdmin.app_user_id, targetEntryId, latestRevisionId],
+  );
+  const historyDetail = historyDetailRes.rows[0].data;
+  assert.equal(historyDetail.entry_id, targetEntryId);
+  assert.equal(historyDetail.snapshot_state, "COMPLETE");
+  assert.equal(historyDetail.after_snapshot.documents.length, 4);
+  assert.equal(JSON.stringify(historyDetail).includes("storage_key"), false);
+
+  const legacyRevision = await db.query(
+    "insert into public.direct_entry_revisions(entry_id, version, actor_user_id, reason_id, before_snapshot, after_snapshot, created_at) " +
+      "select $1, 99, $2, r.reason_id, " +
+      "jsonb_build_object('worker_details', jsonb_build_object(" +
+      "'display_name', 'Phạm Thị Tên Cũ', 'national_id', jsonb_build_object('state', 'provided', 'value', '079098009876'))), " +
+      "public.direct_entry_entry_snapshot($1), clock_timestamp() - interval '10 days' " +
+      "from public.direct_entry_revisions r where r.entry_id = $1 order by r.version desc limit 1 " +
+      "returning revision_id",
+    [targetEntryId, allowlistedAdmin.app_user_id],
+  );
+  assert.equal(legacyRevision.rowCount, 1);
+  const legacyHistory = await db.query(
+    "select public.worker_edit_history_search($1::uuid, $2::uuid, '079098009876', null, null, null, null, null, null, 50, null) as data",
+    [allowlistedAdmin.auth_subject, allowlistedAdmin.app_user_id],
+  );
+  assert.ok(
+    legacyHistory.rows[0].data.rows.some(
+      (row) => row.revision_id === legacyRevision.rows[0].revision_id && row.snapshot_state === "LEGACY_LIMITED",
+    ),
+    "Legacy revisions should remain searchable by their recorded before/after identity values",
+  );
+});
+

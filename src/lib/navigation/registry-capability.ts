@@ -80,6 +80,11 @@ export const adminSecurityNavPredicate = adminAuthorityNavPredicate;
 export const adminAreaNavPredicate: NavCapabilityPredicate = (actor) =>
   catalogOperatorNavPredicate(actor) || adminSecurityNavPredicate(actor);
 
+/** The company-wide worker edit history is a separate, explicitly granted authority. */
+export const workerEditHistoryNavPredicate: NavCapabilityPredicate = (actor) =>
+  actor.capabilities.includes("worker_edit_history_view") &&
+  actor.scopes.some((scope) => scope.kind === "all");
+
 /**
  * Canonical BoD executive report reader authority (requires effective `all` scope):
  * - `entry_privileged_edit` (Direct Entry / P3.1 BoD executive capability), OR
@@ -100,9 +105,9 @@ export const attendanceReportNavPredicate: NavCapabilityPredicate = (actor) => {
   );
 };
 
-/** Top-level Admin panel shell admits catalog operators, Full Admin, or Attendance Report readers (BoD). */
+/** Top-level Admin panel shell admits catalog operators, Full Admin, Attendance Report readers (BoD), or Worker Edit History readers. */
 export const adminPanelNavPredicate: NavCapabilityPredicate = (actor) =>
-  adminAreaNavPredicate(actor) || attendanceReportNavPredicate(actor);
+  adminAreaNavPredicate(actor) || attendanceReportNavPredicate(actor) || workerEditHistoryNavPredicate(actor);
 
 /**
  * P2.5-W06A-R1: Project Operations authority chinh xac theo DB W02

@@ -13,15 +13,30 @@ import { buildFormProfileValidation } from "./form-profile-validation.ts";
 import { buildSpreadsheetValidation } from "./direct-entry-grid-validation.ts";
 import { defaultCells } from "./spreadsheet-row-model.ts";
 import {
+  buildMissingDocumentWorkersQuery,
   isValidReviewEntryId,
   parseCccdReviewListQuery,
   parseCccdReviewResolveRequest,
+  parseMissingDocumentWorkersQuery,
+  projectMissingDocumentWorkersResponse,
 } from "./cccd-review-contract.ts";
 import { createCccdReviewRepository } from "./cccd-review-repository.ts";
 import {
   getDirectEntryCccdReviewQueue,
+  getDirectEntryMissingDocumentWorkers,
   postDirectEntryCccdReviewResolution,
 } from "./cccd-review-api.ts";
+import {
+  parseWorkerEditHistorySearchQuery,
+  projectWorkerEditHistoryRevision,
+  projectWorkerEditHistorySearch,
+} from "../admin/worker-edit-history-contract.ts";
+import { createWorkerEditHistoryRepository } from "../admin/worker-edit-history-repository.ts";
+import {
+  getWorkerEditHistory,
+  getWorkerEditHistoryRevision,
+} from "../admin/worker-edit-history-api.ts";
+import { decideWorkerEditHistoryPageAccess } from "../auth/direct-entry-page-access.ts";
 
 const ENTRY_ID = "11111111-1111-4111-8111-111111111111";
 const DOC_FRONT_ID = "22222222-2222-4222-8222-222222222222";
@@ -543,4 +558,412 @@ test("UI source guards: Form mode orders CCCD (required) before Họ và tên (o
   const reviewTabIdx = tabsSrc.indexOf('"cccd-review"');
   const dupTabIdx = tabsSrc.indexOf('"duplicate-cccd"');
   assert.ok(reviewTabIdx > 0 && dupTabIdx > 0 && reviewTabIdx < dupTabIdx, "Review thông tin NLĐ tab must appear immediately before Báo cáo CCCD trùng");
+  assert.doesNotMatch(tabsSrc, /"missing-documents"/, "Must not add a separate top-level Dashboard tab for Hồ sơ thiếu");
+
+  // Mode tabs inside Review thông tin NLĐ
+  assert.match(panelSrc, /review-mode-tab-CCCD_RECONCILIATION/);
+  assert.match(panelSrc, /review-mode-tab-MISSING_DOCUMENTS/);
+  assert.match(panelSrc, /Đối chiếu CCCD/);
+  assert.match(panelSrc, /Hồ sơ thiếu/);
+  // Conditional load only when clicking Tải danh sách
+  assert.match(panelSrc, /missing-documents-load-submit/);
+  assert.match(panelSrc, /hasMissingDocumentWorkersFilter/);
+  assert.match(panelSrc, /missingState\.kind === "idle"/);
+  // Role-aware action rendering (can_upload vs read-only Recruiter badge)
+  assert.match(panelSrc, /missing-documents-open-upload-/);
+  assert.match(panelSrc, /missing-documents-readonly-/);
+  assert.match(panelSrc, /Chỉ xem \(Người tuyển\)/);
+  // Inline upload dialog supporting all 4 document types
+  assert.match(panelSrc, /missing-documents-slot-/);
+  assert.match(panelSrc, /missing-documents-input-/);
+  assert.match(panelSrc, /WORKER_PORTRAIT/);
+  assert.match(panelSrc, /EMPLOYMENT_CONTRACT/);
+});
+
+test("Hồ sơ thiếu contract & API: parses filters, projects missing document workers, and enforces server-side access", async () => {
+  const defaultMissingQuery = parseMissingDocumentWorkersQuery(new URLSearchParams());
+  assert.deepEqual(defaultMissingQuery, {
+    ok: false,
+    code: "MISSING_DOCUMENTS_FILTER_REQUIRED",
+  });
+  assert.equal(
+    parseMissingDocumentWorkersQuery(new URLSearchParams("employment_status=ON")).ok,
+    true,
+    "A status-only filter is sufficient to load results",
+  );
+
+  const filteredQuery = parseMissingDocumentWorkersQuery(
+    new URLSearchParams(
+      buildMissingDocumentWorkersQuery({
+        missing_type: "WORKER_PORTRAIT",
+        employment_status: "UNCONFIRMED",
+        project_id: "proj_alpha",
+        q: "079095008811",
+        page: 2,
+        page_size: 50,
+      }),
+    ),
+  );
+  assert.deepEqual(filteredQuery, {
+    ok: true,
+    value: {
+      missing_type: "WORKER_PORTRAIT",
+      employment_status: "UNCONFIRMED",
+      project_id: "proj_alpha",
+      search: "079095008811",
+      page: 2,
+      page_size: 50,
+    },
+  });
+
+  assert.deepEqual(
+    parseMissingDocumentWorkersQuery(new URLSearchParams("missing_type=INVALID")),
+    { ok: false, code: "MISSING_DOCUMENTS_FILTER_INVALID" },
+  );
+  assert.deepEqual(
+    parseMissingDocumentWorkersQuery(
+      new URLSearchParams("missing_type=ALL&employment_status=ALL"),
+    ),
+    { ok: false, code: "MISSING_DOCUMENTS_FILTER_REQUIRED" },
+  );
+
+  let unfilteredSessionCalls = 0;
+  let unfilteredRepositoryCalls = 0;
+  const unfilteredRes = await getDirectEntryMissingDocumentWorkers(
+    new Request("https://app.example/api/direct-entry/cccd-review/missing-documents"),
+    "true",
+    {
+      resolveSession: async () => {
+        unfilteredSessionCalls += 1;
+        return {
+          actor: { ok: false, reason: "UNAUTHENTICATED" },
+          response_headers: {},
+        };
+      },
+      reviewRepository: createCccdReviewRepository(async () => {
+        unfilteredRepositoryCalls += 1;
+        return { data: null, error: null };
+      }),
+    },
+  );
+  assert.equal(unfilteredRes.status, 400);
+  assert.equal((await unfilteredRes.json()).code, "MISSING_DOCUMENTS_FILTER_REQUIRED");
+  assert.equal(unfilteredSessionCalls, 0);
+  assert.equal(unfilteredRepositoryCalls, 0);
+
+  const sqlMissingPayload = {
+    scope_kind: "project",
+    can_upload: true,
+    filter_missing_type: "ALL",
+    filter_employment_status: "ON",
+    filter_project_id: null,
+    filter_search: null,
+    page: 1,
+    page_size: 25,
+    total_count: 1,
+    has_more: false,
+    summary: {
+      total_workers: 1,
+      missing_worker_portrait: 1,
+      missing_cccd_front: 0,
+      missing_cccd_back: 1,
+      missing_employment_contract: 1,
+    },
+    project_options: [
+      {
+        project_id: "proj_alpha",
+        project_display: "Dự Án Alpha",
+      },
+    ],
+    items: [
+      {
+        entry_id: ENTRY_ID,
+        entry_version: 3,
+        employee_code: "hrp-2026-000101",
+        display_name: "Lê Thị Hồng Nhung",
+        national_id: "079095008811",
+        project_id: "proj_alpha",
+        project_display: "Dự Án Alpha",
+        recruiter_id: RECRUITER_ID,
+        recruiter_display: "Nguyễn Tuyển Dụng",
+        first_work_date: "2026-04-10",
+        employment_status: "ON",
+        created_by_user_id: USER_ID,
+        created_by_display: "QLDA Khác",
+        missing_documents: ["WORKER_PORTRAIT", "CCCD_BACK", "EMPLOYMENT_CONTRACT"],
+        can_upload: true,
+        documents: [
+          {
+            document_id: DOC_FRONT_ID,
+            document_type: "CCCD_FRONT",
+            document_version: 1,
+            mime_type: "image/jpeg",
+            size_bytes: 1024,
+            updated_at: "2026-04-10T08:00:00.000Z",
+          },
+        ],
+      },
+    ],
+  };
+
+  const projected = projectMissingDocumentWorkersResponse(sqlMissingPayload);
+  assert.ok(projected);
+  assert.equal(projected.scope_kind, "project");
+  assert.equal(projected.can_upload, true);
+  assert.equal(projected.items.length, 1);
+  assert.equal(projected.items[0].national_id, "079095008811");
+  assert.deepEqual(projected.items[0].missing_documents, [
+    "WORKER_PORTRAIT",
+    "CCCD_BACK",
+    "EMPLOYMENT_CONTRACT",
+  ]);
+  assert.equal(projected.items[0].documents[0]?.document_id, DOC_FRONT_ID);
+
+  const reviewRepository = createCccdReviewRepository(async (name) => {
+    if (name === "direct_entry_list_missing_document_workers") {
+      return { data: sqlMissingPayload, error: null };
+    }
+    return { data: null, error: { code: "P0002" } };
+  });
+
+  const okRes = await getDirectEntryMissingDocumentWorkers(
+    new Request("https://app.example/api/direct-entry/cccd-review/missing-documents?employment_status=ON"),
+    "true",
+    {
+      resolveSession: async () => ({
+        actor: {
+          ok: true,
+          actor: {
+            auth_subject: AUTH_SUB,
+            app_user_id: USER_ID,
+            capabilities: ["entry_create"],
+          },
+        },
+      }),
+      reviewRepository,
+    },
+  );
+  assert.equal(okRes.status, 200);
+  const okBody = await okRes.json();
+  assert.equal(okBody.ok, true);
+  assert.equal(okBody.scope_kind, "project");
+  assert.equal(okBody.can_upload, true);
+  assert.equal(okBody.items[0].national_id, "079095008811");
+
+  const deniedRepo = createCccdReviewRepository(async () => ({
+    data: null,
+    error: { code: "42501", message: "MISSING_DOCUMENTS_DENIED" },
+  }));
+  const deniedRes = await getDirectEntryMissingDocumentWorkers(
+    new Request("https://app.example/api/direct-entry/cccd-review/missing-documents?employment_status=ON"),
+    "true",
+    {
+      resolveSession: async () => ({
+        actor: {
+          ok: true,
+          actor: {
+            auth_subject: AUTH_SUB,
+            app_user_id: USER_ID,
+            capabilities: ["entry_create"],
+          },
+        },
+      }),
+      reviewRepository: deniedRepo,
+    },
+  );
+  assert.equal(deniedRes.status, 403);
+});
+
+test("Lịch sử chỉnh sửa NLĐ contract & API: enforces 3-Admin capability gate, requires filters, and rejects storage_key leaks", async () => {
+  // 1. Page & API gate only admits actor with worker_edit_history_view @ all
+  assert.equal(
+    decideWorkerEditHistoryPageAccess({
+      actor: {
+        ok: true,
+        actor: {
+          auth_subject: AUTH_SUB,
+          app_user_id: USER_ID,
+          capabilities: ["entry_admin", "recruiter_master_manage", "team_master_manage"],
+          scopes: [{ kind: "all" }],
+        },
+      },
+    }),
+    "ACCESS_DENIED",
+  );
+  assert.equal(
+    decideWorkerEditHistoryPageAccess({
+      actor: {
+        ok: true,
+        actor: {
+          auth_subject: AUTH_SUB,
+          app_user_id: USER_ID,
+          capabilities: [
+            "entry_admin",
+            "recruiter_master_manage",
+            "team_master_manage",
+            "worker_edit_history_view",
+          ],
+          scopes: [{ kind: "all" }],
+        },
+      },
+    }),
+    "ALLOW",
+  );
+
+  // 2. Query parsing requires national_id or full_name+date window
+  const emptyQuery = parseWorkerEditHistorySearchQuery(new URL("https://app.example/api/admin/worker-edit-history"));
+  assert.deepEqual(emptyQuery, {
+    ok: false,
+    code: "WORKER_EDIT_HISTORY_QUERY_INVALID",
+  });
+
+  const cccdQuery = parseWorkerEditHistorySearchQuery(
+    new URL("https://app.example/api/admin/worker-edit-history?national_id=079095008811"),
+  );
+  assert.equal(cccdQuery.ok, true);
+  assert.equal(cccdQuery.value.national_id, "079095008811");
+
+  // 3. Detail projection fails closed if storage_key is present, and succeeds when clean
+  const REV_ID = "77777777-7777-4777-8777-777777777777";
+  const cleanDetail = {
+    revision_id: REV_ID,
+    entry_id: ENTRY_ID,
+    version: 2,
+    created_at: "2026-04-10T09:00:00.000Z",
+    actor_user_id: USER_ID,
+    actor_display_name: "Liên Vũ",
+    reason_text: "Bổ sung hồ sơ thiếu và cập nhật ngân hàng",
+    snapshot_state: "COMPLETE",
+    before_snapshot: {
+      entry_id: ENTRY_ID,
+      employee_code: "hrp-2026-000101",
+      display_name: "Lê Thị Hồng Nhung",
+      payment: { state: "omitted" },
+      documents: [],
+    },
+    after_snapshot: {
+      entry_id: ENTRY_ID,
+      employee_code: "hrp-2026-000101",
+      display_name: "Lê Thị Hồng Nhung",
+      payment: {
+        state: "provided",
+        account_number: "1903888999001",
+        bank_id: "VCB",
+        bank_name: "Vietcombank",
+        account_holder_name: "LE THI HONG NHUNG",
+      },
+      documents: [
+        {
+          document_id: DOC_FRONT_ID,
+          document_type: "WORKER_PORTRAIT",
+          version: 1,
+          size_bytes: 2048,
+          mime_type: "image/jpeg",
+          upload_status: "READY",
+          scan_status: "CLEAN",
+          validation_status: "VALIDATED",
+          created_by_user_id: USER_ID,
+          uploader_display_name: "Liên Vũ",
+          supersedes_document_id: null,
+          created_at: "2026-04-10T09:00:00.000Z",
+          updated_at: "2026-04-10T09:00:00.000Z",
+        },
+      ],
+    },
+    current_snapshot: {},
+    audit_events: [
+      {
+        event_id: "88888888-8888-4888-8888-888888888888",
+        action: "document_direct_finalize",
+        capability: "document_upload",
+        scope_kind: "all",
+        outcome: "APPLIED",
+        actor_user_id: USER_ID,
+        actor_display_name: "Liên Vũ",
+        reason_text: "Bổ sung hồ sơ thiếu",
+        changed_fields: ["document_lifecycle"],
+        created_at: "2026-04-10T09:00:00.000Z",
+      },
+    ],
+    employment_status_events: [],
+    document_events: [],
+  };
+
+  assert.equal(
+    projectWorkerEditHistoryRevision({
+      ...cleanDetail,
+      after_snapshot: {
+        ...cleanDetail.after_snapshot,
+        storage_key: "p1.6/secret-should-never-leak",
+      },
+    }),
+    null,
+    "projectWorkerEditHistoryRevision must reject any payload containing storage_key",
+  );
+
+  const projectedDetail = projectWorkerEditHistoryRevision(cleanDetail);
+  assert.ok(projectedDetail);
+  assert.equal(JSON.stringify(projectedDetail).includes("storage_key"), false);
+
+  const deniedRepository = createWorkerEditHistoryRepository(async () => ({
+    data: null,
+    error: { code: "42501", message: "WORKER_EDIT_HISTORY_DENIED" },
+  }));
+
+  const forbiddenList = await getWorkerEditHistory(
+    new Request("https://app.example/api/admin/worker-edit-history?national_id=079095008811"),
+    {
+      resolveSession: async () => ({
+        actor: {
+          ok: true,
+          actor: {
+            auth_subject: AUTH_SUB,
+            app_user_id: USER_ID,
+            capabilities: ["entry_admin", "recruiter_master_manage", "team_master_manage"],
+            scopes: [{ kind: "all" }],
+          },
+        },
+      }),
+      repository: deniedRepository,
+    },
+  );
+  assert.equal(forbiddenList.status, 403);
+
+  const allowedRepository = createWorkerEditHistoryRepository(async (name) => {
+    if (name === "worker_edit_history_search") {
+      return {
+        data: projectWorkerEditHistorySearch({
+          rows: [],
+          has_more: false,
+          next_cursor: null,
+        }),
+        error: null,
+      };
+    }
+    if (name === "worker_edit_history_get_revision") {
+      return { data: cleanDetail, error: null };
+    }
+    return { data: null, error: { code: "P0002" } };
+  });
+
+  const allowedDetail = await getWorkerEditHistoryRevision(
+    new Request(`https://app.example/api/admin/worker-edit-history/${ENTRY_ID}/${REV_ID}`),
+    ENTRY_ID,
+    REV_ID,
+    {
+      resolveSession: async () => ({
+        actor: {
+          ok: true,
+          actor: {
+            auth_subject: AUTH_SUB,
+            app_user_id: USER_ID,
+            capabilities: ["worker_edit_history_view"],
+            scopes: [{ kind: "all" }],
+          },
+        },
+      }),
+      repository: allowedRepository,
+    },
+  );
+  assert.equal(allowedDetail.status, 200);
 });
