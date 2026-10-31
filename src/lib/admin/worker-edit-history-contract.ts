@@ -5,13 +5,11 @@ const ACTION_GROUPS = ["NEW_ENTRY", "DUPLICATE_WITHDRAWN", "PROFILE_EDIT", "STAT
 
 export type WorkerEditHistoryActionGroup = (typeof ACTION_GROUPS)[number];
 export type WorkerEditHistorySearchQuery = {
-  national_id: string | null;
-  full_name: string | null;
-  from_date: string | null;
-  to_date: string | null;
+  from_date: string;
+  to_date: string;
   action_group: WorkerEditHistoryActionGroup | null;
-  project_query: string | null;
-  recruiter_query: string | null;
+  project_id: string | null;
+  recruiter_id: string | null;
   page_size: number;
   cursor: string | null;
 };
@@ -95,7 +93,7 @@ function singleton(search: URLSearchParams, key: string): string | null | undefi
 export function parseWorkerEditHistorySearchQuery(url: URL):
   | { ok: true; value: WorkerEditHistorySearchQuery }
   | { ok: false; code: "WORKER_EDIT_HISTORY_QUERY_INVALID" } {
-  const keys = new Set(["national_id", "full_name", "from_date", "to_date", "action_group", "project", "recruiter", "page_size", "cursor"]);
+  const keys = new Set(["from_date", "to_date", "action_group", "project_id", "recruiter_id", "page_size", "cursor"]);
   if ([...url.searchParams.keys()].some((key) => !keys.has(key))) {
     return { ok: false, code: "WORKER_EDIT_HISTORY_QUERY_INVALID" };
   }
@@ -103,13 +101,11 @@ export function parseWorkerEditHistorySearchQuery(url: URL):
   if (Object.values(values).some((value) => value === undefined)) {
     return { ok: false, code: "WORKER_EDIT_HISTORY_QUERY_INVALID" };
   }
-  const nationalId = typeof values.national_id === "string" ? values.national_id.trim() : "";
-  const fullName = typeof values.full_name === "string" ? values.full_name.trim() : "";
   const fromDate = typeof values.from_date === "string" && values.from_date !== "" ? values.from_date : null;
   const toDate = typeof values.to_date === "string" && values.to_date !== "" ? values.to_date : null;
   const rawAction = typeof values.action_group === "string" && values.action_group !== "" ? values.action_group : null;
-  const project = typeof values.project === "string" ? values.project.trim() : "";
-  const recruiter = typeof values.recruiter === "string" ? values.recruiter.trim() : "";
+  const projectId = typeof values.project_id === "string" ? values.project_id.trim() : "";
+  const recruiterId = typeof values.recruiter_id === "string" ? values.recruiter_id.trim() : "";
   const rawPageSize = typeof values.page_size === "string" ? values.page_size : "50";
   const pageSize = /^\d+$/.test(rawPageSize) ? Number(rawPageSize) : NaN;
   const cursor = typeof values.cursor === "string" && values.cursor !== "" ? values.cursor : null;
@@ -118,16 +114,12 @@ export function parseWorkerEditHistorySearchQuery(url: URL):
     isCalendarDate(cursorMatch[1].slice(0, 10)) &&
     Number(cursorMatch[2]) < 24 && Number(cursorMatch[3]) < 60 && Number(cursorMatch[4]) < 60;
 
-  if ((nationalId !== "") === (fullName !== "") ||
-      (nationalId && (!/^\d{12}$/.test(nationalId) || nationalId === "000000000000")) ||
-      (fullName && (fullName.length < 2 || fullName.length > 256 || /[\x00-\x1f\x7f]/.test(fullName))) ||
-      ((fromDate === null) !== (toDate === null)) ||
-      (fullName !== "" && fromDate === null) ||
+  if (fromDate === null || toDate === null ||
       (fromDate !== null && (!isCalendarDate(fromDate) || !isCalendarDate(toDate!) ||
         calendarDay(toDate!) < calendarDay(fromDate) || calendarDay(toDate!) - calendarDay(fromDate) > 92)) ||
       (rawAction !== null && !(ACTION_GROUPS as readonly string[]).includes(rawAction)) ||
-      project.length > 120 || recruiter.length > 120 ||
-      /[\x00-\x1f\x7f]/.test(project + recruiter) ||
+      (projectId !== "" && !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(projectId)) ||
+      (recruiterId !== "" && !UUID.test(recruiterId)) ||
       !Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 100 ||
       (cursor !== null && (cursor.length > 160 || !cursorTimeValid))) {
     return { ok: false, code: "WORKER_EDIT_HISTORY_QUERY_INVALID" };
@@ -136,13 +128,11 @@ export function parseWorkerEditHistorySearchQuery(url: URL):
   return {
     ok: true,
     value: {
-      national_id: nationalId || null,
-      full_name: fullName || null,
-      from_date: fromDate,
-      to_date: toDate,
+      from_date: fromDate!,
+      to_date: toDate!,
       action_group: rawAction as WorkerEditHistoryActionGroup | null,
-      project_query: project || null,
-      recruiter_query: recruiter || null,
+      project_id: projectId || null,
+      recruiter_id: recruiterId || null,
       page_size: pageSize,
       cursor,
     },

@@ -43,13 +43,13 @@ export function createWorkerEditHistoryRepository(rpc?: Rpc): WorkerEditHistoryR
         const result = await invoke("worker_edit_history_search", {
           p_auth_subject: input.auth_subject,
           p_app_user_id: input.app_user_id,
-          p_national_id: input.national_id,
-          p_full_name: input.full_name,
+          p_national_id: null,
+          p_full_name: null,
           p_from_date: input.from_date,
           p_to_date: input.to_date,
           p_action_group: input.action_group,
-          p_project_query: input.project_query,
-          p_recruiter_query: input.recruiter_query,
+          p_project_query: input.project_id,
+          p_recruiter_query: input.recruiter_id,
           p_page_size: input.page_size,
           p_cursor: input.cursor,
         });

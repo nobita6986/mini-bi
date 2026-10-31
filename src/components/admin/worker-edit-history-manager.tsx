@@ -6,6 +6,9 @@ import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader } from "@/components/ui/card";
 import { DATA_TABLE_CLASS, DATA_TABLE_HEAD_CLASS, DATA_TABLE_ROW_CLASS, DATA_TABLE_TD_CLASS, DATA_TABLE_TH_CLASS, DataTableContainer } from "@/components/ui/data-table";
+import { CatalogFilterCombobox, type CatalogFilterOption } from "@/components/ui/catalog-filter-combobox";
+import { parseDirectEntryCatalogResponse } from "@/lib/direct-entry/catalog-response";
+import { hcmTodayDate } from "@/lib/direct-entry/change-request-proposal-builders";
 import {
   workerCccdPreviewUrl,
   workerPortraitPreviewUrl,
@@ -18,14 +21,13 @@ import {
   projectWorkerEditHistoryRevision,
   projectWorkerEditHistorySearch,
 } from "@/lib/admin/worker-edit-history-contract";
+import type { DraftCatalog } from "@/lib/direct-entry/write-repository";
 
 type SearchDraft = {
-  nationalId: string;
-  fullName: string;
   fromDate: string;
   toDate: string;
-  project: string;
-  recruiter: string;
+  projectId: string;
+  recruiterId: string;
   actionGroup: WorkerEditHistoryActionGroup | "";
 };
 
@@ -110,7 +112,7 @@ function errorMessage(code: unknown): string {
     case "UNAUTHENTICATED": return "Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.";
     case "ACTOR_NOT_AVAILABLE":
     case "WORKER_EDIT_HISTORY_ACCESS_DENIED": return "Tài khoản không được cấp quyền xem lịch sử này.";
-    case "WORKER_EDIT_HISTORY_QUERY_INVALID": return "Điều kiện tìm kiếm không hợp lệ. Kiểm tra CCCD hoặc ngày lọc.";
+    case "WORKER_EDIT_HISTORY_QUERY_INVALID": return "Bộ lọc lịch sử không hợp lệ. Hãy kiểm tra ngày, dự án hoặc người tuyển.";
     case "WORKER_EDIT_HISTORY_NOT_FOUND": return "Không tìm thấy revision này.";
     default: return "Không tải được dữ liệu lịch sử. Vui lòng thử lại.";
   }
@@ -123,7 +125,7 @@ function formatDateTime(value: string): string {
   }).format(date);
 }
 
-function defaultNameSearchDates(): { fromDate: string; toDate: string } {
+function defaultHistoryDates(): { fromDate: string; toDate: string } {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Ho_Chi_Minh", year: "numeric", month: "2-digit", day: "2-digit",
   }).formatToParts(new Date());
@@ -223,7 +225,10 @@ function DocumentHistory({ entryId, events }: { entryId: string; events: Record<
 }
 
 export function WorkerEditHistoryManager() {
-  const [draft, setDraft] = useState<SearchDraft>({ nationalId: "", fullName: "", fromDate: "", toDate: "", project: "", recruiter: "", actionGroup: "" });
+  const today = hcmTodayDate();
+  const [draft, setDraft] = useState<SearchDraft>(() => ({ ...defaultHistoryDates(), projectId: "", recruiterId: "", actionGroup: "" }));
+  const [catalog, setCatalog] = useState<DraftCatalog | null>(null);
+  const [catalogState, setCatalogState] = useState<"loading" | "ready" | "unavailable">("loading");
   const [appliedQuery, setAppliedQuery] = useState<URLSearchParams | null>(null);
   const [result, setResult] = useState<WorkerEditHistorySearch | null>(null);
   const [listState, setListState] = useState<"idle" | "loading" | "ready" | "error">("idle");
@@ -231,8 +236,38 @@ export function WorkerEditHistoryManager() {
   const [selected, setSelected] = useState<WorkerEditHistoryRow | null>(null);
   const [detail, setDetail] = useState<DetailState | null>(null);
   const listRequest = useRef<AbortController | null>(null);
+  const projectOptions = useMemo<CatalogFilterOption[]>(
+    () => (catalog?.projects ?? []).map((project) => ({ id: project.project_id, label: project.display_name, keywords: project.project_id })),
+    [catalog],
+  );
+  const recruiterOptions = useMemo<CatalogFilterOption[]>(
+    () => (catalog?.recruiters ?? []).map((recruiter) => ({
+      id: recruiter.recruiter_id,
+      label: recruiter.label,
+      keywords: `${recruiter.display_name} ${recruiter.personnel_code ?? ""}`,
+    })),
+    [catalog],
+  );
   const detailKey = selected ? `${selected.entry_id}/${selected.revision_id}` : "";
   const detailUrl = useMemo(() => detailKey ? `/api/admin/worker-edit-history/${detailKey}` : "", [detailKey]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetch(`/api/direct-entry/catalog?effective_date=${encodeURIComponent(today)}`, {
+      cache: "no-store", headers: { accept: "application/json" }, signal: controller.signal,
+    }).then(async (response) => {
+      const payload: unknown = await response.json();
+      const parsed = response.ok ? parseDirectEntryCatalogResponse(payload, today) : null;
+      if (!parsed) throw new Error("catalog unavailable");
+      if (!controller.signal.aborted) {
+        setCatalog(parsed);
+        setCatalogState("ready");
+      }
+    }).catch(() => {
+      if (!controller.signal.aborted) setCatalogState("unavailable");
+    });
+    return () => controller.abort();
+  }, [today]);
 
   async function loadPage(query: URLSearchParams, append: boolean) {
     listRequest.current?.abort();
@@ -263,63 +298,24 @@ export function WorkerEditHistoryManager() {
     event.preventDefault();
     listRequest.current?.abort();
     listRequest.current = null;
-    const nationalId = draft.nationalId.trim();
-    const fullName = draft.fullName.trim();
-    if ((nationalId.length > 0) === (fullName.length > 0)) {
-      setListError("Nhập CCCD chính xác 12 số hoặc họ tên chính xác, không nhập đồng thời cả hai.");
+    const fromDate = draft.fromDate;
+    const toDate = draft.toDate;
+    if (!fromDate || !toDate) {
+      setListError("Vui lòng chọn đủ ngày bắt đầu và ngày kết thúc.");
       setListState("error");
       return;
     }
-    if (nationalId && (!/^\d{12}$/.test(nationalId) || nationalId === "000000000000")) {
-      setListError("CCCD phải gồm đúng 12 chữ số.");
+    const fromDay = Date.parse(`${fromDate}T00:00:00Z`);
+    const toDay = Date.parse(`${toDate}T00:00:00Z`);
+    if (!Number.isFinite(fromDay) || !Number.isFinite(toDay) || toDay < fromDay || toDay - fromDay > 92 * 86_400_000) {
+      setListError("Khoảng ngày không hợp lệ hoặc dài quá 93 ngày.");
       setListState("error");
       return;
     }
-    if (fullName && fullName.length < 2) {
-      setListError("Họ tên cần nhập ít nhất 2 ký tự.");
-      setListState("error");
-      return;
-    }
-    let fromDate = draft.fromDate;
-    let toDate = draft.toDate;
-    if (fullName && !fromDate && !toDate) {
-      ({ fromDate, toDate } = defaultNameSearchDates());
-      setDraft((current) => ({ ...current, fromDate, toDate }));
-    }
-    if ((fromDate.length > 0) !== (toDate.length > 0)) {
-      setListError("Nếu tự chọn khoảng ngày, cần nhập đủ cả ngày bắt đầu và ngày kết thúc.");
-      setListState("error");
-      return;
-    }
-    if (fromDate && toDate) {
-      const fromDay = Date.parse(`${fromDate}T00:00:00Z`);
-      const toDay = Date.parse(`${toDate}T00:00:00Z`);
-      if (!Number.isFinite(fromDay) || !Number.isFinite(toDay) || toDay < fromDay || toDay - fromDay > 92 * 86_400_000) {
-        setListError("Khoảng ngày không hợp lệ hoặc dài quá 93 ngày.");
-        setListState("error");
-        return;
-      }
-    }
-    const query = new URLSearchParams({ page_size: "50" });
-    if (nationalId) query.set("national_id", nationalId);
-    if (fullName) query.set("full_name", fullName);
-    if (fromDate && toDate) {
-      query.set("from_date", fromDate);
-      query.set("to_date", toDate);
-    }
-    if (draft.project.trim()) query.set("project", draft.project.trim());
-    if (draft.recruiter.trim()) query.set("recruiter", draft.recruiter.trim());
+    const query = new URLSearchParams({ page_size: "50", from_date: fromDate, to_date: toDate });
+    if (draft.projectId) query.set("project_id", draft.projectId);
+    if (draft.recruiterId) query.set("recruiter_id", draft.recruiterId);
     if (draft.actionGroup) query.set("action_group", draft.actionGroup);
-    setAppliedQuery(query);
-    setSelected(null);
-    setDetail(null);
-    setResult(null);
-    void loadPage(query, false);
-  }
-
-  function searchAllHistoryForNationalId(nationalId: string) {
-    setDraft({ nationalId, fullName: "", fromDate: "", toDate: "", project: "", recruiter: "", actionGroup: "" });
-    const query = new URLSearchParams({ page_size: "50", national_id: nationalId });
     setAppliedQuery(query);
     setSelected(null);
     setDetail(null);
@@ -337,7 +333,7 @@ export function WorkerEditHistoryManager() {
   function clearFilters() {
     listRequest.current?.abort();
     listRequest.current = null;
-    setDraft({ nationalId: "", fullName: "", fromDate: "", toDate: "", project: "", recruiter: "", actionGroup: "" });
+    setDraft({ ...defaultHistoryDates(), projectId: "", recruiterId: "", actionGroup: "" });
     setAppliedQuery(null);
     setResult(null);
     setSelected(null);
@@ -388,30 +384,20 @@ export function WorkerEditHistoryManager() {
       </header>
 
       <Alert title="Phạm vi dữ liệu">
-        <p>CCCD tìm chính xác trên toàn bộ lịch sử. Họ tên tìm chính xác, mặc định 30 ngày gần nhất; có thể chọn khoảng ngày tối đa 93 ngày. CCCD, tài khoản ngân hàng và các thông tin khác hiển thị nguyên giá trị.</p>
+        <p>Hiển thị các lần chỉnh sửa của mọi NLĐ trong khoảng ngày đã chọn (mặc định 30 ngày gần nhất, tối đa 93 ngày). Có thể lọc theo dự án, người tuyển và nhóm thay đổi. CCCD, tài khoản ngân hàng và các thông tin khác hiển thị nguyên giá trị.</p>
       </Alert>
 
       <Card>
-        <CardHeader title="Điều kiện tìm kiếm" description="Trang không tự tải dữ liệu. Nhập CCCD chính xác hoặc họ tên chính xác rồi bấm Tìm lịch sử. Họ tên mặc định giới hạn 30 ngày gần nhất; khoảng tự chọn tối đa 93 ngày." />
+        <CardHeader title="Điều kiện lọc" description="Trang không tự tải lịch sử. Chọn khoảng ngày và các bộ lọc tùy chọn, sau đó bấm Tải lịch sử." />
         <form onSubmit={submitSearch} className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <label className="space-y-1 text-sm font-medium">CCCD chính xác
-            <input className={INPUT_CLASS} inputMode="numeric" autoComplete="off" value={draft.nationalId} onChange={(event) => setDraft({ ...draft, nationalId: event.target.value })} placeholder="12 chữ số" />
-          </label>
-          <label className="space-y-1 text-sm font-medium">Hoặc họ tên chính xác (ít nhất 2 ký tự)
-            <input className={INPUT_CLASS} value={draft.fullName} onChange={(event) => setDraft({ ...draft, fullName: event.target.value })} placeholder="Nhập đúng họ tên" />
-          </label>
           <label className="space-y-1 text-sm font-medium">Từ ngày
             <input className={INPUT_CLASS} type="date" value={draft.fromDate} onChange={(event) => setDraft({ ...draft, fromDate: event.target.value })} />
           </label>
           <label className="space-y-1 text-sm font-medium">Đến ngày
             <input className={INPUT_CLASS} type="date" value={draft.toDate} onChange={(event) => setDraft({ ...draft, toDate: event.target.value })} />
           </label>
-          <label className="space-y-1 text-sm font-medium">Dự án
-            <input className={INPUT_CLASS} value={draft.project} onChange={(event) => setDraft({ ...draft, project: event.target.value })} placeholder="Lọc theo tên dự án" />
-          </label>
-          <label className="space-y-1 text-sm font-medium">Người tuyển
-            <input className={INPUT_CLASS} value={draft.recruiter} onChange={(event) => setDraft({ ...draft, recruiter: event.target.value })} placeholder="Lọc theo tên người tuyển" />
-          </label>
+          <CatalogFilterCombobox id="worker-edit-history-project" label="Dự án" allLabel="Tất cả dự án" placeholder={catalogState === "loading" ? "Đang tải danh mục…" : "Gõ tên dự án để tìm"} options={projectOptions} value={draft.projectId} disabled={catalogState !== "ready"} onChange={(projectId) => setDraft((current) => ({ ...current, projectId }))} />
+          <CatalogFilterCombobox id="worker-edit-history-recruiter" label="Người tuyển" allLabel="Tất cả người tuyển" placeholder={catalogState === "loading" ? "Đang tải danh mục…" : "Gõ tên hoặc mã người tuyển"} options={recruiterOptions} value={draft.recruiterId} disabled={catalogState !== "ready"} onChange={(recruiterId) => setDraft((current) => ({ ...current, recruiterId }))} />
           <label className="space-y-1 text-sm font-medium">Nhóm thay đổi
             <select className={INPUT_CLASS} value={draft.actionGroup} onChange={(event) => setDraft({ ...draft, actionGroup: event.target.value as SearchDraft["actionGroup"] })}>
               <option value="">Tất cả nhóm</option>
@@ -419,14 +405,15 @@ export function WorkerEditHistoryManager() {
             </select>
           </label>
           <div className="flex items-end gap-2">
-            <Button type="submit" variant="primary" loading={listState === "loading"}>Tìm lịch sử</Button>
+            <Button type="submit" variant="primary" loading={listState === "loading"}>Tải lịch sử</Button>
             <Button type="button" onClick={clearFilters}>Xóa lọc</Button>
           </div>
         </form>
         {listState === "error" ? <div className="mt-4"><Alert tone="error" title={listError} /></div> : null}
       </Card>
 
-      {listState === "idle" ? <Card><p className="text-sm text-muted">Nhập CCCD hoặc họ tên và bấm “Tìm lịch sử” để tải kết quả.</p></Card> : null}
+      {catalogState === "unavailable" ? <Alert tone="warning" title="Không tải được danh mục dự án và người tuyển">Có thể lọc theo ngày và nhóm thay đổi. Hãy thử tải lại trang để dùng bộ lọc dự án/người tuyển.</Alert> : null}
+      {listState === "idle" ? <Card><p className="text-sm text-muted">Chọn khoảng ngày (mặc định 30 ngày gần nhất) và bấm “Tải lịch sử” để xem các chỉnh sửa của mọi NLĐ.</p></Card> : null}
 
       {result ? <Card>
         <CardHeader title="Kết quả lịch sử" description={`${result.rows.length} revision trên trang hiện tại${result.has_more ? " · còn kết quả tiếp theo" : ""}`} />
@@ -440,7 +427,7 @@ export function WorkerEditHistoryManager() {
               <tbody>{result.rows.map((row) => (
                 <tr key={row.revision_id} className={`${DATA_TABLE_ROW_CLASS} ${selected?.revision_id === row.revision_id ? "bg-primary/5" : ""}`}>
                   <td className={DATA_TABLE_TD_CLASS}>{formatDateTime(row.created_at)}</td>
-                  <td className={DATA_TABLE_TD_CLASS}><div className="font-medium">{row.display_name} · {row.employee_code}</div><div className="font-mono text-xs text-muted">{row.national_id ?? "Chưa có CCCD"}</div>{row.national_id ? <Button size="sm" className="mt-2" onClick={() => searchAllHistoryForNationalId(row.national_id!)}>Tất cả lịch sử theo CCCD</Button> : null}</td>
+                  <td className={DATA_TABLE_TD_CLASS}><div className="font-medium">{row.display_name} · {row.employee_code}</div><div className="font-mono text-xs text-muted">{row.national_id ?? "Chưa có CCCD"}</div></td>
                   <td className={DATA_TABLE_TD_CLASS}>{row.project_name}<div className="text-xs text-muted">Người tuyển: {row.recruiter_name}</div></td>
                   <td className={DATA_TABLE_TD_CLASS}>{ACTION_LABELS[row.action_group]}</td>
                   <td className={DATA_TABLE_TD_CLASS}>{row.actor_display_name}<div className="text-xs text-muted">{row.reason_text || "Không có lý do"}</div></td>
