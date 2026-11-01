@@ -852,9 +852,9 @@ test("WF-04 Hotfix (6): Tab navigation order, content split (Báo cáo tổng qu
     "utf8",
   );
 
-  // 1. Tab order: Báo cáo tổng quát -> Báo cáo chuyên sâu -> Báo cáo theo nhóm -> Báo cáo CCCD trùng
+  // 1. Tab order: Báo cáo tổng quát -> Báo cáo chi tiết (thay vị trí Báo cáo chuyên sâu trên UI) -> Báo cáo theo nhóm -> Báo cáo CCCD trùng
   const idxGeneral = tabsSrc.indexOf('key: "general", label: "Báo cáo tổng quát"');
-  const idxDeep = tabsSrc.indexOf('key: "deep", label: "Báo cáo chuyên sâu"');
+  const idxDeep = tabsSrc.indexOf('key: "deep", label: "Báo cáo chi tiết"');
   const idxTeam = tabsSrc.indexOf('key: "team", label: "Báo cáo theo nhóm"');
   const idxCccd = tabsSrc.indexOf('key: "duplicate-cccd", label: "Báo cáo CCCD trùng"');
   const idxOffboarding = tabsSrc.indexOf('key: "offboarding", label: "Báo cáo NLĐ nghỉ việc"');

@@ -8,7 +8,7 @@ import type { ReportingOptionsResult } from "@/lib/reporting/p1-options-server";
 import { CccdReviewPanel } from "@/components/reporting/cccd-review-panel";
 import { DuplicateCccdReportPanel } from "@/components/reporting/duplicate-cccd-report-panel";
 import { OffboardingReportPanel } from "@/components/workforce/offboarding-report-panel";
-import { WorkforceDeepReportPanel } from "./dashboard-shared";
+import { DetailedRecruitmentMatrixPanel } from "./detailed-recruitment-matrix-panel";
 import { TeamReportView, type TeamReportViewConfig } from "./team-report-view";
 
 /**
@@ -50,9 +50,9 @@ type TabKey = "general" | "deep" | "team" | "cccd-review" | "duplicate-cccd" | "
 type TabDef = { key: TabKey; label: string; panelId: string };
 
 /**
- * P3.1-HF-R3-R1 / WF-04 Hotfix / PRE-WAVE-2:
+ * P3.1-HF-R3-R1 / WF-04 Hotfix / PRE-WAVE-2 / Detailed Recruitment Matrix:
  * 1. "Báo cáo tổng quát" (mặc định)
- * 2. "Báo cáo chuyên sâu" (chỉ hiển thị cho actor có scope = "all", tức primaryTabLabel === undefined)
+ * 2. "Báo cáo chi tiết" (tạm ẩn "Báo cáo chuyên sâu" trên UI nhưng giữ nguyên API/RPC/component; chỉ hiển thị cho actor có scope = "all", tức primaryTabLabel === undefined)
  * 3. "Báo cáo theo nhóm" (chỉ hiển thị cho actor có scope = "all")
  * 4. "Review thông tin NLĐ" (nằm ngay trước "Báo cáo CCCD trùng", hiển thị khi canViewCccdReview === true)
  * 5. "Báo cáo CCCD trùng" (hiển thị khi canViewDuplicateCccd === true)
@@ -60,7 +60,7 @@ type TabDef = { key: TabKey; label: string; panelId: string };
  */
 const tabs: readonly TabDef[] = [
   { key: "general", label: "Báo cáo tổng quát", panelId: "bod-panel-general" },
-  { key: "deep", label: "Báo cáo chuyên sâu", panelId: "bod-panel-deep" },
+  { key: "deep", label: "Báo cáo chi tiết", panelId: "bod-panel-deep" },
   { key: "team", label: "Báo cáo theo nhóm", panelId: "bod-panel-team" },
   { key: "cccd-review", label: "Review thông tin NLĐ", panelId: "bod-panel-cccd-review" },
   { key: "duplicate-cccd", label: "Báo cáo CCCD trùng", panelId: "bod-panel-duplicate-cccd" },
@@ -175,7 +175,7 @@ export function BodDashboardTabs({
         </div>
       ) : activeTab === "deep" && primaryTabLabel === undefined ? (
         <div id="bod-panel-deep" role="tabpanel" aria-labelledby="bod-tab-deep" tabIndex={0} data-ui-panel-motion="true" className="pt-4">
-          <WorkforceDeepReportPanel
+          <DetailedRecruitmentMatrixPanel
             data={data}
             generatedAt={generatedAt}
             optionsResult={optionsResult}

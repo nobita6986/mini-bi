@@ -61,7 +61,7 @@ const MEMBER_ENTRY_ID = "91000000-0000-4000-8000-0000000000d3";
 const PAST = "2026-01-01";
 const ENTRY_DATE = "2026-01-10";
 const LATER = "2026-02-01";
-const FUTURE = "2026-11-01";
+const FUTURE = "2099-01-01";
 const REASON = "Synthetic membership reason";
 const KEY = (suffix) => "50000000-0000-4000-8000-0000000000" + suffix;
 
@@ -1083,7 +1083,7 @@ test("W01A, W01B and W01C-A contracts keep their semantics", async () => {
     + " and c.conname = 'direct_entry_capability_grants_capability_check'");
   const tokens = [...String(capabilityRows[0].definition).matchAll(/'([^']+)'::text/g)]
     .map((match) => match[1]);
-  assert.equal(tokens.length, 32, "the capability vocabulary includes W01A, F1, F2, VFIN-01, and duplicate CCCD tokens");
+  assert.equal(tokens.length, 33, "the capability vocabulary includes W01A, F1, F2, VFIN-01, duplicate CCCD, and worker history tokens");
 
   const personnelSnapshot = (await db.query(
     "select pg_get_function_arguments(p.oid) as args from pg_proc p"

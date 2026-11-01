@@ -56,7 +56,7 @@ test("one top-level /admin entry is independently authorized and is not a Direct
   }), false);
 });
 
-test("Admin internal navigation exposes mapping and departments only to Full Admin", () => {
+test("Admin internal navigation exposes mapping, departments, and worker edit history only to authorized Admin actors", () => {
   assert.deepEqual(ADMIN_SECTIONS.map(({ id, href }) => ({ id, href })), [
     { id: "personnel", href: "/admin/catalog/personnel" },
     { id: "teams", href: "/admin/catalog/teams" },
@@ -66,6 +66,7 @@ test("Admin internal navigation exposes mapping and departments only to Full Adm
     { id: "departments", href: "/admin/departments" },
     { id: "accounts", href: "/admin/access/accounts" },
     { id: "attendance", href: "/admin/attendance" },
+    { id: "worker-edit-history", href: "/admin/worker-edit-history" },
   ]);
   assert.deepEqual(ADMIN_SECTIONS.map(({ id, label }) => ({ id, label })), [
     { id: "personnel", label: "Nhân sự" },
@@ -76,11 +77,17 @@ test("Admin internal navigation exposes mapping and departments only to Full Adm
     { id: "departments", label: "Phòng ban" },
     { id: "accounts", label: "Tài khoản truy cập" },
     { id: "attendance", label: "Báo cáo chấm công" },
+    { id: "worker-edit-history", label: "Lịch sử chỉnh sửa NLĐ" },
   ]);
   const serializableSections = ADMIN_SECTIONS.map(({ id, label, href }) => ({ id, label, href }));
-  const catalogOnly = serializableSections.filter(({ id }) => !["departments", "accounts", "project-team-scopes", "attendance"].includes(id));
+  const catalogOnly = serializableSections.filter(({ id }) => !["departments", "accounts", "project-team-scopes", "attendance", "worker-edit-history"].includes(id));
   const attendanceOnly = serializableSections.filter(({ id }) => id === "attendance");
-  // Accounting (catalog operator) sees catalog sections, never departments, accounts, project mappings, or attendance.
+  const fullAdminWithoutHistory = serializableSections.filter(({ id }) => id !== "worker-edit-history");
+  const allowlistedAdmin = {
+    capabilities: [...fullAdmin.capabilities, "worker_edit_history_view"],
+    scopes: [{ kind: "all" }],
+  };
+  // Accounting (catalog operator) sees catalog sections, never departments, accounts, project mappings, attendance, or worker edit history.
   assert.deepEqual(visibleAdminSections(accountingCatalog), catalogOnly);
   // Canonical BoD (entry_privileged_edit @ all or report_analytics_view + report_view @ all) sees only Attendance Report.
   assert.deepEqual(visibleAdminSections({ capabilities: ["entry_privileged_edit"], scopes: [{ kind: "all" }] }), attendanceOnly);
@@ -88,9 +95,10 @@ test("Admin internal navigation exposes mapping and departments only to Full Adm
   // Aggregate-only or submission-only report viewers do not receive Attendance Report access.
   assert.deepEqual(visibleAdminSections({ capabilities: ["report_analytics_view"], scopes: [{ kind: "all" }] }), []);
   assert.deepEqual(visibleAdminSections({ capabilities: ["report_view"], scopes: [{ kind: "all" }] }), []);
-  // The canonical Full Admin triple sees every section, including restricted sections.
-  assert.deepEqual(visibleAdminSections(fullAdmin), serializableSections);
-  assert.equal(visibleAdminSections(fullAdmin).some((section) => Object.values(section).some((value) => typeof value === "function")), false);
+  // Canonical Full Admin without worker_edit_history_view sees every section except worker-edit-history; allowlisted Admin sees all.
+  assert.deepEqual(visibleAdminSections(fullAdmin), fullAdminWithoutHistory);
+  assert.deepEqual(visibleAdminSections(allowlistedAdmin), serializableSections);
+  assert.equal(visibleAdminSections(allowlistedAdmin).some((section) => Object.values(section).some((value) => typeof value === "function")), false);
   // Project Admin (entry_admin@all without the triple) and unresolved actors see nothing.
   assert.deepEqual(visibleAdminSections({ capabilities: ["entry_admin"], scopes: [{ kind: "all" }] }), []);
   assert.deepEqual(visibleAdminSections(null), []);
