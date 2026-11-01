@@ -286,6 +286,10 @@ export const HF_DUPLICATE_CCCD_RESIGNED_WITHDRAW_AND_WORKER_FILTERS_RPC_SIGNATUR
   "public.direct_entry_list_workers(uuid, uuid, text, text, uuid, text, text, integer, text, date, date, text)",
   "public.direct_entry_export_workers(uuid, uuid, text, text, uuid, text, text, text, date, date, text)",
 ]);
+export const DASHBOARD_DETAILED_RECRUITMENT_MATRIX_CATALOG_MIGRATION_NAME =
+  "20261031120000_dashboard_detailed_recruitment_matrix_catalog.sql";
+export const DASHBOARD_DETAILED_RECRUITMENT_MATRIX_CATALOG_RPC_SIGNATURE =
+  "public.direct_entry_reporting_detailed_matrix_catalog(uuid, uuid)";
 export const F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES = Object.freeze([
   "public.work_report_list_templates(uuid, uuid)",
   "public.work_report_get_template(uuid, uuid, uuid)",
@@ -525,7 +529,8 @@ export async function verifyS0T1CHistoricalCompatibility(
     hfSalaryAdvanceActorDisplayNameApplied = false,
     hfSalaryAdvanceVendorExclusionAndWorkerHistoryApplied = false,
     hfSalaryAdvancePmWorkerHistoryApplied = false,
-    hfDuplicateCccdResignedWithdrawAndWorkerFiltersApplied = false } = {},
+    hfDuplicateCccdResignedWithdrawAndWorkerFiltersApplied = false,
+    dashboardDetailedRecruitmentMatrixCatalogApplied = false } = {},
 ) {
   const baseAllowlist = extractS0T1CAllowlistSignatures(migrationSql);
   if (baseAllowlist.length === 0) {
@@ -604,6 +609,9 @@ export async function verifyS0T1CHistoricalCompatibility(
       : []),
     ...(hfDuplicateCccdResignedWithdrawAndWorkerFiltersApplied
       ? HF_DUPLICATE_CCCD_RESIGNED_WITHDRAW_AND_WORKER_FILTERS_RPC_SIGNATURES
+      : []),
+    ...(dashboardDetailedRecruitmentMatrixCatalogApplied
+      ? [DASHBOARD_DETAILED_RECRUITMENT_MATRIX_CATALOG_RPC_SIGNATURE]
       : []),
   ];
 
@@ -855,6 +863,8 @@ export async function verifyAppliedMigrationChecksum(
           appliedMap.has(HF_SALARY_ADVANCE_PM_WORKER_HISTORY_MIGRATION_NAME),
         hfDuplicateCccdResignedWithdrawAndWorkerFiltersApplied:
           appliedMap.has(HF_DUPLICATE_CCCD_RESIGNED_WITHDRAW_AND_WORKER_FILTERS_MIGRATION_NAME),
+        dashboardDetailedRecruitmentMatrixCatalogApplied:
+          appliedMap.has(DASHBOARD_DETAILED_RECRUITMENT_MATRIX_CATALOG_MIGRATION_NAME),
       },
     );
     if (postconditions.ok) {

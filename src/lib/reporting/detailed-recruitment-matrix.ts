@@ -1,0 +1,505 @@
+/**
+ * Detailed Recruitment Matrix ("Báo cáo chi tiết") — Pure domain & aggregation module.
+ *
+ * Aggregates recruitment facts `(business_date, recruiter_key, recruited_count)` with the
+ * personnel/team catalog on the server to produce a 2D recruiter × time-bucket matrix
+ * (`Ngày` / `Tuần` / `Tháng`), preserving 100% parity with Dashboard totals and
+ * `TrendChart` bucket boundaries.
+ */
+
+import { buildDailyTrend } from "./p1-dashboard.ts";
+import {
+  aggregateDailyTrendPoints,
+  TREND_RESOLUTION_OPTIONS,
+  type TrendBucketPoint,
+  type TrendResolution,
+} from "./p1-dashboard-period.ts";
+import { isRealCalendarDate, type ReportingFilters } from "./p1-filter.ts";
+import { selectDisplay, type ReportingFact } from "./p1-reporting.ts";
+import { P2_W04A_DIRECT_ENTRY_SOURCE_ID } from "./p2-w04a-cutover.ts";
+
+export const ALL_RECRUITERS_TEAM_FILTER = "all";
+
+export type DetailedMatrixTeamOption = {
+  teamId: string;
+  teamCode: string;
+  displayName: string;
+  memberCount: number;
+};
+
+export type DetailedMatrixCatalogRecruiter = {
+  recruiterId: string;
+  recruiterKey: string;
+  displayName: string;
+  personnelCode: string | null;
+  active: boolean;
+  isActiveHrp: boolean;
+  currentTeamIds: string[];
+  workStartDate: string | null;
+};
+
+export type DetailedMatrixCatalog = {
+  teams: Array<{
+    teamId: string;
+    teamCode: string;
+    displayName: string;
+  }>;
+  recruiters: DetailedMatrixCatalogRecruiter[];
+};
+
+export type DetailedMatrixRecruiterRow = {
+  stt: number;
+  recruiterId: string;
+  recruiterKey: string;
+  displayName: string;
+  personnelCode: string | null;
+  workStartDate: string | null;
+  workMonths: number | null;
+  counts: number[];
+  total: number;
+};
+
+export type DetailedRecruitmentMatrixReport = {
+  resolution: TrendResolution;
+  selectedTeamId: string;
+  asOfDate: string | null;
+  fromDate: string | null;
+  toDate: string | null;
+  teams: DetailedMatrixTeamOption[];
+  buckets: TrendBucketPoint[];
+  rows: DetailedMatrixRecruiterRow[];
+  columnTotals: number[];
+  grandTotal: number;
+};
+
+function normalizeKey(value: string | null | undefined): string {
+  if (typeof value !== "string") return "";
+  return value.normalize("NFC").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function daysInCalendarMonth(year: number, month: number): number {
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+function parseYmdParts(
+  ymd: string | null | undefined,
+): { year: number; month: number; day: number; normalized: string } | null {
+  if (typeof ymd !== "string") return null;
+  const trimmed = ymd.trim();
+  if (!isRealCalendarDate(trimmed)) return null;
+  const [y, m, d] = trimmed.split("-").map(Number);
+  return { year: y, month: m, day: d, normalized: trimmed };
+}
+
+/**
+ * Computes the number of completed calendar months from `workStartDate` (`YYYY-MM-DD`)
+ * up to `asOfDate` (`YYYY-MM-DD`, the end date of the active report period).
+ *
+ * Rules:
+ * - Returns `null` when `workStartDate` or `asOfDate` is missing/invalid, or when
+ *   `workStartDate > asOfDate` (not yet started as of the report end date).
+ * - Uses completed calendar months with end-of-month clamping matching PostgreSQL
+ *   date + interval semantics (e.g. `2024-01-31` -> `2024-02-29` = 1 month in leap year;
+ *   `2025-01-31` -> `2025-02-28` = 1 month in non-leap year; `2024-02-29` -> `2025-02-28` = 12 months).
+ */
+export function computeCompletedWorkMonths(
+  workStartDate: string | null | undefined,
+  asOfDate: string | null | undefined,
+): number | null {
+  const start = parseYmdParts(workStartDate);
+  const end = parseYmdParts(asOfDate);
+  if (!start || !end) return null;
+  if (start.normalized > end.normalized) return null;
+
+  const rawMonths = (end.year - start.year) * 12 + (end.month - start.month);
+  const anniversaryDayInEndMonth = Math.min(
+    start.day,
+    daysInCalendarMonth(end.year, end.month),
+  );
+  const completedMonths =
+    end.day >= anniversaryDayInEndMonth ? rawMonths : rawMonths - 1;
+  return Math.max(0, completedMonths);
+}
+
+/**
+ * Formats `workMonths` for table display (`"-"` when unconfigured or unavailable).
+ */
+export function formatWorkMonthsCell(
+  workMonths: number | null | undefined,
+): string {
+  if (
+    typeof workMonths === "number" &&
+    Number.isFinite(workMonths) &&
+    workMonths >= 0
+  ) {
+    return String(Math.trunc(workMonths));
+  }
+  return "-";
+}
+
+/**
+ * Formats canonical `personnelCode` from the personnel catalog (`"-"` when missing).
+ * Never fabricates or infers a code from `displayName`.
+ */
+export function formatPersonnelCodeCell(
+  personnelCode: string | null | undefined,
+): string {
+  if (typeof personnelCode !== "string") return "-";
+  const trimmed = personnelCode.trim();
+  return trimmed.length > 0 ? trimmed : "-";
+}
+
+export function isMatrixResolution(value: string): value is TrendResolution {
+  return TREND_RESOLUTION_OPTIONS.some((opt) => opt.key === value);
+}
+
+export function parseMatrixResolutionParam(
+  raw: string | string[] | undefined,
+): TrendResolution | null {
+  const val = Array.isArray(raw) ? raw[0] : raw;
+  if (val === undefined || val.trim() === "") return "day";
+  const normalized = val.trim();
+  return isMatrixResolution(normalized) ? normalized : null;
+}
+
+/**
+ * Mirrors the exact row-level filter rules of `computeScopedReportingData` + `computeReporting`
+ * in `p2-w04a-reporting-server.ts` / `p1-reporting.ts`.
+ */
+export function matchesDashboardReportingFact(
+  fact: ReportingFact,
+  filters: ReportingFilters,
+): boolean {
+  if (
+    fact.source_id &&
+    fact.source_id !== P2_W04A_DIRECT_ENTRY_SOURCE_ID &&
+    filters.source !== fact.source_id
+  ) {
+    return false;
+  }
+  if (filters.source && fact.source_id !== filters.source) return false;
+  if (filters.from && fact.business_date < filters.from) return false;
+  if (filters.to && fact.business_date > filters.to) return false;
+  if (filters.project && fact.project_key !== filters.project) return false;
+  if (filters.recruiter && fact.recruiter_key !== filters.recruiter) return false;
+  if (filters.provider && fact.provider_type_key !== filters.provider) return false;
+  if (filters.employment && fact.employment_type_key !== filters.employment) return false;
+  return true;
+}
+
+export function buildDetailedMatrixBuckets(
+  fromDate: string | undefined,
+  toDate: string | undefined,
+  factByDate: Record<string, number>,
+  resolution: TrendResolution,
+): {
+  fromDate: string | null;
+  toDate: string | null;
+  buckets: TrendBucketPoint[];
+  dateToBucketIndex: Map<string, number>;
+} {
+  const sortedFactDates = Object.keys(factByDate)
+    .filter((d) => isRealCalendarDate(d))
+    .sort();
+  const effectiveFrom = fromDate ?? sortedFactDates[0] ?? null;
+  const effectiveTo =
+    toDate ?? sortedFactDates[sortedFactDates.length - 1] ?? null;
+
+  if (!effectiveFrom || !effectiveTo || effectiveFrom > effectiveTo) {
+    return {
+      fromDate: effectiveFrom,
+      toDate: effectiveTo,
+      buckets: [],
+      dateToBucketIndex: new Map(),
+    };
+  }
+
+  const dailyPoints = buildDailyTrend(factByDate, effectiveFrom, effectiveTo);
+  const buckets = aggregateDailyTrendPoints(dailyPoints, resolution, {
+    from: effectiveFrom,
+    to: effectiveTo,
+  }).map((b) => ({
+    ...b,
+    count: 0,
+  }));
+
+  const dateToBucketIndex = new Map<string, number>();
+  let bucketCursor = 0;
+  for (const pt of dailyPoints) {
+    while (
+      bucketCursor < buckets.length &&
+      pt.date > buckets[bucketCursor].endDate
+    ) {
+      bucketCursor += 1;
+    }
+    if (
+      bucketCursor < buckets.length &&
+      pt.date >= buckets[bucketCursor].startDate &&
+      pt.date <= buckets[bucketCursor].endDate
+    ) {
+      dateToBucketIndex.set(pt.date, bucketCursor);
+    }
+  }
+
+  return {
+    fromDate: effectiveFrom,
+    toDate: effectiveTo,
+    buckets,
+    dateToBucketIndex,
+  };
+}
+
+export function buildDetailedRecruitmentMatrix(input: {
+  facts: readonly ReportingFact[];
+  catalog: DetailedMatrixCatalog;
+  filters: ReportingFilters;
+  resolution: TrendResolution;
+  teamId?: string | null;
+  fallbackAsOfDate?: string | null;
+}): DetailedRecruitmentMatrixReport {
+  const { facts, catalog, filters, resolution } = input;
+  const rawTeamId =
+    typeof input.teamId === "string" && input.teamId.trim().length > 0
+      ? input.teamId.trim()
+      : ALL_RECRUITERS_TEAM_FILTER;
+
+  // 1. Filter facts using the exact Dashboard predicate and accumulate by (recruiter_key, business_date).
+  const factsByRecruiterAndDate = new Map<string, Map<string, number>>();
+  const displayCountsByRecruiterKey = new Map<string, Map<string, number>>();
+  const matchedFactByDate: Record<string, number> = {};
+
+  for (const row of facts) {
+    if (!matchesDashboardReportingFact(row, filters)) continue;
+    if (!row.business_date || !isRealCalendarDate(row.business_date)) continue;
+
+    matchedFactByDate[row.business_date] =
+      (matchedFactByDate[row.business_date] ?? 0) + row.recruited_count;
+
+    const rKey = row.recruiter_key;
+    let dispMap = displayCountsByRecruiterKey.get(rKey);
+    if (!dispMap) {
+      dispMap = new Map<string, number>();
+      displayCountsByRecruiterKey.set(rKey, dispMap);
+    }
+    dispMap.set(
+      row.recruiter_display,
+      (dispMap.get(row.recruiter_display) ?? 0) + row.recruited_count,
+    );
+
+    let dateMap = factsByRecruiterAndDate.get(rKey);
+    if (!dateMap) {
+      dateMap = new Map<string, number>();
+      factsByRecruiterAndDate.set(rKey, dateMap);
+    }
+    dateMap.set(
+      row.business_date,
+      (dateMap.get(row.business_date) ?? 0) + row.recruited_count,
+    );
+  }
+
+  // 2. Build time buckets (day / week / month) identical to TrendChart.
+  const {
+    fromDate: effectiveFromDate,
+    toDate: effectiveToDate,
+    buckets: baseBuckets,
+    dateToBucketIndex,
+  } = buildDetailedMatrixBuckets(
+    filters.from,
+    filters.to,
+    matchedFactByDate,
+    resolution,
+  );
+
+  const asOfDate =
+    filters.to ??
+    effectiveToDate ??
+    (typeof input.fallbackAsOfDate === "string" &&
+    isRealCalendarDate(input.fallbackAsOfDate)
+      ? input.fallbackAsOfDate
+      : null);
+
+  // 3. Build team options with current active member counts.
+  const activeCatalogRecruiters = catalog.recruiters.filter(
+    (r) => r.active && (r.isActiveHrp || r.currentTeamIds.length > 0),
+  );
+  const memberCountByTeamId = new Map<string, number>();
+  for (const rec of activeCatalogRecruiters) {
+    for (const tId of rec.currentTeamIds) {
+      memberCountByTeamId.set(tId, (memberCountByTeamId.get(tId) ?? 0) + 1);
+    }
+  }
+
+  const teams: DetailedMatrixTeamOption[] = [...catalog.teams]
+    .map((t) => ({
+      teamId: t.teamId,
+      teamCode: t.teamCode,
+      displayName: t.displayName,
+      memberCount: memberCountByTeamId.get(t.teamId) ?? 0,
+    }))
+    .sort((a, b) => {
+      const cmp = a.displayName.localeCompare(b.displayName, "vi");
+      return cmp !== 0 ? cmp : a.teamId.localeCompare(b.teamId);
+    });
+
+  // Lookup primary catalog entry per recruiterKey
+  const primaryCatalogByRecruiterKey = new Map<
+    string,
+    DetailedMatrixCatalogRecruiter
+  >();
+  for (const rec of catalog.recruiters) {
+    const key = normalizeKey(rec.recruiterKey || rec.displayName);
+    if (key && !primaryCatalogByRecruiterKey.has(key)) {
+      primaryCatalogByRecruiterKey.set(key, rec);
+    }
+  }
+
+  function computeBucketCounts(
+    recruiterKey: string,
+    consumeFacts: boolean,
+  ): { counts: number[]; total: number } {
+    const counts = new Array<number>(baseBuckets.length).fill(0);
+    let total = 0;
+    if (!consumeFacts) return { counts, total };
+
+    const dateMap = factsByRecruiterAndDate.get(recruiterKey);
+    if (!dateMap) return { counts, total };
+
+    for (const [date, count] of dateMap.entries()) {
+      const bucketIdx = dateToBucketIndex.get(date);
+      if (bucketIdx !== undefined) {
+        counts[bucketIdx] += count;
+        total += count;
+      }
+    }
+    return { counts, total };
+  }
+
+  // 4. Build candidate rows depending on `rawTeamId`.
+  const consumedFactKeys = new Set<string>();
+  const unsortedRows: Array<Omit<DetailedMatrixRecruiterRow, "stt">> = [];
+
+  if (rawTeamId !== ALL_RECRUITERS_TEAM_FILTER) {
+    // Specific team selected: include ONLY current members of that team.
+    const teamMembers = activeCatalogRecruiters.filter((r) => {
+      const rKey = normalizeKey(r.recruiterKey || r.displayName);
+      return (
+        r.currentTeamIds.includes(rawTeamId) &&
+        (!filters.recruiter || rKey === filters.recruiter)
+      );
+    });
+
+    for (const member of teamMembers) {
+      const rKey = normalizeKey(member.recruiterKey || member.displayName);
+      const shouldConsume = !consumedFactKeys.has(rKey);
+      if (shouldConsume) consumedFactKeys.add(rKey);
+      const { counts, total } = computeBucketCounts(rKey, shouldConsume);
+      unsortedRows.push({
+        recruiterId: member.recruiterId,
+        recruiterKey: rKey,
+        displayName: member.displayName,
+        personnelCode: member.personnelCode,
+        workStartDate: member.workStartDate,
+        workMonths: computeCompletedWorkMonths(member.workStartDate, asOfDate),
+        counts,
+        total,
+      });
+    }
+  } else {
+    // "Tất cả người tuyển":
+    // (a) Include all active HRP / team personnel from the catalog (with 0s when no facts in period).
+    for (const rec of activeCatalogRecruiters) {
+      const rKey = normalizeKey(rec.recruiterKey || rec.displayName);
+      if (filters.recruiter && rKey !== filters.recruiter) continue;
+
+      const shouldConsume = !consumedFactKeys.has(rKey);
+      if (shouldConsume) consumedFactKeys.add(rKey);
+      const { counts, total } = computeBucketCounts(rKey, shouldConsume);
+      unsortedRows.push({
+        recruiterId: rec.recruiterId,
+        recruiterKey: rKey,
+        displayName: rec.displayName,
+        personnelCode: rec.personnelCode,
+        workStartDate: rec.workStartDate,
+        workMonths: computeCompletedWorkMonths(rec.workStartDate, asOfDate),
+        counts,
+        total,
+      });
+    }
+
+    // (b) Include any remaining recruiter keys that have matched facts in the period
+    // (e.g. inactive recruiters with historical entries or vendor recruiter rows when not filtered out),
+    // ensuring 100% row/column/grand total parity with Dashboard on the same filters.
+    for (const [rKey] of factsByRecruiterAndDate.entries()) {
+      if (consumedFactKeys.has(rKey)) continue;
+      consumedFactKeys.add(rKey);
+
+      const { counts, total } = computeBucketCounts(rKey, true);
+      if (total <= 0) continue;
+
+      const catalogMatch = primaryCatalogByRecruiterKey.get(rKey);
+      const dispMap = displayCountsByRecruiterKey.get(rKey);
+      const displayName =
+        catalogMatch?.displayName ??
+        (dispMap ? selectDisplay(rKey, dispMap) : rKey);
+      const personnelCode = catalogMatch?.personnelCode ?? null;
+      const workStartDate = catalogMatch?.workStartDate ?? null;
+
+      unsortedRows.push({
+        recruiterId: catalogMatch?.recruiterId ?? `fact:${rKey}`,
+        recruiterKey: rKey,
+        displayName,
+        personnelCode,
+        workStartDate,
+        workMonths: computeCompletedWorkMonths(workStartDate, asOfDate),
+        counts,
+        total,
+      });
+    }
+  }
+
+  // 5. Sort deterministically: total DESC, displayName ASC (vi), personnelCode ASC, recruiterId ASC.
+  unsortedRows.sort((a, b) => {
+    if (b.total !== a.total) return b.total - a.total;
+    const nameCmp = a.displayName.localeCompare(b.displayName, "vi");
+    if (nameCmp !== 0) return nameCmp;
+    const codeCmp = (a.personnelCode ?? "").localeCompare(
+      b.personnelCode ?? "",
+      "vi",
+    );
+    if (codeCmp !== 0) return codeCmp;
+    return a.recruiterId.localeCompare(b.recruiterId);
+  });
+
+  const rows: DetailedMatrixRecruiterRow[] = unsortedRows.map((row, idx) => ({
+    stt: idx + 1,
+    ...row,
+  }));
+
+  // 6. Compute columnTotals and grandTotal, and populate bucket totals.
+  const columnTotals = new Array<number>(baseBuckets.length).fill(0);
+  let grandTotal = 0;
+  for (const row of rows) {
+    grandTotal += row.total;
+    for (let j = 0; j < baseBuckets.length; j += 1) {
+      columnTotals[j] += row.counts[j] ?? 0;
+    }
+  }
+
+  const buckets: TrendBucketPoint[] = baseBuckets.map((b, idx) => ({
+    ...b,
+    count: columnTotals[idx] ?? 0,
+  }));
+
+  return {
+    resolution,
+    selectedTeamId: rawTeamId,
+    asOfDate,
+    fromDate: effectiveFromDate,
+    toDate: effectiveToDate,
+    teams,
+    buckets,
+    rows,
+    columnTotals,
+    grandTotal,
+  };
+}
