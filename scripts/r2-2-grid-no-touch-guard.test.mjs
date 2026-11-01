@@ -26,8 +26,6 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const BASELINE_COMMIT = "8bf16afe9360e5eebe0dd9183c8ef9d85fc39b0c";
 
 const LOCKED_FILES = [
-  "src/components/direct-entry/direct-entry-spreadsheet-grid.tsx",
-  "src/components/direct-entry/direct-entry-spreadsheet-grid.module.css",
   "src/components/direct-entry/direct-entry-ddmm-date-input.tsx",
   "src/components/direct-entry/direct-entry-excel-paste-dialog.tsx",
   "src/components/direct-entry/direct-entry-worker-profile-paste-dialog.tsx",
@@ -131,23 +129,49 @@ describe("R2.2 — Direct Entry Grid No-Touch & CSS Isolation Guard", () => {
         assert.equal(current, baseline);
       });
     }
+    it("preserves direct-entry-spreadsheet-grid.tsx outside .toolbar 100% vs baseline and locks the updated .toolbar cluster", () => {
+      const gridPath = "src/components/direct-entry/direct-entry-spreadsheet-grid.tsx";
+      const currentGrid = readWorkingFile(gridPath);
+      const baselineGrid = readBaselineFile(gridPath);
+
+      const toolbarMarker = "<div className={styles.toolbar}>";
+      const viewportMarker = "<div className={styles.viewport}>";
+
+      const curToolbarIdx = currentGrid.indexOf(toolbarMarker);
+      const curViewportIdx = currentGrid.indexOf(viewportMarker, curToolbarIdx);
+      const baseToolbarIdx = baselineGrid.indexOf(toolbarMarker);
+      const baseViewportIdx = baselineGrid.indexOf(viewportMarker, baseToolbarIdx);
+
+      assert.ok(curToolbarIdx > 0 && curViewportIdx > curToolbarIdx);
+      assert.ok(baseToolbarIdx > 0 && baseViewportIdx > baseToolbarIdx);
+
+      assert.equal(currentGrid.slice(0, curToolbarIdx), baselineGrid.slice(0, baseToolbarIdx));
+      assert.equal(currentGrid.slice(curViewportIdx), baselineGrid.slice(baseViewportIdx));
+
+      const toolbarSlice = currentGrid.slice(curToolbarIdx, curViewportIdx);
+      assert.match(toolbarSlice, /data-testid="spreadsheet-toolbar-right"/);
+      assert.match(toolbarSlice, /data-testid="spreadsheet-validation-cluster"/);
+      assert.match(toolbarSlice, /data-testid="spreadsheet-error-summary"/);
+      assert.match(toolbarSlice, /data-testid="spreadsheet-header-issues"/);
+      assert.match(toolbarSlice, /data-testid="spreadsheet-save-message"/);
+      assert.match(toolbarSlice, /<div className=\{styles\.toolbarActions\}>\{toolbarActions\}<\/div>/);
+    });
+
+    it("preserves direct-entry-spreadsheet-grid.module.css from .viewport to EOF 100% vs baseline", () => {
+      const gridCssPath = "src/components/direct-entry/direct-entry-spreadsheet-grid.module.css";
+      const currentGridCss = readWorkingFile(gridCssPath);
+      const baselineGridCss = readBaselineFile(gridCssPath);
+
+      const viewportMarker = ".viewport {";
+      const curIdx = currentGridCss.indexOf(viewportMarker);
+      const baseIdx = baselineGridCss.indexOf(viewportMarker);
+      assert.ok(curIdx > 0 && baseIdx > 0);
+      assert.equal(currentGridCss.slice(curIdx), baselineGridCss.slice(baseIdx));
+    });
   });
 
   describe("2. direct-entry-live.tsx — Subtree Slice Preservation", () => {
     const relPath = "src/components/direct-entry/direct-entry-live.tsx";
-
-    function extractInputModeSwitchSlice(source) {
-      const startMarker = "<div className={styles.inputModeSwitch}";
-      const endMarker = "</div>";
-
-      const startIdx = source.indexOf(startMarker);
-      assert.ok(startIdx !== -1, `Missing ${startMarker} in ${relPath}`);
-
-      const closeIdx = source.indexOf(endMarker, startIdx);
-      assert.ok(closeIdx !== -1, `Missing closing ${endMarker} for input mode switch in ${relPath}`);
-
-      return source.slice(startIdx, closeIdx + endMarker.length);
-    }
 
     function extractGridSectionSlice(source) {
       const startMarker = "<section className={styles.gridSection}";
@@ -166,16 +190,19 @@ describe("R2.2 — Direct Entry Grid No-Touch & CSS Isolation Guard", () => {
       return source.slice(startIdx);
     }
 
-    it("preserves the input mode switch and Grid section exactly while allowing Form-only changes", () => {
+    it("locks the two-cluster contextualActionBar and consolidated Grid toolbarActions inside .gridSection", () => {
       const currentSource = readWorkingFile(relPath);
-      const baselineSource = readBaselineFile(relPath);
+      const gridSlice = extractGridSectionSlice(currentSource);
 
-      for (const extractSlice of [extractInputModeSwitchSlice, extractGridSectionSlice]) {
-        const currentSlice = extractSlice(currentSource);
-        const baselineSlice = extractSlice(baselineSource);
-        assert.equal(currentSlice, baselineSlice);
-        assert.equal(sha256(currentSlice), sha256(baselineSlice));
-      }
+      assert.match(gridSlice, /data-testid="contextual-action-left"/);
+      assert.match(gridSlice, /data-testid="contextual-action-right"/);
+      assert.match(gridSlice, /data-testid="input-mode-form"/);
+      assert.match(gridSlice, /data-testid="input-mode-grid"/);
+      assert.match(gridSlice, /data-testid="spreadsheet-paste-rejected"/);
+      assert.match(gridSlice, /data-testid="spreadsheet-labor-types-notice"/);
+      assert.match(gridSlice, /data-testid="spreadsheet-first-error"/);
+      assert.match(gridSlice, /data-testid="add-rows-batch"/);
+      assert.match(gridSlice, /data-testid="spreadsheet-save"/);
     });
 
     it("preserves exact substring from <section className={styles.mobileSection} to EOF (including drawers and dialogs)", () => {
@@ -198,9 +225,6 @@ describe("R2.2 — Direct Entry Grid No-Touch & CSS Isolation Guard", () => {
       ".secondaryButton",
       ".gridEditButton",
       ".dangerButton",
-      ".gridSection",
-      ".inputModeSwitch",
-      ".contextualActionBar",
       ".gridViewport",
       ".grid",
       ".mobileSection",
@@ -224,6 +248,19 @@ describe("R2.2 — Direct Entry Grid No-Touch & CSS Isolation Guard", () => {
         );
       });
     }
+
+    it("locks two-column desktop and responsive narrow-screen rules for .contextualActionBar, .contextualActionLeft, .inputModeSwitch, and .gridSection", () => {
+      const barBlocks = extractCssRuleBlocksForClass(currentCss, ".contextualActionBar");
+      const leftBlocks = extractCssRuleBlocksForClass(currentCss, ".contextualActionLeft");
+      const switchBlocks = extractCssRuleBlocksForClass(currentCss, ".inputModeSwitch");
+      const gridSectionBlocks = extractCssRuleBlocksForClass(currentCss, ".gridSection");
+
+      assert.ok(barBlocks.some((b) => b.includes("grid-template-columns: minmax(0, 1fr) auto")));
+      assert.ok(barBlocks.some((b) => b.includes("@media (max-width: 900px)")));
+      assert.ok(leftBlocks.some((b) => b.includes("display: flex") && b.includes("align-items: center")));
+      assert.ok(switchBlocks.some((b) => b.includes("justify-content: flex-end")));
+      assert.ok(gridSectionBlocks.some((b) => b.includes('.gridSection[data-input-mode="form"] > :not(.contextualActionBar)')));
+    });
   });
 
   describe("4. src/app/globals.css — Scoped Table Rules & Zero Grid Bleed", () => {

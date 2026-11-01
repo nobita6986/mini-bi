@@ -981,32 +981,36 @@ export function DirectEntrySpreadsheetGrid(props: DirectEntrySpreadsheetGridProp
             )}
           </span>
         )}
-        {errorRowCount > 0 && (
-          <span data-testid="spreadsheet-error-summary" role="status">{errorRowCount} dòng có lỗi</span>
-        )}
-        {validation.headerIssues.length > 0 && (
-          <span data-testid="spreadsheet-header-issues" role="alert">
-            {validation.headerIssues.map((issue) => issue.message).join(" ")}
-          </span>
-        )}
-        {saveMessage !== undefined && saveMessage !== "" && (
-          <span
-            data-testid="spreadsheet-save-message"
-            data-tone={saveTone === "error" ? "error" : saveTone === "success" ? "success" : "info"}
-            className={
-              saveTone === "error"
-                ? styles.spreadsheetSaveMessageError
-                : saveTone === "success"
-                  ? styles.spreadsheetSaveMessageSuccess
-                  : styles.spreadsheetSaveMessageInfo
-            }
-            role={saveTone === "error" ? "alert" : "status"}>
-            {saveMessage}
-          </span>
-        )}
-        {toolbarActions !== undefined && (
-          <div className={styles.toolbarActions}>{toolbarActions}</div>
-        )}
+        <div className={styles.toolbarRightCluster} data-testid="spreadsheet-toolbar-right">
+          <div className={styles.toolbarValidationCluster} data-testid="spreadsheet-validation-cluster">
+            {errorRowCount > 0 && (
+              <span className={styles.errorSummaryBadge} data-testid="spreadsheet-error-summary" role="status">{errorRowCount} dòng có lỗi</span>
+            )}
+            {validation.headerIssues.length > 0 && (
+              <span className={styles.toolbarErrorNotice} data-testid="spreadsheet-header-issues" role="alert">
+                {validation.headerIssues.map((issue) => issue.message).join(" ")}
+              </span>
+            )}
+            {saveMessage !== undefined && saveMessage !== "" && (
+              <span
+                data-testid="spreadsheet-save-message"
+                data-tone={saveTone === "error" ? "error" : saveTone === "success" ? "success" : "info"}
+                className={
+                  saveTone === "error"
+                    ? styles.spreadsheetSaveMessageError
+                    : saveTone === "success"
+                      ? styles.spreadsheetSaveMessageSuccess
+                      : styles.spreadsheetSaveMessageInfo
+                }
+                role={saveTone === "error" ? "alert" : "status"}>
+                {saveMessage}
+              </span>
+            )}
+          </div>
+          {toolbarActions !== undefined && (
+            <div className={styles.toolbarActions}>{toolbarActions}</div>
+          )}
+        </div>
       </div>
       <div className={styles.viewport}>
         <DataGrid<SpreadsheetGridRow>
