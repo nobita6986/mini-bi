@@ -18,6 +18,7 @@ import {
   workReportTemplateManagePredicate,
   workReportsNavPredicate,
   workerOperationsNavPredicate,
+  workerEditHistoryNavPredicate,
 } from "../navigation/registry-capability.ts";
 
 export type DirectEntryPageDecision =
@@ -105,6 +106,12 @@ export function decideAttendanceReportPageAccess(input: {
     actor: input.actor,
     allowed: attendanceReportNavPredicate,
   });
+}
+
+export function decideWorkerEditHistoryPageAccess(input: {
+  actor: ActorResolution | null;
+}): DirectEntryPageDecision {
+  return decideCapabilityPageAccess({ actor: input.actor, allowed: workerEditHistoryNavPredicate });
 }
 
 /**

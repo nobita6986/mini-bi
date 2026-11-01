@@ -7,6 +7,7 @@ import {
   isValidReviewEntryId,
   parseCccdReviewListQuery,
   parseCccdReviewResolveRequest,
+  parseMissingDocumentWorkersQuery,
 } from "./cccd-review-contract.ts";
 import type { CccdReviewRepository } from "./cccd-review-repository.ts";
 import {
@@ -55,6 +56,7 @@ async function resolveReviewActor(
   }
   const actor = session.actor.actor;
   const hasReviewOrCreateCapability =
+    actor.capabilities.includes("worker_edit_history_view") ||
     actor.capabilities.includes("entry_admin") ||
     actor.capabilities.includes("entry_privileged_edit") ||
     actor.capabilities.includes("change_request_create") ||
@@ -183,6 +185,60 @@ export async function postDirectEntryCccdReviewResolution(
     );
   } catch {
     console.error("[direct-entry] cccd review resolution failed");
+    return fail("CCCD_REVIEW_UNAVAILABLE", 500);
+  }
+}
+
+export async function getDirectEntryMissingDocumentWorkers(
+  request: Request,
+  flag: string | undefined,
+  dependencies: CccdReviewApiDependencies,
+): Promise<Response> {
+  if (flag !== "true") return fail("NOT_FOUND", 404);
+
+  let parsedQuery: ReturnType<typeof parseMissingDocumentWorkersQuery>;
+  try {
+    const url = new URL(request.url);
+    parsedQuery = parseMissingDocumentWorkersQuery(url.searchParams);
+  } catch {
+    return fail("MISSING_DOCUMENTS_REQUEST_INVALID", 400);
+  }
+  if (!parsedQuery.ok) {
+    return fail(parsedQuery.code, 400);
+  }
+
+  try {
+    const actor = await resolveReviewActor(dependencies);
+    if (!actor.ok) return actor.response;
+
+    if (typeof dependencies.reviewRepository.listMissingDocumentWorkers !== "function") {
+      return fail("CCCD_REVIEW_UNAVAILABLE", 500);
+    }
+
+    const result = await dependencies.reviewRepository.listMissingDocumentWorkers({
+      auth_subject: actor.auth_subject,
+      app_user_id: actor.app_user_id,
+      missing_type: parsedQuery.value.missing_type,
+      employment_status: parsedQuery.value.employment_status,
+      project_id: parsedQuery.value.project_id,
+      search: parsedQuery.value.search,
+      page: parsedQuery.value.page,
+      page_size: parsedQuery.value.page_size,
+    });
+    if (!result.ok) {
+      if (result.kind === "denied") return fail("MISSING_DOCUMENTS_DENIED", 403);
+      return mapReviewFailure(result.kind, "MISSING_DOCUMENTS_REQUEST_INVALID");
+    }
+
+    return json(
+      {
+        ok: true,
+        ...result.data,
+      },
+      200,
+    );
+  } catch {
+    console.error("[direct-entry] missing document workers read failed");
     return fail("CCCD_REVIEW_UNAVAILABLE", 500);
   }
 }

@@ -165,7 +165,7 @@ test("assertions 3-5: grant CHECKs widened, membership still >=, F2 vocabulary r
     + " where c.conname = 'direct_entry_capability_grants_capability_check'")).rows;
   const tokens = [...String(vocabulary[0].definition).matchAll(/'([^']+)'::text/g)]
     .map((match) => match[1]);
-  assert.equal(tokens.length, 32, "the capability vocabulary includes W01A, F1, F2, VFIN-01, and duplicate CCCD tokens");
+  assert.equal(tokens.length, 33, "the capability vocabulary includes W01A, F1, F2, VFIN-01, duplicate CCCD, and worker history tokens");
 });
 
 // ---------------------------------------------------------------------------
