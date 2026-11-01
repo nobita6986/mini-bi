@@ -307,7 +307,7 @@ test("live component reuses server projections and lifecycle helpers instead of 
 });
 
 test("terminal submissions hide change requests and keep document management out of project scope", () => {
-  assert.match(listComponent, /submission\.project_scoped\s*\?/);
+  assert.match(listComponent, /terminal\s*&&\s*submission\.project_scoped/);
   assert.doesNotMatch(listComponent, /Yêu cầu thay đổi/);
   assert.doesNotMatch(listComponent, /onRequestChange/);
   assert.match(listComponent, /!submission\.project_scoped\s*&&\s*\(\s*<button[\s\S]*?onManageDocuments\(submission\)/);
