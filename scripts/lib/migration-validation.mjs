@@ -287,7 +287,7 @@ export const HF_DUPLICATE_CCCD_RESIGNED_WITHDRAW_AND_WORKER_FILTERS_RPC_SIGNATUR
   "public.direct_entry_export_workers(uuid, uuid, text, text, uuid, text, text, text, date, date, text)",
 ]);
 export const DASHBOARD_DETAILED_RECRUITMENT_MATRIX_CATALOG_MIGRATION_NAME =
-  "20261031120000_dashboard_detailed_recruitment_matrix_catalog.sql";
+  "20261031140000_dashboard_detailed_recruitment_matrix_catalog.sql";
 export const DASHBOARD_DETAILED_RECRUITMENT_MATRIX_CATALOG_RPC_SIGNATURE =
   "public.direct_entry_reporting_detailed_matrix_catalog(uuid, uuid)";
 export const F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES = Object.freeze([
