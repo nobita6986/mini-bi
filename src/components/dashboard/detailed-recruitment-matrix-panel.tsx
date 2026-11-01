@@ -1,6 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent,
+} from "react";
 
 import { Alert } from "@/components/ui/alert";
 import { StatusBadge } from "@/components/ui/badge";
@@ -9,7 +16,6 @@ import { useNotify } from "@/components/ui/notify-provider";
 import { formatTimestamp } from "@/lib/format";
 import {
   ALL_RECRUITERS_TEAM_FILTER,
-  formatPersonnelCodeCell,
   formatWorkMonthsCell,
   type DetailedMatrixTeamOption,
   type DetailedRecruitmentMatrixReport,
@@ -23,6 +29,97 @@ import type { ReportingOptionsResult } from "@/lib/reporting/p1-options-server";
 
 import { FiltersOrError } from "./dashboard-shared";
 
+export type DetailedMatrixProvider = "hrp" | "vendor";
+
+export const DETAILED_MATRIX_PROVIDER_OPTIONS: readonly {
+  key: DetailedMatrixProvider;
+  label: string;
+}[] = [
+  { key: "hrp", label: "HRP" },
+  { key: "vendor", label: "Vendor" },
+] as const;
+
+export const DETAILED_MATRIX_ZOOM_MIN = 70;
+export const DETAILED_MATRIX_ZOOM_MAX = 130;
+export const DETAILED_MATRIX_ZOOM_STEP = 10;
+export const DETAILED_MATRIX_ZOOM_DEFAULT = 100;
+
+export function normalizeDetailedMatrixProvider(
+  value: string | null | undefined,
+): DetailedMatrixProvider {
+  return value?.trim().toLowerCase() === "vendor" ? "vendor" : "hrp";
+}
+
+export function clampDetailedMatrixZoom(value: number): number {
+  if (!Number.isFinite(value)) return DETAILED_MATRIX_ZOOM_DEFAULT;
+  const stepped =
+    Math.round(value / DETAILED_MATRIX_ZOOM_STEP) * DETAILED_MATRIX_ZOOM_STEP;
+  return Math.min(
+    DETAILED_MATRIX_ZOOM_MAX,
+    Math.max(DETAILED_MATRIX_ZOOM_MIN, stepped),
+  );
+}
+
+/**
+ * Hiển thị tên người tuyển kèm số tháng làm việc trong ngoặc đơn, ví dụ:
+ * `"Nguyễn Thế Vinh (80)"`. Nếu không có số tháng hợp lệ thì chỉ hiển thị tên.
+ */
+export function formatRecruiterNameWithWorkMonths(
+  displayName: string,
+  workMonths: number | null | undefined,
+): string {
+  const monthsText = formatWorkMonthsCell(workMonths);
+  return monthsText !== "-" ? `${displayName} (${monthsText})` : displayName;
+}
+
+/**
+ * Bỏ phần năm khỏi mốc ngày để rút gọn nhãn cột trên bảng:
+ * - `YYYY-MM-DD` -> `DD/MM` (ví dụ `2026-10-25` -> `25/10`)
+ * - `YYYY-MM` -> `TMM` (ví dụ `2026-10` -> `T10`)
+ */
+export function stripYearFromDateToken(token: string): string {
+  const trimmed = token.trim();
+  const ymdMatch = /^\d{4}-(\d{2})-(\d{2})$/.exec(trimmed);
+  if (ymdMatch) {
+    return `${ymdMatch[2]}/${ymdMatch[1]}`;
+  }
+  const ymMatch = /^\d{4}-(\d{2})$/.exec(trimmed);
+  if (ymMatch) {
+    return `T${ymMatch[1]}`;
+  }
+  return trimmed.replace(/^\d{4}[-/]/, "");
+}
+
+export function formatShortBucketLabel(bucket: {
+  date: string;
+  startDate: string;
+  endDate: string;
+}): string {
+  if (/^\d{4}-\d{2}$/.test(bucket.date.trim())) {
+    return stripYearFromDateToken(bucket.date);
+  }
+  if (bucket.startDate && bucket.endDate) {
+    if (bucket.startDate === bucket.endDate) {
+      return stripYearFromDateToken(bucket.startDate);
+    }
+    return `${stripYearFromDateToken(bucket.startDate)}–${stripYearFromDateToken(bucket.endDate)}`;
+  }
+  return bucket.date
+    .split(/\s*→\s*/)
+    .map(stripYearFromDateToken)
+    .join("–");
+}
+
+export function formatFullBucketTooltip(bucket: {
+  date: string;
+  startDate: string;
+  endDate: string;
+}): string {
+  return bucket.startDate === bucket.endDate
+    ? bucket.startDate
+    : `${bucket.startDate} → ${bucket.endDate}`;
+}
+
 export function buildDetailedMatrixFilterSignature(data: ReportingData): string {
   const a = data.applied;
   return [
@@ -30,7 +127,6 @@ export function buildDetailedMatrixFilterSignature(data: ReportingData): string 
     a.to ?? "",
     a.project ?? "",
     a.recruiter ?? "",
-    a.provider ?? "",
     a.employment ?? "",
     a.status ?? "",
     a.source ?? "",
@@ -39,7 +135,11 @@ export function buildDetailedMatrixFilterSignature(data: ReportingData): string 
 
 export function buildDetailedMatrixUrl(
   data: ReportingData,
-  options?: { resolution?: TrendResolution; teamId?: string },
+  options?: {
+    resolution?: TrendResolution;
+    teamId?: string;
+    provider?: DetailedMatrixProvider;
+  },
 ): string {
   const query = new URLSearchParams();
   const a = data.applied;
@@ -48,7 +148,10 @@ export function buildDetailedMatrixUrl(
   if (a.to) query.set("to", a.to);
   if (a.project) query.set("project", a.project);
   if (a.recruiter) query.set("recruiter", a.recruiter);
-  if (a.provider) query.set("provider", a.provider);
+
+  const provider = normalizeDetailedMatrixProvider(options?.provider ?? "hrp");
+  query.set("provider", provider);
+
   if (a.employment) query.set("employment", a.employment);
   if (a.status) query.set("status", a.status);
   if (a.source) query.set("source", a.source);
@@ -89,9 +192,10 @@ function isReadyDetailedMatrixEnvelope(value: unknown): value is {
  * Panel cho tab `Báo cáo chi tiết` trên Dashboard toàn cục (`scope = "all"`).
  *
  * Hiển thị bảng ma trận 2 chiều:
- * - Cột cố định: `STT`, `Họ tên`, `Mã nhân viên`, `Số tháng làm việc`
- * - Cột thời gian động theo bộ chuyển `Ngày` / `Tuần` / `Tháng`
- * - Chế độ lọc `Tất cả người tuyển` hoặc từng nhóm (team) đang hoạt động
+ * - Cột cố định bên trái: `STT`, `Họ tên` (kèm số tháng làm việc trong ngoặc đơn nếu có)
+ * - Bộ lọc nguồn `HRP` / `Vendor` riêng cho bảng (mặc định `HRP`)
+ * - Cột thời gian động theo bộ chuyển `Ngày` / `Tuần` / `Tháng` với nhãn rút gọn (bỏ năm, giữ tooltip ngày đầy đủ)
+ * - Thu phóng dữ liệu (`70%` – `130%`) và thanh cuộn ngang sticky phía trên đồng bộ hai chiều với bảng
  * - Tổng theo dòng (`Tổng`) và tổng theo cột (`Tổng cộng`), đối soát khớp với Dashboard.
  */
 export function DetailedRecruitmentMatrixPanel({
@@ -104,12 +208,18 @@ export function DetailedRecruitmentMatrixPanel({
   optionsResult: ReportingOptionsResult;
 }) {
   const filterSignature = buildDetailedMatrixFilterSignature(data);
+  const [selectedProvider, setSelectedProvider] =
+    useState<DetailedMatrixProvider>("hrp");
   const [resolution, setResolution] = useState<TrendResolution>("day");
   const [selectedTeamId, setSelectedTeamId] = useState<string>(
     ALL_RECRUITERS_TEAM_FILTER,
   );
   const [knownTeams, setKnownTeams] = useState<DetailedMatrixTeamOption[]>([]);
   const [reloadToken, setReloadToken] = useState(0);
+  const [zoomPercent, setZoomPercent] = useState<number>(
+    DETAILED_MATRIX_ZOOM_DEFAULT,
+  );
+  const [scrollContentWidth, setScrollContentWidth] = useState<number>(0);
 
   const cacheRef = useRef<Map<string, DetailedRecruitmentMatrixReport>>(
     new Map(),
@@ -117,9 +227,13 @@ export function DetailedRecruitmentMatrixPanel({
   const requestSeqRef = useRef(0);
   const userRetryRef = useRef(false);
   const resolutionButtonRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const topScrollRef = useRef<HTMLDivElement | null>(null);
+  const tableScrollRef = useRef<HTMLDivElement | null>(null);
+  const tableRef = useRef<HTMLTableElement | null>(null);
+  const syncingScrollSourceRef = useRef<"top" | "table" | null>(null);
   const notify = useNotify();
 
-  const requestKey = `${filterSignature}|${resolution}|${selectedTeamId}`;
+  const requestKey = `${filterSignature}|${selectedProvider}|${resolution}|${selectedTeamId}`;
 
   const [state, setState] = useState<{
     requestKey: string;
@@ -158,6 +272,7 @@ export function DetailedRecruitmentMatrixPanel({
       buildDetailedMatrixUrl(data, {
         resolution,
         teamId: selectedTeamId,
+        provider: selectedProvider,
       }),
       {
         method: "GET",
@@ -215,7 +330,117 @@ export function DetailedRecruitmentMatrixPanel({
       });
 
     return () => controller.abort();
-  }, [data, notify, reloadToken, requestKey, resolution, selectedTeamId]);
+  }, [
+    data,
+    notify,
+    reloadToken,
+    requestKey,
+    resolution,
+    selectedProvider,
+    selectedTeamId,
+  ]);
+
+  const isCurrentRequest = state.requestKey === requestKey;
+  const effectiveStatus = isCurrentRequest ? state.status : "loading";
+  const effectiveMatrix = isCurrentRequest ? state.matrix : null;
+
+  const syncScrollMetrics = useCallback(() => {
+    const tableEl = tableRef.current;
+    const scrollEl = tableScrollRef.current;
+    const topEl = topScrollRef.current;
+    const nextWidth = tableEl?.scrollWidth ?? scrollEl?.scrollWidth ?? 0;
+    setScrollContentWidth((prev) => (prev !== nextWidth ? nextWidth : prev));
+    if (topEl && scrollEl && Math.abs(topEl.scrollLeft - scrollEl.scrollLeft) > 0.5) {
+      topEl.scrollLeft = scrollEl.scrollLeft;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (effectiveStatus !== "ready" || !effectiveMatrix) return;
+    syncScrollMetrics();
+
+    const tableEl = tableRef.current;
+    const scrollEl = tableScrollRef.current;
+    let observer: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== "undefined") {
+      observer = new ResizeObserver(() => {
+        syncScrollMetrics();
+      });
+      if (tableEl) observer.observe(tableEl);
+      if (scrollEl) observer.observe(scrollEl);
+    }
+    window.addEventListener("resize", syncScrollMetrics);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", syncScrollMetrics);
+    };
+  }, [effectiveMatrix, effectiveStatus, resolution, syncScrollMetrics, zoomPercent]);
+
+  function handleTopScroll(): void {
+    const topEl = topScrollRef.current;
+    const tableEl = tableScrollRef.current;
+    if (!topEl || !tableEl) return;
+    if (syncingScrollSourceRef.current === "table") return;
+    syncingScrollSourceRef.current = "top";
+    if (Math.abs(tableEl.scrollLeft - topEl.scrollLeft) > 0.5) {
+      tableEl.scrollLeft = topEl.scrollLeft;
+    }
+    requestAnimationFrame(() => {
+      if (syncingScrollSourceRef.current === "top") {
+        syncingScrollSourceRef.current = null;
+      }
+    });
+  }
+
+  function handleTableScroll(): void {
+    const topEl = topScrollRef.current;
+    const tableEl = tableScrollRef.current;
+    if (!topEl || !tableEl) return;
+    if (syncingScrollSourceRef.current === "top") return;
+    syncingScrollSourceRef.current = "table";
+    if (Math.abs(topEl.scrollLeft - tableEl.scrollLeft) > 0.5) {
+      topEl.scrollLeft = tableEl.scrollLeft;
+    }
+    requestAnimationFrame(() => {
+      if (syncingScrollSourceRef.current === "table") {
+        syncingScrollSourceRef.current = null;
+      }
+    });
+  }
+
+  function handleHorizontalScrollKeyDown(
+    event: KeyboardEvent<HTMLDivElement>,
+  ): void {
+    const tableEl = tableScrollRef.current;
+    const topEl = topScrollRef.current;
+    if (!tableEl) return;
+
+    const maxScrollLeft = Math.max(0, tableEl.scrollWidth - tableEl.clientWidth);
+    if (maxScrollLeft <= 0) return;
+
+    const stepPx = 120;
+    const pagePx = Math.max(200, Math.round(tableEl.clientWidth * 0.8));
+    let nextScrollLeft: number | null = null;
+
+    if (event.key === "ArrowRight") {
+      nextScrollLeft = Math.min(maxScrollLeft, tableEl.scrollLeft + stepPx);
+    } else if (event.key === "ArrowLeft") {
+      nextScrollLeft = Math.max(0, tableEl.scrollLeft - stepPx);
+    } else if (event.key === "PageDown") {
+      nextScrollLeft = Math.min(maxScrollLeft, tableEl.scrollLeft + pagePx);
+    } else if (event.key === "PageUp") {
+      nextScrollLeft = Math.max(0, tableEl.scrollLeft - pagePx);
+    } else if (event.key === "Home") {
+      nextScrollLeft = 0;
+    } else if (event.key === "End") {
+      nextScrollLeft = maxScrollLeft;
+    }
+
+    if (nextScrollLeft === null) return;
+    event.preventDefault();
+    tableEl.scrollLeft = nextScrollLeft;
+    if (topEl) topEl.scrollLeft = nextScrollLeft;
+  }
 
   function handleRetry(): void {
     userRetryRef.current = true;
@@ -245,18 +470,42 @@ export function DetailedRecruitmentMatrixPanel({
     requestAnimationFrame(() => resolutionButtonRefs.current[nextIndex]?.focus());
   }
 
-  const isCurrentRequest = state.requestKey === requestKey;
-  const effectiveStatus = isCurrentRequest ? state.status : "loading";
-  const effectiveMatrix = isCurrentRequest ? state.matrix : null;
   const activeResolutionOption =
     TREND_RESOLUTION_OPTIONS.find((opt) => opt.key === resolution) ??
     TREND_RESOLUTION_OPTIONS[0];
+  const activeProviderLabel =
+    DETAILED_MATRIX_PROVIDER_OPTIONS.find((opt) => opt.key === selectedProvider)
+      ?.label ?? "HRP";
   const teamOptions = effectiveMatrix?.teams ?? knownTeams;
   const selectedTeamLabel =
     selectedTeamId === ALL_RECRUITERS_TEAM_FILTER
       ? "Tất cả người tuyển"
       : (teamOptions.find((t) => t.teamId === selectedTeamId)?.displayName ??
         "Nhóm đã chọn");
+
+  const zoomScale = zoomPercent / 100;
+  const sttColWidthPx = Math.max(28, Math.round(36 * zoomScale));
+  const nameMinWidthPx = Math.max(132, Math.round(180 * zoomScale));
+  const nameMaxWidthPx = Math.max(168, Math.round(240 * zoomScale));
+  const bucketMinWidthPx = Math.max(
+    34,
+    Math.round((resolution === "week" ? 68 : 42) * zoomScale),
+  );
+  const totalColMinWidthPx = Math.max(48, Math.round(64 * zoomScale));
+  const fontSizePx = Math.round(12 * zoomScale * 10) / 10;
+  const cellPadXPx = Math.max(3, Math.round(6 * zoomScale));
+  const cellPadYPx = Math.max(3, Math.round(6 * zoomScale));
+
+  const matrixZoomStyles: CSSProperties = {
+    ["--matrix-font-size" as string]: `${fontSizePx}px`,
+    ["--matrix-cell-px" as string]: `${cellPadXPx}px`,
+    ["--matrix-cell-py" as string]: `${cellPadYPx}px`,
+    ["--matrix-stt-w" as string]: `${sttColWidthPx}px`,
+    ["--matrix-name-min-w" as string]: `${nameMinWidthPx}px`,
+    ["--matrix-name-max-w" as string]: `${nameMaxWidthPx}px`,
+    ["--matrix-bucket-min-w" as string]: `${bucketMinWidthPx}px`,
+    ["--matrix-total-min-w" as string]: `${totalColMinWidthPx}px`,
+  };
 
   return (
     <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-4 sm:px-6">
@@ -287,6 +536,11 @@ export function DetailedRecruitmentMatrixPanel({
             <div className="space-y-1">
               <CardHeader title="Bảng chi tiết tuyển dụng theo nhân viên" />
               <p className="text-xs text-muted" aria-live="polite">
+                Nguồn:{" "}
+                <span className="font-medium text-foreground">
+                  {activeProviderLabel}
+                </span>
+                {" · "}
                 Phạm vi hiển thị:{" "}
                 <span className="font-medium text-foreground">
                   {selectedTeamLabel}
@@ -318,14 +572,41 @@ export function DetailedRecruitmentMatrixPanel({
               </p>
             </div>
 
-            <div className="flex flex-wrap items-center gap-3">
+            <div className="flex flex-wrap items-center gap-2.5">
               {effectiveMatrix?.asOfDate ? (
                 <StatusBadge tone="neutral" dot>
                   Thâm niên tính đến {effectiveMatrix.asOfDate}
                 </StatusBadge>
               ) : null}
 
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5">
+                <label
+                  htmlFor="detailed-matrix-provider-select"
+                  className="text-xs font-medium whitespace-nowrap text-muted"
+                >
+                  HRP/Vendor
+                </label>
+                <select
+                  id="detailed-matrix-provider-select"
+                  data-testid="detailed-matrix-provider-select"
+                  aria-label="HRP/Vendor"
+                  value={selectedProvider}
+                  onChange={(event) =>
+                    setSelectedProvider(
+                      normalizeDetailedMatrixProvider(event.target.value),
+                    )
+                  }
+                  className="min-h-9 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-xs font-medium text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                >
+                  {DETAILED_MATRIX_PROVIDER_OPTIONS.map((opt) => (
+                    <option key={opt.key} value={opt.key}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex items-center gap-1.5">
                 <label
                   htmlFor="detailed-matrix-team-select"
                   className="text-xs font-medium whitespace-nowrap text-muted"
@@ -367,7 +648,7 @@ export function DetailedRecruitmentMatrixPanel({
                       aria-pressed={active}
                       onClick={() => setResolution(opt.key)}
                       onKeyDown={(event) => handleResolutionKeyDown(event, idx)}
-                      className={`min-h-9 rounded-md px-3 text-xs font-medium whitespace-nowrap transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 ${
+                      className={`min-h-9 rounded-md px-2.5 text-xs font-medium whitespace-nowrap transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 ${
                         active
                           ? "bg-primary text-on-primary shadow-sm"
                           : "text-muted hover:text-foreground"
@@ -377,6 +658,51 @@ export function DetailedRecruitmentMatrixPanel({
                     </button>
                   );
                 })}
+              </div>
+
+              <div
+                role="group"
+                aria-label="Thu nhỏ phóng to bảng báo cáo"
+                className="inline-flex items-center rounded-lg border border-border bg-surface-muted p-0.5"
+              >
+                <button
+                  type="button"
+                  data-testid="detailed-matrix-zoom-out"
+                  aria-label="Thu nhỏ dữ liệu bảng báo cáo"
+                  disabled={zoomPercent <= DETAILED_MATRIX_ZOOM_MIN}
+                  onClick={() =>
+                    setZoomPercent((prev) =>
+                      clampDetailedMatrixZoom(prev - DETAILED_MATRIX_ZOOM_STEP),
+                    )
+                  }
+                  className="min-h-8 min-w-8 rounded-md px-2 text-xs font-semibold text-foreground transition-colors hover:bg-surface disabled:cursor-not-allowed disabled:opacity-45 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                >
+                  −
+                </button>
+                <button
+                  type="button"
+                  data-testid="detailed-matrix-zoom-level"
+                  aria-label={`Mức thu phóng hiện tại ${zoomPercent}%, nhấn để đặt lại 100%`}
+                  title="Nhấn để đặt lại tỷ lệ 100%"
+                  onClick={() => setZoomPercent(DETAILED_MATRIX_ZOOM_DEFAULT)}
+                  className="min-h-8 min-w-[46px] px-1.5 text-center font-mono text-xs font-semibold tabular-nums text-foreground hover:text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                >
+                  {zoomPercent}%
+                </button>
+                <button
+                  type="button"
+                  data-testid="detailed-matrix-zoom-in"
+                  aria-label="Phóng to dữ liệu bảng báo cáo"
+                  disabled={zoomPercent >= DETAILED_MATRIX_ZOOM_MAX}
+                  onClick={() =>
+                    setZoomPercent((prev) =>
+                      clampDetailedMatrixZoom(prev + DETAILED_MATRIX_ZOOM_STEP),
+                    )
+                  }
+                  className="min-h-8 min-w-8 rounded-md px-2 text-xs font-semibold text-foreground transition-colors hover:bg-surface disabled:cursor-not-allowed disabled:opacity-45 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                >
+                  +
+                </button>
               </div>
             </div>
           </div>
@@ -408,145 +734,238 @@ export function DetailedRecruitmentMatrixPanel({
               </Alert>
             </div>
           ) : (
-            <div className="mt-4 overflow-x-auto rounded-xl border border-border bg-surface">
-              <table
-                className="r22-report-table min-w-full border-collapse text-left text-xs"
-                aria-label="Bảng báo cáo chi tiết tuyển dụng theo nhân viên"
+            <div className="mt-4">
+              <div
+                ref={topScrollRef}
+                role="region"
+                aria-label="Thanh cuộn ngang phía trên bảng báo cáo chi tiết"
+                tabIndex={0}
+                data-testid="detailed-matrix-top-scrollbar"
+                onScroll={handleTopScroll}
+                onKeyDown={handleHorizontalScrollKeyDown}
+                className="sticky top-0 z-30 overflow-x-auto overflow-y-hidden rounded-t-xl border border-b-0 border-border bg-surface/95 backdrop-blur supports-[backdrop-filter]:bg-surface/85 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
               >
-                <caption className="sr-only">
-                  Bảng báo cáo chi tiết tuyển dụng theo nhân viên ({selectedTeamLabel}, độ phân giải {activeResolutionOption.label})
-                </caption>
-                <thead className="bg-surface-muted uppercase tracking-wide text-muted">
-                  <tr className="border-b border-border">
-                    <th
-                      scope="col"
-                      className="sticky left-0 z-20 w-11 min-w-[44px] bg-surface-muted px-2.5 py-2.5 text-center font-medium whitespace-nowrap"
-                    >
-                      STT
-                    </th>
-                    <th
-                      scope="col"
-                      className="sticky left-11 z-20 min-w-[148px] max-w-[200px] border-r border-border bg-surface-muted px-3 py-2.5 font-medium whitespace-nowrap sm:min-w-[180px] sm:max-w-[240px]"
-                    >
-                      Họ tên
-                    </th>
-                    <th
-                      scope="col"
-                      className="min-w-[110px] bg-surface-muted px-3 py-2.5 font-medium whitespace-nowrap"
-                    >
-                      Mã nhân viên
-                    </th>
-                    <th
-                      scope="col"
-                      className="min-w-[136px] border-r border-border bg-surface-muted px-3 py-2.5 text-right font-medium whitespace-nowrap"
-                    >
-                      Số tháng làm việc
-                    </th>
-                    {effectiveMatrix.buckets.map((bucket) => (
+                <div
+                  aria-hidden="true"
+                  style={{
+                    width:
+                      scrollContentWidth > 0
+                        ? `${scrollContentWidth}px`
+                        : "100%",
+                    height: "12px",
+                  }}
+                />
+              </div>
+
+              <div
+                ref={tableScrollRef}
+                role="region"
+                aria-label="Vùng cuộn ngang bảng báo cáo chi tiết tuyển dụng"
+                tabIndex={0}
+                data-testid="detailed-matrix-table-scroll"
+                onScroll={handleTableScroll}
+                onKeyDown={handleHorizontalScrollKeyDown}
+                style={matrixZoomStyles}
+                className="overflow-x-auto rounded-b-xl border border-border bg-surface focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+              >
+                <table
+                  ref={tableRef}
+                  data-zoom-percent={zoomPercent}
+                  style={{ fontSize: "var(--matrix-font-size, 12px)" }}
+                  className="r22-report-table min-w-full border-collapse text-left"
+                  aria-label="Bảng báo cáo chi tiết tuyển dụng theo nhân viên"
+                >
+                  <caption className="sr-only">
+                    Bảng báo cáo chi tiết tuyển dụng theo nhân viên ({activeProviderLabel}, {selectedTeamLabel}, độ phân giải {activeResolutionOption.label})
+                  </caption>
+                  <thead className="bg-surface-muted uppercase tracking-wide text-muted">
+                    <tr className="border-b border-border">
                       <th
-                        key={bucket.key}
                         scope="col"
-                        title={
-                          bucket.startDate === bucket.endDate
-                            ? bucket.startDate
-                            : `${bucket.startDate} → ${bucket.endDate}`
-                        }
-                        className="min-w-[88px] bg-surface-muted px-2.5 py-2.5 text-right font-medium tabular-nums whitespace-nowrap"
+                        style={{
+                          width: "var(--matrix-stt-w)",
+                          minWidth: "var(--matrix-stt-w)",
+                          maxWidth: "var(--matrix-stt-w)",
+                          padding:
+                            "var(--matrix-cell-py) var(--matrix-cell-px)",
+                        }}
+                        className="sticky left-0 z-20 bg-surface-muted text-center font-medium whitespace-nowrap"
                       >
-                        {bucket.date}
+                        STT
                       </th>
-                    ))}
-                    <th
-                      scope="col"
-                      className="min-w-[88px] border-l border-border bg-surface-muted px-3 py-2.5 text-right font-semibold text-foreground whitespace-nowrap md:sticky md:right-0 md:z-20"
-                    >
-                      Tổng
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {effectiveMatrix.rows.length === 0 ? (
-                    <tr>
-                      <td
-                        colSpan={5 + effectiveMatrix.buckets.length}
-                        className="px-4 py-8 text-center text-sm text-muted"
+                      <th
+                        scope="col"
+                        style={{
+                          left: "var(--matrix-stt-w)",
+                          minWidth: "var(--matrix-name-min-w)",
+                          maxWidth: "var(--matrix-name-max-w)",
+                          padding:
+                            "var(--matrix-cell-py) calc(var(--matrix-cell-px) * 1.5)",
+                        }}
+                        className="sticky z-20 border-r border-border bg-surface-muted font-medium whitespace-nowrap"
                       >
-                        Không có nhân viên tuyển dụng nào khớp bộ lọc đang chọn.
-                      </td>
+                        Họ tên
+                      </th>
+                      {effectiveMatrix.buckets.map((bucket) => {
+                        const fullTooltip = formatFullBucketTooltip(bucket);
+                        const shortLabel = formatShortBucketLabel(bucket);
+                        return (
+                          <th
+                            key={bucket.key}
+                            scope="col"
+                            title={fullTooltip}
+                            aria-label={fullTooltip}
+                            style={{
+                              minWidth: "var(--matrix-bucket-min-w)",
+                              padding:
+                                "var(--matrix-cell-py) var(--matrix-cell-px)",
+                            }}
+                            className="bg-surface-muted text-right font-medium tabular-nums whitespace-nowrap"
+                          >
+                            {shortLabel}
+                          </th>
+                        );
+                      })}
+                      <th
+                        scope="col"
+                        style={{
+                          minWidth: "var(--matrix-total-min-w)",
+                          padding:
+                            "var(--matrix-cell-py) calc(var(--matrix-cell-px) * 1.5)",
+                        }}
+                        className="border-l border-border bg-surface-muted text-right font-semibold text-foreground whitespace-nowrap md:sticky md:right-0 md:z-20"
+                      >
+                        Tổng
+                      </th>
                     </tr>
-                  ) : (
-                    effectiveMatrix.rows.map((row) => (
-                      <tr
-                        key={row.recruiterId}
-                        className="group text-foreground hover:bg-surface-hover"
-                      >
-                        <td className="sticky left-0 z-10 w-11 min-w-[44px] bg-surface px-2.5 py-2 text-center tabular-nums text-muted group-hover:bg-surface-hover">
-                          {row.stt}
-                        </td>
-                        <th
-                          scope="row"
-                          title={row.displayName}
-                          className="sticky left-11 z-10 min-w-[148px] max-w-[200px] truncate border-r border-border bg-surface px-3 py-2 font-medium text-foreground group-hover:bg-surface-hover sm:min-w-[180px] sm:max-w-[240px]"
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {effectiveMatrix.rows.length === 0 ? (
+                      <tr>
+                        <td
+                          colSpan={3 + effectiveMatrix.buckets.length}
+                          className="px-4 py-8 text-center text-sm text-muted"
                         >
-                          {row.displayName}
-                        </th>
-                        <td className="px-3 py-2 font-mono tabular-nums text-muted whitespace-nowrap">
-                          {formatPersonnelCodeCell(row.personnelCode)}
-                        </td>
-                        <td className="border-r border-border px-3 py-2 text-right tabular-nums whitespace-nowrap">
-                          {formatWorkMonthsCell(row.workMonths)}
-                        </td>
-                        {effectiveMatrix.buckets.map((bucket, bucketIdx) => {
-                          const count = row.counts[bucketIdx] ?? 0;
-                          return (
-                            <td
-                              key={bucket.key}
-                              className={`px-2.5 py-2 text-right tabular-nums whitespace-nowrap ${
-                                count > 0
-                                  ? "font-medium text-foreground"
-                                  : "text-muted"
-                              }`}
-                            >
-                              {count}
-                            </td>
-                          );
-                        })}
-                        <td className="border-l border-border bg-surface px-3 py-2 text-right font-semibold tabular-nums text-foreground whitespace-nowrap group-hover:bg-surface-hover md:sticky md:right-0 md:z-10">
-                          {row.total}
+                          Không có nhân viên tuyển dụng nào khớp bộ lọc đang chọn.
                         </td>
                       </tr>
-                    ))
-                  )}
-                </tbody>
-                <tfoot className="border-t-2 border-border bg-surface-muted font-semibold text-foreground">
-                  <tr>
-                    <th
-                      scope="row"
-                      colSpan={2}
-                      className="sticky left-0 z-10 border-r border-border bg-surface-muted px-3 py-2.5 text-left whitespace-nowrap"
-                    >
-                      Tổng cộng
-                    </th>
-                    <td
-                      colSpan={2}
-                      className="border-r border-border bg-surface-muted px-3 py-2.5 text-right text-xs font-normal text-muted whitespace-nowrap"
-                    >
-                      {effectiveMatrix.rows.length} nhân viên
-                    </td>
-                    {effectiveMatrix.buckets.map((bucket, bucketIdx) => (
-                      <td
-                        key={bucket.key}
-                        className="bg-surface-muted px-2.5 py-2.5 text-right tabular-nums whitespace-nowrap"
+                    ) : (
+                      effectiveMatrix.rows.map((row) => {
+                        const formattedName = formatRecruiterNameWithWorkMonths(
+                          row.displayName,
+                          row.workMonths,
+                        );
+                        return (
+                          <tr
+                            key={row.recruiterId}
+                            className="group text-foreground hover:bg-surface-hover"
+                          >
+                            <td
+                              style={{
+                                width: "var(--matrix-stt-w)",
+                                minWidth: "var(--matrix-stt-w)",
+                                maxWidth: "var(--matrix-stt-w)",
+                                padding:
+                                  "var(--matrix-cell-py) var(--matrix-cell-px)",
+                              }}
+                              className="sticky left-0 z-10 bg-surface text-center tabular-nums text-muted group-hover:bg-surface-hover"
+                            >
+                              {row.stt}
+                            </td>
+                            <th
+                              scope="row"
+                              title={formattedName}
+                              style={{
+                                left: "var(--matrix-stt-w)",
+                                minWidth: "var(--matrix-name-min-w)",
+                                maxWidth: "var(--matrix-name-max-w)",
+                                padding:
+                                  "var(--matrix-cell-py) calc(var(--matrix-cell-px) * 1.5)",
+                              }}
+                              className="sticky z-10 truncate border-r border-border bg-surface font-medium text-foreground group-hover:bg-surface-hover"
+                            >
+                              {formattedName}
+                            </th>
+                            {effectiveMatrix.buckets.map((bucket, bucketIdx) => {
+                              const count = row.counts[bucketIdx] ?? 0;
+                              return (
+                                <td
+                                  key={bucket.key}
+                                  style={{
+                                    minWidth: "var(--matrix-bucket-min-w)",
+                                    padding:
+                                      "var(--matrix-cell-py) var(--matrix-cell-px)",
+                                  }}
+                                  className={`text-right tabular-nums whitespace-nowrap ${
+                                    count > 0
+                                      ? "font-medium text-foreground"
+                                      : "text-muted"
+                                  }`}
+                                >
+                                  {count}
+                                </td>
+                              );
+                            })}
+                            <td
+                              style={{
+                                minWidth: "var(--matrix-total-min-w)",
+                                padding:
+                                  "var(--matrix-cell-py) calc(var(--matrix-cell-px) * 1.5)",
+                              }}
+                              className="border-l border-border bg-surface text-right font-semibold tabular-nums text-foreground whitespace-nowrap group-hover:bg-surface-hover md:sticky md:right-0 md:z-10"
+                            >
+                              {row.total}
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                  <tfoot className="border-t-2 border-border bg-surface-muted font-semibold text-foreground">
+                    <tr>
+                      <th
+                        scope="row"
+                        colSpan={2}
+                        style={{
+                          padding:
+                            "var(--matrix-cell-py) calc(var(--matrix-cell-px) * 1.5)",
+                        }}
+                        className="sticky left-0 z-10 border-r border-border bg-surface-muted text-left whitespace-nowrap"
                       >
-                        {effectiveMatrix.columnTotals[bucketIdx] ?? 0}
+                        <div className="flex items-center justify-between gap-2">
+                          <span>Tổng cộng</span>
+                          <span className="font-normal text-muted">
+                            {effectiveMatrix.rows.length} nhân viên
+                          </span>
+                        </div>
+                      </th>
+                      {effectiveMatrix.buckets.map((bucket, bucketIdx) => (
+                        <td
+                          key={bucket.key}
+                          style={{
+                            minWidth: "var(--matrix-bucket-min-w)",
+                            padding:
+                              "var(--matrix-cell-py) var(--matrix-cell-px)",
+                          }}
+                          className="bg-surface-muted text-right tabular-nums whitespace-nowrap"
+                        >
+                          {effectiveMatrix.columnTotals[bucketIdx] ?? 0}
+                        </td>
+                      ))}
+                      <td
+                        style={{
+                          minWidth: "var(--matrix-total-min-w)",
+                          padding:
+                            "var(--matrix-cell-py) calc(var(--matrix-cell-px) * 1.5)",
+                        }}
+                        className="border-l border-border bg-surface-muted text-right font-bold tabular-nums text-primary whitespace-nowrap md:sticky md:right-0 md:z-10"
+                      >
+                        {effectiveMatrix.grandTotal}
                       </td>
-                    ))}
-                    <td className="border-l border-border bg-surface-muted px-3 py-2.5 text-right font-bold tabular-nums text-primary whitespace-nowrap md:sticky md:right-0 md:z-10">
-                      {effectiveMatrix.grandTotal}
-                    </td>
-                  </tr>
-                </tfoot>
-              </table>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
             </div>
           )}
         </Card>

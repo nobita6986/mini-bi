@@ -458,11 +458,13 @@ test("Detailed Matrix (4): Dashboard UI places 'Báo cáo chi tiết' at 'Báo c
   assert.ok(sharedSrc.includes("export function WorkforceDeepReportPanel"));
   assert.ok(sharedSrc.includes("export function WorkforceDeepSection"));
 
-  // 3. DetailedRecruitmentMatrixPanel renders required columns, team selector, and resolution switcher
+  // 3. DetailedRecruitmentMatrixPanel renders required columns, provider/team selectors, zoom, sticky top scrollbar, and resolution switcher
   assert.ok(panelSrc.includes("STT"));
   assert.ok(panelSrc.includes("Họ tên"));
-  assert.ok(panelSrc.includes("Mã nhân viên"));
-  assert.ok(panelSrc.includes("Số tháng làm việc"));
+  assert.ok(!panelSrc.includes("Mã nhân viên"));
+  assert.ok(panelSrc.includes("formatRecruiterNameWithWorkMonths"));
+  assert.ok(panelSrc.includes("DETAILED_MATRIX_PROVIDER_OPTIONS"));
+  assert.ok(panelSrc.includes("detailed-matrix-top-scrollbar"));
   assert.ok(panelSrc.includes("Tổng cộng"));
   assert.ok(panelSrc.includes("Tất cả người tuyển"));
   assert.ok(panelSrc.includes("TREND_RESOLUTION_OPTIONS"));
