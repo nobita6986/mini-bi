@@ -61,7 +61,7 @@ const MEMBER_ENTRY_ID = "91000000-0000-4000-8000-0000000000d3";
 const PAST = "2026-01-01";
 const ENTRY_DATE = "2026-01-10";
 const LATER = "2026-02-01";
-const FUTURE = "2026-11-01";
+const FUTURE = "2099-01-01";
 const REASON = "Synthetic membership reason";
 const KEY = (suffix) => "50000000-0000-4000-8000-0000000000" + suffix;
 
