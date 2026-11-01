@@ -11,7 +11,8 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
+  justify-content: space-between;
+  gap: 8px 12px;
   font-size: var(--direct-entry-grid-font-size, 13px);
 }
 
@@ -63,6 +64,48 @@
   opacity: 0.6;
 }
 
+.toolbarRightCluster {
+  display: flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px 10px;
+  min-width: 0;
+  max-width: 100%;
+  margin-left: auto;
+}
+
+.toolbarValidationCluster {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px 10px;
+  min-width: 0;
+}
+
+.toolbarValidationCluster:empty {
+  display: none;
+}
+
+.errorSummaryBadge {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid color-mix(in srgb, var(--semantic-error, #be123c) 35%, var(--border, #d4d4d8));
+  border-radius: 9999px;
+  background: color-mix(in srgb, var(--semantic-error, #be123c) 10%, var(--surface, #fff));
+  color: var(--semantic-error, #be123c);
+  padding: 2px 10px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.toolbarErrorNotice {
+  color: var(--semantic-error, #be123c);
+  font-weight: 600;
+}
+
 .toolbarActions {
   display: flex;
   flex: 0 1 auto;
@@ -80,6 +123,15 @@
   min-height: 35px;
   padding: 0 10px;
   white-space: nowrap;
+}
+
+@media (max-width: 900px) {
+  .toolbarRightCluster,
+  .toolbarValidationCluster,
+  .toolbarActions {
+    justify-content: flex-start;
+    margin-left: 0;
+  }
 }
 
 .viewport {

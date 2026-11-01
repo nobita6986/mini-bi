@@ -2592,48 +2592,6 @@ export function DirectEntryLive() {
               {submissionDeleteNotice.message}
             </p>
           )}
-          <div className={styles.inputModeSwitch} role="group" aria-label="Cách nhập liệu">
-            <button type="button" className={inputMode === "form" ? styles.primaryButton : styles.secondaryButton}
-              data-testid="input-mode-form" aria-pressed={inputMode === "form"}
-              disabled={stagedBusy} onClick={() => setInputMode("form")}>
-              Biểu mẫu
-            </button>
-            <button type="button" className={inputMode === "grid" ? styles.primaryButton : styles.secondaryButton}
-              data-testid="input-mode-grid" aria-pressed={inputMode === "grid"}
-              disabled={stagedBusy} onClick={() => setInputMode("grid")}>
-              Lưới
-            </button>
-          </div>
-          {inputMode === "form" && editingDraftSubmissionId === null && (
-            <DirectEntryMultiEntryForm
-              model={stagedModel}
-              visibleRowIds={visibleFormRowIds}
-              validation={stagedValidationForDisplay}
-              catalog={currentCatalog}
-              busy={stagedBusy}
-              canSave={loadState === "ready" && stagedValidation.canSave && hasActiveLaborTypes}
-              message={stagedMessage}
-              messageTone={stagedTone}
-              portraitStages={portraitStages}
-              cccdFrontStages={cccdFrontStages}
-              cccdBackStages={cccdBackStages}
-              contractStages={contractStages}
-              officialEntryIds={selectNonEmptySpreadsheetRows(stagedModel).length > 0
-                ? []
-                : lastSavedFormDraft?.entryIds ?? []}
-              canSubmitOfficial={selectNonEmptySpreadsheetRows(stagedModel).length > 0
-                ? loadState === "ready" && stagedValidation.canSave && hasActiveLaborTypes
-                : lastSavedFormDraft !== null}
-              officialSubmitBusy={officialSubmitBusy}
-              onActivateRow={activateStagedRowLazyDefaults}
-              onChange={onMobileStagedChange}
-              onProviderTypeChange={onStagedProviderTypeChange}
-              onAddRow={addFormRow}
-              onDeleteRow={deleteFormRow}
-              onSave={() => void onStagedSave()}
-              onSubmitOfficial={() => void onSubmitOfficial()}
-            />
-          )}
           <section className={styles.gridSection} data-input-mode={inputMode}
             aria-label="Bảng nhập liệu Direct Entry">
             {(() => {
@@ -2711,81 +2669,99 @@ export function DirectEntryLive() {
                     : selectedIsPersisted
                       ? "persisted"
                       : "staged"}>
-                  <p className={styles.contextualActionLabel}
-                    data-testid="contextual-action-label">
-                    {selected === null
-                      ? <span className={styles.contextualActionLabelMuted}>
-                          Chọn một dòng để thao tác
-                        </span>
-                      : <>Đang chọn dòng STT <strong>{
-                            spreadsheetRows.findIndex((row) =>
-                              row.clientRowId === selected.clientRowId) + 1
-                          }</strong>{selectedIsPersisted && selected.employeeCode !== ""
-                              ? ` · Mã NLĐ ${selected.employeeCode}`
-                              : ""}</>}
-                  </p>
-                  <div className={styles.contextualActionGroup}>
-                    {/*
-                      P1.7-H08: render nut "Ho so NLD" hoac ly do inline
-                      tuy theo trang thai. KHONG bao gio render nut disabled
-                      ma khong co explanation (touch device khong hover).
-                     */}
-                    {selectedIsStaged ? (
-                      <p className={styles.contextualActionHint}
-                        data-testid="contextual-staged-hint">
-                        Lưu NLĐ để thêm hồ sơ.
-                      </p>
-                    ) : selectedIsPersisted && canOpenWorkerDocuments ? (
+                  <div className={styles.contextualActionLeft}
+                    data-testid="contextual-action-left">
+                    <p className={styles.contextualActionLabel}
+                      data-testid="contextual-action-label">
+                      {selected === null
+                        ? <span className={styles.contextualActionLabelMuted}>
+                            Chọn một dòng để thao tác
+                          </span>
+                        : <>Đang chọn dòng STT <strong>{
+                              spreadsheetRows.findIndex((row) =>
+                                row.clientRowId === selected.clientRowId) + 1
+                            }</strong>{selectedIsPersisted && selected.employeeCode !== ""
+                                ? ` · Mã NLĐ ${selected.employeeCode}`
+                                : ""}</>}
+                    </p>
+                    <div className={styles.contextualActionGroup}>
+                      {/*
+                        P1.7-H08: render nut "Ho so NLD" hoac ly do inline
+                        tuy theo trang thai. KHONG bao gio render nut disabled
+                        ma khong co explanation (touch device khong hover).
+                       */}
+                      {selectedIsStaged ? (
+                        <p className={styles.contextualActionHint}
+                          data-testid="contextual-staged-hint">
+                          Lưu NLĐ để thêm hồ sơ.
+                        </p>
+                      ) : selectedIsPersisted && canOpenWorkerDocuments ? (
+                        <button type="button"
+                          data-testid="contextual-documents"
+                          className={styles.contextualActionButton}
+                          aria-label="Hồ sơ NLĐ"
+                          disabled={false}
+                          title={canEditDocsFromCta
+                            ? "Mở hồ sơ NLĐ (sửa được)"
+                            : "Mở hồ sơ NLĐ (chỉ xem)"}
+                          onClick={() => {
+                            if (selected === null) return;
+                            if (!selectedHasEntryId) return;
+                            if (!canViewDocs) return;
+                            const persisted = rows.find((entry) =>
+                              entry.rowId === selected.clientRowId);
+                            if (persisted) setDocumentsRowId(persisted.rowId);
+                          }}>
+                          Hồ sơ NLĐ
+                        </button>
+                      ) : selectedIsPersisted && !canViewDocs ? (
+                        <p className={styles.contextualActionHint}
+                          data-testid="contextual-no-permission-hint"
+                          role="status">
+                          Bạn không có quyền xem hồ sơ.
+                        </p>
+                      ) : null}
                       <button type="button"
-                        data-testid="contextual-documents"
-                        className={styles.contextualActionButton}
-                        aria-label="Hồ sơ NLĐ"
-                        disabled={false}
-                        title={canEditDocsFromCta
-                          ? "Mở hồ sơ NLĐ (sửa được)"
-                          : "Mở hồ sơ NLĐ (chỉ xem)"}
+                        data-testid="contextual-delete"
+                        className={`${styles.contextualActionButton} ${styles.contextualActionButtonDanger}`}
+                        aria-label="Xóa dòng"
+                        aria-busy={deletingRowId === selected?.clientRowId}
+                        disabled={selected === null || deletingRowId !== null ||
+                          (selectedIsPersisted && (!selectedDeleteEligible || selectedIsFinalDraftRow))}
+                        title={selected === null
+                          ? "Chọn một dòng đang nhập trước"
+                          : selectedIsPersisted && selectedIsFinalDraftRow
+                            ? "Không thể xóa hàng cuối của bản nháp"
+                            : selectedIsPersisted && !selectedDeleteEligible
+                              ? "Chỉ xóa được dòng thuộc bản nháp còn chỉnh sửa được"
+                              : undefined}
                         onClick={() => {
                           if (selected === null) return;
-                          if (!selectedHasEntryId) return;
-                          if (!canViewDocs) return;
-                          const persisted = rows.find((entry) =>
-                            entry.rowId === selected.clientRowId);
-                          if (persisted) setDocumentsRowId(persisted.rowId);
+                          if (selectedIsStaged) {
+                            onStagedDelete(selected.clientRowId);
+                            return;
+                          }
+                          if (selectedDeleteEligible && !selectedIsFinalDraftRow) {
+                            void onPersistedDelete(selected.clientRowId);
+                          }
                         }}>
-                        Hồ sơ NLĐ
+                        {deletingRowId === selected?.clientRowId ? "Đang xóa…" : "Xóa dòng"}
                       </button>
-                    ) : selectedIsPersisted && !canViewDocs ? (
-                      <p className={styles.contextualActionHint}
-                        data-testid="contextual-no-permission-hint"
-                        role="status">
-                        Bạn không có quyền xem hồ sơ.
-                      </p>
-                    ) : null}
-                    <button type="button"
-                      data-testid="contextual-delete"
-                      className={`${styles.contextualActionButton} ${styles.contextualActionButtonDanger}`}
-                      aria-label="Xóa dòng"
-                      aria-busy={deletingRowId === selected?.clientRowId}
-                      disabled={selected === null || deletingRowId !== null ||
-                        (selectedIsPersisted && (!selectedDeleteEligible || selectedIsFinalDraftRow))}
-                      title={selected === null
-                        ? "Chọn một dòng đang nhập trước"
-                        : selectedIsPersisted && selectedIsFinalDraftRow
-                          ? "Không thể xóa hàng cuối của bản nháp"
-                          : selectedIsPersisted && !selectedDeleteEligible
-                            ? "Chỉ xóa được dòng thuộc bản nháp còn chỉnh sửa được"
-                            : undefined}
-                      onClick={() => {
-                        if (selected === null) return;
-                        if (selectedIsStaged) {
-                          onStagedDelete(selected.clientRowId);
-                          return;
-                        }
-                        if (selectedDeleteEligible && !selectedIsFinalDraftRow) {
-                          void onPersistedDelete(selected.clientRowId);
-                        }
-                      }}>
-                      {deletingRowId === selected?.clientRowId ? "Đang xóa…" : "Xóa dòng"}
+                    </div>
+                  </div>
+                  <div className={styles.inputModeSwitch}
+                    data-testid="contextual-action-right"
+                    role="group"
+                    aria-label="Cách nhập liệu">
+                    <button type="button" className={inputMode === "form" ? styles.primaryButton : styles.secondaryButton}
+                      data-testid="input-mode-form" aria-pressed={inputMode === "form"}
+                      disabled={stagedBusy} onClick={() => setInputMode("form")}>
+                      Biểu mẫu
+                    </button>
+                    <button type="button" className={inputMode === "grid" ? styles.primaryButton : styles.secondaryButton}
+                      data-testid="input-mode-grid" aria-pressed={inputMode === "grid"}
+                      disabled={stagedBusy} onClick={() => setInputMode("grid")}>
+                      Lưới
                     </button>
                   </div>
                 </div>
@@ -2798,29 +2774,6 @@ export function DirectEntryLive() {
                 </>
               );
             })()}
-            {stagedRejection !== "" && (
-              <p role="alert" data-testid="spreadsheet-paste-rejected">{stagedRejection}</p>
-            )}
-            {stagedValidationForDisplay.firstError !== null && (
-              <button type="button" data-testid="spreadsheet-first-error"
-                onClick={() => {
-                  const index = stagedValidationForDisplay.rowOrder.indexOf(
-                    stagedValidationForDisplay.firstError?.clientRowId ?? "");
-                  setStagedMessageWithTone(
-                    "Lỗi đầu tiên ở dòng dữ liệu " + (index + 1) + ", cột " +
-                    (stagedValidationForDisplay.firstError?.columnKey ?? "") + ".",
-                    "error");
-                }}>
-                Đi tới lỗi đầu tiên
-              </button>
-            )}
-            {!hasActiveLaborTypes && (
-              <p role="status">
-                {loadState === "ready"
-                  ? "Danh mục chưa có loại hình lao động đang hoạt động; không thể lưu dòng mới."
-                  : "Đang tải danh mục loại hình lao động từ máy chủ."}
-              </p>
-            )}
             <DirectEntrySpreadsheetGrid
               rows={spreadsheetRows}
               validation={stagedValidationForDisplay}
@@ -2841,6 +2794,34 @@ export function DirectEntryLive() {
               onZoomChange={setDirectEntryGridZoomLevel}
               toolbarActions={
                 <>
+                  {stagedRejection !== "" && (
+                    <span className={styles.toolbarAlertNotice} role="alert"
+                      data-testid="spreadsheet-paste-rejected">
+                      {stagedRejection}
+                    </span>
+                  )}
+                  {!hasActiveLaborTypes && (
+                    <span className={styles.toolbarStatusNotice} role="status"
+                      data-testid="spreadsheet-labor-types-notice">
+                      {loadState === "ready"
+                        ? "Danh mục chưa có loại hình lao động đang hoạt động; không thể lưu dòng mới."
+                        : "Đang tải danh mục loại hình lao động từ máy chủ."}
+                    </span>
+                  )}
+                  {stagedValidationForDisplay.firstError !== null && (
+                    <button type="button" className={styles.secondaryButton}
+                      data-testid="spreadsheet-first-error"
+                      onClick={() => {
+                        const index = stagedValidationForDisplay.rowOrder.indexOf(
+                          stagedValidationForDisplay.firstError?.clientRowId ?? "");
+                        setStagedMessageWithTone(
+                          "Lỗi đầu tiên ở dòng dữ liệu " + (index + 1) + ", cột " +
+                          (stagedValidationForDisplay.firstError?.columnKey ?? "") + ".",
+                          "error");
+                      }}>
+                      Đi tới lỗi đầu tiên
+                    </button>
+                  )}
                   <button type="button" className={styles.secondaryButton}
                     data-testid="add-rows-batch"
                     onClick={addStagedRows}
@@ -2858,6 +2839,36 @@ export function DirectEntryLive() {
               }
             />
           </section>
+          {inputMode === "form" && editingDraftSubmissionId === null && (
+            <DirectEntryMultiEntryForm
+              model={stagedModel}
+              visibleRowIds={visibleFormRowIds}
+              validation={stagedValidationForDisplay}
+              catalog={currentCatalog}
+              busy={stagedBusy}
+              canSave={loadState === "ready" && stagedValidation.canSave && hasActiveLaborTypes}
+              message={stagedMessage}
+              messageTone={stagedTone}
+              portraitStages={portraitStages}
+              cccdFrontStages={cccdFrontStages}
+              cccdBackStages={cccdBackStages}
+              contractStages={contractStages}
+              officialEntryIds={selectNonEmptySpreadsheetRows(stagedModel).length > 0
+                ? []
+                : lastSavedFormDraft?.entryIds ?? []}
+              canSubmitOfficial={selectNonEmptySpreadsheetRows(stagedModel).length > 0
+                ? loadState === "ready" && stagedValidation.canSave && hasActiveLaborTypes
+                : lastSavedFormDraft !== null}
+              officialSubmitBusy={officialSubmitBusy}
+              onActivateRow={activateStagedRowLazyDefaults}
+              onChange={onMobileStagedChange}
+              onProviderTypeChange={onStagedProviderTypeChange}
+              onAddRow={addFormRow}
+              onDeleteRow={deleteFormRow}
+              onSave={() => void onStagedSave()}
+              onSubmitOfficial={() => void onSubmitOfficial()}
+            />
+          )}
           <DirectEntryInitialWorkerUploads
             pendingByEntryId={pendingInitialUploadsByEntryId}
             rows={rows}

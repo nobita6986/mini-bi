@@ -171,3 +171,77 @@ test("spreadsheet actions live once at the end of the grid toolbar", () => {
   assert.match(live, /onClick=\{\(\) => void onStagedSave\(\)\}/);
   assert.match(live, /<DirectEntrySpreadsheetGrid[\s\S]*?toolbarActions=/);
 });
+
+test("contextual action bar groups row status + delete on the left and mode switch on the right", () => {
+  const barStart = live.indexOf('data-testid="contextual-action-bar"');
+  const barEnd = live.indexOf('{ctaFor && (', barStart);
+  assert.ok(barStart >= 0 && barEnd > barStart);
+  const barSlice = live.slice(barStart, barEnd);
+
+  const leftIdx = barSlice.indexOf('data-testid="contextual-action-left"');
+  const labelIdx = barSlice.indexOf('data-testid="contextual-action-label"');
+  const deleteIdx = barSlice.indexOf('data-testid="contextual-delete"');
+  const rightIdx = barSlice.indexOf('data-testid="contextual-action-right"');
+  const formBtnIdx = barSlice.indexOf('data-testid="input-mode-form"');
+  const gridBtnIdx = barSlice.indexOf('data-testid="input-mode-grid"');
+
+  assert.ok(leftIdx > 0 && labelIdx > leftIdx && deleteIdx > labelIdx);
+  assert.ok(rightIdx > deleteIdx && formBtnIdx > rightIdx && gridBtnIdx > formBtnIdx);
+  assert.equal((live.match(/data-testid="input-mode-form"/g) ?? []).length, 1);
+  assert.equal((live.match(/data-testid="input-mode-grid"/g) ?? []).length, 1);
+  assert.match(barSlice, /Chọn một dòng để thao tác/);
+  assert.match(barSlice, /Mã NLĐ \$\{selected\.employeeCode\}/);
+  assert.match(barSlice, /data-testid="contextual-staged-hint"/);
+  assert.match(barSlice, /data-testid="contextual-documents"/);
+  assert.match(barSlice, /data-testid="contextual-no-permission-hint"/);
+
+  assert.match(
+    css,
+    /\.contextualActionBar\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s+auto;[^}]*align-items:\s*center;/s,
+  );
+  assert.match(
+    css,
+    /\.gridSection\[data-input-mode="form"\]\s*>\s*:not\(\.contextualActionBar\)\s*\{\s*display:\s*none;\s*\}/s,
+  );
+  assert.match(
+    css,
+    /@media\s*\(max-width:\s*900px\)\s*\{[\s\S]*?\.contextualActionBar\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0,\s*1fr\);/s,
+  );
+});
+
+test("grid control row places error summary, first-error jump, and validation notices next to Thêm dòng", () => {
+  const toolbarStart = grid.indexOf("<div className={styles.toolbar}>");
+  const toolbarEnd = grid.indexOf('<div className={styles.viewport}>', toolbarStart);
+  const toolbar = grid.slice(toolbarStart, toolbarEnd);
+
+  const zoomIdx = toolbar.indexOf("styles.zoomControls");
+  const rightClusterIdx = toolbar.indexOf('data-testid="spreadsheet-toolbar-right"');
+  const validationClusterIdx = toolbar.indexOf('data-testid="spreadsheet-validation-cluster"');
+  const errorSummaryIdx = toolbar.indexOf('data-testid="spreadsheet-error-summary"');
+  const headerIssuesIdx = toolbar.indexOf('data-testid="spreadsheet-header-issues"');
+  const saveMsgIdx = toolbar.indexOf('data-testid="spreadsheet-save-message"');
+  const actionsIdx = toolbar.indexOf("styles.toolbarActions");
+
+  assert.ok(zoomIdx > 0 && rightClusterIdx > zoomIdx);
+  assert.ok(validationClusterIdx > rightClusterIdx && errorSummaryIdx > validationClusterIdx);
+  assert.ok(headerIssuesIdx > errorSummaryIdx && saveMsgIdx > headerIssuesIdx && actionsIdx > saveMsgIdx);
+
+  const toolbarActionsStart = live.indexOf("toolbarActions={");
+  const toolbarActionsEnd = live.indexOf("</section>", toolbarActionsStart);
+  const toolbarActionsSlice = live.slice(toolbarActionsStart, toolbarActionsEnd);
+
+  const pasteRejectedIdx = toolbarActionsSlice.indexOf('data-testid="spreadsheet-paste-rejected"');
+  const laborNoticeIdx = toolbarActionsSlice.indexOf('data-testid="spreadsheet-labor-types-notice"');
+  const firstErrorIdx = toolbarActionsSlice.indexOf('data-testid="spreadsheet-first-error"');
+  const addRowsIdx = toolbarActionsSlice.indexOf('data-testid="add-rows-batch"');
+  const saveIdx = toolbarActionsSlice.indexOf('data-testid="spreadsheet-save"');
+
+  assert.ok(pasteRejectedIdx > 0 && laborNoticeIdx > pasteRejectedIdx);
+  assert.ok(firstErrorIdx > laborNoticeIdx && addRowsIdx > firstErrorIdx && saveIdx > addRowsIdx);
+  assert.equal((live.match(/data-testid="spreadsheet-first-error"/g) ?? []).length, 1);
+  assert.equal((live.match(/data-testid="spreadsheet-paste-rejected"/g) ?? []).length, 1);
+  assert.match(
+    gridCss,
+    /@media\s*\(max-width:\s*900px\)\s*\{[\s\S]*?\.toolbarRightCluster,\s*\.toolbarValidationCluster,\s*\.toolbarActions\s*\{[\s\S]*?justify-content:\s*flex-start;/s,
+  );
+});

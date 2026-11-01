@@ -185,21 +185,24 @@
 
 .inputModeSwitch {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   justify-content: flex-end;
   gap: 8px;
-  margin: 0 0 12px;
+  margin: 0;
+  justify-self: end;
 }
 
-.gridSection[data-input-mode="form"] {
+.gridSection[data-input-mode="form"] > :not(.contextualActionBar) {
   display: none;
 }
 
 /* P1.7-H06: contextual action bar tren desktop, dat giua header va grid.
-   Bar hien thi dong dang chon (hoac nhac chon khi rong) va hai nut:
-   "Hồ sơ NLĐ" + "Xóa dòng". */
+   Bar tach 2 cot: cum ben trai (dong dang chon, ma NLD, huong dan + Xoa dong)
+   va cum ben phai (chuyen che do Bieu mau / Luoi). */
 .contextualActionBar {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   justify-content: space-between;
   gap: 10px 16px;
@@ -209,6 +212,14 @@
   background: color-mix(in srgb, var(--background, #f4f4f5) 40%, var(--surface, #fff));
   padding: 10px 14px;
   min-height: 48px;
+}
+
+.contextualActionLeft {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  min-width: 0;
 }
 
 .contextualActionLabel {
@@ -231,6 +242,18 @@
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
+}
+
+.toolbarAlertNotice {
+  margin: 0;
+  color: var(--semantic-error, #be123c);
+  font-weight: 600;
+}
+
+.toolbarStatusNotice {
+  margin: 0;
+  color: var(--muted, #64748b);
+  font-weight: 500;
 }
 
 /* P1.7-H08: inline explanation trong contextual bar khi nut khong the
@@ -292,12 +315,25 @@
   background: color-mix(in srgb, var(--semantic-error, #be123c) 18%, var(--surface, #fff));
 }
 
+@media (max-width: 900px) {
+  .contextualActionBar {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+  }
+  .inputModeSwitch {
+    justify-content: flex-start;
+    justify-self: stretch;
+  }
+}
+
 /* P1.7-H06: bar tren mobile phai full-width, khong tran. */
 @media (max-width: 767px) {
   .contextualActionBar {
+    grid-template-columns: minmax(0, 1fr);
     align-items: stretch;
     flex-direction: column;
   }
+  .contextualActionLeft,
   .contextualActionGroup {
     width: 100%;
   }
