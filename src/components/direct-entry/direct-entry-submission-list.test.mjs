@@ -53,11 +53,18 @@ function renderList(overrides = {}) {
   };
   const exports = {};
   runInNewContext(compiledList, { exports, require(name) {
-    if (name === "react") return { useState(initial) {
-      const slot = cursor++;
-      if (!(slot in state)) state[slot] = initial;
-      return [state[slot], (value) => { state[slot] = value; }];
-    } };
+    if (name === "react") return {
+      useState(initial) {
+        const slot = cursor++;
+        if (!(slot in state)) state[slot] = initial;
+        return [state[slot], (value) => { state[slot] = value; }];
+      },
+      useRef(initial) {
+        const slot = cursor++;
+        if (!(slot in state)) state[slot] = { current: initial };
+        return state[slot];
+      },
+    };
     if (name === "react/jsx-runtime") return require(name);
     if (name === "radix-ui") return { AlertDialog: new Proxy({}, { get: (_, key) => "AlertDialog." + key }) };
     if (name.endsWith("submission-lifecycle")) return lifecycle;
@@ -145,18 +152,16 @@ test("preflight unavailable keeps both confirmation paths closed", async () => {
   assert.equal(ui.writes.length, 0);
 });
 
-test("no conflicts uses normal confirmation with the preflight version", async () => {
+test("no conflicts submits immediately with the preflight version without opening a confirmation dialog", async () => {
   const ui = renderList({ onPreflight: async () => ({ ...preflight, conflict_count: 0 }) });
   await ui.submit();
-  assert.equal(ui.generic().open, true);
-  assert.equal(ui.writes.length, 0);
-  await ui.confirm();
+  assert.equal(ui.generic().open, false);
   assert.equal(ui.writes.length, 1);
   assert.equal(ui.writes[0].submission.version, preflight.version);
   assert.equal(ui.writes[0].acknowledgement, undefined);
 });
 
-test("a conflict appearing after normal confirmation reopens duplicate confirmation without auto-submit", async () => {
+test("a conflict appearing on immediate submit reopens duplicate confirmation without auto-submit", async () => {
   const writes = [];
   let reads = 0;
   const ui = renderList({
@@ -164,7 +169,6 @@ test("a conflict appearing after normal confirmation reopens duplicate confirmat
     onTransition: async (input) => { writes.push(input); return "duplicate-changed"; },
   });
   await ui.submit();
-  await ui.confirm();
   assert.equal(reads, 2);
   assert.equal(writes.length, 1, "never auto-submit the refreshed conflicts");
   assert.equal(ui.generic().open, false);
@@ -189,15 +193,62 @@ test("stale duplicate confirmation refreshes fingerprint/version and needs anoth
   assert.equal(writes[1].acknowledgement.fingerprint, fresh.fingerprint);
 });
 
-test("legacy REVIEW transitions do not request a DRAFT-only preflight", async () => {
+test("legacy REVIEW transitions do not request a DRAFT-only preflight and submit immediately", async () => {
   for (const target of ["DRAFT", "SUBMITTED"]) {
     const ui = renderList({ submissions: [{ ...submission, state: "REVIEW", allowed_transitions: [target] }] });
     await ui.submit(target);
     assert.equal(ui.reads.length, 0);
-    await ui.confirm();
+    assert.equal(ui.generic().open, false);
+    assert.equal(ui.writes.length, 1);
     assert.equal(ui.writes[0].action.target_state, target);
     assert.equal(ui.writes[0].acknowledgement, undefined);
   }
+});
+
+test("rapid consecutive Gửi duyệt clicks do not duplicate requests and keep action disabled while in flight", async () => {
+  let resolveTransition;
+  let preflightCalls = 0;
+  let transitionCalls = 0;
+  const ui = renderList({
+    onPreflight: async () => {
+      preflightCalls += 1;
+      return { ...preflight, conflict_count: 0 };
+    },
+    onTransition: () => {
+      transitionCalls += 1;
+      return new Promise((resolve) => {
+        resolveTransition = () => resolve("applied");
+      });
+    },
+  });
+  const submitButton = () => findElement(ui.tree(), (node) => node.type === "button" && node.key === "SUBMITTED");
+  submitButton().props.onClick();
+  submitButton().props.onClick();
+  await new Promise(setImmediate);
+  assert.equal(preflightCalls, 1, "only one preflight request is sent on rapid clicks");
+  assert.equal(transitionCalls, 1, "only one transition request is sent on rapid clicks");
+  assert.equal(submitButton().props.disabled, true);
+  assert.equal(submitButton().props["aria-busy"], true);
+  submitButton().props.onClick();
+  await new Promise(setImmediate);
+  assert.equal(preflightCalls, 1);
+  assert.equal(transitionCalls, 1);
+  resolveTransition();
+  await new Promise(setImmediate);
+  assert.equal(submitButton().props.disabled, false);
+});
+
+test("submit success uses system Toast, removes obsolete banner copy, and merges Đợt nhập liệu into Nhập liệu trực tiếp Card", () => {
+  assert.match(liveComponent, /useNotify\(\)/);
+  assert.match(liveComponent, /notify\.success\(\{\s*title:\s*"Đã gửi duyệt đợt "\s*\+\s*shortRef\(updated\.submission_id\)\s*\+\s*" thành công\."/);
+  assert.doesNotMatch(liveComponent, /Đợt ở trạng thái cuối; thay đổi sau đó phải đi qua yêu cầu thay đổi\./);
+  assert.doesNotMatch(liveComponent, /Dữ liệu chỉ được lưu sau khi máy chủ xác nhận\./);
+  const headerStart = liveComponent.indexOf("<header className={styles.header}>");
+  const headerEnd = liveComponent.indexOf("</header>", headerStart);
+  const headerSlice = liveComponent.slice(headerStart, headerEnd);
+  assert.match(headerSlice, /<h1>Nhập liệu trực tiếp<\/h1>/);
+  assert.match(headerSlice, /<DirectEntrySubmissionList/);
+  assert.equal((listComponent.match(/<AlertDialog\.Root/g) ?? []).length, 1, "only delete draft keeps AlertDialog confirmation");
 });
 
 test("confirmation uses Radix AlertDialog without manual modal plumbing", () => {

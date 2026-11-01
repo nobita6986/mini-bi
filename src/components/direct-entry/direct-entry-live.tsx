@@ -13,6 +13,7 @@ import { DirectEntrySubmissionList, type SubmissionTransitionRequest,
   type TransitionOutcome } from "@/components/direct-entry/direct-entry-submission-list";
 import { DirectEntryDuplicateCccdDialog } from "@/components/direct-entry/direct-entry-duplicate-cccd-dialog";
 import { DirectEntryWorkerDocuments } from "@/components/direct-entry/direct-entry-worker-documents";
+import { useNotify } from "@/components/ui/notify-provider";
 import { isRealCalendarDate } from "@/lib/analytics/identity/identity-shared.mjs";
 import {
   validateEmployeeCode,
@@ -353,8 +354,10 @@ export function DirectEntryLive() {
   const [submissionHasMore, setSubmissionHasMore] = useState(false);
   const [busySubmissionId, setBusySubmissionId] = useState<string | null>(null);
   const [lifecycleMessage, setLifecycleMessage] = useState("");
+  const notify = useNotify();
   const cursorRef = useRef<string | null>(null);
   const intentKeys = useRef(new Map<string, TransitionIntentKeyState>());
+  const transitionInFlightRef = useRef(new Set<string>());
   const deleteIntentKeys = useRef(new Map<string, TransitionIntentKeyState>());
   const deleteSubmissionIntentKeys = useRef(new Map<string, TransitionIntentKeyState>());
   const [deletingRowId, setDeletingRowId] = useState<string | null>(null);
@@ -505,6 +508,8 @@ export function DirectEntryLive() {
   ): Promise<TransitionOutcome> => {
     const { submission, action, acknowledgement } = input;
     const submissionId = submission.submission_id;
+    if (transitionInFlightRef.current.has(submissionId)) return "failed";
+    transitionInFlightRef.current.add(submissionId);
     const intent = submissionId + ":" + action.target_state;
     const resolved = resolveIntentKey(
       intentKeys.current.get(submissionId) ?? EMPTY_INTENT_KEY,
@@ -571,26 +576,31 @@ export function DirectEntryLive() {
         setSubmissions(updatedSubmissions);
         if (updated.state === "REVIEW") {
           setRows((current) => dropSubmissionRows(current, updated.submission_id));
-          setLifecycleMessage(
-            "Đã gửi duyệt đợt " + shortRef(updated.submission_id) +
-              ". Dòng thuộc đợt này tạm khóa chỉnh sửa cho tới khi được trả về bản nháp.",
-          );
+          setLifecycleMessage("");
+          notify.success({
+            title: "Đã gửi duyệt đợt " + shortRef(updated.submission_id) + " thành công.",
+            dedupeKey: "submission-submit:" + updated.submission_id,
+          });
         } else if (updated.state === "DRAFT") {
           await reloadDrafts();
           setLifecycleMessage(
             "Đã trả đợt " + shortRef(updated.submission_id) + " về bản nháp và tải lại bản nháp máy chủ.",
           );
         } else {
+          setRows((current) => dropSubmissionRows(current, updated.submission_id));
           setLastSavedFormDraft((current) =>
             current?.submissionId === updated.submission_id ? null : current,
           );
-          setLifecycleMessage(
-            "Đã gửi chính thức đợt " + shortRef(updated.submission_id) +
-              ". Đợt ở trạng thái cuối; thay đổi sau đó phải đi qua yêu cầu thay đổi.",
-          );
+          setLifecycleMessage("");
+          notify.success({
+            title: "Đã gửi duyệt đợt " + shortRef(updated.submission_id) + " thành công.",
+            dedupeKey: "submission-submit:" + updated.submission_id,
+          });
         }
         await loadSubmissions("replace");
-        lifecycleStatusRef.current?.focus();
+        if (updated.state === "DRAFT") {
+          lifecycleStatusRef.current?.focus();
+        }
         return "applied";
       }
       const status = response.status;
@@ -610,9 +620,10 @@ export function DirectEntryLive() {
       setLifecycleMessage(transitionErrorMessage(0));
       return "failed";
     } finally {
+      transitionInFlightRef.current.delete(submissionId);
       setBusySubmissionId(null);
     }
-  }, [loadSubmissions, reloadDrafts]);
+  }, [loadSubmissions, notify, reloadDrafts]);
 
   /** P3.1-HF-R1: read-only preflight dùng khi máy chủ yêu cầu xác nhận CCCD trùng. */
   const blockedSubmissionIds = useMemo(() => {
@@ -2484,60 +2495,39 @@ export function DirectEntryLive() {
   return (
     <main className={styles.page}>
       <header className={styles.header}>
-        <div className={styles.headerTitleGroup}>
-          <div className={styles.headerTitleRow}>
-            <h1>Nhập liệu trực tiếp</h1>
-            <span className={styles.headerCountBadge}>{rows.length} dòng</span>
+        <div className={styles.headerMainRow}>
+          <div className={styles.headerTitleGroup}>
+            <div className={styles.headerTitleRow}>
+              <h1>Nhập liệu trực tiếp</h1>
+              <span className={styles.headerCountBadge}>{rows.length} dòng</span>
+            </div>
           </div>
-          <p className={styles.serverStatus} role="status">
-            Dữ liệu chỉ được lưu sau khi máy chủ xác nhận.
-          </p>
+          <div className={styles.liveHeaderActions}>
+            <input
+              ref={xlsxInputRef}
+              type="file"
+              accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+              onChange={(event) => void onXlsxFile(event)}
+              hidden
+              aria-label="Chọn tệp workbook .xlsx"
+            />
+            <button type="button" className={`${styles.secondaryButton} ${styles.excelButton}`}
+              onClick={() => void downloadXlsxTemplate()} hidden>
+              Tải file Excel mẫu
+            </button>
+            <button type="button" className={`${styles.secondaryButton} ${styles.excelButton}`}
+              onClick={() => xlsxInputRef.current?.click()} hidden>
+              Nhập file Excel
+            </button>
+            <button type="button" className={`${styles.secondaryButton} ${styles.quickAddButton}`}
+              data-testid="quick-add-row"
+              onClick={addQuickStagedRow}
+              disabled={loadState !== "ready"}>
+              Thêm nhanh NLĐ
+            </button>
+          </div>
         </div>
-        <div className={styles.liveHeaderActions}>
-          <input
-            ref={xlsxInputRef}
-            type="file"
-            accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            onChange={(event) => void onXlsxFile(event)}
-            hidden
-            aria-label="Chọn tệp workbook .xlsx"
-          />
-          <button type="button" className={`${styles.secondaryButton} ${styles.excelButton}`}
-            onClick={() => void downloadXlsxTemplate()} hidden>
-            Tải file Excel mẫu
-          </button>
-          <button type="button" className={`${styles.secondaryButton} ${styles.excelButton}`}
-            onClick={() => xlsxInputRef.current?.click()} hidden>
-            Nhập file Excel
-          </button>
-          <button type="button" className={`${styles.secondaryButton} ${styles.quickAddButton}`}
-            data-testid="quick-add-row"
-            onClick={addQuickStagedRow}
-            disabled={loadState !== "ready"}>
-            Thêm nhanh NLĐ
-          </button>
-        </div>
-      </header>
-
-      {lifecycleMessage !== "" && (
-        <p className={styles.lifecycleStatus} role="status" tabIndex={-1} ref={lifecycleStatusRef}>
-          {lifecycleMessage}
-        </p>
-      )}
-
-      <div className={styles.notice} role={loadState === "error" ? "alert" : "status"}
-        aria-live="polite">
-        {loadState === "loading" && "Đang tải quyền, danh mục và bản nháp…"}
-        {loadState === "error" && `Không tải được Direct Entry (${loadMessage}). Không dùng dữ liệu mẫu khi chế độ máy chủ đang bật.`}
-        {loadState === "ready" && catalogMissing &&
-          "Danh mục dự án hoặc người tuyển chưa được cấu hình; thao tác lưu đang bị khóa."}
-        {Object.entries(catalogErrors).map(([date, message]) =>
-          <span key={date}>Danh mục ngày {date} không khả dụng ({message}).</span>,
-        )}
-      </div>
-
-      {loadState === "ready" && (
-        <>
+        {loadState === "ready" && (
           <DirectEntrySubmissionList
             compact
             queueFilter={submissionQueue}
@@ -2570,6 +2560,28 @@ export function DirectEntryLive() {
             onManageDocuments={(submission) => setManageDocumentsSubmission(submission)}
             onDeleteDraft={(submission) => onDeleteDraftSubmission(submission)}
           />
+        )}
+      </header>
+
+      {lifecycleMessage !== "" && (
+        <p className={styles.lifecycleStatus} role="status" tabIndex={-1} ref={lifecycleStatusRef}>
+          {lifecycleMessage}
+        </p>
+      )}
+
+      <div className={styles.notice} role={loadState === "error" ? "alert" : "status"}
+        aria-live="polite">
+        {loadState === "loading" && "Đang tải quyền, danh mục và bản nháp…"}
+        {loadState === "error" && `Không tải được Direct Entry (${loadMessage}). Không dùng dữ liệu mẫu khi chế độ máy chủ đang bật.`}
+        {loadState === "ready" && catalogMissing &&
+          "Danh mục dự án hoặc người tuyển chưa được cấu hình; thao tác lưu đang bị khóa."}
+        {Object.entries(catalogErrors).map(([date, message]) =>
+          <span key={date}>Danh mục ngày {date} không khả dụng ({message}).</span>,
+        )}
+      </div>
+
+      {loadState === "ready" && (
+        <>
           <DirectEntryDuplicateCccdDialog
             preflight={pendingFormDuplicate?.preflight ?? null}
             submitting={pendingFormDuplicate !== null &&
