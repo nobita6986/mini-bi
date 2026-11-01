@@ -338,6 +338,7 @@ test("LEAVE-WP1 real PostgreSQL concurrency: accrual burst, overlapping requests
       "race-create-idem-2",
       "fp-race-create-2",
     ]);
+    blockedCreate.catch(() => {});
 
     await waitUntilBlocked(observer, "leave-wp1-worker-2");
     await worker1.query("commit");
@@ -381,6 +382,7 @@ test("LEAVE-WP1 real PostgreSQL concurrency: accrual burst, overlapping requests
       "race-decide-idem-2",
       "fp-race-decide-2",
     ]);
+    blockedDecide.catch(() => {});
 
     await waitUntilBlocked(observer, "leave-wp1-worker-2");
     await worker1.query("commit");

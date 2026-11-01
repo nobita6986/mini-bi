@@ -79,6 +79,8 @@ import {
   HF_SALARY_ADVANCE_PM_WORKER_HISTORY_RPC_SIGNATURE,
   HF_DUPLICATE_CCCD_RESIGNED_WITHDRAW_AND_WORKER_FILTERS_MIGRATION_NAME,
   HF_DUPLICATE_CCCD_RESIGNED_WITHDRAW_AND_WORKER_FILTERS_RPC_SIGNATURES,
+  DASHBOARD_DETAILED_RECRUITMENT_MATRIX_CATALOG_MIGRATION_NAME,
+  DASHBOARD_DETAILED_RECRUITMENT_MATRIX_CATALOG_RPC_SIGNATURE,
   WORKER_EDIT_HISTORY_ADMIN_RPC_SIGNATURES,
   OFFBOARDING_REPORT_MIGRATION_NAME,
   OFFBOARDING_REPORT_RPC_SIGNATURES,
@@ -1037,6 +1039,7 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
         HF_SALARY_ADVANCE_VENDOR_EXCLUSION_AND_WORKER_HISTORY_RPC_SIGNATURE,
         HF_SALARY_ADVANCE_PM_WORKER_HISTORY_RPC_SIGNATURE,
         ...HF_DUPLICATE_CCCD_RESIGNED_WITHDRAW_AND_WORKER_FILTERS_RPC_SIGNATURES,
+        DASHBOARD_DETAILED_RECRUITMENT_MATRIX_CATALOG_RPC_SIGNATURE,
         ...WORKER_EDIT_HISTORY_ADMIN_RPC_SIGNATURES);
       assert.ok(expectedSignatures.length > 0, "the explicit server/invoker allowlist is not empty");
       assert.equal(new Set(expectedSignatures).size, expectedSignatures.length, "the allowlist has no duplicates");
@@ -1083,8 +1086,31 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
           HF_SALARY_ADVANCE_VENDOR_EXCLUSION_AND_WORKER_HISTORY_RPC_SIGNATURE,
           HF_SALARY_ADVANCE_PM_WORKER_HISTORY_RPC_SIGNATURE,
           ...HF_DUPLICATE_CCCD_RESIGNED_WITHDRAW_AND_WORKER_FILTERS_RPC_SIGNATURES,
+          DASHBOARD_DETAILED_RECRUITMENT_MATRIX_CATALOG_RPC_SIGNATURE,
           ...WORKER_EDIT_HISTORY_ADMIN_RPC_SIGNATURES].sort(),
         "only explicitly reviewed post-S0 RPCs add service_role grants after the S0 baseline",
+      );
+      const dashboardDetailedMatrixCatalogMigration = await readFile(
+        path.join(MIGRATION_DIR, DASHBOARD_DETAILED_RECRUITMENT_MATRIX_CATALOG_MIGRATION_NAME),
+        "utf8",
+      );
+      const dashboardDetailedMatrixCatalogNormalized =
+        dashboardDetailedMatrixCatalogMigration
+          .replace(/\s+/g, " ")
+          .replace(/\(\s+/g, "(")
+          .replace(/\s+\)/g, ")")
+          .toLowerCase();
+      assert.ok(
+        dashboardDetailedMatrixCatalogNormalized.includes(
+          `revoke all on function ${DASHBOARD_DETAILED_RECRUITMENT_MATRIX_CATALOG_RPC_SIGNATURE.toLowerCase()} from public, anon, authenticated, service_role;`,
+        ),
+        "detailed recruitment matrix catalog RPC revokes inherited RPC grants before granting service_role",
+      );
+      assert.ok(
+        dashboardDetailedMatrixCatalogNormalized.includes(
+          `grant execute on function ${DASHBOARD_DETAILED_RECRUITMENT_MATRIX_CATALOG_RPC_SIGNATURE.toLowerCase()} to service_role;`,
+        ),
+        "detailed recruitment matrix catalog RPC grants RPC execution only to service_role",
       );
       const hfDuplicateCccdResignedWithdrawAndWorkerFiltersMigration = await readFile(
         path.join(MIGRATION_DIR, HF_DUPLICATE_CCCD_RESIGNED_WITHDRAW_AND_WORKER_FILTERS_MIGRATION_NAME),

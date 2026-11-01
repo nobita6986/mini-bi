@@ -286,6 +286,10 @@ export const HF_DUPLICATE_CCCD_RESIGNED_WITHDRAW_AND_WORKER_FILTERS_RPC_SIGNATUR
   "public.direct_entry_list_workers(uuid, uuid, text, text, uuid, text, text, integer, text, date, date, text)",
   "public.direct_entry_export_workers(uuid, uuid, text, text, uuid, text, text, text, date, date, text)",
 ]);
+export const DASHBOARD_DETAILED_RECRUITMENT_MATRIX_CATALOG_MIGRATION_NAME =
+  "20261031140000_dashboard_detailed_recruitment_matrix_catalog.sql";
+export const DASHBOARD_DETAILED_RECRUITMENT_MATRIX_CATALOG_RPC_SIGNATURE =
+  "public.direct_entry_reporting_detailed_matrix_catalog(uuid, uuid)";
 export const WORKER_EDIT_HISTORY_ADMIN_MIGRATION_NAME =
   "20261031120000_worker_edit_history_admin.sql";
 export const MISSING_DOCUMENT_WORKERS_REVIEW_RPC_SIGNATURE =
@@ -535,6 +539,7 @@ export async function verifyS0T1CHistoricalCompatibility(
     hfSalaryAdvanceVendorExclusionAndWorkerHistoryApplied = false,
     hfSalaryAdvancePmWorkerHistoryApplied = false,
     hfDuplicateCccdResignedWithdrawAndWorkerFiltersApplied = false,
+    dashboardDetailedRecruitmentMatrixCatalogApplied = false,
     workerEditHistoryAdminApplied = false } = {},
 ) {
   const baseAllowlist = extractS0T1CAllowlistSignatures(migrationSql);
@@ -614,6 +619,9 @@ export async function verifyS0T1CHistoricalCompatibility(
       : []),
     ...(hfDuplicateCccdResignedWithdrawAndWorkerFiltersApplied
       ? HF_DUPLICATE_CCCD_RESIGNED_WITHDRAW_AND_WORKER_FILTERS_RPC_SIGNATURES
+      : []),
+    ...(dashboardDetailedRecruitmentMatrixCatalogApplied
+      ? [DASHBOARD_DETAILED_RECRUITMENT_MATRIX_CATALOG_RPC_SIGNATURE]
       : []),
     ...(workerEditHistoryAdminApplied ? WORKER_EDIT_HISTORY_ADMIN_RPC_SIGNATURES : []),
   ];
@@ -866,6 +874,8 @@ export async function verifyAppliedMigrationChecksum(
           appliedMap.has(HF_SALARY_ADVANCE_PM_WORKER_HISTORY_MIGRATION_NAME),
         hfDuplicateCccdResignedWithdrawAndWorkerFiltersApplied:
           appliedMap.has(HF_DUPLICATE_CCCD_RESIGNED_WITHDRAW_AND_WORKER_FILTERS_MIGRATION_NAME),
+        dashboardDetailedRecruitmentMatrixCatalogApplied:
+          appliedMap.has(DASHBOARD_DETAILED_RECRUITMENT_MATRIX_CATALOG_MIGRATION_NAME),
         workerEditHistoryAdminApplied:
           appliedMap.has(WORKER_EDIT_HISTORY_ADMIN_MIGRATION_NAME),
       },
