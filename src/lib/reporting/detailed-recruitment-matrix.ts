@@ -20,11 +20,47 @@ import { P2_W04A_DIRECT_ENTRY_SOURCE_ID } from "./p2-w04a-cutover.ts";
 
 export const ALL_RECRUITERS_TEAM_FILTER = "all";
 
+export const DETAILED_MATRIX_ZOOM_MIN = 70;
+export const DETAILED_MATRIX_ZOOM_MAX = 130;
+export const DETAILED_MATRIX_ZOOM_STEP = 10;
+export const DETAILED_MATRIX_ZOOM_DEFAULT = 100;
+
+export const DETAILED_MATRIX_STT_COL_WIDTH_PX = 36;
+export const DETAILED_MATRIX_NAME_COL_WIDTH_PX = 200;
+export const DETAILED_MATRIX_FIXED_FONT_SIZE_PX = 12;
+export const DETAILED_MATRIX_FIXED_CELL_PAD_X_PX = 6;
+export const DETAILED_MATRIX_FIXED_CELL_PAD_Y_PX = 6;
+export const DETAILED_MATRIX_FIXED_NAME_PAD_X_PX = 10;
+
 export type DetailedMatrixTeamOption = {
   teamId: string;
   teamCode: string;
   displayName: string;
   memberCount: number;
+};
+
+export type DetailedMatrixTeamDropdownOption = {
+  value: string;
+  label: string;
+};
+
+export type DetailedMatrixZoomMetrics = {
+  zoomPercent: number;
+  zoomScale: number;
+  sttColWidthPx: number;
+  nameColWidthPx: number;
+  nameMinWidthPx: number;
+  nameMaxWidthPx: number;
+  fixedFontSizePx: number;
+  fixedCellPadXPx: number;
+  fixedCellPadYPx: number;
+  fixedNamePadXPx: number;
+  bucketMinWidthPx: number;
+  totalColMinWidthPx: number;
+  metricFontSizePx: number;
+  cellPadXPx: number;
+  cellPadYPx: number;
+  totalCellPadXPx: number;
 };
 
 export type DetailedMatrixCatalogRecruiter = {
@@ -147,6 +183,113 @@ export function formatPersonnelCodeCell(
   if (typeof personnelCode !== "string") return "-";
   const trimmed = personnelCode.trim();
   return trimmed.length > 0 ? trimmed : "-";
+}
+
+export function clampDetailedMatrixZoom(value: number): number {
+  if (!Number.isFinite(value)) return DETAILED_MATRIX_ZOOM_DEFAULT;
+  const stepped =
+    Math.round(value / DETAILED_MATRIX_ZOOM_STEP) * DETAILED_MATRIX_ZOOM_STEP;
+  return Math.min(
+    DETAILED_MATRIX_ZOOM_MAX,
+    Math.max(DETAILED_MATRIX_ZOOM_MIN, stepped),
+  );
+}
+
+/**
+ * Computes zoom layout metrics for `DetailedRecruitmentMatrixPanel`:
+ * - Fixed columns (`STT`, `Họ tên`): width, padding, font-size, and sticky offsets remain invariant.
+ * - Metric columns (time buckets + `Tổng`): width, padding, and font-size scale with `zoomPercent`.
+ */
+export function computeDetailedMatrixZoomMetrics(
+  zoomPercent: number,
+  resolution: TrendResolution,
+): DetailedMatrixZoomMetrics {
+  const clampedZoom = clampDetailedMatrixZoom(zoomPercent);
+  const zoomScale = clampedZoom / 100;
+  const baseBucketWidth = resolution === "week" ? 68 : 42;
+  const minBucketFloor = resolution === "week" ? 44 : 26;
+
+  return {
+    zoomPercent: clampedZoom,
+    zoomScale,
+    sttColWidthPx: DETAILED_MATRIX_STT_COL_WIDTH_PX,
+    nameColWidthPx: DETAILED_MATRIX_NAME_COL_WIDTH_PX,
+    nameMinWidthPx: DETAILED_MATRIX_NAME_COL_WIDTH_PX,
+    nameMaxWidthPx: DETAILED_MATRIX_NAME_COL_WIDTH_PX,
+    fixedFontSizePx: DETAILED_MATRIX_FIXED_FONT_SIZE_PX,
+    fixedCellPadXPx: DETAILED_MATRIX_FIXED_CELL_PAD_X_PX,
+    fixedCellPadYPx: DETAILED_MATRIX_FIXED_CELL_PAD_Y_PX,
+    fixedNamePadXPx: DETAILED_MATRIX_FIXED_NAME_PAD_X_PX,
+    bucketMinWidthPx: Math.max(
+      minBucketFloor,
+      Math.round(baseBucketWidth * zoomScale),
+    ),
+    totalColMinWidthPx: Math.max(42, Math.round(64 * zoomScale)),
+    metricFontSizePx: Math.round(12 * zoomScale * 10) / 10,
+    cellPadXPx: Math.max(2, Math.round(6 * zoomScale)),
+    cellPadYPx: Math.max(2, Math.round(6 * zoomScale)),
+    totalCellPadXPx: Math.max(4, Math.round(9 * zoomScale)),
+  };
+}
+
+function normalizeTeamToken(value: string | null | undefined): string {
+  if (typeof value !== "string") return "";
+  return value
+    .normalize("NFC")
+    .replace(/[-_]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+export function isMarketingHrpTeamOption(
+  team: Pick<DetailedMatrixTeamOption, "displayName" | "teamCode">,
+): boolean {
+  return (
+    normalizeTeamToken(team.displayName) === "marketing hrp" ||
+    normalizeTeamToken(team.teamCode) === "marketing hrp"
+  );
+}
+
+/**
+ * Sắp xếp danh sách nhóm trong dropdown `Người tuyển / Nhóm`:
+ * - `"Marketing HRP"` luôn nằm cuối danh sách các nhóm.
+ * - Giữ nguyên thứ tự tương đối của những nhóm còn lại.
+ */
+export function sortDetailedMatrixTeamOptions<
+  T extends Pick<DetailedMatrixTeamOption, "displayName" | "teamCode">,
+>(teams: readonly T[]): T[] {
+  const regularTeams: T[] = [];
+  const marketingHrpTeams: T[] = [];
+  for (const team of teams) {
+    if (isMarketingHrpTeamOption(team)) {
+      marketingHrpTeams.push(team);
+    } else {
+      regularTeams.push(team);
+    }
+  }
+  return [...regularTeams, ...marketingHrpTeams];
+}
+
+/**
+ * Tạo danh sách lựa chọn cho dropdown `Người tuyển / Nhóm`:
+ * - `"Tất cả người tuyển"` luôn đứng đầu tiên.
+ * - Các nhóm tiếp theo giữ nguyên thứ tự tương đối, riêng `"Marketing HRP"` luôn đứng cuối.
+ */
+export function buildDetailedMatrixTeamDropdownOptions(
+  teams: readonly DetailedMatrixTeamOption[],
+): DetailedMatrixTeamDropdownOption[] {
+  const sortedTeams = sortDetailedMatrixTeamOptions(teams);
+  return [
+    {
+      value: ALL_RECRUITERS_TEAM_FILTER,
+      label: "Tất cả người tuyển",
+    },
+    ...sortedTeams.map((team) => ({
+      value: team.teamId,
+      label: `${team.displayName} (${team.memberCount})`,
+    })),
+  ];
 }
 
 export function isMatrixResolution(value: string): value is TrendResolution {
@@ -329,17 +472,19 @@ export function buildDetailedRecruitmentMatrix(input: {
     }
   }
 
-  const teams: DetailedMatrixTeamOption[] = [...catalog.teams]
-    .map((t) => ({
-      teamId: t.teamId,
-      teamCode: t.teamCode,
-      displayName: t.displayName,
-      memberCount: memberCountByTeamId.get(t.teamId) ?? 0,
-    }))
-    .sort((a, b) => {
-      const cmp = a.displayName.localeCompare(b.displayName, "vi");
-      return cmp !== 0 ? cmp : a.teamId.localeCompare(b.teamId);
-    });
+  const teams: DetailedMatrixTeamOption[] = sortDetailedMatrixTeamOptions(
+    [...catalog.teams]
+      .map((t) => ({
+        teamId: t.teamId,
+        teamCode: t.teamCode,
+        displayName: t.displayName,
+        memberCount: memberCountByTeamId.get(t.teamId) ?? 0,
+      }))
+      .sort((a, b) => {
+        const cmp = a.displayName.localeCompare(b.displayName, "vi");
+        return cmp !== 0 ? cmp : a.teamId.localeCompare(b.teamId);
+      }),
+  );
 
   // Lookup primary catalog entry per recruiterKey
   const primaryCatalogByRecruiterKey = new Map<
