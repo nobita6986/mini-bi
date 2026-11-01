@@ -8,11 +8,22 @@ import { PGlite } from "@electric-sql/pglite";
 
 import {
   ALL_RECRUITERS_TEAM_FILTER,
+  buildDetailedMatrixTeamDropdownOptions,
   buildDetailedRecruitmentMatrix,
+  clampDetailedMatrixZoom,
   computeCompletedWorkMonths,
+  computeDetailedMatrixZoomMetrics,
+  DETAILED_MATRIX_FIXED_CELL_PAD_X_PX,
+  DETAILED_MATRIX_FIXED_CELL_PAD_Y_PX,
+  DETAILED_MATRIX_FIXED_FONT_SIZE_PX,
+  DETAILED_MATRIX_FIXED_NAME_PAD_X_PX,
+  DETAILED_MATRIX_NAME_COL_WIDTH_PX,
+  DETAILED_MATRIX_STT_COL_WIDTH_PX,
   formatPersonnelCodeCell,
   formatWorkMonthsCell,
+  isMarketingHrpTeamOption,
   parseMatrixResolutionParam,
+  sortDetailedMatrixTeamOptions,
 } from "./detailed-recruitment-matrix.ts";
 import {
   fetchDetailedRecruitmentMatrixReport,
@@ -469,6 +480,123 @@ test("Detailed Matrix (4): Dashboard UI places 'Báo cáo chi tiết' at 'Báo c
   assert.ok(panelSrc.includes("Tất cả người tuyển"));
   assert.ok(panelSrc.includes("TREND_RESOLUTION_OPTIONS"));
   assert.ok(panelSrc.includes("/api/reporting/detailed-matrix"));
+
+  // 4. Zoom +/- affects ONLY time bucket columns and Total column; STT and Họ tên remain fixed size/font/sticky
+  const zoomLevels = [70, 80, 90, 100, 110, 120, 130];
+  for (const res of ["day", "week", "month"]) {
+    const metricsByZoom = zoomLevels.map((z) =>
+      computeDetailedMatrixZoomMetrics(z, res),
+    );
+    for (const m of metricsByZoom) {
+      assert.equal(m.sttColWidthPx, DETAILED_MATRIX_STT_COL_WIDTH_PX);
+      assert.equal(m.nameColWidthPx, DETAILED_MATRIX_NAME_COL_WIDTH_PX);
+      assert.equal(m.nameMinWidthPx, DETAILED_MATRIX_NAME_COL_WIDTH_PX);
+      assert.equal(m.nameMaxWidthPx, DETAILED_MATRIX_NAME_COL_WIDTH_PX);
+      assert.equal(m.fixedFontSizePx, DETAILED_MATRIX_FIXED_FONT_SIZE_PX);
+      assert.equal(m.fixedCellPadXPx, DETAILED_MATRIX_FIXED_CELL_PAD_X_PX);
+      assert.equal(m.fixedCellPadYPx, DETAILED_MATRIX_FIXED_CELL_PAD_Y_PX);
+      assert.equal(m.fixedNamePadXPx, DETAILED_MATRIX_FIXED_NAME_PAD_X_PX);
+    }
+
+    for (let i = 1; i < metricsByZoom.length; i += 1) {
+      const prev = metricsByZoom[i - 1];
+      const curr = metricsByZoom[i];
+      assert.ok(
+        curr.bucketMinWidthPx > prev.bucketMinWidthPx,
+        `bucketMinWidthPx must grow with zoom (${prev.zoomPercent}% -> ${curr.zoomPercent}% on ${res})`,
+      );
+      assert.ok(
+        curr.totalColMinWidthPx > prev.totalColMinWidthPx,
+        `totalColMinWidthPx must grow with zoom (${prev.zoomPercent}% -> ${curr.zoomPercent}% on ${res})`,
+      );
+      assert.ok(
+        curr.metricFontSizePx > prev.metricFontSizePx,
+        `metricFontSizePx must grow with zoom (${prev.zoomPercent}% -> ${curr.zoomPercent}% on ${res})`,
+      );
+      assert.ok(curr.cellPadXPx >= prev.cellPadXPx);
+      assert.ok(curr.cellPadYPx >= prev.cellPadYPx);
+      assert.ok(curr.totalCellPadXPx >= prev.totalCellPadXPx);
+    }
+  }
+  assert.equal(clampDetailedMatrixZoom(50), 70);
+  assert.equal(clampDetailedMatrixZoom(160), 130);
+  assert.equal(clampDetailedMatrixZoom(Number.NaN), 100);
+  assert.ok(panelSrc.includes("--matrix-fixed-font-size"));
+  assert.ok(panelSrc.includes("--matrix-fixed-cell-py"));
+  assert.ok(panelSrc.includes("--matrix-fixed-name-px"));
+  assert.ok(panelSrc.includes("--matrix-name-w"));
+  assert.ok(panelSrc.includes("sortDetailedMatrixTeamOptions"));
+
+  // 5. Team dropdown sorting: "Tất cả người tuyển" first, "Marketing HRP" last, remaining teams preserve relative order & stability
+  const rawTeams = [
+    {
+      teamId: "team-b",
+      teamCode: "TEAM_B",
+      displayName: "Nhóm Tuyển dụng 2",
+      memberCount: 5,
+    },
+    {
+      teamId: "team-mkt",
+      teamCode: "MARKETING_HRP",
+      displayName: "Marketing HRP",
+      memberCount: 2,
+    },
+    {
+      teamId: "team-a",
+      teamCode: "TEAM_A",
+      displayName: "Nhóm Tuyển dụng 1",
+      memberCount: 7,
+    },
+    {
+      teamId: "team-c",
+      teamCode: "TEAM_C",
+      displayName: "Nhóm Tuyển dụng 3",
+      memberCount: 4,
+    },
+  ];
+  assert.equal(isMarketingHrpTeamOption(rawTeams[1]), true);
+  assert.equal(isMarketingHrpTeamOption(rawTeams[0]), false);
+
+  const sortedTeams = sortDetailedMatrixTeamOptions(rawTeams);
+  assert.deepEqual(
+    sortedTeams.map((t) => t.displayName),
+    [
+      "Nhóm Tuyển dụng 2",
+      "Nhóm Tuyển dụng 1",
+      "Nhóm Tuyển dụng 3",
+      "Marketing HRP",
+    ],
+  );
+  // Idempotent across reloads / filter changes
+  assert.deepEqual(sortDetailedMatrixTeamOptions(sortedTeams), sortedTeams);
+
+  const dropdownOptions = buildDetailedMatrixTeamDropdownOptions(rawTeams);
+  assert.deepEqual(dropdownOptions, [
+    { value: ALL_RECRUITERS_TEAM_FILTER, label: "Tất cả người tuyển" },
+    { value: "team-b", label: "Nhóm Tuyển dụng 2 (5)" },
+    { value: "team-a", label: "Nhóm Tuyển dụng 1 (7)" },
+    { value: "team-c", label: "Nhóm Tuyển dụng 3 (4)" },
+    { value: "team-mkt", label: "Marketing HRP (2)" },
+  ]);
+
+  // Also verify buildDetailedRecruitmentMatrix places "Marketing HRP" at the end of matrix.teams
+  const matrixWithMarketing = buildDetailedRecruitmentMatrix({
+    facts: [],
+    catalog: {
+      teams: [
+        { teamId: "t-mkt", teamCode: "MKT_HRP", displayName: "Marketing HRP" },
+        { teamId: "t-2", teamCode: "N2", displayName: "Nhóm 2" },
+        { teamId: "t-1", teamCode: "N1", displayName: "Nhóm 1" },
+      ],
+      recruiters: [],
+    },
+    filters: { from: "2026-10-01", to: "2026-10-05" },
+    resolution: "day",
+  });
+  assert.deepEqual(
+    matrixWithMarketing.teams.map((t) => t.displayName),
+    ["Nhóm 1", "Nhóm 2", "Marketing HRP"],
+  );
 });
 
 test("Detailed Matrix (5): Ephemeral PGlite DB integration for direct_entry_reporting_detailed_matrix_catalog RPC", async () => {

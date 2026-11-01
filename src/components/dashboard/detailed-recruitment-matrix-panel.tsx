@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -16,8 +17,25 @@ import { useNotify } from "@/components/ui/notify-provider";
 import { formatTimestamp } from "@/lib/format";
 import {
   ALL_RECRUITERS_TEAM_FILTER,
+  buildDetailedMatrixTeamDropdownOptions,
+  clampDetailedMatrixZoom,
+  computeDetailedMatrixZoomMetrics,
+  DETAILED_MATRIX_FIXED_CELL_PAD_X_PX,
+  DETAILED_MATRIX_FIXED_CELL_PAD_Y_PX,
+  DETAILED_MATRIX_FIXED_FONT_SIZE_PX,
+  DETAILED_MATRIX_FIXED_NAME_PAD_X_PX,
+  DETAILED_MATRIX_NAME_COL_WIDTH_PX,
+  DETAILED_MATRIX_STT_COL_WIDTH_PX,
+  DETAILED_MATRIX_ZOOM_DEFAULT,
+  DETAILED_MATRIX_ZOOM_MAX,
+  DETAILED_MATRIX_ZOOM_MIN,
+  DETAILED_MATRIX_ZOOM_STEP,
   formatWorkMonthsCell,
+  isMarketingHrpTeamOption,
+  sortDetailedMatrixTeamOptions,
+  type DetailedMatrixTeamDropdownOption,
   type DetailedMatrixTeamOption,
+  type DetailedMatrixZoomMetrics,
   type DetailedRecruitmentMatrixReport,
 } from "@/lib/reporting/detailed-recruitment-matrix";
 import {
@@ -29,6 +47,26 @@ import type { ReportingOptionsResult } from "@/lib/reporting/p1-options-server";
 
 import { FiltersOrError } from "./dashboard-shared";
 
+export {
+  buildDetailedMatrixTeamDropdownOptions,
+  clampDetailedMatrixZoom,
+  computeDetailedMatrixZoomMetrics,
+  DETAILED_MATRIX_FIXED_CELL_PAD_X_PX,
+  DETAILED_MATRIX_FIXED_CELL_PAD_Y_PX,
+  DETAILED_MATRIX_FIXED_FONT_SIZE_PX,
+  DETAILED_MATRIX_FIXED_NAME_PAD_X_PX,
+  DETAILED_MATRIX_NAME_COL_WIDTH_PX,
+  DETAILED_MATRIX_STT_COL_WIDTH_PX,
+  DETAILED_MATRIX_ZOOM_DEFAULT,
+  DETAILED_MATRIX_ZOOM_MAX,
+  DETAILED_MATRIX_ZOOM_MIN,
+  DETAILED_MATRIX_ZOOM_STEP,
+  isMarketingHrpTeamOption,
+  sortDetailedMatrixTeamOptions,
+  type DetailedMatrixTeamDropdownOption,
+  type DetailedMatrixZoomMetrics,
+};
+
 export type DetailedMatrixProvider = "hrp" | "vendor";
 
 export const DETAILED_MATRIX_PROVIDER_OPTIONS: readonly {
@@ -39,25 +77,10 @@ export const DETAILED_MATRIX_PROVIDER_OPTIONS: readonly {
   { key: "vendor", label: "Vendor" },
 ] as const;
 
-export const DETAILED_MATRIX_ZOOM_MIN = 70;
-export const DETAILED_MATRIX_ZOOM_MAX = 130;
-export const DETAILED_MATRIX_ZOOM_STEP = 10;
-export const DETAILED_MATRIX_ZOOM_DEFAULT = 100;
-
 export function normalizeDetailedMatrixProvider(
   value: string | null | undefined,
 ): DetailedMatrixProvider {
   return value?.trim().toLowerCase() === "vendor" ? "vendor" : "hrp";
-}
-
-export function clampDetailedMatrixZoom(value: number): number {
-  if (!Number.isFinite(value)) return DETAILED_MATRIX_ZOOM_DEFAULT;
-  const stepped =
-    Math.round(value / DETAILED_MATRIX_ZOOM_STEP) * DETAILED_MATRIX_ZOOM_STEP;
-  return Math.min(
-    DETAILED_MATRIX_ZOOM_MAX,
-    Math.max(DETAILED_MATRIX_ZOOM_MIN, stepped),
-  );
 }
 
 /**
@@ -250,7 +273,7 @@ export function DetailedRecruitmentMatrixPanel({
       reloadToken === 0 ? cacheRef.current.get(requestKey) : undefined;
     if (cached) {
       userRetryRef.current = false;
-      setKnownTeams(cached.teams);
+      setKnownTeams(sortDetailedMatrixTeamOptions(cached.teams));
       setState({
         requestKey,
         status: "ready",
@@ -299,7 +322,7 @@ export function DetailedRecruitmentMatrixPanel({
         const matrix = json.matrix;
         userRetryRef.current = false;
         cacheRef.current.set(requestKey, matrix);
-        setKnownTeams(matrix.teams);
+        setKnownTeams(sortDetailedMatrixTeamOptions(matrix.teams));
 
         if (
           selectedTeamId !== ALL_RECRUITERS_TEAM_FILTER &&
@@ -476,35 +499,33 @@ export function DetailedRecruitmentMatrixPanel({
   const activeProviderLabel =
     DETAILED_MATRIX_PROVIDER_OPTIONS.find((opt) => opt.key === selectedProvider)
       ?.label ?? "HRP";
-  const teamOptions = effectiveMatrix?.teams ?? knownTeams;
+  const teamOptions = useMemo(
+    () => sortDetailedMatrixTeamOptions(effectiveMatrix?.teams ?? knownTeams),
+    [effectiveMatrix?.teams, knownTeams],
+  );
   const selectedTeamLabel =
     selectedTeamId === ALL_RECRUITERS_TEAM_FILTER
       ? "Tất cả người tuyển"
       : (teamOptions.find((t) => t.teamId === selectedTeamId)?.displayName ??
         "Nhóm đã chọn");
 
-  const zoomScale = zoomPercent / 100;
-  const sttColWidthPx = Math.max(28, Math.round(36 * zoomScale));
-  const nameMinWidthPx = Math.max(132, Math.round(180 * zoomScale));
-  const nameMaxWidthPx = Math.max(168, Math.round(240 * zoomScale));
-  const bucketMinWidthPx = Math.max(
-    34,
-    Math.round((resolution === "week" ? 68 : 42) * zoomScale),
-  );
-  const totalColMinWidthPx = Math.max(48, Math.round(64 * zoomScale));
-  const fontSizePx = Math.round(12 * zoomScale * 10) / 10;
-  const cellPadXPx = Math.max(3, Math.round(6 * zoomScale));
-  const cellPadYPx = Math.max(3, Math.round(6 * zoomScale));
+  const zoomMetrics = computeDetailedMatrixZoomMetrics(zoomPercent, resolution);
 
   const matrixZoomStyles: CSSProperties = {
-    ["--matrix-font-size" as string]: `${fontSizePx}px`,
-    ["--matrix-cell-px" as string]: `${cellPadXPx}px`,
-    ["--matrix-cell-py" as string]: `${cellPadYPx}px`,
-    ["--matrix-stt-w" as string]: `${sttColWidthPx}px`,
-    ["--matrix-name-min-w" as string]: `${nameMinWidthPx}px`,
-    ["--matrix-name-max-w" as string]: `${nameMaxWidthPx}px`,
-    ["--matrix-bucket-min-w" as string]: `${bucketMinWidthPx}px`,
-    ["--matrix-total-min-w" as string]: `${totalColMinWidthPx}px`,
+    ["--matrix-fixed-font-size" as string]: `${zoomMetrics.fixedFontSizePx}px`,
+    ["--matrix-fixed-cell-px" as string]: `${zoomMetrics.fixedCellPadXPx}px`,
+    ["--matrix-fixed-cell-py" as string]: `${zoomMetrics.fixedCellPadYPx}px`,
+    ["--matrix-fixed-name-px" as string]: `${zoomMetrics.fixedNamePadXPx}px`,
+    ["--matrix-stt-w" as string]: `${zoomMetrics.sttColWidthPx}px`,
+    ["--matrix-name-w" as string]: `${zoomMetrics.nameColWidthPx}px`,
+    ["--matrix-name-min-w" as string]: `${zoomMetrics.nameMinWidthPx}px`,
+    ["--matrix-name-max-w" as string]: `${zoomMetrics.nameMaxWidthPx}px`,
+    ["--matrix-font-size" as string]: `${zoomMetrics.metricFontSizePx}px`,
+    ["--matrix-cell-px" as string]: `${zoomMetrics.cellPadXPx}px`,
+    ["--matrix-cell-py" as string]: `${zoomMetrics.cellPadYPx}px`,
+    ["--matrix-total-cell-px" as string]: `${zoomMetrics.totalCellPadXPx}px`,
+    ["--matrix-bucket-min-w" as string]: `${zoomMetrics.bucketMinWidthPx}px`,
+    ["--matrix-total-min-w" as string]: `${zoomMetrics.totalColMinWidthPx}px`,
   };
 
   return (
@@ -771,7 +792,7 @@ export function DetailedRecruitmentMatrixPanel({
                 <table
                   ref={tableRef}
                   data-zoom-percent={zoomPercent}
-                  style={{ fontSize: "var(--matrix-font-size, 12px)" }}
+                  style={{ fontSize: "var(--matrix-fixed-font-size, 12px)" }}
                   className="r22-report-table min-w-full border-collapse text-left"
                   aria-label="Bảng báo cáo chi tiết tuyển dụng theo nhân viên"
                 >
@@ -786,10 +807,11 @@ export function DetailedRecruitmentMatrixPanel({
                           width: "var(--matrix-stt-w)",
                           minWidth: "var(--matrix-stt-w)",
                           maxWidth: "var(--matrix-stt-w)",
+                          fontSize: "var(--matrix-fixed-font-size)",
                           padding:
-                            "var(--matrix-cell-py) var(--matrix-cell-px)",
+                            "var(--matrix-fixed-cell-py) var(--matrix-fixed-cell-px)",
                         }}
-                        className="sticky left-0 z-20 bg-surface-muted text-center font-medium whitespace-nowrap"
+                        className="sticky left-0 z-20 bg-surface-muted text-center align-middle font-medium whitespace-nowrap"
                       >
                         STT
                       </th>
@@ -797,12 +819,14 @@ export function DetailedRecruitmentMatrixPanel({
                         scope="col"
                         style={{
                           left: "var(--matrix-stt-w)",
+                          width: "var(--matrix-name-w)",
                           minWidth: "var(--matrix-name-min-w)",
                           maxWidth: "var(--matrix-name-max-w)",
+                          fontSize: "var(--matrix-fixed-font-size)",
                           padding:
-                            "var(--matrix-cell-py) calc(var(--matrix-cell-px) * 1.5)",
+                            "var(--matrix-fixed-cell-py) var(--matrix-fixed-name-px)",
                         }}
-                        className="sticky z-20 border-r border-border bg-surface-muted font-medium whitespace-nowrap"
+                        className="sticky z-20 border-r border-border bg-surface-muted align-middle font-medium whitespace-nowrap"
                       >
                         Họ tên
                       </th>
@@ -816,11 +840,13 @@ export function DetailedRecruitmentMatrixPanel({
                             title={fullTooltip}
                             aria-label={fullTooltip}
                             style={{
+                              width: "var(--matrix-bucket-min-w)",
                               minWidth: "var(--matrix-bucket-min-w)",
+                              fontSize: "var(--matrix-font-size)",
                               padding:
                                 "var(--matrix-cell-py) var(--matrix-cell-px)",
                             }}
-                            className="bg-surface-muted text-right font-medium tabular-nums whitespace-nowrap"
+                            className="bg-surface-muted text-right align-middle font-medium tabular-nums whitespace-nowrap"
                           >
                             {shortLabel}
                           </th>
@@ -829,11 +855,13 @@ export function DetailedRecruitmentMatrixPanel({
                       <th
                         scope="col"
                         style={{
+                          width: "var(--matrix-total-min-w)",
                           minWidth: "var(--matrix-total-min-w)",
+                          fontSize: "var(--matrix-font-size)",
                           padding:
-                            "var(--matrix-cell-py) calc(var(--matrix-cell-px) * 1.5)",
+                            "var(--matrix-cell-py) var(--matrix-total-cell-px)",
                         }}
-                        className="border-l border-border bg-surface-muted text-right font-semibold text-foreground whitespace-nowrap md:sticky md:right-0 md:z-20"
+                        className="border-l border-border bg-surface-muted text-right align-middle font-semibold text-foreground whitespace-nowrap md:sticky md:right-0 md:z-20"
                       >
                         Tổng
                       </th>
@@ -865,10 +893,11 @@ export function DetailedRecruitmentMatrixPanel({
                                 width: "var(--matrix-stt-w)",
                                 minWidth: "var(--matrix-stt-w)",
                                 maxWidth: "var(--matrix-stt-w)",
+                                fontSize: "var(--matrix-fixed-font-size)",
                                 padding:
-                                  "var(--matrix-cell-py) var(--matrix-cell-px)",
+                                  "var(--matrix-fixed-cell-py) var(--matrix-fixed-cell-px)",
                               }}
-                              className="sticky left-0 z-10 bg-surface text-center tabular-nums text-muted group-hover:bg-surface-hover"
+                              className="sticky left-0 z-10 bg-surface text-center align-middle tabular-nums text-muted group-hover:bg-surface-hover"
                             >
                               {row.stt}
                             </td>
@@ -877,12 +906,14 @@ export function DetailedRecruitmentMatrixPanel({
                               title={formattedName}
                               style={{
                                 left: "var(--matrix-stt-w)",
+                                width: "var(--matrix-name-w)",
                                 minWidth: "var(--matrix-name-min-w)",
                                 maxWidth: "var(--matrix-name-max-w)",
+                                fontSize: "var(--matrix-fixed-font-size)",
                                 padding:
-                                  "var(--matrix-cell-py) calc(var(--matrix-cell-px) * 1.5)",
+                                  "var(--matrix-fixed-cell-py) var(--matrix-fixed-name-px)",
                               }}
-                              className="sticky z-10 truncate border-r border-border bg-surface font-medium text-foreground group-hover:bg-surface-hover"
+                              className="sticky z-10 truncate border-r border-border bg-surface align-middle font-medium text-foreground group-hover:bg-surface-hover"
                             >
                               {formattedName}
                             </th>
@@ -892,11 +923,13 @@ export function DetailedRecruitmentMatrixPanel({
                                 <td
                                   key={bucket.key}
                                   style={{
+                                    width: "var(--matrix-bucket-min-w)",
                                     minWidth: "var(--matrix-bucket-min-w)",
+                                    fontSize: "var(--matrix-font-size)",
                                     padding:
                                       "var(--matrix-cell-py) var(--matrix-cell-px)",
                                   }}
-                                  className={`text-right tabular-nums whitespace-nowrap ${
+                                  className={`text-right align-middle tabular-nums whitespace-nowrap ${
                                     count > 0
                                       ? "font-medium text-foreground"
                                       : "text-muted"
@@ -908,11 +941,13 @@ export function DetailedRecruitmentMatrixPanel({
                             })}
                             <td
                               style={{
+                                width: "var(--matrix-total-min-w)",
                                 minWidth: "var(--matrix-total-min-w)",
+                                fontSize: "var(--matrix-font-size)",
                                 padding:
-                                  "var(--matrix-cell-py) calc(var(--matrix-cell-px) * 1.5)",
+                                  "var(--matrix-cell-py) var(--matrix-total-cell-px)",
                               }}
-                              className="border-l border-border bg-surface text-right font-semibold tabular-nums text-foreground whitespace-nowrap group-hover:bg-surface-hover md:sticky md:right-0 md:z-10"
+                              className="border-l border-border bg-surface text-right align-middle font-semibold tabular-nums text-foreground whitespace-nowrap group-hover:bg-surface-hover md:sticky md:right-0 md:z-10"
                             >
                               {row.total}
                             </td>
@@ -927,10 +962,16 @@ export function DetailedRecruitmentMatrixPanel({
                         scope="row"
                         colSpan={2}
                         style={{
+                          width: "calc(var(--matrix-stt-w) + var(--matrix-name-w))",
+                          minWidth:
+                            "calc(var(--matrix-stt-w) + var(--matrix-name-min-w))",
+                          maxWidth:
+                            "calc(var(--matrix-stt-w) + var(--matrix-name-max-w))",
+                          fontSize: "var(--matrix-fixed-font-size)",
                           padding:
-                            "var(--matrix-cell-py) calc(var(--matrix-cell-px) * 1.5)",
+                            "var(--matrix-fixed-cell-py) var(--matrix-fixed-name-px)",
                         }}
-                        className="sticky left-0 z-10 border-r border-border bg-surface-muted text-left whitespace-nowrap"
+                        className="sticky left-0 z-10 border-r border-border bg-surface-muted text-left align-middle whitespace-nowrap"
                       >
                         <div className="flex items-center justify-between gap-2">
                           <span>Tổng cộng</span>
@@ -943,22 +984,26 @@ export function DetailedRecruitmentMatrixPanel({
                         <td
                           key={bucket.key}
                           style={{
+                            width: "var(--matrix-bucket-min-w)",
                             minWidth: "var(--matrix-bucket-min-w)",
+                            fontSize: "var(--matrix-font-size)",
                             padding:
                               "var(--matrix-cell-py) var(--matrix-cell-px)",
                           }}
-                          className="bg-surface-muted text-right tabular-nums whitespace-nowrap"
+                          className="bg-surface-muted text-right align-middle tabular-nums whitespace-nowrap"
                         >
                           {effectiveMatrix.columnTotals[bucketIdx] ?? 0}
                         </td>
                       ))}
                       <td
                         style={{
+                          width: "var(--matrix-total-min-w)",
                           minWidth: "var(--matrix-total-min-w)",
+                          fontSize: "var(--matrix-font-size)",
                           padding:
-                            "var(--matrix-cell-py) calc(var(--matrix-cell-px) * 1.5)",
+                            "var(--matrix-cell-py) var(--matrix-total-cell-px)",
                         }}
-                        className="border-l border-border bg-surface-muted text-right font-bold tabular-nums text-primary whitespace-nowrap md:sticky md:right-0 md:z-10"
+                        className="border-l border-border bg-surface-muted text-right align-middle font-bold tabular-nums text-primary whitespace-nowrap md:sticky md:right-0 md:z-10"
                       >
                         {effectiveMatrix.grandTotal}
                       </td>
