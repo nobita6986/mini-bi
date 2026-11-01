@@ -7,7 +7,7 @@
  * moi hanh dong dua tren allowed_transitions do server tra ve (xem actionsForSubmission).
  * Khong viet focus trap/modal/keyboard handler thu cong - Radix lo phan do.
  */
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { AlertDialog } from "radix-ui";
 
 import { DirectEntryCompactPanel } from "@/components/direct-entry/direct-entry-compact-panel";
@@ -72,7 +72,6 @@ export type SubmissionListProps = {
   onDeleteDraft: (submission: SubmissionReadItem) => Promise<void>;
 };
 
-type PendingConfirm = { submission: SubmissionReadItem; action: SubmissionAction };
 type PendingDuplicate = {
   submission: SubmissionReadItem;
   action: SubmissionAction;
@@ -100,10 +99,11 @@ export function DirectEntrySubmissionList({
   onManageDocuments,
   onDeleteDraft,
 }: SubmissionListProps) {
-  const [pending, setPending] = useState<PendingConfirm | null>(null);
   const [pendingDelete, setPendingDelete] = useState<SubmissionReadItem | null>(null);
   const [pendingDuplicate, setPendingDuplicate] = useState<PendingDuplicate | null>(null);
   const [checkingId, setCheckingId] = useState<string | null>(null);
+  const [submittingId, setSubmittingId] = useState<string | null>(null);
+  const inFlightRef = useRef<string | null>(null);
   const [blockedNotice, setBlockedNotice] = useState<string | null>(null);
 
   async function requestAction(
@@ -111,59 +111,87 @@ export function DirectEntrySubmissionList({
     action: SubmissionAction,
     forcePreflight = false,
   ) {
+    const submissionId = submission.submission_id;
+    if (
+      busySubmissionId === submissionId ||
+      checkingId === submissionId ||
+      submittingId === submissionId ||
+      inFlightRef.current === submissionId
+    ) {
+      return;
+    }
     const submittingDraft = submission.state === "DRAFT" && action.target_state === "SUBMITTED";
-    if (submittingDraft && blockedSubmissionIds.has(submission.submission_id)) {
+    if (submittingDraft && blockedSubmissionIds.has(submissionId)) {
       setBlockedNotice(
         "Còn dòng chưa được máy chủ xác nhận trong đợt này. Hãy lưu nháp trước khi gửi chính thức.",
       );
       return;
     }
     setBlockedNotice(null);
-    if (!submittingDraft || (!preflightBeforeSubmit && !forcePreflight)) {
-      setPending({ submission, action });
-      return;
-    }
-    // Legacy REVIEW batches cannot use the DRAFT-only duplicate preflight.
-    setCheckingId(submission.submission_id);
-    const preflight = await onPreflight(submission);
-    setCheckingId(null);
-    if (preflight === null) return;
-    const currentSubmission = { ...submission, version: preflight.version };
-    if (preflight.conflict_count > 0) {
-      setPendingDuplicate({ submission: currentSubmission, action, preflight });
-      return;
-    }
-    setPending({ submission: currentSubmission, action });
-  }
-
-  async function confirmPending() {
-    const current = pending;
-    if (current === null) return;
-    setPending(null);
-    const outcome = await onTransition(current);
-    if (outcome === "duplicate-changed") {
-      await requestAction(current.submission, current.action, true);
+    inFlightRef.current = submissionId;
+    try {
+      let targetSubmission = submission;
+      if (submittingDraft && (preflightBeforeSubmit || forcePreflight)) {
+        // Legacy REVIEW batches cannot use the DRAFT-only duplicate preflight.
+        setCheckingId(submissionId);
+        const preflight = await onPreflight(submission);
+        setCheckingId(null);
+        if (preflight === null) return;
+        targetSubmission = { ...submission, version: preflight.version };
+        if (preflight.conflict_count > 0) {
+          setPendingDuplicate({ submission: targetSubmission, action, preflight });
+          return;
+        }
+      }
+      setSubmittingId(submissionId);
+      const outcome = await onTransition({ submission: targetSubmission, action });
+      setSubmittingId(null);
+      if (outcome === "duplicate-changed") {
+        inFlightRef.current = null;
+        await requestAction(targetSubmission, action, true);
+      }
+    } finally {
+      setCheckingId(null);
+      setSubmittingId(null);
+      inFlightRef.current = null;
     }
   }
 
   async function confirmDuplicate() {
     const current = pendingDuplicate;
     if (current === null) return;
-    const outcome = await onTransition({
-      submission: current.submission,
-      action: current.action,
-      acknowledgement: {
-        fingerprint: current.preflight.fingerprint,
-        count: current.preflight.conflict_count,
-      },
-    });
-    if (outcome === "duplicate-changed") {
-      // Refresh the server version and conflict set; require another explicit confirmation.
-      setPendingDuplicate(null);
-      await requestAction(current.submission, current.action, true);
+    const submissionId = current.submission.submission_id;
+    if (
+      busySubmissionId === submissionId ||
+      submittingId === submissionId ||
+      inFlightRef.current === submissionId
+    ) {
       return;
     }
-    setPendingDuplicate(null);
+    inFlightRef.current = submissionId;
+    setSubmittingId(submissionId);
+    try {
+      const outcome = await onTransition({
+        submission: current.submission,
+        action: current.action,
+        acknowledgement: {
+          fingerprint: current.preflight.fingerprint,
+          count: current.preflight.conflict_count,
+        },
+      });
+      if (outcome === "duplicate-changed") {
+        // Refresh the server version and conflict set; require another explicit confirmation.
+        setPendingDuplicate(null);
+        setSubmittingId(null);
+        inFlightRef.current = null;
+        await requestAction(current.submission, current.action, true);
+        return;
+      }
+      setPendingDuplicate(null);
+    } finally {
+      setSubmittingId(null);
+      inFlightRef.current = null;
+    }
   }
 
   async function confirmDelete() {
@@ -174,8 +202,10 @@ export function DirectEntrySubmissionList({
     setPendingDelete(null);
   }
 
-  const duplicateBusy = pendingDuplicate !== null &&
-    busySubmissionId === pendingDuplicate.submission.submission_id;
+  const duplicateBusy = pendingDuplicate !== null && (
+    busySubmissionId === pendingDuplicate.submission.submission_id ||
+    submittingId === pendingDuplicate.submission.submission_id
+  );
 
   const content = (
     <section
@@ -183,30 +213,32 @@ export function DirectEntrySubmissionList({
       aria-labelledby={compact ? undefined : "direct-entry-submissions-heading"}
       aria-label={compact ? "Danh sách đợt nhập liệu" : undefined}
     >
-      <div className={styles.submissionHead}>
-        <div>
-          {!compact && (
-            <h2 id="direct-entry-submissions-heading" className={styles.submissionTitle}>
-              Đợt nhập liệu
-            </h2>
-          )}
-          {!compact && (
-            <p className={styles.submissionHint}>
-              Trạng thái được tải từ máy chủ; tải lại trang vẫn giữ đúng đợt đang ở bản nháp, chờ duyệt hoặc đã gửi.
-            </p>
+      {(!compact || hasMore) && (
+        <div className={styles.submissionHead}>
+          <div>
+            {!compact && (
+              <h2 id="direct-entry-submissions-heading" className={styles.submissionTitle}>
+                Đợt nhập liệu
+              </h2>
+            )}
+            {!compact && (
+              <p className={styles.submissionHint}>
+                Trạng thái được tải từ máy chủ; tải lại trang vẫn giữ đúng đợt đang ở bản nháp, chờ duyệt hoặc đã gửi.
+              </p>
+            )}
+          </div>
+          {hasMore && (
+            <button
+              type="button"
+              className={styles.secondaryButton}
+              onClick={onLoadMore}
+              disabled={state === "loading"}
+            >
+              Tải thêm đợt cũ hơn
+            </button>
           )}
         </div>
-        {hasMore && (
-          <button
-            type="button"
-            className={styles.secondaryButton}
-            onClick={onLoadMore}
-            disabled={state === "loading"}
-          >
-            Tải thêm đợt cũ hơn
-          </button>
-        )}
-      </div>
+      )}
 
       <DirectEntryQueueTabs
         ariaLabel="Trạng thái đợt nhập liệu"
@@ -234,6 +266,9 @@ export function DirectEntrySubmissionList({
         {submissions.map((submission) => {
           const actions = actionsForSubmission(submission);
           const busy = busySubmissionId === submission.submission_id;
+          const checking = checkingId === submission.submission_id;
+          const submitting = submittingId === submission.submission_id;
+          const working = busy || checking || submitting;
           const terminal = submission.state === "SUBMITTED";
           return (
             <li
@@ -252,11 +287,9 @@ export function DirectEntrySubmissionList({
                 <div><dt>Số dòng</dt><dd>{submission.entry_count}</dd></div>
                 <div><dt>Cập nhật</dt><dd>{formatHcmDateTime(submission.updated_at)}</dd></div>
               </dl>
-              {terminal && (
+              {terminal && submission.project_scoped && (
                 <p className={styles.submissionTerminalNote}>
-                  {submission.project_scoped
-                    ? "Đợt này thuộc dự án được giao quản lý; chỉ gửi đề xuất thay đổi, dữ liệu gốc cần reviewer có thẩm quyền duyệt."
-                    : "Đã gửi chính thức là trạng thái cuối. Thay đổi sau đó phải đi qua yêu cầu thay đổi."}
+                  Đợt này thuộc dự án được giao quản lý; chỉ gửi đề xuất thay đổi, dữ liệu gốc cần reviewer có thẩm quyền duyệt.
                 </p>
               )}
               <div className={submission.state === "DRAFT"
@@ -268,7 +301,7 @@ export function DirectEntrySubmissionList({
                     <button
                       type="button"
                       className={styles.secondaryButton}
-                      disabled={busy}
+                      disabled={working}
                       onClick={() => onEditDraft(submission)}
                     >
                       Sửa
@@ -278,8 +311,8 @@ export function DirectEntrySubmissionList({
                         type="button"
                         className={styles.secondaryButton}
                         data-testid="submission-delete-draft"
-                        aria-busy={busy}
-                        disabled={busy}
+                        aria-busy={working}
+                        disabled={working}
                         onClick={() => setPendingDelete(submission)}
                       >
                         Xóa đợt nhập liệu
@@ -298,8 +331,6 @@ export function DirectEntrySubmissionList({
                         confirm_label: officialSubmitLabel,
                       }
                     : action;
-                  const checking = checkingId === submission.submission_id;
-                  const working = busy || checking;
                   return (
                     <button
                       key={displayedAction.target_state}
@@ -338,41 +369,6 @@ export function DirectEntrySubmissionList({
       </ul>
       </div>
       </DirectEntryQueueTabs>
-
-      <AlertDialog.Root open={pending !== null} onOpenChange={(open) => {
-        if (!open) setPending(null);
-      }}>
-        <AlertDialog.Portal>
-          <AlertDialog.Overlay className={styles.drawerOverlay} />
-          {pending && (
-            <AlertDialog.Content className={styles.confirmDialog}>
-              <AlertDialog.Title className={styles.drawerTitle}>
-                {pending.action.confirm_title}
-              </AlertDialog.Title>
-              <AlertDialog.Description className={styles.drawerDescription}>
-                {pending.action.confirm_description}
-              </AlertDialog.Description>
-              <p className={styles.submissionHint}>
-                {SUBMISSION_STATE_LABELS[pending.submission.state]} · {pending.submission.entry_count} dòng
-              </p>
-              <div className={styles.drawerActions}>
-                <AlertDialog.Cancel asChild>
-                  <button type="button" className={styles.secondaryButton}>Hủy</button>
-                </AlertDialog.Cancel>
-                <AlertDialog.Action asChild>
-                  <button
-                    type="button"
-                    className={styles.primaryButton}
-                    onClick={() => void confirmPending()}
-                  >
-                    {pending.action.confirm_label}
-                  </button>
-                </AlertDialog.Action>
-              </div>
-            </AlertDialog.Content>
-          )}
-        </AlertDialog.Portal>
-      </AlertDialog.Root>
 
       {/* PRE-W2-HF: xac nhan xoa mem dot nhap lieu (chi DRAFT). */}
       <AlertDialog.Root open={pendingDelete !== null} onOpenChange={(open) => {
