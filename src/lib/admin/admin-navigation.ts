@@ -2,6 +2,7 @@ import {
   adminAreaNavPredicate,
   adminSecurityNavPredicate,
   attendanceReportNavPredicate,
+  workerEditHistoryNavPredicate,
   type NavActorProjection,
   type NavCapabilityPredicate,
 } from "../navigation/registry-capability.ts";
@@ -34,6 +35,7 @@ export const ADMIN_SECTIONS: readonly AdminSectionConfig[] = [
   { id: "departments", label: "Phòng ban", href: "/admin/departments", visible: adminSecurityNavPredicate },
   { id: "accounts", label: "Tài khoản truy cập", href: "/admin/access/accounts", visible: adminSecurityNavPredicate },
   { id: "attendance", label: "Báo cáo chấm công", href: "/admin/attendance", visible: attendanceReportNavPredicate },
+  { id: "worker-edit-history", label: "Lịch sử chỉnh sửa NLĐ", href: "/admin/worker-edit-history", visible: workerEditHistoryNavPredicate },
 ];
 
 const RECRUITMENT_SECTION_IDS = new Set([

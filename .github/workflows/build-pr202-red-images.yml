@@ -1,0 +1,80 @@
+name: Build PR 202 Red UAT images
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    if: github.event.pull_request.number == 202 && github.event.pull_request.head.ref == 'codex/worker-review-combined-preview' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: red
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Validate PR SHA and Red build settings
+        id: image
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ github.event.pull_request.head.sha }}
+          SUPABASE_URL: ${{ vars.RED_NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_KEY: ${{ vars.RED_NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ && "$(git rev-parse HEAD)" == "$RELEASE_SHA" ]] || {
+            echo '::error::Checked-out revision differs from the PR head SHA.'
+            exit 1
+          }
+          [[ "$SUPABASE_URL" == 'https://spbase.hrpvietnam.com' && -n "$SUPABASE_KEY" ]] || {
+            echo '::error::Red public Supabase build settings are missing or point to another environment.'
+            exit 1
+          }
+          echo "repository=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+          echo "sha=$RELEASE_SHA" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish Red app image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: runner
+          push: true
+          tags: ${{ steps.image.outputs.repository }}:red-${{ steps.image.outputs.sha }}
+          labels: |
+            org.opencontainers.image.revision=${{ steps.image.outputs.sha }}
+            com.hrpartner.environment=red
+            com.hrpartner.kind=app
+          build-args: |
+            NEXT_PUBLIC_SUPABASE_URL=${{ vars.RED_NEXT_PUBLIC_SUPABASE_URL }}
+            NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=${{ vars.RED_NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
+          cache-from: type=gha,scope=red-pr202-app
+          cache-to: type=gha,mode=max,scope=red-pr202-app
+
+      - name: Build and publish Red migration image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: migrations
+          push: true
+          tags: ${{ steps.image.outputs.repository }}:red-${{ steps.image.outputs.sha }}-migrations
+          labels: |
+            org.opencontainers.image.revision=${{ steps.image.outputs.sha }}
+            com.hrpartner.environment=red
+            com.hrpartner.kind=migrations
+          cache-from: type=gha,scope=red-pr202-migrations
+          cache-to: type=gha,mode=max,scope=red-pr202-migrations

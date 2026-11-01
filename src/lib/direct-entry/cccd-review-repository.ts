@@ -22,6 +22,7 @@ import {
 } from "./cccd-qr-repository.ts";
 import {
   isCccdReviewStatusFilter,
+  projectMissingDocumentWorkersResponse,
   type CccdReviewDocumentSummary,
   type CccdReviewEnteredDetails,
   type CccdReviewQrSummary,
@@ -30,6 +31,9 @@ import {
   type CccdReviewQueueSummary,
   type CccdReviewResolveRequest,
   type CccdReviewStatusFilter,
+  type MissingDocumentEmploymentStatus,
+  type MissingDocumentFilterType,
+  type MissingDocumentWorkersResponse,
 } from "./cccd-review-contract.ts";
 import type { OperationResult } from "./write-repository.ts";
 
@@ -71,6 +75,17 @@ export type CccdReviewRepository = {
     request: CccdReviewResolveRequest;
     idempotency_key: string;
   }): Promise<CccdReviewResolveOutcome>;
+
+  listMissingDocumentWorkers?(input: {
+    auth_subject: string;
+    app_user_id: string;
+    missing_type: MissingDocumentFilterType;
+    employment_status: MissingDocumentEmploymentStatus;
+    project_id: string | null;
+    search: string | null;
+    page: number;
+    page_size: number;
+  }): Promise<OperationResult<MissingDocumentWorkersResponse>>;
 };
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -895,6 +910,34 @@ export function createCccdReviewRepository(rpc?: Rpc): CccdReviewRepository {
         return projected ? { ok: true, data: projected } : { ok: false, kind: "unavailable" };
       } catch {
         console.error("[direct-entry] resolve cccd review RPC failed");
+        return { ok: false, kind: "unavailable" };
+      }
+    },
+
+    async listMissingDocumentWorkers(input) {
+      try {
+        const { data, error } = await callRpc("direct_entry_list_missing_document_workers", {
+          p_auth_subject: input.auth_subject,
+          p_app_user_id: input.app_user_id,
+          p_missing_type: input.missing_type,
+          p_project_id: input.project_id,
+          p_employment_status: input.employment_status,
+          p_search: input.search,
+          p_page: input.page,
+          p_page_size: input.page_size,
+        });
+        if (error) {
+          const classified = classifyReviewError(error);
+          return {
+            ok: false,
+            kind: classified.kind,
+            ...(classified.error_code ? { error_code: classified.error_code } : {}),
+          };
+        }
+        const projected = projectMissingDocumentWorkersResponse(data);
+        return projected ? { ok: true, data: projected } : { ok: false, kind: "unavailable" };
+      } catch {
+        console.error("[direct-entry] list missing document workers RPC failed");
         return { ok: false, kind: "unavailable" };
       }
     },
