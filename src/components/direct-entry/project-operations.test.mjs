@@ -279,3 +279,15 @@ test("HF-R5A: nhan quan ly khong bao gio hien UUID, ke ca dang rut gon", () => {
     "nhan du phong phai la nhan nghiep vu trung tinh");
   assert.equal(/candidateLabels\[recruiterId\][^;]{0,80}\.slice\(/.test(source), false);
 });
+
+test("project location UI: hien thi toa do/ban kinh/confirmed_at, cap nhat + xoa qua PUT location va gate can_manage_project_master", () => {
+  assert.match(source, /kind: "location"/);
+  assert.match(source, /submitUpdateLocation/);
+  assert.match(source, /\/location",\s*"PUT"/);
+  assert.match(source, /buildUpdateProjectLocationRequest/);
+  assert.match(source, /Tọa độ dự án/);
+  assert.match(source, /Xóa vị trí dự án/);
+  assert.match(source, /confirmed_at/);
+  assert.match(source, /radius_meters/);
+  assert.match(source, /canManageProjectMaster=\{detail\.can_manage_project_master\}/);
+});

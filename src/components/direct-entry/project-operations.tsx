@@ -15,11 +15,13 @@
 import {
   Building2,
   History,
+  MapPin,
   Pencil,
   Plus,
   Power,
   RefreshCw,
   Search,
+  Trash2,
   UserPlus,
   UsersRound,
   X,
@@ -36,6 +38,7 @@ import {
   buildRenameRequest,
   buildSetActiveRequest,
   buildUnassignRequest,
+  buildUpdateProjectLocationRequest,
   candidateLabel,
   executeProjectRequest,
   filterProjects,
@@ -45,6 +48,10 @@ import {
   parseCandidatesResponse,
   parseDetailResponse,
   parseListResponse,
+  PROJECT_LOCATION_ADDRESS_MAX,
+  PROJECT_LOCATION_DEFAULT_RADIUS_METERS,
+  PROJECT_LOCATION_MAX_RADIUS_METERS,
+  PROJECT_LOCATION_MIN_RADIUS_METERS,
   projectStatusLabel,
   REASON_MAX,
   splitAssignments,
@@ -54,6 +61,7 @@ import {
   type Outcome,
   type PendingAssignment,
   type ProjectDetailView,
+  type ProjectLocationView,
   type ProjectStatusFilter,
   type ProjectView,
   type RequestResult,
@@ -70,6 +78,7 @@ type DialogState =
   | { kind: "create" }
   | { kind: "rename" }
   | { kind: "set-active"; active: boolean }
+  | { kind: "location" }
   | { kind: "assign" }
   | { kind: "unassign"; assignment: AssignmentView };
 
@@ -144,6 +153,12 @@ export function ProjectOperations({ canManageProjectMasterForEmptyList }: { canM
   const [reason, setReason] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [projectId, setProjectId] = useState("");
+  const [locationAddress, setLocationAddress] = useState("");
+  const [locationLatitude, setLocationLatitude] = useState("");
+  const [locationLongitude, setLocationLongitude] = useState("");
+  const [locationRadius, setLocationRadius] = useState(
+    String(PROJECT_LOCATION_DEFAULT_RADIUS_METERS),
+  );
   const [pending, setPending] = useState<PendingAssignment[]>([]);
   const [managerId, setManagerId] = useState("");
   const [validFrom, setValidFrom] = useState("");
@@ -305,6 +320,10 @@ export function ProjectOperations({ canManageProjectMasterForEmptyList }: { canM
     setReason("");
     setDisplayName("");
     setProjectId("");
+    setLocationAddress("");
+    setLocationLatitude("");
+    setLocationLongitude("");
+    setLocationRadius(String(PROJECT_LOCATION_DEFAULT_RADIUS_METERS));
     setPending([]);
     setManagerId("");
     setValidFrom("");
@@ -341,7 +360,7 @@ export function ProjectOperations({ canManageProjectMasterForEmptyList }: { canM
   }, [notify]);
 
   async function send(
-    url: string, method: "POST" | "PATCH", request: RequestResult, key: string,
+    url: string, method: "POST" | "PATCH" | "PUT", request: RequestResult, key: string,
   ): Promise<{ outcome: Outcome; payload: unknown }> {
     if (conflict) return { outcome: { kind: "reload-required", message: conflict }, payload: null };
     return executeProjectRequest(url, method, request, key);
@@ -448,13 +467,60 @@ export function ProjectOperations({ canManageProjectMasterForEmptyList }: { canM
     await afterSuccess(detail.project_id);
   }
 
-  function openDialog(next: DialogState, seed?: { displayName?: string }) {
+  async function submitUpdateLocation(clearLocation = false) {
+    if (!detail) return;
+    const key = newIdempotencyKey();
+    const request = buildUpdateProjectLocationRequest({
+      address: clearLocation ? null : locationAddress,
+      latitudeInput: clearLocation ? null : locationLatitude,
+      longitudeInput: clearLocation ? null : locationLongitude,
+      radiusInput: clearLocation ? null : locationRadius,
+      clear: clearLocation,
+      reason,
+      expectedVersion: detail.project_version,
+      idempotencyKey: key,
+    });
+    setBusy(true);
+    const { outcome } = await send(
+      API + "/" + encodeURIComponent(detail.project_id) + "/location",
+      "PUT",
+      request,
+      key,
+    );
+    setBusy(false);
+    if (!applyOutcome(outcome)) return;
+    const isCleared =
+      clearLocation ||
+      (locationLatitude.trim() === "" && locationLongitude.trim() === "");
+    notify.success({
+      title: isCleared ? "Đã xóa tọa độ vị trí dự án." : "Đã cập nhật tọa độ vị trí dự án.",
+    });
+    closeDialog();
+    await afterSuccess(detail.project_id);
+  }
+
+  function openDialog(
+    next: DialogState,
+    seed?: { displayName?: string; location?: ProjectLocationView | null },
+  ) {
     setNotice(null);
     setReason("");
     setPending([]);
     setManagerId("");
     setValidFrom("");
     setDisplayName(seed && seed.displayName ? seed.displayName : "");
+    const seededLocation =
+      seed && "location" in seed ? seed.location : (detail?.location ?? null);
+    setLocationAddress(seededLocation?.address ?? "");
+    setLocationLatitude(
+      seededLocation ? String(seededLocation.latitude) : "",
+    );
+    setLocationLongitude(
+      seededLocation ? String(seededLocation.longitude) : "",
+    );
+    setLocationRadius(
+      String(seededLocation?.radius_meters ?? PROJECT_LOCATION_DEFAULT_RADIUS_METERS),
+    );
     setCandidateSearch("");
     setActiveCandidateIndex(0);
     if (next.kind === "assign") {
@@ -594,6 +660,12 @@ export function ProjectOperations({ canManageProjectMasterForEmptyList }: { canM
                             ) : null}
                           </div>
                           <span className="mt-0.5 block font-mono text-xs text-muted">{project.project_id}</span>
+                          {project.location ? (
+                            <span className="mt-1 inline-flex items-center gap-1 text-xs text-muted">
+                              <MapPin aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-primary" />
+                              {project.location.latitude.toFixed(6)}, {project.location.longitude.toFixed(6)} · {project.location.radius_meters} m
+                            </span>
+                          ) : null}
                         </td>
                         <td data-label="Trạng thái" className="px-3 py-3"><ProjectStatusBadge active={project.active} /></td>
                         <td className="px-3 py-3">
@@ -703,6 +775,14 @@ export function ProjectOperations({ canManageProjectMasterForEmptyList }: { canM
                   <ProjectStatusBadge active={detail.project_active} />
                 </div>
               </div>
+              <ProjectLocationSection
+                location={detail.location ?? null}
+                canManageProjectMaster={detail.can_manage_project_master}
+                actionsDisabled={conflict !== null || reloadBusy}
+                onOpenLocationDialog={() =>
+                  openDialog({ kind: "location" }, { location: detail.location ?? null })
+                }
+              />
               {detail.can_assign_managers ? (
               <button type="button" className={primaryClass}
                 disabled={conflict !== null || reloadBusy}
@@ -808,6 +888,86 @@ export function ProjectOperations({ canManageProjectMasterForEmptyList }: { canM
                 <ReasonField id={reasonId} value={reason} onChange={setReason} inputRef={focusDialogInput} />
                 <DialogActions busy={busy || reloadBusy} locked={conflict !== null} onCancel={closeDialog}
                   submitLabel={dialog.active ? "Kích hoạt" : "Ngừng hoạt động"} />
+              </form>
+            ) : null}
+
+            {dialog.kind === "location" ? (
+              <form className="flex flex-col gap-4"
+                onSubmit={(event) => { event.preventDefault(); void submitUpdateLocation(false); }}>
+                <Dialog.Title className="pr-10 text-lg font-semibold">Tọa độ dự án</Dialog.Title>
+                <Dialog.Description className="text-sm text-muted">
+                  Cấu hình địa chỉ, tọa độ GPS và bán kính chấm công cho dự án ({PROJECT_LOCATION_MIN_RADIUS_METERS}–{PROJECT_LOCATION_MAX_RADIUS_METERS} m, mặc định {PROJECT_LOCATION_DEFAULT_RADIUS_METERS} m). Vĩ độ và kinh độ phải cùng có hoặc cùng để trống.
+                </Dialog.Description>
+                {detail?.location?.confirmed_at ? (
+                  <p className="rounded-lg border border-border bg-muted/5 px-3 py-2 text-xs text-muted">
+                    Thời điểm xác nhận tọa độ: <span className="font-medium text-foreground">{formatProjectLocationTimestamp(detail.location.confirmed_at)}</span>
+                  </p>
+                ) : null}
+                <Field id="project-location-address" label="Địa chỉ dự án" hint="Tối đa 500 ký tự.">
+                  <input
+                    ref={focusDialogInput}
+                    id="project-location-address"
+                    className={inputClass}
+                    maxLength={PROJECT_LOCATION_ADDRESS_MAX}
+                    value={locationAddress}
+                    placeholder="Số nhà, đường, phường/xã, quận/huyện, tỉnh/thành…"
+                    onChange={(event) => setLocationAddress(event.target.value)}
+                  />
+                </Field>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Field id="project-location-latitude" label="Vĩ độ (Latitude)" hint="-90 đến 90">
+                    <input
+                      id="project-location-latitude"
+                      className={inputClass}
+                      inputMode="decimal"
+                      value={locationLatitude}
+                      placeholder="10.776889"
+                      onChange={(event) => setLocationLatitude(event.target.value)}
+                    />
+                  </Field>
+                  <Field id="project-location-longitude" label="Kinh độ (Longitude)" hint="-180 đến 180">
+                    <input
+                      id="project-location-longitude"
+                      className={inputClass}
+                      inputMode="decimal"
+                      value={locationLongitude}
+                      placeholder="106.700806"
+                      onChange={(event) => setLocationLongitude(event.target.value)}
+                    />
+                  </Field>
+                </div>
+                <Field
+                  id="project-location-radius"
+                  label="Bán kính chấm công (m)"
+                  hint={`Từ ${PROJECT_LOCATION_MIN_RADIUS_METERS} đến ${PROJECT_LOCATION_MAX_RADIUS_METERS} m (mặc định ${PROJECT_LOCATION_DEFAULT_RADIUS_METERS} m).`}
+                >
+                  <input
+                    id="project-location-radius"
+                    type="number"
+                    min={PROJECT_LOCATION_MIN_RADIUS_METERS}
+                    max={PROJECT_LOCATION_MAX_RADIUS_METERS}
+                    step={1}
+                    className={inputClass}
+                    value={locationRadius}
+                    onChange={(event) => setLocationRadius(event.target.value)}
+                  />
+                </Field>
+                {detail?.location ? (
+                  <div className="flex justify-start">
+                    <button
+                      type="button"
+                      className={dangerClass}
+                      disabled={busy || reloadBusy || conflict !== null}
+                      onClick={() => { void submitUpdateLocation(true); }}
+                    >
+                      <Trash2 aria-hidden="true" className="h-4 w-4" />
+                      Xóa vị trí dự án
+                    </button>
+                  </div>
+                ) : null}
+                <ReasonField id={reasonId} value={reason} onChange={setReason} />
+                <DialogActions busy={busy || reloadBusy} locked={conflict !== null}
+                  onCancel={closeDialog} submitLabel="Lưu tọa độ" />
               </form>
             ) : null}
 
@@ -1014,6 +1174,83 @@ function ProjectStatusBadge({ active }: { active: boolean }) {
       <span aria-hidden="true" className={"h-1.5 w-1.5 shrink-0 rounded-full " + (active ? "bg-emerald-500" : "bg-slate-400")} />
       {projectStatusLabel(active)}
     </span>
+  );
+}
+
+function formatProjectLocationTimestamp(iso: string | null): string {
+  if (!iso) return "—";
+  const parsed = new Date(iso);
+  if (Number.isNaN(parsed.getTime())) return iso;
+  return new Intl.DateTimeFormat("vi-VN", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    dateStyle: "short",
+    timeStyle: "short",
+  }).format(parsed);
+}
+
+function ProjectLocationSection({
+  location,
+  canManageProjectMaster,
+  actionsDisabled,
+  onOpenLocationDialog,
+}: {
+  location: ProjectLocationView | null;
+  canManageProjectMaster: boolean;
+  actionsDisabled: boolean;
+  onOpenLocationDialog: () => void;
+}) {
+  return (
+    <section className="rounded-xl border border-border bg-muted/5 p-3">
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+          <MapPin aria-hidden="true" className="h-4 w-4 text-primary" />
+          Tọa độ dự án
+        </h3>
+        {canManageProjectMaster ? (
+          <button
+            type="button"
+            className={buttonClass + " min-h-9 px-2.5 text-xs"}
+            disabled={actionsDisabled}
+            onClick={onOpenLocationDialog}
+          >
+            <Pencil aria-hidden="true" className="h-3.5 w-3.5" />
+            {location ? "Cập nhật tọa độ" : "Cấu hình tọa độ"}
+          </button>
+        ) : null}
+      </div>
+      {location ? (
+        <dl className="mt-2.5 grid gap-1.5 text-xs">
+          <div>
+            <dt className="text-muted">Địa chỉ</dt>
+            <dd className="font-medium text-foreground">
+              {location.address ?? "Chưa nhập địa chỉ"}
+            </dd>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <dt className="text-muted">Tọa độ (Lat, Lon)</dt>
+              <dd className="font-mono font-medium text-foreground">
+                {location.latitude.toFixed(6)}, {location.longitude.toFixed(6)}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-muted">Bán kính</dt>
+              <dd className="font-medium text-foreground">{location.radius_meters} m</dd>
+            </div>
+          </div>
+          {location.confirmed_at ? (
+            <div>
+              <dt className="text-muted">Xác nhận lúc</dt>
+              <dd className="font-medium text-foreground">
+                {formatProjectLocationTimestamp(location.confirmed_at)}
+              </dd>
+            </div>
+          ) : null}
+        </dl>
+      ) : (
+        <p className="mt-2 text-xs text-muted">Chưa cấu hình tọa độ vị trí cho dự án này.</p>
+      )}
+    </section>
   );
 }
 

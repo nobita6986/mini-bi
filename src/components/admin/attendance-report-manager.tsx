@@ -55,6 +55,14 @@ import {
   moveTypeaheadIndex,
   typeaheadKeyAction,
 } from "@/lib/direct-entry/typeahead";
+import {
+  AttendanceBranchesAdminSection,
+  AttendanceMonthlyMatrixSection,
+} from "@/components/admin/attendance-monthly-matrix-panel";
+import {
+  buildGoogleMapsCoordinatesUrl,
+  type AttendanceAdminWorkspaceTab,
+} from "@/lib/attendance/attendance-monthly-matrix-ui-model";
 import { cn } from "@/lib/utils";
 
 type ReportLoadState =
@@ -493,11 +501,9 @@ function TimeVerificationCell({ item }: { item: AttendanceReportItemProjection }
 }
 
 function GpsDetailCell({ item }: { item: AttendanceReportItemProjection }) {
+  const googleMapsUrl = buildGoogleMapsCoordinatesUrl(item.latitude, item.longitude);
   const hasValidCoordinates =
-    item.latitude !== null &&
-    item.longitude !== null &&
-    Number.isFinite(item.latitude) &&
-    Number.isFinite(item.longitude);
+    googleMapsUrl !== null && item.latitude !== null && item.longitude !== null;
 
   if (!hasValidCoordinates) {
     return (
@@ -512,10 +518,20 @@ function GpsDetailCell({ item }: { item: AttendanceReportItemProjection }) {
     );
   }
 
+  const coordinateLabel = formatCoordinatePair(item.latitude!, item.longitude!);
+
   return (
     <div className="space-y-0.5 text-xs">
       <p className="font-mono tabular-nums text-foreground">
-        {formatCoordinatePair(item.latitude, item.longitude)}
+        <a
+          href={googleMapsUrl}
+          target="_blank"
+          rel="noreferrer"
+          aria-label={`Mở tọa độ ${coordinateLabel} trên Google Maps`}
+          className="text-primary underline decoration-primary/50 underline-offset-2 transition-colors hover:text-primary/80 hover:decoration-primary"
+        >
+          {coordinateLabel}
+        </a>
         {item.accuracy_meters !== null
           ? ` (±${Math.round(item.accuracy_meters)} m)`
           : ""}
@@ -799,6 +815,8 @@ export function AttendanceReportManager() {
   const initialToday = getVietnamTodayIsoDate();
   const initialFrom = shiftIsoDateDays(initialToday, -6);
 
+  const [activeTab, setActiveTab] =
+    useState<AttendanceAdminWorkspaceTab>("checkins");
   const [fromInput, setFromInput] = useState(initialFrom);
   const [toInput, setToInput] = useState(initialToday);
   const [employeeIdInput, setEmployeeIdInput] = useState("");
@@ -1367,6 +1385,61 @@ export function AttendanceReportManager() {
         </div>
       </header>
 
+      <div
+        role="tablist"
+        aria-label="Chế độ xem quản trị chấm công"
+        className="flex flex-wrap gap-2 rounded-xl border border-border bg-surface p-1.5 shadow-2xs"
+      >
+        <button
+          type="button"
+          role="tab"
+          id="attendance-tab-checkins"
+          aria-selected={activeTab === "checkins"}
+          aria-controls="attendance-panel-checkins"
+          onClick={() => setActiveTab("checkins")}
+          className={cn(
+            "min-h-10 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors",
+            activeTab === "checkins"
+              ? "bg-accent text-on-primary shadow-2xs"
+              : "text-muted hover:bg-surface-muted/70 hover:text-foreground",
+          )}
+        >
+          Chi tiết lượt chấm công
+        </button>
+        <button
+          type="button"
+          role="tab"
+          id="attendance-tab-monthly-matrix"
+          aria-selected={activeTab === "monthly-matrix"}
+          aria-controls="attendance-panel-monthly-matrix"
+          onClick={() => setActiveTab("monthly-matrix")}
+          className={cn(
+            "min-h-10 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors",
+            activeTab === "monthly-matrix"
+              ? "bg-accent text-on-primary shadow-2xs"
+              : "text-muted hover:bg-surface-muted/70 hover:text-foreground",
+          )}
+        >
+          Ma trận tháng
+        </button>
+        <button
+          type="button"
+          role="tab"
+          id="attendance-tab-branches"
+          aria-selected={activeTab === "branches"}
+          aria-controls="attendance-panel-branches"
+          onClick={() => setActiveTab("branches")}
+          className={cn(
+            "min-h-10 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors",
+            activeTab === "branches"
+              ? "bg-accent text-on-primary shadow-2xs"
+              : "text-muted hover:bg-surface-muted/70 hover:text-foreground",
+          )}
+        >
+          Chi nhánh HRP
+        </button>
+      </div>
+
       {loadState.kind === "error" ? (
         <Alert tone="error" role="alert" title="Không thể làm mới báo cáo">
           <p>{loadState.detail}</p>
@@ -1543,6 +1616,33 @@ export function AttendanceReportManager() {
         ) : null}
       </Card>
 
+      {activeTab === "monthly-matrix" ? (
+        <div
+          id="attendance-panel-monthly-matrix"
+          role="tabpanel"
+          aria-labelledby="attendance-tab-monthly-matrix"
+        >
+          <AttendanceMonthlyMatrixSection />
+        </div>
+      ) : null}
+
+      {activeTab === "branches" ? (
+        <div
+          id="attendance-panel-branches"
+          role="tabpanel"
+          aria-labelledby="attendance-tab-branches"
+        >
+          <AttendanceBranchesAdminSection />
+        </div>
+      ) : null}
+
+      {activeTab === "checkins" ? (
+      <div
+        id="attendance-panel-checkins"
+        role="tabpanel"
+        aria-labelledby="attendance-tab-checkins"
+        className="space-y-6"
+      >
       {/* 2. Date-range & Searchable Employee Combobox Filter Toolbar */}
       <form onSubmit={handleFilterSubmit}>
         <FilterToolbar
@@ -1878,6 +1978,8 @@ export function AttendanceReportManager() {
           </>
         )}
       </Card>
+      </div>
+      ) : null}
 
       {/* 5. Check-in Detail Dialog (loads private photo lazily on open) */}
       <FormDialog

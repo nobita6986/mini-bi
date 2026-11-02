@@ -169,7 +169,7 @@
     "test:salary-advance-wp1": "node --conditions=react-server --test src/lib/salary-advance/salary-advance-contract.test.mjs src/lib/salary-advance/salary-advance-api.test.mjs scripts/w2s2-salary-advance-wp1-db.test.mjs && node --conditions=react-server --test scripts/w2s2-salary-advance-wp1-concurrency.test.mjs",
     "test:salary-advance-wp2-ui": "node --test src/lib/salary-advance/salary-advance-ui-model.test.mjs src/components/salary-advances/salary-advance-ui.test.mjs",
     "test:detailed-recruitment-matrix": "node --conditions=react-server --test src/lib/reporting/detailed-recruitment-matrix.test.mjs",
-    "test:attendance-monthly-matrix": "node --conditions=react-server --test src/lib/attendance/attendance-monthly-matrix-api.test.mjs scripts/attendance-monthly-matrix-branches-project-coords-db.test.mjs"
+    "test:attendance-monthly-matrix": "node --conditions=react-server --test src/lib/attendance/attendance-monthly-matrix-api.test.mjs src/lib/attendance/attendance-monthly-matrix-ui.test.mjs scripts/attendance-monthly-matrix-branches-project-coords-db.test.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.1146.0",

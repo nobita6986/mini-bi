@@ -13,10 +13,23 @@
 import { projectOptionalActionReason } from "./action-reason.ts";
 
 export const REASON_MAX = 4000;
+export const PROJECT_LOCATION_ADDRESS_MAX = 500;
+export const PROJECT_LOCATION_DEFAULT_RADIUS_METERS = 200;
+export const PROJECT_LOCATION_MIN_RADIUS_METERS = 50;
+export const PROJECT_LOCATION_MAX_RADIUS_METERS = 2000;
 export const PROJECT_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/;
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const LOCATION_ADDRESS_CONTROL_CHAR_PATTERN = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/;
+
+export type ProjectLocationView = {
+  address: string | null;
+  latitude: number;
+  longitude: number;
+  radius_meters: number;
+  confirmed_at: string | null;
+};
 
 export type ProjectView = {
   project_id: string;
@@ -25,6 +38,7 @@ export type ProjectView = {
   version: number;
   can_manage_project_master: boolean;
   can_assign_managers: boolean;
+  location?: ProjectLocationView | null;
 };
 
 export type AssignmentView = {
@@ -52,6 +66,7 @@ export type ProjectDetailView = {
   assignments: AssignmentView[];
   can_manage_project_master: boolean;
   can_assign_managers: boolean;
+  location?: ProjectLocationView | null;
 };
 
 export type RequestResult =
@@ -87,6 +102,60 @@ function asCount(value: unknown): number | null {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
 
+export function parseProjectLocation(value: unknown): ProjectLocationView | null {
+  const row = asRecord(value);
+  if (!row) return null;
+  const keys = Object.keys(row);
+  const expectedKeys = ["address", "latitude", "longitude", "radius_meters", "confirmed_at"];
+  if (keys.length !== expectedKeys.length || !expectedKeys.every((k) => k in row)) {
+    return null;
+  }
+  let address: string | null = null;
+  if (row.address !== null) {
+    if (typeof row.address !== "string") return null;
+    const trimmed = row.address.trim();
+    if (
+      trimmed === "" ||
+      trimmed.length > PROJECT_LOCATION_ADDRESS_MAX ||
+      LOCATION_ADDRESS_CONTROL_CHAR_PATTERN.test(trimmed)
+    ) {
+      return null;
+    }
+    address = trimmed;
+  }
+  if (
+    typeof row.latitude !== "number" ||
+    !Number.isFinite(row.latitude) ||
+    row.latitude < -90 ||
+    row.latitude > 90 ||
+    typeof row.longitude !== "number" ||
+    !Number.isFinite(row.longitude) ||
+    row.longitude < -180 ||
+    row.longitude > 180
+  ) {
+    return null;
+  }
+  const radius_meters = asCount(row.radius_meters);
+  if (
+    radius_meters === null ||
+    radius_meters < PROJECT_LOCATION_MIN_RADIUS_METERS ||
+    radius_meters > PROJECT_LOCATION_MAX_RADIUS_METERS
+  ) {
+    return null;
+  }
+  const confirmed_at = row.confirmed_at === null ? null : asText(row.confirmed_at);
+  if (row.confirmed_at !== null && confirmed_at === null) {
+    return null;
+  }
+  return {
+    address,
+    latitude: Object.is(row.latitude, -0) ? 0 : row.latitude,
+    longitude: Object.is(row.longitude, -0) ? 0 : row.longitude,
+    radius_meters,
+    confirmed_at,
+  };
+}
+
 export function parseProject(value: unknown): ProjectView | null {
   const row = asRecord(value);
   if (!row) return null;
@@ -100,8 +169,19 @@ export function parseProject(value: unknown): ProjectView | null {
       can_manage_project_master === null || can_assign_managers === null) {
     return null;
   }
-  return { project_id, display_name, active, version,
-    can_manage_project_master, can_assign_managers };
+  const base: ProjectView = {
+    project_id,
+    display_name,
+    active,
+    version,
+    can_manage_project_master,
+    can_assign_managers,
+  };
+  if (!("location" in row)) return base;
+  if (row.location === null) return { ...base, location: null };
+  const location = parseProjectLocation(row.location);
+  if (!location) return null;
+  return { ...base, location };
 }
 
 export function parseAssignment(value: unknown): AssignmentView | null {
@@ -170,11 +250,16 @@ export function parseDetailResponse(payload: unknown): ProjectDetailView | null 
     if (assignment === null) return null;
     assignments.push(assignment);
   }
-  return {
+  const base: ProjectDetailView = {
     project_id, display_name, version: masterVersion, project_version,
     project_active, active_assignment_count, assignments,
     can_manage_project_master, can_assign_managers,
   };
+  if (!("location" in master)) return base;
+  if (master.location === null) return { ...base, location: null };
+  const location = parseProjectLocation(master.location);
+  if (!location) return null;
+  return { ...base, location };
 }
 
 /** Doc project_version tu assign/unassign response (NOT version = assignment version). */
@@ -309,6 +394,121 @@ export function buildUnassignRequest(input: {
   } };
 }
 
+export function buildUpdateProjectLocationRequest(input: {
+  address?: string | null;
+  latitudeInput?: string | number | null;
+  longitudeInput?: string | number | null;
+  radiusInput?: string | number | null;
+  clear?: boolean;
+  reason?: string | null;
+  expectedVersion: number;
+  idempotencyKey: string;
+}): RequestResult {
+  const metaFailure =
+    validateReason(input.reason) ??
+    validateVersion(input.expectedVersion) ??
+    validateUuid(input.idempotencyKey);
+  if (metaFailure) return { ok: false, message: metaFailure };
+
+  const normalizedReason = normalizeOptionalActionReason(input.reason);
+  if (input.clear === true) {
+    return {
+      ok: true,
+      body: {
+        expected_version: input.expectedVersion,
+        address: null,
+        latitude: null,
+        longitude: null,
+        radius_meters: PROJECT_LOCATION_DEFAULT_RADIUS_METERS,
+        clear: true,
+        reason: normalizedReason,
+        idempotency_key: input.idempotencyKey,
+      },
+    };
+  }
+
+  const rawLat =
+    input.latitudeInput === undefined || input.latitudeInput === null
+      ? ""
+      : String(input.latitudeInput).trim();
+  const rawLon =
+    input.longitudeInput === undefined || input.longitudeInput === null
+      ? ""
+      : String(input.longitudeInput).trim();
+  const rawAddress = typeof input.address === "string" ? input.address.trim() : "";
+
+  if ((rawLat === "") !== (rawLon === "")) {
+    return { ok: false, message: "Vĩ độ và kinh độ phải cùng có hoặc cùng để trống." };
+  }
+
+  if (rawLat === "" && rawLon === "") {
+    if (rawAddress !== "") {
+      return { ok: false, message: "Vĩ độ và kinh độ phải cùng có hoặc cùng để trống." };
+    }
+    return {
+      ok: true,
+      body: {
+        expected_version: input.expectedVersion,
+        address: null,
+        latitude: null,
+        longitude: null,
+        radius_meters: PROJECT_LOCATION_DEFAULT_RADIUS_METERS,
+        clear: true,
+        reason: normalizedReason,
+        idempotency_key: input.idempotencyKey,
+      },
+    };
+  }
+
+  if (
+    rawAddress.length > PROJECT_LOCATION_ADDRESS_MAX ||
+    LOCATION_ADDRESS_CONTROL_CHAR_PATTERN.test(rawAddress)
+  ) {
+    return { ok: false, message: "Địa chỉ dự án tối đa 500 ký tự và không chứa ký tự điều khiển." };
+  }
+
+  const latitude = Number(rawLat);
+  const longitude = Number(rawLon);
+  if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90) {
+    return { ok: false, message: "Vĩ độ phải nằm trong khoảng từ -90 đến 90." };
+  }
+  if (!Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+    return { ok: false, message: "Kinh độ phải nằm trong khoảng từ -180 đến 180." };
+  }
+
+  const rawRadius =
+    input.radiusInput === undefined ||
+    input.radiusInput === null ||
+    String(input.radiusInput).trim() === ""
+      ? String(PROJECT_LOCATION_DEFAULT_RADIUS_METERS)
+      : String(input.radiusInput).trim();
+  if (!/^\d+$/.test(rawRadius)) {
+    return { ok: false, message: "Bán kính chấm công phải là số nguyên từ 50 đến 2000 mét." };
+  }
+  const radiusMeters = Number(rawRadius);
+  if (
+    !Number.isSafeInteger(radiusMeters) ||
+    radiusMeters < PROJECT_LOCATION_MIN_RADIUS_METERS ||
+    radiusMeters > PROJECT_LOCATION_MAX_RADIUS_METERS
+  ) {
+    return { ok: false, message: "Bán kính chấm công phải là số nguyên từ 50 đến 2000 mét." };
+  }
+
+  return {
+    ok: true,
+    body: {
+      expected_version: input.expectedVersion,
+      address: rawAddress === "" ? null : rawAddress,
+      latitude: Number((Object.is(latitude, -0) ? 0 : latitude).toFixed(7)),
+      longitude: Number((Object.is(longitude, -0) ? 0 : longitude).toFixed(7)),
+      radius_meters: radiusMeters,
+      clear: false,
+      reason: normalizedReason,
+      idempotency_key: input.idempotencyKey,
+    },
+  };
+}
+
 /* ---------- outcome ---------- */
 
 export function classifyResponse(status: number, payload: unknown): Outcome {
@@ -335,7 +535,7 @@ export function classifyResponse(status: number, payload: unknown): Outcome {
 
 export async function executeProjectRequest(
   url: string,
-  method: "POST" | "PATCH",
+  method: "POST" | "PATCH" | "PUT",
   request: RequestResult,
   idempotencyKey: string,
   fetcher: typeof fetch = fetch,
