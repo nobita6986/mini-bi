@@ -140,6 +140,8 @@ function formatDistanceStatusLabel(
       return "Tọa độ GPS thiếu hoặc không hợp lệ (INVALID_GPS)";
     case "HQ_NOT_CONFIGURED":
       return "Chưa cấu hình trụ sở tại thời điểm chấm công (HQ_NOT_CONFIGURED)";
+    case "BRANCH_NOT_CONFIGURED":
+      return "Chi nhánh được gán chưa cấu hình tọa độ (BRANCH_NOT_CONFIGURED)";
   }
 }
 

@@ -249,6 +249,183 @@ export function projectAdminUnassignRequest(body: unknown): Parsed<UnassignReque
   return { ok: true, value: { expected_version, expected_project_version, reason: reason.value, idempotency_key } };
 }
 
+export type UpdateProjectLocationRequest = {
+  expected_version: number;
+  address: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  radius_meters: number;
+  clear: boolean;
+  reason: string | null;
+  idempotency_key: string;
+};
+
+const LOCATION_FLAT_ALLOWED_KEYS = new Set([
+  "expected_version",
+  "address",
+  "latitude",
+  "longitude",
+  "radius_meters",
+  "clear",
+  "reason",
+  "idempotency_key",
+]);
+
+const LOCATION_NESTED_OUTER_ALLOWED_KEYS = new Set([
+  "expected_version",
+  "location",
+  "reason",
+  "idempotency_key",
+]);
+
+const LOCATION_NESTED_INNER_ALLOWED_KEYS = new Set([
+  "address",
+  "latitude",
+  "longitude",
+  "radius_meters",
+]);
+
+export function projectAdminUpdateLocationRequest(
+  body: unknown,
+): Parsed<UpdateProjectLocationRequest> {
+  const value = record(body);
+  if (!value) {
+    return { ok: false, response: fail("PROJECT_INVALID", 400) };
+  }
+  const expected_version = version(value.expected_version);
+  const reason = projectOptionalActionReason(value.reason, REASON_MAX);
+  const idempotency_key = uuid(value.idempotency_key);
+  if (expected_version === null || !reason.ok || !idempotency_key) {
+    return { ok: false, response: fail("PROJECT_INVALID", 400) };
+  }
+
+  let rawLocationSource: Record<string, unknown>;
+  let clearFlag = false;
+
+  if ("location" in value) {
+    if (Object.keys(value).some((k) => !LOCATION_NESTED_OUTER_ALLOWED_KEYS.has(k))) {
+      return { ok: false, response: fail("PROJECT_INVALID", 400) };
+    }
+    if (value.location === null) {
+      return {
+        ok: true,
+        value: {
+          expected_version,
+          address: null,
+          latitude: null,
+          longitude: null,
+          radius_meters: 200,
+          clear: true,
+          reason: reason.value,
+          idempotency_key,
+        },
+      };
+    }
+    const inner = record(value.location);
+    if (
+      !inner ||
+      Object.keys(inner).some((k) => !LOCATION_NESTED_INNER_ALLOWED_KEYS.has(k))
+    ) {
+      return { ok: false, response: fail("PROJECT_INVALID", 400) };
+    }
+    rawLocationSource = inner;
+  } else {
+    if (Object.keys(value).some((k) => !LOCATION_FLAT_ALLOWED_KEYS.has(k))) {
+      return { ok: false, response: fail("PROJECT_INVALID", 400) };
+    }
+    if ("clear" in value && typeof value.clear !== "boolean") {
+      return { ok: false, response: fail("PROJECT_INVALID", 400) };
+    }
+    clearFlag = value.clear === true;
+    rawLocationSource = value;
+  }
+
+  if (clearFlag) {
+    if (
+      (rawLocationSource.latitude !== undefined && rawLocationSource.latitude !== null) ||
+      (rawLocationSource.longitude !== undefined && rawLocationSource.longitude !== null) ||
+      (rawLocationSource.address !== undefined &&
+        rawLocationSource.address !== null &&
+        String(rawLocationSource.address).trim() !== "")
+    ) {
+      return { ok: false, response: fail("PROJECT_INVALID", 400) };
+    }
+    return {
+      ok: true,
+      value: {
+        expected_version,
+        address: null,
+        latitude: null,
+        longitude: null,
+        radius_meters: 200,
+        clear: true,
+        reason: reason.value,
+        idempotency_key,
+      },
+    };
+  }
+
+  const rawLat = rawLocationSource.latitude;
+  const rawLon = rawLocationSource.longitude;
+  if (
+    typeof rawLat !== "number" ||
+    !Number.isFinite(rawLat) ||
+    rawLat < -90 ||
+    rawLat > 90 ||
+    typeof rawLon !== "number" ||
+    !Number.isFinite(rawLon) ||
+    rawLon < -180 ||
+    rawLon > 180
+  ) {
+    return { ok: false, response: fail("PROJECT_INVALID", 400) };
+  }
+
+  let address: string | null = null;
+  if (rawLocationSource.address !== undefined && rawLocationSource.address !== null) {
+    if (typeof rawLocationSource.address !== "string") {
+      return { ok: false, response: fail("PROJECT_INVALID", 400) };
+    }
+    const trimmed = rawLocationSource.address.trim();
+    if (trimmed.length > 500 || /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/.test(trimmed)) {
+      return { ok: false, response: fail("PROJECT_INVALID", 400) };
+    }
+    address = trimmed.length > 0 ? trimmed : null;
+  }
+
+  let radius_meters = 200;
+  if (
+    rawLocationSource.radius_meters !== undefined &&
+    rawLocationSource.radius_meters !== null
+  ) {
+    if (
+      typeof rawLocationSource.radius_meters !== "number" ||
+      !Number.isSafeInteger(rawLocationSource.radius_meters) ||
+      rawLocationSource.radius_meters < 50 ||
+      rawLocationSource.radius_meters > 2000
+    ) {
+      return { ok: false, response: fail("PROJECT_INVALID", 400) };
+    }
+    radius_meters = rawLocationSource.radius_meters;
+  }
+
+  const latitude = Number((Object.is(rawLat, -0) ? 0 : rawLat).toFixed(7));
+  const longitude = Number((Object.is(rawLon, -0) ? 0 : rawLon).toFixed(7));
+
+  return {
+    ok: true,
+    value: {
+      expected_version,
+      address,
+      latitude,
+      longitude,
+      radius_meters,
+      clear: false,
+      reason: reason.value,
+      idempotency_key,
+    },
+  };
+}
+
 /** Chay mot mutation da qua preflight + parse. */
 async function runMutation<T>(
   request: Request,
@@ -410,4 +587,33 @@ export function unassignProjectManagerAdmin(
       ? Promise.resolve({ ok: false as const, kind: "invalid" })
       : dependencies.repository.unassignManager({ ...actor, assignment_id: assignment, ...value }),
     "[direct-entry] project admin unassign failed");
+}
+
+export function updateProjectLocationAdmin(
+  request: Request,
+  projectId: string,
+  flag: string | undefined,
+  dependencies: ProjectAdminDependencies,
+): Promise<Response> {
+  const id = resourceId(projectId);
+  return mutationPipeline(
+    request,
+    flag,
+    dependencies,
+    projectAdminUpdateLocationRequest,
+    (actor, value: UpdateProjectLocationRequest) => {
+      if (id === null) {
+        return Promise.resolve({ ok: false as const, kind: "invalid" });
+      }
+      if (!dependencies.repository.updateProjectLocation) {
+        return Promise.resolve({ ok: false as const, kind: "unavailable" });
+      }
+      return dependencies.repository.updateProjectLocation({
+        ...actor,
+        project_id: id,
+        ...value,
+      });
+    },
+    "[direct-entry] project admin location update failed",
+  );
 }

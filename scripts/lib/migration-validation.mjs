@@ -301,6 +301,17 @@ export const WORKER_EDIT_HISTORY_ADMIN_RPC_SIGNATURES = Object.freeze([
   "public.worker_edit_history_get_revision(uuid, uuid, uuid, uuid)",
   MISSING_DOCUMENT_WORKERS_REVIEW_RPC_SIGNATURE,
 ]);
+export const ATTENDANCE_MONTHLY_MATRIX_BRANCHES_PROJECT_COORDS_MIGRATION_NAME =
+  "20261102120000_attendance_monthly_matrix_branches_and_project_coords.sql";
+export const ATTENDANCE_MONTHLY_MATRIX_BRANCHES_PROJECT_COORDS_RPC_SIGNATURES = Object.freeze([
+  "public.attendance_list_branches_admin(uuid, uuid, boolean)",
+  "public.attendance_upsert_branch_admin(uuid, uuid, uuid, text, text, text, double precision, double precision, boolean, integer, uuid, text)",
+  "public.attendance_assign_employee_branch_admin(uuid, uuid, uuid, uuid, date, integer, uuid, text)",
+  "public.attendance_unassign_employee_branch_admin(uuid, uuid, uuid, date, integer, uuid, text)",
+  "public.attendance_monthly_matrix_report(uuid, uuid, text, uuid, uuid, text, integer, integer)",
+  "public.direct_entry_update_project_location(uuid, uuid, text, integer, text, numeric, numeric, integer, boolean, text, text)",
+  "public.hrp_sync_catalog(uuid, uuid, uuid)",
+]);
 export const F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES = Object.freeze([
   "public.work_report_list_templates(uuid, uuid)",
   "public.work_report_get_template(uuid, uuid, uuid)",
@@ -319,7 +330,7 @@ export const F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES = Object.freeze([
   "public.work_report_submit(uuid, uuid, uuid, jsonb, integer, text)",
 ]);
 export const S0_T1_C_TARGET_ROUTINE_PATTERN =
-  "^(direct_entry_|worker_edit_history_|work_report_|attendance_|org_department_|vendor_finance_|leave_management_|salary_advance_|ai_report_|ai_provider_config_|recruitment_|(expand|replace|reject|upsert)_daily_recruitment|record_recruitment_source_failure_|set_updated_at$)";
+  "^(direct_entry_|worker_edit_history_|work_report_|attendance_|org_department_|vendor_finance_|leave_management_|salary_advance_|hrp_sync_|ai_report_|ai_provider_config_|recruitment_|(expand|replace|reject|upsert)_daily_recruitment|record_recruitment_source_failure_|set_updated_at$)";
 
 export function migrationChecksum(text) {
   // Git may materialize SQL files as CRLF on Windows even though the same
@@ -542,7 +553,8 @@ export async function verifyS0T1CHistoricalCompatibility(
     hfSalaryAdvancePmWorkerHistoryApplied = false,
     hfDuplicateCccdResignedWithdrawAndWorkerFiltersApplied = false,
     dashboardDetailedRecruitmentMatrixCatalogApplied = false,
-    workerEditHistoryAdminApplied = false } = {},
+    workerEditHistoryAdminApplied = false,
+    attendanceMonthlyMatrixBranchesProjectCoordsApplied = false } = {},
 ) {
   const baseAllowlist = extractS0T1CAllowlistSignatures(migrationSql);
   if (baseAllowlist.length === 0) {
@@ -626,6 +638,9 @@ export async function verifyS0T1CHistoricalCompatibility(
       ? [DASHBOARD_DETAILED_RECRUITMENT_MATRIX_CATALOG_RPC_SIGNATURE]
       : []),
     ...(workerEditHistoryAdminApplied ? WORKER_EDIT_HISTORY_ADMIN_RPC_SIGNATURES : []),
+    ...(attendanceMonthlyMatrixBranchesProjectCoordsApplied
+      ? ATTENDANCE_MONTHLY_MATRIX_BRANCHES_PROJECT_COORDS_RPC_SIGNATURES
+      : []),
   ];
 
   const { rows } = await client.query(
@@ -684,7 +699,7 @@ export async function verifyS0T1CHistoricalCompatibility(
           join pg_catalog.pg_namespace n on n.oid = p.pronamespace
          where n.nspname = 'public'
            and p.prokind in ('f', 'p')
-           and p.proname ~ '^(direct_entry_|worker_edit_history_|attendance_|org_department_|vendor_finance_|leave_management_|salary_advance_)'
+           and p.proname ~ '^(direct_entry_|worker_edit_history_|attendance_|org_department_|vendor_finance_|leave_management_|salary_advance_|hrp_sync_)'
            and p.prosecdef
            and not coalesce(
              'search_path=pg_catalog, public' = any(p.proconfig)
@@ -880,6 +895,8 @@ export async function verifyAppliedMigrationChecksum(
           appliedMap.has(DASHBOARD_DETAILED_RECRUITMENT_MATRIX_CATALOG_MIGRATION_NAME),
         workerEditHistoryAdminApplied:
           appliedMap.has(WORKER_EDIT_HISTORY_ADMIN_MIGRATION_NAME),
+        attendanceMonthlyMatrixBranchesProjectCoordsApplied:
+          appliedMap.has(ATTENDANCE_MONTHLY_MATRIX_BRANCHES_PROJECT_COORDS_MIGRATION_NAME),
       },
     );
     if (postconditions.ok) {
