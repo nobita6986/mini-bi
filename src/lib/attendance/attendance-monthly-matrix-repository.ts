@@ -4,12 +4,16 @@ import {
   projectAssignBranchResult,
   projectAttendanceBranchesAdminList,
   projectAttendanceMonthlyMatrixReport,
+  projectAttendanceSlotPoliciesAdminList,
+  projectCreateSlotPolicyResult,
   projectUnassignBranchResult,
   projectUpsertBranchResult,
   type AssignAttendanceBranchResultProjection,
   type AttendanceBranchesAdminListProjection,
   type AttendanceMonthlyMatrixErrorCode,
   type AttendanceMonthlyMatrixReportProjection,
+  type AttendanceSlotPoliciesAdminListProjection,
+  type CreateAttendanceSlotPolicyResultProjection,
   type UnassignAttendanceBranchResultProjection,
   type UpsertAttendanceBranchResultProjection,
 } from "./attendance-monthly-matrix-contract.ts";
@@ -88,6 +92,40 @@ export type UnassignEmployeeBranchAdminResult =
   | { ok: true; result: UnassignAttendanceBranchResultProjection }
   | { ok: false; code: AttendanceMonthlyMatrixErrorCode };
 
+export type GetAttendanceSlotPoliciesAdminInput = {
+  auth_subject: string;
+  app_user_id: string;
+};
+
+export type GetAttendanceSlotPoliciesAdminResult =
+  | { ok: true; data: AttendanceSlotPoliciesAdminListProjection }
+  | { ok: false; code: AttendanceMonthlyMatrixErrorCode };
+
+export type CreateAttendanceSlotPolicyAdminInput = {
+  auth_subject: string;
+  app_user_id: string;
+  effective_from_date: string;
+  slot_1_time: string;
+  slot_1_grace_before_minutes: number;
+  slot_1_grace_after_minutes: number;
+  slot_2_time: string;
+  slot_2_grace_before_minutes: number;
+  slot_2_grace_after_minutes: number;
+  slot_3_time: string;
+  slot_3_grace_before_minutes: number;
+  slot_3_grace_after_minutes: number;
+  slot_4_time: string;
+  slot_4_grace_before_minutes: number;
+  slot_4_grace_after_minutes: number;
+  expected_version: number;
+  idempotency_key: string;
+  request_fingerprint: string;
+};
+
+export type CreateAttendanceSlotPolicyAdminResult =
+  | { ok: true; result: CreateAttendanceSlotPolicyResultProjection }
+  | { ok: false; code: AttendanceMonthlyMatrixErrorCode };
+
 export type AttendanceMonthlyMatrixRepository = {
   getMonthlyMatrixReport(
     input: GetAttendanceMonthlyMatrixReportInput,
@@ -104,12 +142,19 @@ export type AttendanceMonthlyMatrixRepository = {
   unassignEmployeeBranchAdmin(
     input: UnassignEmployeeBranchAdminInput,
   ): Promise<UnassignEmployeeBranchAdminResult>;
+  getSlotPoliciesAdmin?(
+    input: GetAttendanceSlotPoliciesAdminInput,
+  ): Promise<GetAttendanceSlotPoliciesAdminResult>;
+  createSlotPolicyAdmin?(
+    input: CreateAttendanceSlotPolicyAdminInput,
+  ): Promise<CreateAttendanceSlotPolicyAdminResult>;
 };
 
 const KNOWN_MATRIX_RPC_TOKENS: ReadonlyMap<string, AttendanceMonthlyMatrixErrorCode> = new Map([
   ["ATTENDANCE_ACTOR_DENIED", "ACTOR_NOT_AVAILABLE"],
   ["ATTENDANCE_REPORT_ACCESS_DENIED", "ATTENDANCE_REPORT_ACCESS_DENIED"],
   ["ATTENDANCE_BRANCH_WRITE_DENIED", "ATTENDANCE_BRANCH_WRITE_DENIED"],
+  ["ATTENDANCE_SLOT_POLICY_WRITE_DENIED", "ATTENDANCE_SLOT_POLICY_WRITE_DENIED"],
   ["ATTENDANCE_MATRIX_MONTH_INVALID", "ATTENDANCE_MATRIX_MONTH_INVALID"],
   ["ATTENDANCE_REPORT_PAGINATION_INVALID", "ATTENDANCE_REPORT_PAGINATION_INVALID"],
   ["ATTENDANCE_REPORT_SEARCH_INVALID", "ATTENDANCE_REPORT_SEARCH_INVALID"],
@@ -129,6 +174,13 @@ const KNOWN_MATRIX_RPC_TOKENS: ReadonlyMap<string, AttendanceMonthlyMatrixErrorC
     "ATTENDANCE_BRANCH_ASSIGNMENT_VERSION_CONFLICT",
     "ATTENDANCE_BRANCH_ASSIGNMENT_VERSION_CONFLICT",
   ],
+  ["ATTENDANCE_SLOT_POLICY_INVALID", "ATTENDANCE_SLOT_POLICY_INVALID"],
+  [
+    "ATTENDANCE_SLOT_POLICY_EFFECTIVE_DATE_PAST",
+    "ATTENDANCE_SLOT_POLICY_EFFECTIVE_DATE_PAST",
+  ],
+  ["ATTENDANCE_SLOT_POLICY_OVERLAP", "ATTENDANCE_SLOT_POLICY_OVERLAP"],
+  ["ATTENDANCE_SLOT_POLICY_VERSION_CONFLICT", "ATTENDANCE_SLOT_POLICY_VERSION_CONFLICT"],
   ["ATTENDANCE_IDEMPOTENCY_INVALID", "IDEMPOTENCY_KEY_INVALID"],
   ["IDEMPOTENCY_CONFLICT", "IDEMPOTENCY_CONFLICT"],
 ]);
@@ -142,7 +194,7 @@ function serviceRoleRpc(): AttendanceRpcCaller {
 
 function classifyMatrixRpcError(
   error: { code?: string; message?: string },
-  mode: "report" | "branch_write" | "assignment_write",
+  mode: "report" | "branch_write" | "assignment_write" | "slot_policy_write",
 ): AttendanceMonthlyMatrixErrorCode {
   const trimmed = typeof error.message === "string" ? error.message.trim() : "";
   const exact = KNOWN_MATRIX_RPC_TOKENS.get(trimmed);
@@ -157,9 +209,9 @@ function classifyMatrixRpcError(
   }
 
   if (error.code === "42501") {
-    return mode === "report"
-      ? "ATTENDANCE_REPORT_ACCESS_DENIED"
-      : "ATTENDANCE_BRANCH_WRITE_DENIED";
+    if (mode === "report") return "ATTENDANCE_REPORT_ACCESS_DENIED";
+    if (mode === "slot_policy_write") return "ATTENDANCE_SLOT_POLICY_WRITE_DENIED";
+    return "ATTENDANCE_BRANCH_WRITE_DENIED";
   }
   if (error.code === "P0002") {
     return mode === "assignment_write"
@@ -167,9 +219,9 @@ function classifyMatrixRpcError(
       : "ATTENDANCE_BRANCH_NOT_FOUND";
   }
   if (error.code === "PT409" || error.code === "40001") {
-    return mode === "assignment_write"
-      ? "ATTENDANCE_BRANCH_ASSIGNMENT_VERSION_CONFLICT"
-      : "ATTENDANCE_BRANCH_VERSION_CONFLICT";
+    if (mode === "assignment_write") return "ATTENDANCE_BRANCH_ASSIGNMENT_VERSION_CONFLICT";
+    if (mode === "slot_policy_write") return "ATTENDANCE_SLOT_POLICY_VERSION_CONFLICT";
+    return "ATTENDANCE_BRANCH_VERSION_CONFLICT";
   }
   if (error.code === "23505") {
     if (trimmed.includes("attendance_branch_assignments_one_open_idx")) {
@@ -178,11 +230,15 @@ function classifyMatrixRpcError(
     if (trimmed.includes("attendance_branches_code_uq")) {
       return "ATTENDANCE_BRANCH_CODE_CONFLICT";
     }
+    if (trimmed.includes("attendance_slot_policy_versions_effective_from_date_key")) {
+      return "ATTENDANCE_SLOT_POLICY_OVERLAP";
+    }
     return "IDEMPOTENCY_CONFLICT";
   }
   if (error.code === "22023" || error.code === "23514") {
     if (mode === "branch_write") return "ATTENDANCE_BRANCH_INVALID";
     if (mode === "assignment_write") return "ATTENDANCE_BRANCH_ASSIGNMENT_INVALID";
+    if (mode === "slot_policy_write") return "ATTENDANCE_SLOT_POLICY_INVALID";
     return "ATTENDANCE_REPORT_QUERY_INVALID";
   }
 
@@ -352,6 +408,76 @@ export function createServiceAttendanceMonthlyMatrixRepository(
         return { ok: true, result: projected };
       } catch {
         console.error("[attendance-monthly-matrix] unassign branch RPC call failed");
+        return { ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" };
+      }
+    },
+
+    async getSlotPoliciesAdmin(input) {
+      try {
+        resolvedRpc ??= serviceRoleRpc();
+        const result = await resolvedRpc("attendance_get_slot_policies_admin", {
+          p_auth_subject: input.auth_subject,
+          p_app_user_id: input.app_user_id,
+        });
+
+        if (result.error) {
+          return { ok: false, code: classifyMatrixRpcError(result.error, "report") };
+        }
+
+        const projected = projectAttendanceSlotPoliciesAdminList(result.data);
+        if (!projected) {
+          console.error(
+            "[attendance-monthly-matrix] get slot policies RPC returned non-canonical projection",
+          );
+          return { ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" };
+        }
+
+        return { ok: true, data: projected };
+      } catch {
+        console.error("[attendance-monthly-matrix] get slot policies RPC call failed");
+        return { ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" };
+      }
+    },
+
+    async createSlotPolicyAdmin(input) {
+      try {
+        resolvedRpc ??= serviceRoleRpc();
+        const result = await resolvedRpc("attendance_create_slot_policy_admin", {
+          p_auth_subject: input.auth_subject,
+          p_app_user_id: input.app_user_id,
+          p_effective_from_date: input.effective_from_date,
+          p_slot_1_time: input.slot_1_time,
+          p_slot_1_grace_before_minutes: input.slot_1_grace_before_minutes,
+          p_slot_1_grace_after_minutes: input.slot_1_grace_after_minutes,
+          p_slot_2_time: input.slot_2_time,
+          p_slot_2_grace_before_minutes: input.slot_2_grace_before_minutes,
+          p_slot_2_grace_after_minutes: input.slot_2_grace_after_minutes,
+          p_slot_3_time: input.slot_3_time,
+          p_slot_3_grace_before_minutes: input.slot_3_grace_before_minutes,
+          p_slot_3_grace_after_minutes: input.slot_3_grace_after_minutes,
+          p_slot_4_time: input.slot_4_time,
+          p_slot_4_grace_before_minutes: input.slot_4_grace_before_minutes,
+          p_slot_4_grace_after_minutes: input.slot_4_grace_after_minutes,
+          p_expected_version: input.expected_version,
+          p_idempotency_key: input.idempotency_key,
+          p_request_fingerprint: input.request_fingerprint,
+        });
+
+        if (result.error) {
+          return { ok: false, code: classifyMatrixRpcError(result.error, "slot_policy_write") };
+        }
+
+        const projected = projectCreateSlotPolicyResult(result.data);
+        if (!projected) {
+          console.error(
+            "[attendance-monthly-matrix] create slot policy RPC returned non-canonical projection",
+          );
+          return { ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" };
+        }
+
+        return { ok: true, result: projected };
+      } catch {
+        console.error("[attendance-monthly-matrix] create slot policy RPC call failed");
         return { ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" };
       }
     },

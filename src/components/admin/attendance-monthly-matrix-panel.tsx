@@ -32,12 +32,16 @@ import {
   ATTENDANCE_REPORT_DEFAULT_PAGE_SIZE,
   formatCoordinatePair,
   formatDistanceMeters,
+  getVietnamTodayIsoDate,
   newAttendanceHqIntentKey,
+  shiftIsoDateDays,
 } from "@/lib/attendance/attendance-report-contract";
 import {
   projectAssignBranchResult,
   projectAttendanceBranchesAdminList,
   projectAttendanceMonthlyMatrixReport,
+  projectAttendanceSlotPoliciesAdminList,
+  projectCreateSlotPolicyResult,
   projectUnassignBranchResult,
   projectUpsertBranchResult,
   type AttendanceBranchAdminItemProjection,
@@ -46,9 +50,14 @@ import {
   type AttendanceMonthlyMatrixDayCellProjection,
   type AttendanceMonthlyMatrixEmployeeRowProjection,
   type AttendanceMonthlyMatrixReportProjection,
+  type AttendanceSlotPoliciesAdminListProjection,
+  type AttendanceSlotPolicyProjection,
 } from "@/lib/attendance/attendance-monthly-matrix-contract";
 import {
+  MATRIX_LEGEND_ITEMS,
+  MATRIX_SLOT_SHORT_LABELS,
   buildAssignEmployeeToBranchPayload,
+  buildCreateSlotPolicyPayload,
   buildGoogleMapsCoordinatesUrl,
   buildMonthlyMatrixExportUrl,
   buildMonthlyMatrixReportQuery,
@@ -61,6 +70,7 @@ import {
   mapBranchAdminMutationError,
   mapMonthlyMatrixExportError,
   mapMonthlyMatrixReportError,
+  mapSlotPolicyMutationError,
   validateMonthlyMatrixFilters,
   type MatrixEmployeeFilterMode,
 } from "@/lib/attendance/attendance-monthly-matrix-ui-model";
@@ -119,7 +129,7 @@ function MatrixDayCell({ cell }: { cell: AttendanceMonthlyMatrixDayCellProjectio
   return (
     <div
       className={cn(
-        "flex min-h-[5.5rem] w-40 flex-col justify-between gap-1 rounded-lg border p-2 text-xs",
+        "flex min-h-[10.5rem] w-56 flex-col justify-between gap-1.5 rounded-lg border p-2 text-xs",
         cellToneClass,
       )}
     >
@@ -136,18 +146,83 @@ function MatrixDayCell({ cell }: { cell: AttendanceMonthlyMatrixDayCellProjectio
         >
           {presentation.statusLabel}
         </span>
-        {presentation.targetBadgeLabel ? (
-          <span className="rounded border border-current/25 px-1 py-0.5 font-mono text-[10px] font-medium">
-            {presentation.targetBadgeLabel}
+        <div className="flex items-center gap-1">
+          <span
+            title={`Áp dụng khung giờ phiên bản v${presentation.policyVersionUsed}`}
+            className="rounded border border-current/20 px-1 py-0.5 font-mono text-[10px] opacity-80"
+          >
+            KG v{presentation.policyVersionUsed}
           </span>
-        ) : null}
+          {presentation.targetBadgeLabel ? (
+            <span className="rounded border border-current/25 px-1 py-0.5 font-mono text-[10px] font-medium">
+              {presentation.targetBadgeLabel}
+            </span>
+          ) : null}
+        </div>
+      </div>
+
+      {/* 4 Daily Slots */}
+      <div className="space-y-1">
+        {presentation.slots.map((slot) => {
+          const slotRowClass =
+            slot.tone === "emerald"
+              ? "border-emerald-300/80 bg-white/80 text-emerald-950 dark:border-emerald-800/60 dark:bg-emerald-950/50 dark:text-emerald-100"
+              : slot.tone === "amber"
+                ? "border-amber-400/90 bg-amber-100/85 text-amber-950 dark:border-amber-700/70 dark:bg-amber-950/60 dark:text-amber-100"
+                : slot.tone === "sky"
+                  ? "border-sky-300/90 bg-sky-50/90 text-sky-950 dark:border-sky-800/60 dark:bg-sky-950/50 dark:text-sky-100"
+                  : "border-red-300/90 bg-red-100/85 text-red-950 dark:border-red-800/70 dark:bg-red-950/55 dark:text-red-100";
+
+          return (
+            <div
+              key={slot.slotCode}
+              className={cn(
+                "rounded border px-1.5 py-1 text-[11px] leading-tight",
+                slotRowClass,
+              )}
+            >
+              <div className="flex items-center justify-between gap-1">
+                <span className="font-semibold">
+                  {slot.slotShortLabel}{" "}
+                  <span className="font-mono font-normal opacity-80">
+                    ({slot.targetTime})
+                  </span>
+                </span>
+                {slot.slotStatus === "MISSING" ? (
+                  <span className="rounded bg-red-200/90 px-1 py-0.5 text-[10px] font-bold text-red-950 dark:bg-red-900/80 dark:text-red-100">
+                    Chưa có lượt chấm
+                  </span>
+                ) : slot.slotStatus === "LEAVE_COVERED" && slot.checkins.length === 0 ? (
+                  <span className="rounded bg-sky-200/80 px-1 py-0.5 text-[10px] font-semibold text-sky-950 dark:bg-sky-900/70 dark:text-sky-100">
+                    {slot.statusLabel}
+                  </span>
+                ) : null}
+              </div>
+
+              {slot.checkins.length > 0 ? (
+                <div className="mt-1 flex flex-wrap items-center gap-1">
+                  {slot.checkins.map((c) => (
+                    <span
+                      key={c.checkinId}
+                      className="inline-flex items-center gap-1 rounded bg-black/5 px-1 py-0.5 font-mono text-[11px] font-semibold tabular-nums dark:bg-white/10"
+                    >
+                      <span>{c.timeLocal}</span>
+                      {c.deviationBadgeLabel ? (
+                        <span className="rounded bg-amber-300/90 px-1 py-0.2 text-[10px] font-sans font-bold text-amber-950 dark:bg-amber-800 dark:text-amber-100">
+                          {c.deviationBadgeLabel}
+                        </span>
+                      ) : null}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
       </div>
 
       {presentation.hasCheckin ? (
-        <div className="space-y-0.5">
-          <p className="font-mono font-semibold tabular-nums">
-            {presentation.timeRangeLabel}
-          </p>
+        <div className="space-y-0.5 border-t border-current/15 pt-1">
           {presentation.verificationLabel ? (
             <p className="text-[11px] opacity-85">{presentation.verificationLabel}</p>
           ) : null}
@@ -177,12 +252,6 @@ function MatrixDayCell({ cell }: { cell: AttendanceMonthlyMatrixDayCellProjectio
           )}
         </div>
       ) : null}
-
-      {presentation.dayStatus === "NO_CHECKIN" ? (
-        <p className="text-[11px] opacity-80">
-          Không ghi nhận lượt chấm công
-        </p>
-      ) : null}
     </div>
   );
 }
@@ -192,6 +261,15 @@ function MatrixEmployeeStickySummary({
 }: {
   row: AttendanceMonthlyMatrixEmployeeRowProjection;
 }) {
+  const lateOrEarlyCheckinCount = row.days.reduce(
+    (sum, day) => sum + day.late_or_early_checkin_count,
+    0,
+  );
+  const missingSlotCount = row.days.reduce(
+    (sum, day) => sum + day.missing_slot_count,
+    0,
+  );
+
   return (
     <div className="w-64 space-y-1.5">
       <div className="flex flex-wrap items-center gap-1.5">
@@ -222,12 +300,16 @@ function MatrixEmployeeStickySummary({
           Check-in: {VI_INTEGER.format(row.summary.checkin_day_count)} ngày (
           {VI_INTEGER.format(row.summary.total_checkins)} lượt)
         </span>
+        <span className="rounded bg-amber-100 px-1.5 py-0.5 font-medium text-amber-900 dark:bg-amber-950/60 dark:text-amber-200">
+          Lệch ngưỡng: {VI_INTEGER.format(lateOrEarlyCheckinCount)} lượt
+        </span>
         <span className="rounded bg-red-100 px-1.5 py-0.5 font-medium text-red-900 dark:bg-red-950/60 dark:text-red-200">
           Nghỉ phép: {VI_INTEGER.format(row.summary.approved_leave_day_count)} ngày (
           {VI_DECIMAL.format(row.summary.approved_leave_units)} công)
         </span>
         <span className="rounded bg-red-50 px-1.5 py-0.5 font-medium text-red-800 dark:bg-red-950/40 dark:text-red-200">
-          Chưa check-in: {VI_INTEGER.format(row.summary.no_checkin_day_count)} ngày
+          Mốc chưa chấm: {VI_INTEGER.format(missingSlotCount)} mốc (
+          {VI_INTEGER.format(row.summary.no_checkin_day_count)} ngày)
         </span>
       </div>
       <p className="text-[11px] text-muted">
@@ -238,6 +320,760 @@ function MatrixEmployeeStickySummary({
           : ""}
       </p>
     </div>
+  );
+}
+
+type SlotPolicyDialogMode =
+  | { kind: "closed" }
+  | { kind: "history" }
+  | { kind: "create" };
+
+function AttendanceSlotPolicySummaryCard({
+  activeReport,
+  onPolicyCreated,
+}: {
+  activeReport: AttendanceMonthlyMatrixReportProjection | null;
+  onPolicyCreated: () => void;
+}) {
+  const router = useRouter();
+  const notify = useNotify();
+
+  const [dialogMode, setDialogMode] = useState<SlotPolicyDialogMode>({ kind: "closed" });
+  const [policiesData, setPoliciesData] =
+    useState<AttendanceSlotPoliciesAdminListProjection | null>(null);
+  const [loadingPolicies, setLoadingPolicies] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const [effectiveFromInput, setEffectiveFromInput] = useState("");
+  const [slot1TimeInput, setSlot1TimeInput] = useState("08:00");
+  const [slot1BeforeInput, setSlot1BeforeInput] = useState("15");
+  const [slot1AfterInput, setSlot1AfterInput] = useState("15");
+  const [slot2TimeInput, setSlot2TimeInput] = useState("11:00");
+  const [slot2BeforeInput, setSlot2BeforeInput] = useState("15");
+  const [slot2AfterInput, setSlot2AfterInput] = useState("15");
+  const [slot3TimeInput, setSlot3TimeInput] = useState("13:00");
+  const [slot3BeforeInput, setSlot3BeforeInput] = useState("15");
+  const [slot3AfterInput, setSlot3AfterInput] = useState("15");
+  const [slot4TimeInput, setSlot4TimeInput] = useState("17:00");
+  const [slot4BeforeInput, setSlot4BeforeInput] = useState("15");
+  const [slot4AfterInput, setSlot4AfterInput] = useState("15");
+  const [mutationBusy, setMutationBusy] = useState(false);
+  const [mutationError, setMutationError] = useState<string | null>(null);
+
+  const canManageSlotPolicy =
+    activeReport?.viewer.can_manage_slot_policy === true ||
+    policiesData?.viewer.can_manage_slot_policy === true;
+
+  const populateFormFromPolicy = useCallback(
+    (seedPolicy: AttendanceSlotPolicyProjection, businessDate: string) => {
+      const s1 = seedPolicy.slots[0];
+      const s2 = seedPolicy.slots[1];
+      const s3 = seedPolicy.slots[2];
+      const s4 = seedPolicy.slots[3];
+      const defaultDate =
+        seedPolicy.effective_from_date >= businessDate
+          ? shiftIsoDateDays(seedPolicy.effective_from_date, 1)
+          : businessDate;
+      setEffectiveFromInput(defaultDate);
+      setSlot1TimeInput(s1.target_time);
+      setSlot1BeforeInput(String(s1.grace_before_minutes));
+      setSlot1AfterInput(String(s1.grace_after_minutes));
+      setSlot2TimeInput(s2.target_time);
+      setSlot2BeforeInput(String(s2.grace_before_minutes));
+      setSlot2AfterInput(String(s2.grace_after_minutes));
+      setSlot3TimeInput(s3.target_time);
+      setSlot3BeforeInput(String(s3.grace_before_minutes));
+      setSlot3AfterInput(String(s3.grace_after_minutes));
+      setSlot4TimeInput(s4.target_time);
+      setSlot4BeforeInput(String(s4.grace_before_minutes));
+      setSlot4AfterInput(String(s4.grace_after_minutes));
+    },
+    [],
+  );
+
+  const fetchSlotPolicies = useCallback(
+    async (openModeAfterLoad?: "history" | "create") => {
+      setLoadingPolicies(true);
+      setLoadError(null);
+      try {
+        const response = await fetch("/api/admin/attendance/slot-policies", {
+          method: "GET",
+          cache: "no-store",
+        });
+        if (response.status === 401) {
+          setLoadingPolicies(false);
+          router.replace("/login?next=/admin/attendance");
+          return;
+        }
+        let payload: unknown = null;
+        try {
+          payload = await response.json();
+        } catch {
+          payload = null;
+        }
+        if (!response.ok || !isRecord(payload) || payload.ok !== true) {
+          setLoadError("Không tải được lịch sử cấu hình khung giờ chấm công.");
+          setLoadingPolicies(false);
+          return;
+        }
+        const projected = projectAttendanceSlotPoliciesAdminList({
+          viewer: payload.viewer,
+          business_date: payload.business_date,
+          current_policy: payload.current_policy,
+          latest_policy: payload.latest_policy,
+          versions: payload.versions,
+        });
+        if (!projected) {
+          setLoadError("Dữ liệu cấu hình khung giờ chấm công không đúng định dạng chuẩn.");
+          setLoadingPolicies(false);
+          return;
+        }
+        setPoliciesData(projected);
+        setLoadingPolicies(false);
+        if (openModeAfterLoad === "create") {
+          populateFormFromPolicy(projected.latest_policy, projected.business_date);
+        }
+      } catch {
+        setLoadError("Không thể kết nối máy chủ để tải cấu hình khung giờ chấm công.");
+        setLoadingPolicies(false);
+      }
+    },
+    [populateFormFromPolicy, router],
+  );
+
+  function openHistoryDialog() {
+    setMutationError(null);
+    setDialogMode({ kind: "history" });
+    void fetchSlotPolicies("history");
+  }
+
+  function openCreateDialog() {
+    setMutationError(null);
+    const seed =
+      policiesData?.latest_policy ?? activeReport?.slot_policy.current_policy ?? null;
+    const todayVn = policiesData?.business_date ?? getVietnamTodayIsoDate();
+    if (seed) {
+      populateFormFromPolicy(seed, todayVn);
+    }
+    setDialogMode({ kind: "create" });
+    void fetchSlotPolicies("create");
+  }
+
+  function closeDialog() {
+    if (mutationBusy) return;
+    setDialogMode({ kind: "closed" });
+    setMutationError(null);
+  }
+
+  async function handleSaveSlotPolicy(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (mutationBusy || !canManageSlotPolicy) return;
+
+    const latestVersion =
+      policiesData?.latest_policy.version ??
+      activeReport?.slot_policy.current_policy.version ??
+      1;
+    const idempotencyKey = newAttendanceHqIntentKey();
+
+    const built = buildCreateSlotPolicyPayload({
+      effectiveFromDate: effectiveFromInput,
+      slot1Time: slot1TimeInput,
+      slot1GraceBeforeInput: slot1BeforeInput,
+      slot1GraceAfterInput: slot1AfterInput,
+      slot2Time: slot2TimeInput,
+      slot2GraceBeforeInput: slot2BeforeInput,
+      slot2GraceAfterInput: slot2AfterInput,
+      slot3Time: slot3TimeInput,
+      slot3GraceBeforeInput: slot3BeforeInput,
+      slot3GraceAfterInput: slot3AfterInput,
+      slot4Time: slot4TimeInput,
+      slot4GraceBeforeInput: slot4BeforeInput,
+      slot4GraceAfterInput: slot4AfterInput,
+      expectedVersion: latestVersion,
+      idempotencyKey,
+    });
+
+    if (!built.ok) {
+      setMutationError(built.message);
+      return;
+    }
+
+    setMutationBusy(true);
+    setMutationError(null);
+
+    try {
+      const response = await fetch("/api/admin/attendance/slot-policies", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": idempotencyKey,
+        },
+        body: JSON.stringify(built.body),
+      });
+
+      if (response.status === 401) {
+        setMutationBusy(false);
+        router.replace("/login?next=/admin/attendance");
+        return;
+      }
+
+      let payload: unknown = null;
+      try {
+        payload = await response.json();
+      } catch {
+        payload = null;
+      }
+
+      if (!response.ok || !isRecord(payload) || payload.ok !== true) {
+        const mapped = mapSlotPolicyMutationError(
+          response.status,
+          extractErrorCode(payload),
+        );
+        setMutationError(mapped.message);
+        if (mapped.isConflict) {
+          void fetchSlotPolicies();
+        }
+        setMutationBusy(false);
+        return;
+      }
+
+      const projected = projectCreateSlotPolicyResult({
+        replayed: payload.replayed,
+        policy: payload.policy,
+      });
+      if (!projected) {
+        setMutationError("Phản hồi lưu khung giờ chấm công không đúng định dạng chuẩn.");
+        setMutationBusy(false);
+        return;
+      }
+
+      setMutationBusy(false);
+      setDialogMode({ kind: "closed" });
+      notify.success({
+        title: `Đã tạo khung giờ chấm công v${projected.policy.version}`,
+        description: `Hiệu lực từ ngày ${projected.policy.effective_from_date} (${projected.policy.slots.map((s) => s.target_time).join(" · ")})`,
+      });
+      onPolicyCreated();
+    } catch {
+      setMutationBusy(false);
+      setMutationError("Không thể kết nối máy chủ khi lưu khung giờ chấm công.");
+    }
+  }
+
+  const currentPolicy =
+    policiesData?.current_policy ?? activeReport?.slot_policy.current_policy ?? null;
+  const monthPolicies = activeReport?.slot_policy.month_policies ?? [];
+
+  return (
+    <Card>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <CardHeader
+          title="Cấu hình khung giờ chấm công 4 mốc"
+          description="Áp dụng thống nhất 4 mốc giờ mục tiêu cho toàn bộ nhân sự. Đổi khung giờ mùa hè/mùa đông sẽ tạo phiên bản mới theo ngày hiệu lực, bảo toàn dữ liệu lịch sử."
+        />
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={openHistoryDialog}
+          >
+            Lịch sử phiên bản khung giờ
+          </Button>
+          {canManageSlotPolicy ? (
+            <Button
+              type="button"
+              variant="soft"
+              size="sm"
+              onClick={openCreateDialog}
+            >
+              Cấu hình khung giờ mới
+            </Button>
+          ) : activeReport ? (
+            <StatusBadge tone="neutral">Chỉ xem (BoD)</StatusBadge>
+          ) : null}
+        </div>
+      </div>
+
+      {currentPolicy ? (
+        <div className="space-y-3">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {currentPolicy.slots.map((slot) => (
+              <div
+                key={slot.slot_code}
+                className="rounded-xl border border-border bg-surface-muted/45 p-3 text-xs"
+              >
+                <p className="font-semibold text-foreground">
+                  {MATRIX_SLOT_SHORT_LABELS[slot.slot_code]} (
+                  {slot.session_code === "AM" ? "Ca sáng" : "Ca chiều"})
+                </p>
+                <p className="mt-1 font-mono text-lg font-bold tabular-nums text-foreground">
+                  {slot.target_time}
+                </p>
+                <p className="mt-0.5 text-muted">
+                  Ngưỡng cho phép:{" "}
+                  <strong className="font-mono text-foreground">
+                    -{slot.grace_before_minutes}p / +{slot.grace_after_minutes}p
+                  </strong>
+                </p>
+              </div>
+            ))}
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted">
+            <span>
+              Phiên bản hiện hành:{" "}
+              <strong className="font-mono text-foreground">
+                v{currentPolicy.version}
+              </strong>{" "}
+              (hiệu lực từ{" "}
+              <span className="font-mono text-foreground">
+                {currentPolicy.effective_from_date}
+              </span>
+              {currentPolicy.effective_to_date
+                ? ` đến ${currentPolicy.effective_to_date}`
+                : ""}
+              ) · Người cấu hình:{" "}
+              <strong className="text-foreground">
+                {currentPolicy.configured_by_display_name}
+              </strong>
+            </span>
+            {monthPolicies.length > 0 ? (
+              <span>
+                Phiên bản áp dụng trong tháng đang xem:{" "}
+                {monthPolicies.map((mp) => (
+                  <span
+                    key={mp.version}
+                    className="ml-1 inline-flex items-center rounded border border-border bg-surface px-1.5 py-0.5 font-mono text-[11px] font-medium text-foreground"
+                  >
+                    v{mp.version} (từ {mp.effective_from_date}:{" "}
+                    {mp.slots.map((s) => s.target_time).join("/")})
+                  </span>
+                ))}
+              </span>
+            ) : null}
+          </div>
+        </div>
+      ) : (
+        <p className="text-sm text-muted">Đang tải thông tin khung giờ chấm công...</p>
+      )}
+
+      {/* Dialog: Slot Policy Version History */}
+      <FormDialog
+        open={dialogMode.kind === "history"}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) closeDialog();
+        }}
+        title="Lịch sử phiên bản khung giờ chấm công"
+        description="Mỗi ngày nghiệp vụ trong báo cáo ma trận tháng tự động áp dụng phiên bản khung giờ có hiệu lực tại ngày đó."
+        closeAriaLabel="Đóng lịch sử khung giờ chấm công"
+        contentClassName="sm:w-[min(56rem,calc(100vw-2rem))]"
+      >
+        <div className="space-y-4">
+          {loadError ? (
+            <Alert tone="error" role="alert" title="Không tải được lịch sử khung giờ">
+              <p>{loadError}</p>
+            </Alert>
+          ) : null}
+
+          {loadingPolicies && !policiesData ? (
+            <p className="py-6 text-center text-sm text-muted">
+              Đang tải lịch sử phiên bản khung giờ...
+            </p>
+          ) : policiesData ? (
+            <DataTableContainer>
+              <table className={DATA_TABLE_CLASS}>
+                <thead className={DATA_TABLE_HEAD_CLASS}>
+                  <tr>
+                    <th scope="col" className={DATA_TABLE_TH_CLASS}>
+                      Phiên bản &amp; Hiệu lực
+                    </th>
+                    <th scope="col" className={DATA_TABLE_TH_CLASS}>
+                      Mốc 1 &amp; Mốc 2 (Ca sáng)
+                    </th>
+                    <th scope="col" className={DATA_TABLE_TH_CLASS}>
+                      Mốc 3 &amp; Mốc 4 (Ca chiều)
+                    </th>
+                    <th scope="col" className={DATA_TABLE_TH_CLASS}>
+                      Audit cấu hình
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {policiesData.versions.map((p) => (
+                    <tr key={p.version} className={DATA_TABLE_ROW_CLASS}>
+                      <td data-label="Phiên bản & Hiệu lực" className={DATA_TABLE_TD_CLASS}>
+                        <div className="space-y-0.5 text-xs">
+                          <p className="font-mono font-semibold text-foreground">
+                            Phiên bản v{p.version}
+                          </p>
+                          <p className="font-mono text-muted">
+                            Từ: {p.effective_from_date}
+                            {p.effective_to_date ? ` → ${p.effective_to_date}` : " → Nay"}
+                          </p>
+                        </div>
+                      </td>
+                      <td data-label="Mốc 1 & Mốc 2 (Ca sáng)" className={DATA_TABLE_TD_CLASS}>
+                        <div className="space-y-0.5 font-mono text-xs">
+                          <p>
+                            Mốc 1: <strong>{p.slots[0].target_time}</strong> (-
+                            {p.slots[0].grace_before_minutes}p / +
+                            {p.slots[0].grace_after_minutes}p)
+                          </p>
+                          <p>
+                            Mốc 2: <strong>{p.slots[1].target_time}</strong> (-
+                            {p.slots[1].grace_before_minutes}p / +
+                            {p.slots[1].grace_after_minutes}p)
+                          </p>
+                        </div>
+                      </td>
+                      <td data-label="Mốc 3 & Mốc 4 (Ca chiều)" className={DATA_TABLE_TD_CLASS}>
+                        <div className="space-y-0.5 font-mono text-xs">
+                          <p>
+                            Mốc 3: <strong>{p.slots[2].target_time}</strong> (-
+                            {p.slots[2].grace_before_minutes}p / +
+                            {p.slots[2].grace_after_minutes}p)
+                          </p>
+                          <p>
+                            Mốc 4: <strong>{p.slots[3].target_time}</strong> (-
+                            {p.slots[3].grace_before_minutes}p / +
+                            {p.slots[3].grace_after_minutes}p)
+                          </p>
+                        </div>
+                      </td>
+                      <td data-label="Audit cấu hình" className={DATA_TABLE_TD_CLASS}>
+                        <div className="space-y-0.5 text-xs">
+                          <p className="font-medium text-foreground">
+                            {p.configured_by_display_name}
+                          </p>
+                          <p className="font-mono text-muted">{p.configured_at_local}</p>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </DataTableContainer>
+          ) : null}
+
+          <div className="flex justify-end gap-2">
+            {canManageSlotPolicy ? (
+              <Button
+                type="button"
+                variant="primary"
+                size="sm"
+                onClick={openCreateDialog}
+              >
+                Tạo phiên bản khung giờ mới
+              </Button>
+            ) : null}
+            <Button type="button" variant="secondary" size="sm" onClick={closeDialog}>
+              Đóng
+            </Button>
+          </div>
+        </div>
+      </FormDialog>
+
+      {/* Dialog: Create New Date-Effective Slot Policy Version */}
+      <FormDialog
+        open={dialogMode.kind === "create"}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) closeDialog();
+        }}
+        title="Tạo phiên bản khung giờ chấm công mới"
+        description="Phiên bản mới sẽ áp dụng từ ngày bắt đầu hiệu lực được chọn và không ghi đè dữ liệu lịch sử của các ngày trước đó."
+        closeAriaLabel="Đóng hộp thoại cấu hình khung giờ chấm công"
+        contentClassName="sm:w-[min(46rem,calc(100vw-2rem))]"
+      >
+        <form onSubmit={handleSaveSlotPolicy} className="space-y-4">
+          {mutationError ? (
+            <Alert tone="error" role="alert" title="Không thể lưu khung giờ chấm công">
+              <p>{mutationError}</p>
+            </Alert>
+          ) : null}
+
+          <div>
+            <label
+              htmlFor="slot-policy-effective-from"
+              className="mb-1 block text-xs font-medium text-muted"
+            >
+              Ngày bắt đầu hiệu lực (YYYY-MM-DD, từ hôm nay và sau phiên bản mới nhất)
+            </label>
+            <input
+              id="slot-policy-effective-from"
+              type="date"
+              required
+              value={effectiveFromInput}
+              disabled={mutationBusy}
+              onChange={(event) => setEffectiveFromInput(event.target.value)}
+              className={INPUT_CLASS}
+            />
+          </div>
+
+          <div className="space-y-3 rounded-xl border border-border bg-surface-muted/35 p-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+              4 mốc thời gian &amp; ngưỡng sớm/muộn cho phép (0–240 phút)
+            </p>
+
+            {/* Slot 1 */}
+            <div className="grid gap-2 sm:grid-cols-3">
+              <div>
+                <label
+                  htmlFor="slot-1-time"
+                  className="mb-1 block text-xs font-medium text-muted"
+                >
+                  Mốc 1 — Vào ca sáng (HH:MM)
+                </label>
+                <input
+                  id="slot-1-time"
+                  type="time"
+                  required
+                  value={slot1TimeInput}
+                  disabled={mutationBusy}
+                  onChange={(event) => setSlot1TimeInput(event.target.value)}
+                  className={INPUT_CLASS}
+                />
+              </div>
+              <div>
+                <label
+                  htmlFor="slot-1-before"
+                  className="mb-1 block text-xs font-medium text-muted"
+                >
+                  Ngưỡng trước Mốc 1 (phút)
+                </label>
+                <input
+                  id="slot-1-before"
+                  type="number"
+                  min={0}
+                  max={240}
+                  required
+                  value={slot1BeforeInput}
+                  disabled={mutationBusy}
+                  onChange={(event) => setSlot1BeforeInput(event.target.value)}
+                  className={INPUT_CLASS}
+                />
+              </div>
+              <div>
+                <label
+                  htmlFor="slot-1-after"
+                  className="mb-1 block text-xs font-medium text-muted"
+                >
+                  Ngưỡng sau Mốc 1 (phút)
+                </label>
+                <input
+                  id="slot-1-after"
+                  type="number"
+                  min={0}
+                  max={240}
+                  required
+                  value={slot1AfterInput}
+                  disabled={mutationBusy}
+                  onChange={(event) => setSlot1AfterInput(event.target.value)}
+                  className={INPUT_CLASS}
+                />
+              </div>
+            </div>
+
+            {/* Slot 2 */}
+            <div className="grid gap-2 sm:grid-cols-3">
+              <div>
+                <label
+                  htmlFor="slot-2-time"
+                  className="mb-1 block text-xs font-medium text-muted"
+                >
+                  Mốc 2 — Ra ca sáng (HH:MM)
+                </label>
+                <input
+                  id="slot-2-time"
+                  type="time"
+                  required
+                  value={slot2TimeInput}
+                  disabled={mutationBusy}
+                  onChange={(event) => setSlot2TimeInput(event.target.value)}
+                  className={INPUT_CLASS}
+                />
+              </div>
+              <div>
+                <label
+                  htmlFor="slot-2-before"
+                  className="mb-1 block text-xs font-medium text-muted"
+                >
+                  Ngưỡng trước Mốc 2 (phút)
+                </label>
+                <input
+                  id="slot-2-before"
+                  type="number"
+                  min={0}
+                  max={240}
+                  required
+                  value={slot2BeforeInput}
+                  disabled={mutationBusy}
+                  onChange={(event) => setSlot2BeforeInput(event.target.value)}
+                  className={INPUT_CLASS}
+                />
+              </div>
+              <div>
+                <label
+                  htmlFor="slot-2-after"
+                  className="mb-1 block text-xs font-medium text-muted"
+                >
+                  Ngưỡng sau Mốc 2 (phút)
+                </label>
+                <input
+                  id="slot-2-after"
+                  type="number"
+                  min={0}
+                  max={240}
+                  required
+                  value={slot2AfterInput}
+                  disabled={mutationBusy}
+                  onChange={(event) => setSlot2AfterInput(event.target.value)}
+                  className={INPUT_CLASS}
+                />
+              </div>
+            </div>
+
+            {/* Slot 3 */}
+            <div className="grid gap-2 sm:grid-cols-3">
+              <div>
+                <label
+                  htmlFor="slot-3-time"
+                  className="mb-1 block text-xs font-medium text-muted"
+                >
+                  Mốc 3 — Vào ca chiều (HH:MM)
+                </label>
+                <input
+                  id="slot-3-time"
+                  type="time"
+                  required
+                  value={slot3TimeInput}
+                  disabled={mutationBusy}
+                  onChange={(event) => setSlot3TimeInput(event.target.value)}
+                  className={INPUT_CLASS}
+                />
+              </div>
+              <div>
+                <label
+                  htmlFor="slot-3-before"
+                  className="mb-1 block text-xs font-medium text-muted"
+                >
+                  Ngưỡng trước Mốc 3 (phút)
+                </label>
+                <input
+                  id="slot-3-before"
+                  type="number"
+                  min={0}
+                  max={240}
+                  required
+                  value={slot3BeforeInput}
+                  disabled={mutationBusy}
+                  onChange={(event) => setSlot3BeforeInput(event.target.value)}
+                  className={INPUT_CLASS}
+                />
+              </div>
+              <div>
+                <label
+                  htmlFor="slot-3-after"
+                  className="mb-1 block text-xs font-medium text-muted"
+                >
+                  Ngưỡng sau Mốc 3 (phút)
+                </label>
+                <input
+                  id="slot-3-after"
+                  type="number"
+                  min={0}
+                  max={240}
+                  required
+                  value={slot3AfterInput}
+                  disabled={mutationBusy}
+                  onChange={(event) => setSlot3AfterInput(event.target.value)}
+                  className={INPUT_CLASS}
+                />
+              </div>
+            </div>
+
+            {/* Slot 4 */}
+            <div className="grid gap-2 sm:grid-cols-3">
+              <div>
+                <label
+                  htmlFor="slot-4-time"
+                  className="mb-1 block text-xs font-medium text-muted"
+                >
+                  Mốc 4 — Ra ca chiều (HH:MM)
+                </label>
+                <input
+                  id="slot-4-time"
+                  type="time"
+                  required
+                  value={slot4TimeInput}
+                  disabled={mutationBusy}
+                  onChange={(event) => setSlot4TimeInput(event.target.value)}
+                  className={INPUT_CLASS}
+                />
+              </div>
+              <div>
+                <label
+                  htmlFor="slot-4-before"
+                  className="mb-1 block text-xs font-medium text-muted"
+                >
+                  Ngưỡng trước Mốc 4 (phút)
+                </label>
+                <input
+                  id="slot-4-before"
+                  type="number"
+                  min={0}
+                  max={240}
+                  required
+                  value={slot4BeforeInput}
+                  disabled={mutationBusy}
+                  onChange={(event) => setSlot4BeforeInput(event.target.value)}
+                  className={INPUT_CLASS}
+                />
+              </div>
+              <div>
+                <label
+                  htmlFor="slot-4-after"
+                  className="mb-1 block text-xs font-medium text-muted"
+                >
+                  Ngưỡng sau Mốc 4 (phút)
+                </label>
+                <input
+                  id="slot-4-after"
+                  type="number"
+                  min={0}
+                  max={240}
+                  required
+                  value={slot4AfterInput}
+                  disabled={mutationBusy}
+                  onChange={(event) => setSlot4AfterInput(event.target.value)}
+                  className={INPUT_CLASS}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2">
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={mutationBusy}
+              onClick={closeDialog}
+            >
+              Hủy
+            </Button>
+            <Button
+              type="submit"
+              variant="primary"
+              size="sm"
+              loading={mutationBusy}
+            >
+              {mutationBusy ? "Đang lưu..." : "Lưu phiên bản khung giờ mới"}
+            </Button>
+          </div>
+        </form>
+      </FormDialog>
+    </Card>
   );
 }
 
@@ -516,6 +1352,11 @@ export function AttendanceMonthlyMatrixSection() {
         </Alert>
       ) : null}
 
+      <AttendanceSlotPolicySummaryCard
+        activeReport={activeReport}
+        onPolicyCreated={requestReload}
+      />
+
       <form onSubmit={handleFilterSubmit}>
         <FilterToolbar
           actions={
@@ -755,19 +1596,19 @@ export function AttendanceMonthlyMatrixSection() {
 
             <Card className="p-4">
               <p className="text-xs font-medium uppercase tracking-wide text-muted">
-                Ngày chưa có check-in
+                Tín hiệu Chưa có lượt chấm
               </p>
               <p className="mt-1.5 font-mono text-2xl font-semibold tabular-nums text-red-700 dark:text-red-300">
-                {VI_INTEGER.format(activeReport.overview.total_no_checkin_days)}
+                {VI_INTEGER.format(activeReport.overview.total_no_checkin_days)}{" "}
+                <span className="text-sm font-normal text-muted">ngày</span>
               </p>
               <p className="mt-1 text-xs text-muted">
-                Chưa check-in &amp; không có phép:{" "}
+                Ngày chưa có lượt chấm và không có phép:{" "}
                 <strong className="font-mono text-foreground">
                   {VI_INTEGER.format(
                     activeReport.overview.total_no_checkin_without_leave_days,
                   )}
-                </strong>{" "}
-                ngày
+                </strong>
               </p>
             </Card>
           </div>
@@ -780,24 +1621,59 @@ export function AttendanceMonthlyMatrixSection() {
 
       {/* Matrix Table */}
       <Card>
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-          <CardHeader
-            title={`Bảng ma trận chấm công tháng ${activeReport?.filters.year_month ?? appliedFilters.yearMonth}`}
-            description="Mỗi dòng là một nhân viên, mỗi cột là một ngày trong tháng. Ô màu đỏ thể hiện ngày chưa có check-in hoặc ngày nghỉ phép đã duyệt (kèm rõ loại phép và buổi nghỉ)."
-          />
-          <div className="flex flex-wrap items-center gap-2 text-xs">
-            <span className="inline-flex items-center gap-1 rounded-md border border-emerald-300 bg-emerald-50 px-2 py-1 font-medium text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200">
-              Có check-in
-            </span>
-            <span className="inline-flex items-center gap-1 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 font-medium text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
-              Có check-in &amp; Nghỉ phép
-            </span>
-            <span className="inline-flex items-center gap-1 rounded-md border border-red-300 bg-red-50 px-2 py-1 font-medium text-red-900 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200">
-              Nghỉ phép đã duyệt (ghi rõ loại phép/buổi)
-            </span>
-            <span className="inline-flex items-center gap-1 rounded-md border border-red-200 bg-red-50/75 px-2 py-1 font-medium text-red-900 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200">
-              Chưa có check-in
-            </span>
+        <div className="space-y-3">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+            <CardHeader
+              title={`Bảng ma trận chấm công 4 mốc tháng ${activeReport?.filters.year_month ?? appliedFilters.yearMonth}`}
+              description="Mỗi ô ngày hiển thị đầy đủ 4 mốc giờ mục tiêu. Toàn bộ lượt check-in trong ngày được gán vào mốc có giờ mục tiêu gần nhất (nếu cách đều 2 mốc liền kề thì ưu tiên mốc sớm hơn) và sắp xếp tăng dần theo thời gian."
+            />
+          </div>
+
+          <div
+            aria-label="Chú giải màu sắc và quy tắc 4 khung giờ"
+            className="rounded-xl border border-border bg-surface-muted/40 p-3 text-xs"
+          >
+            <p className="mb-2 font-semibold text-foreground">
+              Chú giải màu sắc &amp; tín hiệu rà soát HR HRP:
+            </p>
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+              {MATRIX_LEGEND_ITEMS.map((item) => {
+                const badgeClass =
+                  item.tone === "emerald"
+                    ? "border-emerald-300 bg-emerald-50 text-emerald-950 dark:border-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-200"
+                    : item.tone === "amber"
+                      ? "border-amber-300 bg-amber-50 text-amber-950 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-200"
+                      : item.tone === "sky"
+                        ? "border-sky-300 bg-sky-50 text-sky-950 dark:border-sky-800 dark:bg-sky-950/50 dark:text-sky-200"
+                        : "border-red-300 bg-red-50 text-red-950 dark:border-red-800 dark:bg-red-950/50 dark:text-red-200";
+                return (
+                  <div
+                    key={item.key}
+                    className="rounded-lg border border-border/80 bg-surface p-2"
+                  >
+                    <span
+                      className={cn(
+                        "inline-flex items-center rounded border px-1.5 py-0.5 text-[11px] font-semibold",
+                        badgeClass,
+                      )}
+                    >
+                      {item.badgeText}
+                    </span>
+                    <p className="mt-1 text-[11px] font-medium text-foreground">
+                      {item.title}
+                    </p>
+                    <p className="mt-0.5 text-[11px] leading-snug text-muted">
+                      {item.description}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+            <p className="mt-2 text-[11px] text-muted">
+              <strong>Lưu ý nghiệp vụ:</strong> Hệ thống áp dụng thống nhất bộ 4 mốc cho mọi nhân viên và không tự suy luận nhân viên bắt buộc chấm 2 hay 4 lượt. Nhãn{" "}
+              <strong className="text-foreground">“Chưa có lượt chấm”</strong> và cảnh báo{" "}
+              <strong className="text-foreground">Sớm/Muộn Xp</strong> là tín hiệu để HR HRP kiểm tra và đối chiếu theo quy định từng bộ phận.
+            </p>
           </div>
         </div>
 
@@ -827,7 +1703,7 @@ export function AttendanceMonthlyMatrixSection() {
                         key={calDay.business_date}
                         scope="col"
                         title={calDay.business_date}
-                        className="min-w-[10.5rem] border-b border-r border-border px-2 py-2 text-center text-xs font-semibold text-foreground last:border-r-0"
+                        className="min-w-[14.5rem] border-b border-r border-border px-2 py-2 text-center text-xs font-semibold text-foreground last:border-r-0"
                       >
                         <div className="font-mono text-sm">
                           Ngày {String(calDay.day_of_month).padStart(2, "0")}

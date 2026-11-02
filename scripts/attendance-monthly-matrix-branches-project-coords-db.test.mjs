@@ -12,11 +12,14 @@ import {
   computeBranchAssignRequestFingerprint,
   computeBranchUnassignRequestFingerprint,
   computeBranchUpsertRequestFingerprint,
+  computeSlotPolicyCreateRequestFingerprint,
 } from "../src/lib/attendance/attendance-monthly-matrix-api.ts";
 import {
   projectAssignBranchResult,
   projectAttendanceBranchesAdminList,
   projectAttendanceMonthlyMatrixReport,
+  projectAttendanceSlotPoliciesAdminList,
+  projectCreateSlotPolicyResult,
   projectUnassignBranchResult,
   projectUpsertBranchResult,
 } from "../src/lib/attendance/attendance-monthly-matrix-contract.ts";
@@ -1040,6 +1043,209 @@ test("HRP Branches, Branch Check-In Distance Snapshot Immutability, Project Coor
     const clearedLoc = projectAdminLocationMutation(clearedLocRaw);
     assert.equal(clearedLoc.version, 3);
     assert.equal(clearedLoc.location, null);
+
+    // -------------------------------------------------------------------------
+    // 7. 4-Slot Monthly Attendance Matrix & Date-Effective Slot Policy Configuration
+    // -------------------------------------------------------------------------
+    // 7a. Default seeded slot policy version 1 (08:00, 11:00, 13:00, 17:00, ±15m)
+    const slotPoliciesRaw1 = await callAsServiceRole(
+      db,
+      "select public.attendance_get_slot_policies_admin($1::uuid, $2::uuid) as data",
+      [ACTORS.BOD_PRIVILEGED.auth, ACTORS.BOD_PRIVILEGED.app],
+    );
+    const slotPolicies1 = projectAttendanceSlotPoliciesAdminList(slotPoliciesRaw1);
+    assert.ok(slotPolicies1, "attendance_get_slot_policies_admin strict projection passes");
+    assert.equal(slotPolicies1.viewer.can_manage_slot_policy, false);
+    assert.equal(slotPolicies1.current_policy.version, 1);
+    assert.equal(slotPolicies1.current_policy.effective_from_date, "2000-01-01");
+    assert.deepEqual(
+      slotPolicies1.current_policy.slots.map((s) => s.target_time),
+      ["08:00", "11:00", "13:00", "17:00"],
+    );
+
+    // 7b. BoD cannot create a slot policy version
+    await assert.rejects(
+      () =>
+        callAsServiceRole(
+          db,
+          `select public.attendance_create_slot_policy_admin(
+            $1::uuid, $2::uuid, '2026-12-15'::date,
+            '07:30', 15, 15, '11:30', 15, 15, '13:00', 15, 15, '17:00', 15, 15,
+            1, $3::uuid, $4::text
+          ) as data`,
+          [ACTORS.BOD_PRIVILEGED.auth, ACTORS.BOD_PRIVILEGED.app, nextUuid(), "a".repeat(64)],
+        ),
+      (err) => /ATTENDANCE_SLOT_POLICY_WRITE_DENIED/.test(err.message),
+    );
+
+    // 7c. Past effective_from_date is rejected to protect historical reports
+    await assert.rejects(
+      () =>
+        callAsServiceRole(
+          db,
+          `select public.attendance_create_slot_policy_admin(
+            $1::uuid, $2::uuid, '2000-06-01'::date,
+            '07:30', 15, 15, '11:30', 15, 15, '13:00', 15, 15, '17:00', 15, 15,
+            1, $3::uuid, $4::text
+          ) as data`,
+          [ACTORS.FULL_ADMIN.auth, ACTORS.FULL_ADMIN.app, nextUuid(), "b".repeat(64)],
+        ),
+      (err) => /ATTENDANCE_SLOT_POLICY_EFFECTIVE_DATE_PAST/.test(err.message),
+    );
+
+    // 7d. Create date-effective winter schedule v2 starting 2026-12-15 (08:30, 12:00, 13:30, 17:30, ±15m)
+    const createPolicyKey = nextUuid();
+    const createPolicyInput = {
+      effective_from_date: "2026-12-15",
+      slot_1_time: "08:30",
+      slot_1_grace_before_minutes: 15,
+      slot_1_grace_after_minutes: 15,
+      slot_2_time: "12:00",
+      slot_2_grace_before_minutes: 15,
+      slot_2_grace_after_minutes: 15,
+      slot_3_time: "13:30",
+      slot_3_grace_before_minutes: 15,
+      slot_3_grace_after_minutes: 15,
+      slot_4_time: "17:30",
+      slot_4_grace_before_minutes: 15,
+      slot_4_grace_after_minutes: 15,
+      expected_version: 1,
+      idempotency_key: createPolicyKey,
+    };
+    const createPolicyFp = computeSlotPolicyCreateRequestFingerprint({
+      app_user_id: ACTORS.FULL_ADMIN.app,
+      ...createPolicyInput,
+    });
+    const createdPolicyRaw = await callAsServiceRole(
+      db,
+      `select public.attendance_create_slot_policy_admin(
+        $1::uuid, $2::uuid, '2026-12-15'::date,
+        '08:30', 15, 15, '12:00', 15, 15, '13:30', 15, 15, '17:30', 15, 15,
+        1, $3::uuid, $4::text
+      ) as data`,
+      [ACTORS.FULL_ADMIN.auth, ACTORS.FULL_ADMIN.app, createPolicyKey, createPolicyFp],
+    );
+    const createdPolicy = projectCreateSlotPolicyResult(createdPolicyRaw);
+    assert.ok(createdPolicy, "attendance_create_slot_policy_admin strict projection passes");
+    assert.equal(createdPolicy.replayed, false);
+    assert.equal(createdPolicy.policy.version, 2);
+    assert.equal(createdPolicy.policy.effective_from_date, "2026-12-15");
+
+    // 7e. Overlapping/earlier effective_from_date (<= 2026-12-15) and stale expected_version are rejected
+    await assert.rejects(
+      () =>
+        callAsServiceRole(
+          db,
+          `select public.attendance_create_slot_policy_admin(
+            $1::uuid, $2::uuid, '2026-12-15'::date,
+            '08:00', 15, 15, '11:00', 15, 15, '13:00', 15, 15, '17:00', 15, 15,
+            2, $3::uuid, $4::text
+          ) as data`,
+          [ACTORS.FULL_ADMIN.auth, ACTORS.FULL_ADMIN.app, nextUuid(), "c".repeat(64)],
+        ),
+      (err) => /ATTENDANCE_SLOT_POLICY_OVERLAP/.test(err.message),
+    );
+    await assert.rejects(
+      () =>
+        callAsServiceRole(
+          db,
+          `select public.attendance_create_slot_policy_admin(
+            $1::uuid, $2::uuid, '2026-12-20'::date,
+            '08:00', 15, 15, '11:00', 15, 15, '13:00', 15, 15, '17:00', 15, 15,
+            1, $3::uuid, $4::text
+          ) as data`,
+          [ACTORS.FULL_ADMIN.auth, ACTORS.FULL_ADMIN.app, nextUuid(), "d".repeat(64)],
+        ),
+      (err) => /ATTENDANCE_SLOT_POLICY_VERSION_CONFLICT/.test(err.message),
+    );
+
+    // 7f. Verify immutability trigger on public.attendance_slot_policy_versions
+    await assert.rejects(
+      () =>
+        db.query(
+          "update public.attendance_slot_policy_versions set slot_1_time = '09:00' where version = 1",
+        ),
+      (err) => /ATTENDANCE_CHECKINS_IMMUTABLE/.test(err.message),
+    );
+
+    // 7g. Record December 2026 check-ins for STAFF_B across both v1 (before 2026-12-15) and v2 (from 2026-12-15):
+    // On 2026-12-10 (uses v1: 08:00, 11:00, 13:00, 17:00 ±15m):
+    // - 07:45 VN (00:45 UTC): exact boundary (-15m) -> SLOT_1, ON_TIME
+    // - 08:15 VN (01:15 UTC): exact boundary (+15m) -> SLOT_1, ON_TIME (2nd check-in in SLOT_1!)
+    // - 09:30 VN (02:30 UTC): equidistant tie-break between 08:00 and 11:00 -> SLOT_1, LATE (+90m)
+    // - 12:00 VN (05:00 UTC): equidistant tie-break between 11:00 and 13:00 -> SLOT_2, LATE (+60m)
+    // - 15:00 VN (08:00 UTC): equidistant tie-break between 13:00 and 17:00 -> SLOT_3, LATE (+120m)
+    for (const utcTime of [
+      "2026-12-10T00:45:00.000Z",
+      "2026-12-10T01:15:00.000Z",
+      "2026-12-10T02:30:00.000Z",
+      "2026-12-10T05:00:00.000Z",
+      "2026-12-10T08:00:00.000Z",
+    ]) {
+      await recordCheckInAsServiceRole(db, {
+        actor: ACTORS.STAFF_B,
+        latitude: HQ_HANOI.latitude,
+        longitude: HQ_HANOI.longitude,
+        captured_at: utcTime,
+      });
+    }
+
+    // On 2026-12-16 (uses v2: 08:30, 12:00, 13:30, 17:30 ±15m):
+    // - 08:30 VN (01:30 UTC): under v2, 08:30 is exact ON_TIME for SLOT_1 (whereas under v1 it would be LATE +30m!)
+    await recordCheckInAsServiceRole(db, {
+      actor: ACTORS.STAFF_B,
+      latitude: HQ_HANOI.latitude,
+      longitude: HQ_HANOI.longitude,
+      captured_at: "2026-12-16T01:30:00.000Z",
+    });
+
+    const decMatrixRaw = await callAsServiceRole(
+      db,
+      `select public.attendance_monthly_matrix_report(
+        $1::uuid, $2::uuid, '2026-12', null, $3::uuid, null, 1, 25
+      ) as data`,
+      [ACTORS.FULL_ADMIN.auth, ACTORS.FULL_ADMIN.app, ACTORS.STAFF_B.app],
+    );
+    const decMatrix = projectAttendanceMonthlyMatrixReport(decMatrixRaw);
+    assert.ok(decMatrix, "December matrix strict projection passes");
+    assert.deepEqual(
+      decMatrix.slot_policy.month_policies.map((p) => p.version),
+      [1, 2],
+      "December 2026 report must report both v1 and v2 in month_policies",
+    );
+
+    const staffBDecRow = decMatrix.items[0];
+    assert.ok(staffBDecRow);
+
+    const dec10Cell = staffBDecRow.days.find((d) => d.business_date === "2026-12-10");
+    assert.ok(dec10Cell);
+    assert.equal(dec10Cell.policy_version_used, 1);
+    assert.equal(dec10Cell.slots[0].target_time, "08:00");
+    assert.deepEqual(
+      dec10Cell.slots[0].checkins.map((c) => c.time_local),
+      ["07:45", "08:15", "09:30"],
+    );
+    assert.equal(dec10Cell.slots[0].checkins[0].deviation_status, "ON_TIME");
+    assert.equal(dec10Cell.slots[0].checkins[1].deviation_status, "ON_TIME");
+    assert.equal(dec10Cell.slots[0].checkins[2].deviation_status, "LATE");
+    assert.deepEqual(
+      dec10Cell.slots[1].checkins.map((c) => c.time_local),
+      ["12:00"],
+    );
+    assert.deepEqual(
+      dec10Cell.slots[2].checkins.map((c) => c.time_local),
+      ["15:00"],
+    );
+    assert.equal(dec10Cell.slots[3].slot_status, "MISSING");
+
+    const dec16Cell = staffBDecRow.days.find((d) => d.business_date === "2026-12-16");
+    assert.ok(dec16Cell);
+    assert.equal(dec16Cell.policy_version_used, 2);
+    assert.equal(dec16Cell.slots[0].target_time, "08:30");
+    assert.equal(dec16Cell.slots[0].slot_status, "ON_TIME");
+    assert.equal(dec16Cell.slots[0].checkins[0].time_local, "08:30");
+    assert.equal(dec16Cell.slots[0].checkins[0].deviation_status, "ON_TIME");
+    assert.equal(dec16Cell.slots[0].checkins[0].delta_minutes, 0);
   } finally {
     await db.close();
   }

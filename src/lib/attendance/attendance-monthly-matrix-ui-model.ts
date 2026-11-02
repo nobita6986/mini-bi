@@ -7,13 +7,21 @@ import {
 } from "./attendance-report-contract.ts";
 import {
   ATTENDANCE_MONTHLY_MATRIX_EXPORT_ROW_LIMIT,
+  ATTENDANCE_SLOT_CODES,
+  ATTENDANCE_SLOT_MAX_GRACE_MINUTES,
+  evaluateAttendanceDaySlots,
   isValidYearMonth,
   type AttendanceBranchAssignmentAdminItemProjection,
+  type AttendanceCheckinDeviationStatus,
   type AttendanceDistanceTargetKind,
   type AttendanceMatrixLeaveSessionCode,
   type AttendanceMatrixLeaveType,
   type AttendanceMonthlyMatrixDayCellProjection,
+  type AttendanceMonthlyMatrixDaySlotProjection,
   type AttendanceMonthlyMatrixDayStatus,
+  type AttendanceSlotCode,
+  type AttendanceSlotSessionCode,
+  type AttendanceSlotStatus,
 } from "./attendance-monthly-matrix-contract.ts";
 
 const UUID_PATTERN =
@@ -21,10 +29,13 @@ const UUID_PATTERN =
 const BRANCH_CODE_PATTERN = /^[A-Z0-9][A-Z0-9._:-]{0,63}$/;
 const CONTROL_CHAR_PATTERN = /[\x00-\x1f\x7f]/;
 const ADDRESS_CONTROL_CHAR_PATTERN = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/;
+const HH_MM_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 export type AttendanceAdminWorkspaceTab = "checkins" | "monthly-matrix" | "branches";
 
 export type MatrixEmployeeFilterMode = "employee" | "search";
+
+export const MATRIX_MISSING_SLOT_LABEL = "Chưa có lượt chấm";
 
 export const MATRIX_WEEKDAY_LABELS: Readonly<Record<number, string>> = {
   1: "T2",
@@ -38,8 +49,11 @@ export const MATRIX_WEEKDAY_LABELS: Readonly<Record<number, string>> = {
 
 export const MATRIX_LEAVE_TYPE_LABELS: Readonly<Record<AttendanceMatrixLeaveType, string>> = {
   ANNUAL: "Phép năm",
-  MATERNITY: "Thai sản",
+  BEREAVEMENT: "Nghỉ tang",
+  MARRIAGE: "Nghỉ cưới",
+  SICK: "Nghỉ ốm",
   UNPAID: "Không lương",
+  MATERNITY: "Thai sản",
 };
 
 export const MATRIX_LEAVE_SESSION_LABELS: Readonly<
@@ -50,15 +64,24 @@ export const MATRIX_LEAVE_SESSION_LABELS: Readonly<
   PM: "Chiều",
 };
 
+export const MATRIX_SLOT_SHORT_LABELS: Readonly<Record<AttendanceSlotCode, string>> = {
+  SLOT_1: "Mốc 1",
+  SLOT_2: "Mốc 2",
+  SLOT_3: "Mốc 3",
+  SLOT_4: "Mốc 4",
+};
+
 export const MATRIX_DAY_STATUS_LABELS: Readonly<Record<AttendanceMonthlyMatrixDayStatus, string>> =
   {
     CHECKED_IN: "Có check-in",
     APPROVED_LEAVE: "Nghỉ phép đã duyệt",
     CHECKED_IN_AND_LEAVE: "Có check-in & Nghỉ phép",
-    NO_CHECKIN: "Chưa có check-in",
+    NO_CHECKIN: MATRIX_MISSING_SLOT_LABEL,
   };
 
-export type MatrixDayCellTone = "emerald" | "red" | "amber";
+export type MatrixDayCellTone = "emerald" | "red" | "amber" | "sky";
+
+export type MatrixSlotTone = "emerald" | "amber" | "sky" | "red";
 
 export type MatrixLeaveBadgeView = {
   requestId: string;
@@ -70,13 +93,47 @@ export type MatrixLeaveBadgeView = {
   label: string;
 };
 
+export type MatrixSlotCheckinPresentation = {
+  checkinId: string;
+  sequenceInDay: number;
+  timeLocal: string;
+  timeVerified: boolean;
+  deviationStatus: AttendanceCheckinDeviationStatus;
+  deltaMinutes: number;
+  overGraceMinutes: number;
+  deviationBadgeLabel: string | null;
+  displayText: string;
+};
+
+export type MatrixSlotPresentation = {
+  slotCode: AttendanceSlotCode;
+  slotIndex: 1 | 2 | 3 | 4;
+  sessionCode: AttendanceSlotSessionCode;
+  slotShortLabel: string;
+  slotTitle: string;
+  targetTime: string;
+  graceBeforeMinutes: number;
+  graceAfterMinutes: number;
+  isLeaveCovered: boolean;
+  slotStatus: AttendanceSlotStatus;
+  statusLabel: string;
+  tone: MatrixSlotTone;
+  isMissingHighlight: boolean;
+  isOutOfGraceHighlight: boolean;
+  checkins: MatrixSlotCheckinPresentation[];
+  summaryText: string;
+};
+
 export type MatrixDayCellPresentation = {
   dayStatus: AttendanceMonthlyMatrixDayStatus;
   statusLabel: string;
   tone: MatrixDayCellTone;
   isRedHighlight: boolean;
+  policyVersionUsed: number;
   hasCheckin: boolean;
   checkinCount: number;
+  missingSlotCount: number;
+  lateOrEarlyCheckinCount: number;
   timeRangeLabel: string | null;
   verificationLabel: string | null;
   distanceLabel: string | null;
@@ -84,7 +141,51 @@ export type MatrixDayCellPresentation = {
   hasApprovedLeave: boolean;
   approvedLeaveUnits: number;
   leaveBadges: MatrixLeaveBadgeView[];
+  slots: MatrixSlotPresentation[];
 };
+
+export type MatrixLegendItem = {
+  key: string;
+  tone: MatrixSlotTone;
+  badgeText: string;
+  title: string;
+  description: string;
+};
+
+export const MATRIX_LEGEND_ITEMS: readonly MatrixLegendItem[] = [
+  {
+    key: "on-time",
+    tone: "emerald",
+    badgeText: "Đúng khung giờ",
+    title: "Có lượt chấm trong phạm vi dung sai",
+    description:
+      "Lượt chấm được gán về mốc gần nhất và nằm trong khoảng dung sai cho phép trước/sau giờ mục tiêu (bao gồm đúng biên dung sai).",
+  },
+  {
+    key: "out-of-grace",
+    tone: "amber",
+    badgeText: "Sớm Xp / Muộn Xp",
+    title: "Có lượt chấm nhưng lệch ngoài dung sai",
+    description:
+      "Lượt chấm vẫn thuộc mốc gần nhất và hiển thị kèm cảnh báo số phút sớm hoặc muộn so với giờ chuẩn của mốc đó để HR rà soát.",
+  },
+  {
+    key: "leave-covered",
+    tone: "sky",
+    badgeText: "Nghỉ phép đã duyệt",
+    title: "Mốc thuộc buổi/ngày có đơn nghỉ phép đã duyệt",
+    description:
+      "Đơn nghỉ phép Cả ngày bao phủ Mốc 1–4; nghỉ buổi Sáng bao phủ Mốc 1–2; nghỉ buổi Chiều bao phủ Mốc 3–4 (không đánh dấu thiếu lượt chấm).",
+  },
+  {
+    key: "missing-slot",
+    tone: "red",
+    badgeText: MATRIX_MISSING_SLOT_LABEL,
+    title: "Mốc chưa có lượt chấm & không có phép duyệt",
+    description:
+      "Tô nổi bật để HR HRP đối chiếu nghĩa vụ chấm công thực tế (2 lượt hoặc 4 lượt) của từng nhân sự; đây là tín hiệu rà soát, không tự động kết luận vắng không phép.",
+  },
+] as const;
 
 export function getVietnamCurrentYearMonth(now: Date = new Date()): string {
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -282,16 +383,224 @@ export function formatMatrixDistanceStatusLabel(
   return null;
 }
 
+export function formatCheckinDeviationBadgeLabel(
+  deviationStatus: AttendanceCheckinDeviationStatus,
+  deltaMinutes: number,
+): string | null {
+  const absDelta = Math.abs(Math.trunc(deltaMinutes));
+  if (deviationStatus === "EARLY" && absDelta > 0) {
+    return `Sớm ${absDelta}p`;
+  }
+  if (deviationStatus === "LATE" && absDelta > 0) {
+    return `Muộn ${absDelta}p`;
+  }
+  return null;
+}
+
+function resolveSessionLeaveCoverageLabel(
+  sessionCode: AttendanceSlotSessionCode,
+  leaveBadges: readonly MatrixLeaveBadgeView[],
+): string {
+  const matching = leaveBadges.filter(
+    (badge) => badge.sessionCode === "FULL" || badge.sessionCode === sessionCode,
+  );
+  if (matching.length === 0) {
+    return "Nghỉ phép đã duyệt";
+  }
+  return `Nghỉ phép: ${matching.map((item) => item.label).join(", ")}`;
+}
+
+function resolveRawDaySlots(
+  cell: AttendanceMonthlyMatrixDayCellProjection,
+): {
+  policyVersionUsed: number;
+  missingSlotCount: number;
+  lateOrEarlyCheckinCount: number;
+  slots: AttendanceMonthlyMatrixDaySlotProjection[];
+} {
+  if (Array.isArray(cell.slots) && cell.slots.length === 4) {
+    return {
+      policyVersionUsed:
+        typeof cell.policy_version_used === "number" && cell.policy_version_used >= 1
+          ? cell.policy_version_used
+          : 1,
+      missingSlotCount:
+        typeof cell.missing_slot_count === "number"
+          ? cell.missing_slot_count
+          : cell.slots.filter((s) => s.slot_status === "MISSING").length,
+      lateOrEarlyCheckinCount:
+        typeof cell.late_or_early_checkin_count === "number"
+          ? cell.late_or_early_checkin_count
+          : cell.slots.reduce(
+              (acc, s) =>
+                acc + s.checkins.filter((c) => c.deviation_status !== "ON_TIME").length,
+              0,
+            ),
+      slots: cell.slots,
+    };
+  }
+
+  const synthesizedCheckins: {
+    checkin_id: string;
+    sequence_in_day: number;
+    captured_at: string;
+    captured_at_local: string;
+    time_local: string;
+    time_verified: boolean;
+    distance_target_kind: AttendanceDistanceTargetKind | null;
+    distance_status: AttendanceDistanceStatus | null;
+    distance_meters: number | null;
+  }[] = [];
+
+  if (
+    cell.has_checkin &&
+    cell.first_checkin_id &&
+    cell.first_captured_at &&
+    cell.first_captured_at_local &&
+    cell.first_time_local
+  ) {
+    synthesizedCheckins.push({
+      checkin_id: cell.first_checkin_id,
+      sequence_in_day: 1,
+      captured_at: cell.first_captured_at,
+      captured_at_local: cell.first_captured_at_local,
+      time_local: cell.first_time_local,
+      time_verified: cell.unverified_checkin_count === 0,
+      distance_target_kind: cell.distance_target_kind,
+      distance_status: cell.distance_status,
+      distance_meters: cell.distance_meters,
+    });
+    if (
+      cell.checkin_count > 1 &&
+      cell.last_checkin_id &&
+      cell.last_checkin_id.toLowerCase() !== cell.first_checkin_id.toLowerCase() &&
+      cell.last_captured_at &&
+      cell.last_captured_at_local &&
+      cell.last_time_local
+    ) {
+      synthesizedCheckins.push({
+        checkin_id: cell.last_checkin_id,
+        sequence_in_day: cell.checkin_count,
+        captured_at: cell.last_captured_at,
+        captured_at_local: cell.last_captured_at_local,
+        time_local: cell.last_time_local,
+        time_verified: cell.unverified_checkin_count === 0,
+        distance_target_kind: cell.distance_target_kind,
+        distance_status: cell.distance_status,
+        distance_meters: cell.max_distance_meters,
+      });
+    }
+  }
+
+  const evaluated = evaluateAttendanceDaySlots({
+    checkins: synthesizedCheckins,
+    approved_leaves: cell.approved_leaves,
+  });
+
+  return {
+    policyVersionUsed: evaluated.policy_version_used,
+    missingSlotCount: evaluated.missing_slot_count,
+    lateOrEarlyCheckinCount: evaluated.late_or_early_checkin_count,
+    slots: evaluated.slots,
+  };
+}
+
 export function describeMatrixDayCell(
   cell: AttendanceMonthlyMatrixDayCellProjection,
 ): MatrixDayCellPresentation {
   const statusLabel = MATRIX_DAY_STATUS_LABELS[cell.day_status];
-  const tone: MatrixDayCellTone =
-    cell.day_status === "NO_CHECKIN" || cell.day_status === "APPROVED_LEAVE"
-      ? "red"
-      : cell.day_status === "CHECKED_IN_AND_LEAVE"
-        ? "amber"
-        : "emerald";
+
+  const leaveBadges: MatrixLeaveBadgeView[] = cell.approved_leaves.map((item) => {
+    const leaveTypeLabel = MATRIX_LEAVE_TYPE_LABELS[item.leave_type] ?? item.leave_type;
+    const sessionLabel = MATRIX_LEAVE_SESSION_LABELS[item.session_code] ?? item.session_code;
+    return {
+      requestId: item.request_id,
+      leaveType: item.leave_type,
+      leaveTypeLabel,
+      sessionCode: item.session_code,
+      sessionLabel,
+      halfDayUnits: item.half_day_units,
+      label: `${leaveTypeLabel} (${sessionLabel})`,
+    };
+  });
+
+  const resolvedSlots = resolveRawDaySlots(cell);
+
+  const slots: MatrixSlotPresentation[] = resolvedSlots.slots.map((slot) => {
+    const slotShortLabel = MATRIX_SLOT_SHORT_LABELS[slot.slot_code] ?? slot.slot_code;
+    const slotTitle = `${slotShortLabel} (${slot.target_time})`;
+
+    const checkins: MatrixSlotCheckinPresentation[] = slot.checkins.map((item) => {
+      const deviationBadgeLabel = formatCheckinDeviationBadgeLabel(
+        item.deviation_status,
+        item.delta_minutes,
+      );
+      const displayText = deviationBadgeLabel
+        ? `${item.time_local} (${deviationBadgeLabel})`
+        : item.time_local;
+      return {
+        checkinId: item.checkin_id,
+        sequenceInDay: item.sequence_in_day,
+        timeLocal: item.time_local,
+        timeVerified: item.time_verified,
+        deviationStatus: item.deviation_status,
+        deltaMinutes: item.delta_minutes,
+        overGraceMinutes: item.over_grace_minutes,
+        deviationBadgeLabel,
+        displayText,
+      };
+    });
+
+    let tone: MatrixSlotTone;
+    let slotStatusLabel: string;
+    let summaryText: string;
+
+    if (slot.slot_status === "ON_TIME") {
+      tone = "emerald";
+      slotStatusLabel = "Đúng khung giờ";
+      summaryText = checkins.map((c) => c.displayText).join(", ");
+    } else if (slot.slot_status === "OUT_OF_GRACE") {
+      tone = "amber";
+      slotStatusLabel = "Lệch khung giờ";
+      summaryText = checkins.map((c) => c.displayText).join(", ");
+    } else if (slot.slot_status === "LEAVE_COVERED") {
+      tone = "sky";
+      slotStatusLabel = resolveSessionLeaveCoverageLabel(slot.session_code, leaveBadges);
+      summaryText = slotStatusLabel;
+    } else {
+      tone = "red";
+      slotStatusLabel = MATRIX_MISSING_SLOT_LABEL;
+      summaryText = MATRIX_MISSING_SLOT_LABEL;
+    }
+
+    return {
+      slotCode: slot.slot_code,
+      slotIndex: slot.slot_index,
+      sessionCode: slot.session_code,
+      slotShortLabel,
+      slotTitle,
+      targetTime: slot.target_time,
+      graceBeforeMinutes: slot.grace_before_minutes,
+      graceAfterMinutes: slot.grace_after_minutes,
+      isLeaveCovered: slot.is_leave_covered,
+      slotStatus: slot.slot_status,
+      statusLabel: slotStatusLabel,
+      tone,
+      isMissingHighlight: slot.slot_status === "MISSING",
+      isOutOfGraceHighlight: slot.slot_status === "OUT_OF_GRACE",
+      checkins,
+      summaryText,
+    };
+  });
+
+  let tone: MatrixDayCellTone;
+  if (cell.day_status === "NO_CHECKIN" || cell.day_status === "APPROVED_LEAVE") {
+    tone = "red";
+  } else if (cell.day_status === "CHECKED_IN_AND_LEAVE") {
+    tone = "amber";
+  } else {
+    tone = "emerald";
+  }
 
   let timeRangeLabel: string | null = null;
   let verificationLabel: string | null = null;
@@ -327,27 +636,16 @@ export function describeMatrixDayCell(
       )
     : null;
 
-  const leaveBadges: MatrixLeaveBadgeView[] = cell.approved_leaves.map((item) => {
-    const leaveTypeLabel = MATRIX_LEAVE_TYPE_LABELS[item.leave_type] ?? item.leave_type;
-    const sessionLabel = MATRIX_LEAVE_SESSION_LABELS[item.session_code] ?? item.session_code;
-    return {
-      requestId: item.request_id,
-      leaveType: item.leave_type,
-      leaveTypeLabel,
-      sessionCode: item.session_code,
-      sessionLabel,
-      halfDayUnits: item.half_day_units,
-      label: `${leaveTypeLabel} (${sessionLabel})`,
-    };
-  });
-
   return {
     dayStatus: cell.day_status,
     statusLabel,
     tone,
     isRedHighlight: tone === "red",
+    policyVersionUsed: resolvedSlots.policyVersionUsed,
     hasCheckin: cell.has_checkin,
     checkinCount: cell.checkin_count,
+    missingSlotCount: resolvedSlots.missingSlotCount,
+    lateOrEarlyCheckinCount: resolvedSlots.lateOrEarlyCheckinCount,
     timeRangeLabel,
     verificationLabel,
     distanceLabel,
@@ -355,6 +653,7 @@ export function describeMatrixDayCell(
     hasApprovedLeave: cell.has_approved_leave,
     approvedLeaveUnits: cell.approved_leave_units,
     leaveBadges,
+    slots,
   };
 }
 
@@ -433,6 +732,232 @@ export function mapMonthlyMatrixExportError(status: number, code: string | null)
 export type BranchMutationPayloadResult =
   | { ok: true; body: Record<string, unknown> }
   | { ok: false; message: string };
+
+export function buildCreateSlotPolicyPayload(input: {
+  effectiveFromDate: string;
+  slots?: readonly {
+    slotCode?: AttendanceSlotCode;
+    targetTime: string;
+    graceBeforeInput: string | number;
+    graceAfterInput: string | number;
+  }[];
+  slot1Time?: string;
+  slot1GraceBeforeInput?: string | number;
+  slot1GraceAfterInput?: string | number;
+  slot2Time?: string;
+  slot2GraceBeforeInput?: string | number;
+  slot2GraceAfterInput?: string | number;
+  slot3Time?: string;
+  slot3GraceBeforeInput?: string | number;
+  slot3GraceAfterInput?: string | number;
+  slot4Time?: string;
+  slot4GraceBeforeInput?: string | number;
+  slot4GraceAfterInput?: string | number;
+  expectedVersion: number;
+  idempotencyKey: string;
+  todayVn?: string;
+}): BranchMutationPayloadResult {
+  const effectiveFromDate = input.effectiveFromDate.trim();
+  if (!isValidIsoCalendarDate(effectiveFromDate)) {
+    return {
+      ok: false,
+      message: "Ngày bắt đầu hiệu lực phải đúng định dạng YYYY-MM-DD.",
+    };
+  }
+  if (input.todayVn && effectiveFromDate < input.todayVn) {
+    return {
+      ok: false,
+      message: `Ngày bắt đầu hiệu lực không được lùi về quá khứ (phải từ ${input.todayVn} trở đi) để bảo toàn lịch sử báo cáo.`,
+    };
+  }
+
+  const rawSlots =
+    Array.isArray(input.slots) && input.slots.length === 4
+      ? input.slots
+      : input.slot1Time !== undefined &&
+          input.slot2Time !== undefined &&
+          input.slot3Time !== undefined &&
+          input.slot4Time !== undefined
+        ? [
+            {
+              targetTime: input.slot1Time,
+              graceBeforeInput: input.slot1GraceBeforeInput ?? "",
+              graceAfterInput: input.slot1GraceAfterInput ?? "",
+            },
+            {
+              targetTime: input.slot2Time,
+              graceBeforeInput: input.slot2GraceBeforeInput ?? "",
+              graceAfterInput: input.slot2GraceAfterInput ?? "",
+            },
+            {
+              targetTime: input.slot3Time,
+              graceBeforeInput: input.slot3GraceBeforeInput ?? "",
+              graceAfterInput: input.slot3GraceAfterInput ?? "",
+            },
+            {
+              targetTime: input.slot4Time,
+              graceBeforeInput: input.slot4GraceBeforeInput ?? "",
+              graceAfterInput: input.slot4GraceAfterInput ?? "",
+            },
+          ]
+        : null;
+
+  if (!rawSlots || rawSlots.length !== 4) {
+    return {
+      ok: false,
+      message: "Cấu hình khung giờ bắt buộc đủ 4 mốc chấm công trong ngày.",
+    };
+  }
+
+  const normalizedSlots: {
+    slot_code: AttendanceSlotCode;
+    target_time: string;
+    grace_before_minutes: number;
+    grace_after_minutes: number;
+  }[] = [];
+
+  for (let i = 0; i < 4; i += 1) {
+    const raw = rawSlots[i]!;
+    const slotCode = ATTENDANCE_SLOT_CODES[i]!;
+    const slotLabel = MATRIX_SLOT_SHORT_LABELS[slotCode];
+    const targetTime = raw.targetTime.trim();
+
+    if (!HH_MM_PATTERN.test(targetTime)) {
+      return {
+        ok: false,
+        message: `Giờ mục tiêu của ${slotLabel} phải đúng định dạng 24h HH:MM (ví dụ 08:00, 17:30).`,
+      };
+    }
+
+    const beforeStr = String(raw.graceBeforeInput).trim();
+    const afterStr = String(raw.graceAfterInput).trim();
+    if (!/^\d+$/.test(beforeStr) || !/^\d+$/.test(afterStr)) {
+      return {
+        ok: false,
+        message: `Dung sai trước/sau của ${slotLabel} phải là số nguyên từ 0 đến ${ATTENDANCE_SLOT_MAX_GRACE_MINUTES} phút.`,
+      };
+    }
+
+    const graceBefore = Number(beforeStr);
+    const graceAfter = Number(afterStr);
+    if (
+      !Number.isSafeInteger(graceBefore) ||
+      graceBefore < 0 ||
+      graceBefore > ATTENDANCE_SLOT_MAX_GRACE_MINUTES ||
+      !Number.isSafeInteger(graceAfter) ||
+      graceAfter < 0 ||
+      graceAfter > ATTENDANCE_SLOT_MAX_GRACE_MINUTES
+    ) {
+      return {
+        ok: false,
+        message: `Dung sai trước/sau của ${slotLabel} phải nằm trong khoảng 0–${ATTENDANCE_SLOT_MAX_GRACE_MINUTES} phút.`,
+      };
+    }
+
+    normalizedSlots.push({
+      slot_code: slotCode,
+      target_time: targetTime,
+      grace_before_minutes: graceBefore,
+      grace_after_minutes: graceAfter,
+    });
+  }
+
+  if (
+    !(
+      normalizedSlots[0]!.target_time < normalizedSlots[1]!.target_time &&
+      normalizedSlots[1]!.target_time < normalizedSlots[2]!.target_time &&
+      normalizedSlots[2]!.target_time < normalizedSlots[3]!.target_time
+    )
+  ) {
+    return {
+      ok: false,
+      message:
+        "Giờ mục tiêu của 4 mốc chấm công phải tăng dần theo thứ tự thời gian trong ngày (Mốc 1 < Mốc 2 < Mốc 3 < Mốc 4).",
+    };
+  }
+
+  if (
+    typeof input.expectedVersion !== "number" ||
+    !Number.isSafeInteger(input.expectedVersion) ||
+    input.expectedVersion < 1
+  ) {
+    return {
+      ok: false,
+      message: "Phiên bản cấu hình khung giờ không hợp lệ. Vui lòng tải lại trước khi lưu.",
+    };
+  }
+
+  const key = input.idempotencyKey.trim().toLowerCase();
+  if (!UUID_PATTERN.test(key)) {
+    return { ok: false, message: "Khóa chống gửi trùng (idempotency_key) không hợp lệ." };
+  }
+
+  return {
+    ok: true,
+    body: {
+      effective_from_date: effectiveFromDate,
+      slots: normalizedSlots,
+      expected_version: input.expectedVersion,
+      idempotency_key: key,
+    },
+  };
+}
+
+export function mapSlotPolicyMutationError(
+  status: number,
+  code: string | null,
+): { isConflict: boolean; message: string } {
+  if (code === "ATTENDANCE_SLOT_POLICY_EFFECTIVE_DATE_PAST") {
+    return {
+      isConflict: false,
+      message:
+        "Ngày bắt đầu hiệu lực không được lùi về quá khứ để tránh làm thay đổi hồi tố kết quả báo cáo lịch sử.",
+    };
+  }
+  if (code === "ATTENDANCE_SLOT_POLICY_OVERLAP") {
+    return {
+      isConflict: true,
+      message:
+        "Ngày bắt đầu hiệu lực phải lớn hơn ngày hiệu lực của phiên bản khung giờ gần nhất (không chồng chéo kỳ hiệu lực).",
+    };
+  }
+  if (code === "ATTENDANCE_SLOT_POLICY_VERSION_CONFLICT") {
+    return {
+      isConflict: true,
+      message:
+        "Cấu hình khung giờ vừa được cập nhật ở phiên khác. Vui lòng tải lại dữ liệu trước khi lưu phiên bản mới.",
+    };
+  }
+  if (code === "ATTENDANCE_SLOT_POLICY_INVALID") {
+    return {
+      isConflict: false,
+      message:
+        "Thông số khung giờ hoặc dung sai không hợp lệ. Vui lòng kiểm tra thứ tự Mốc 1 < Mốc 2 < Mốc 3 < Mốc 4 và dung sai 0–240 phút.",
+    };
+  }
+  if (code === "IDEMPOTENCY_CONFLICT") {
+    return {
+      isConflict: true,
+      message: "Thao tác bị trùng khóa xử lý (Idempotency). Vui lòng tải lại dữ liệu.",
+    };
+  }
+  if (status === 403 || code === "ATTENDANCE_SLOT_POLICY_WRITE_DENIED") {
+    return {
+      isConflict: false,
+      message: "Tài khoản hiện tại chỉ có quyền xem, không có quyền cấu hình khung giờ chấm công.",
+    };
+  }
+  if (status === 401 || code === "UNAUTHENTICATED") {
+    return {
+      isConflict: false,
+      message: "Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.",
+    };
+  }
+  return {
+    isConflict: status === 409,
+    message: "Không thể lưu cấu hình khung giờ chấm công lúc này. Vui lòng thử lại.",
+  };
+}
 
 export function buildUpsertBranchPayload(input: {
   branchCode: string;

@@ -85,6 +85,8 @@ import {
   WORKER_EDIT_HISTORY_ADMIN_RPC_SIGNATURES,
   ATTENDANCE_MONTHLY_MATRIX_BRANCHES_PROJECT_COORDS_MIGRATION_NAME,
   ATTENDANCE_MONTHLY_MATRIX_BRANCHES_PROJECT_COORDS_RPC_SIGNATURES,
+  ATTENDANCE_SLOT_POLICY_AND_FOUR_SLOT_MATRIX_MIGRATION_NAME,
+  ATTENDANCE_SLOT_POLICY_AND_FOUR_SLOT_MATRIX_RPC_SIGNATURES,
   OFFBOARDING_REPORT_MIGRATION_NAME,
   OFFBOARDING_REPORT_RPC_SIGNATURES,
   migrationChecksum,
@@ -1082,7 +1084,8 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
         ...HF_DUPLICATE_CCCD_RESIGNED_WITHDRAW_AND_WORKER_FILTERS_RPC_SIGNATURES,
         DASHBOARD_DETAILED_RECRUITMENT_MATRIX_CATALOG_RPC_SIGNATURE,
         ...WORKER_EDIT_HISTORY_ADMIN_RPC_SIGNATURES,
-        ...ATTENDANCE_MONTHLY_MATRIX_BRANCHES_PROJECT_COORDS_RPC_SIGNATURES);
+        ...ATTENDANCE_MONTHLY_MATRIX_BRANCHES_PROJECT_COORDS_RPC_SIGNATURES,
+        ...ATTENDANCE_SLOT_POLICY_AND_FOUR_SLOT_MATRIX_RPC_SIGNATURES);
       assert.ok(expectedSignatures.length > 0, "the explicit server/invoker allowlist is not empty");
       assert.equal(new Set(expectedSignatures).size, expectedSignatures.length, "the allowlist has no duplicates");
       const { rows: resolvedExpected } = await client.query(
@@ -1130,9 +1133,33 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
           ...HF_DUPLICATE_CCCD_RESIGNED_WITHDRAW_AND_WORKER_FILTERS_RPC_SIGNATURES,
           DASHBOARD_DETAILED_RECRUITMENT_MATRIX_CATALOG_RPC_SIGNATURE,
           ...WORKER_EDIT_HISTORY_ADMIN_RPC_SIGNATURES,
-          ...ATTENDANCE_MONTHLY_MATRIX_BRANCHES_PROJECT_COORDS_RPC_SIGNATURES].sort(),
+          ...ATTENDANCE_MONTHLY_MATRIX_BRANCHES_PROJECT_COORDS_RPC_SIGNATURES,
+          ...ATTENDANCE_SLOT_POLICY_AND_FOUR_SLOT_MATRIX_RPC_SIGNATURES].sort(),
         "only explicitly reviewed post-S0 RPCs add service_role grants after the S0 baseline",
       );
+      const attendanceSlotPolicyFourSlotMigration = await readFile(
+        path.join(MIGRATION_DIR, ATTENDANCE_SLOT_POLICY_AND_FOUR_SLOT_MATRIX_MIGRATION_NAME),
+        "utf8",
+      );
+      const attendanceSlotPolicyFourSlotNormalized = attendanceSlotPolicyFourSlotMigration
+        .replace(/\s+/g, " ")
+        .replace(/\(\s+/g, "(")
+        .replace(/\s+\)/g, ")")
+        .toLowerCase();
+      for (const sig of ATTENDANCE_SLOT_POLICY_AND_FOUR_SLOT_MATRIX_RPC_SIGNATURES) {
+        assert.ok(
+          attendanceSlotPolicyFourSlotNormalized.includes(
+            `revoke all on function ${sig.toLowerCase()} from public, anon, authenticated, service_role;`,
+          ),
+          `attendance slot policy RPC ${sig} revokes inherited RPC grants`,
+        );
+        assert.ok(
+          attendanceSlotPolicyFourSlotNormalized.includes(
+            `grant execute on function ${sig.toLowerCase()} to service_role;`,
+          ),
+          `attendance slot policy RPC ${sig} grants EXECUTE only to service_role`,
+        );
+      }
       const dashboardDetailedMatrixCatalogMigration = await readFile(
         path.join(MIGRATION_DIR, DASHBOARD_DETAILED_RECRUITMENT_MATRIX_CATALOG_MIGRATION_NAME),
         "utf8",

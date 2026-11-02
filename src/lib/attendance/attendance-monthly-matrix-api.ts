@@ -17,6 +17,7 @@ import {
   parseAttendanceBranchesAdminQuery,
   parseAttendanceMonthlyMatrixExportQuery,
   parseAttendanceMonthlyMatrixQuery,
+  parseCreateSlotPolicyBody,
   parseUnassignBranchBody,
   parseUpsertBranchBody,
   type AttendanceMonthlyMatrixEmployeeRowProjection,
@@ -241,6 +242,45 @@ export function computeBranchUnassignRequestFingerprint(input: {
   return createHash("sha256").update(canonicalPayload, "utf8").digest("hex");
 }
 
+export function computeSlotPolicyCreateRequestFingerprint(input: {
+  app_user_id: string;
+  effective_from_date: string;
+  slot_1_time: string;
+  slot_1_grace_before_minutes: number;
+  slot_1_grace_after_minutes: number;
+  slot_2_time: string;
+  slot_2_grace_before_minutes: number;
+  slot_2_grace_after_minutes: number;
+  slot_3_time: string;
+  slot_3_grace_before_minutes: number;
+  slot_3_grace_after_minutes: number;
+  slot_4_time: string;
+  slot_4_grace_before_minutes: number;
+  slot_4_grace_after_minutes: number;
+  expected_version: number;
+}): string {
+  const canonicalPayload = JSON.stringify({
+    v: 1,
+    op: "slot_policy_create",
+    app_user_id: input.app_user_id.toLowerCase(),
+    effective_from_date: input.effective_from_date,
+    slot_1_time: input.slot_1_time,
+    slot_1_grace_before_minutes: input.slot_1_grace_before_minutes,
+    slot_1_grace_after_minutes: input.slot_1_grace_after_minutes,
+    slot_2_time: input.slot_2_time,
+    slot_2_grace_before_minutes: input.slot_2_grace_before_minutes,
+    slot_2_grace_after_minutes: input.slot_2_grace_after_minutes,
+    slot_3_time: input.slot_3_time,
+    slot_3_grace_before_minutes: input.slot_3_grace_before_minutes,
+    slot_3_grace_after_minutes: input.slot_3_grace_after_minutes,
+    slot_4_time: input.slot_4_time,
+    slot_4_grace_before_minutes: input.slot_4_grace_before_minutes,
+    slot_4_grace_after_minutes: input.slot_4_grace_after_minutes,
+    expected_version: input.expected_version,
+  });
+  return createHash("sha256").update(canonicalPayload, "utf8").digest("hex");
+}
+
 export async function getAttendanceMonthlyMatrixReport(
   request: Request,
   dependencies: AttendanceMonthlyMatrixApiDependencies,
@@ -414,6 +454,7 @@ export async function exportAttendanceMonthlyMatrixXlsx(
       to_date: firstReport.filters.to_date,
       calendar_days: firstReport.calendar_days,
       items: collectedItems,
+      slot_policy: firstReport.slot_policy,
     });
     const body = new ArrayBuffer(bytes.byteLength);
     new Uint8Array(body).set(bytes);
@@ -755,5 +796,160 @@ export async function postAttendanceBranchUnassignAdmin(
       assignment: saved.result.assignment,
     },
     200,
+  );
+}
+
+export async function getAttendanceSlotPoliciesAdmin(
+  request: Request,
+  dependencies: AttendanceMonthlyMatrixApiDependencies,
+): Promise<Response> {
+  if (hasDisallowedAuthorityHeaders(request)) {
+    return matrixError("ATTENDANCE_REPORT_QUERY_INVALID");
+  }
+
+  try {
+    const parsedUrl = new URL(request.url);
+    if (parsedUrl.search.length > 0) {
+      return matrixError("ATTENDANCE_REPORT_QUERY_INVALID");
+    }
+  } catch {
+    return matrixError("ATTENDANCE_REPORT_QUERY_INVALID");
+  }
+
+  const actorResult = await resolveVerifiedActor(dependencies.resolveSession);
+  if (!actorResult.ok) {
+    return actorResult.response;
+  }
+
+  if (!attendanceReportNavPredicate(actorResult.nav_actor)) {
+    return matrixError("ATTENDANCE_REPORT_ACCESS_DENIED");
+  }
+
+  if (!dependencies.repository.getSlotPoliciesAdmin) {
+    return matrixError("ATTENDANCE_REPORT_UNAVAILABLE");
+  }
+
+  const result = await dependencies.repository.getSlotPoliciesAdmin({
+    auth_subject: actorResult.auth_subject,
+    app_user_id: actorResult.app_user_id,
+  });
+
+  if (!result.ok) {
+    return matrixError(result.code);
+  }
+
+  return noStoreJson(
+    {
+      ok: true,
+      ...result.data,
+    },
+    200,
+  );
+}
+
+export async function postAttendanceSlotPolicyAdmin(
+  request: Request,
+  dependencies: AttendanceMonthlyMatrixApiDependencies,
+): Promise<Response> {
+  if (!isSameOriginAuthRequest(request)) {
+    return matrixError("CSRF_REJECTED");
+  }
+
+  if (hasDisallowedAuthorityHeaders(request)) {
+    return matrixError("ATTENDANCE_SLOT_POLICY_INVALID");
+  }
+
+  try {
+    const parsedUrl = new URL(request.url);
+    if (parsedUrl.search.length > 0) {
+      return matrixError("ATTENDANCE_SLOT_POLICY_INVALID");
+    }
+  } catch {
+    return matrixError("ATTENDANCE_SLOT_POLICY_INVALID");
+  }
+
+  const contentType = request.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase();
+  if (contentType !== "application/json") {
+    return matrixError("CONTENT_TYPE_INVALID");
+  }
+
+  const actorResult = await resolveVerifiedActor(dependencies.resolveSession);
+  if (!actorResult.ok) {
+    return actorResult.response;
+  }
+
+  if (!adminAuthorityNavPredicate(actorResult.nav_actor)) {
+    return matrixError("ATTENDANCE_SLOT_POLICY_WRITE_DENIED");
+  }
+
+  const boundedBody = await readBoundedJsonBody(request, MAX_BRANCH_JSON_BODY_BYTES);
+  if (!boundedBody.ok) {
+    return boundedBody.kind === "too-large"
+      ? matrixError("BODY_TOO_LARGE")
+      : matrixError("ATTENDANCE_SLOT_POLICY_INVALID");
+  }
+
+  const parsedBody = parseCreateSlotPolicyBody(
+    boundedBody.value,
+    request.headers.get("idempotency-key"),
+  );
+  if (!parsedBody.ok) {
+    return matrixError(parsedBody.code);
+  }
+
+  if (!dependencies.repository.createSlotPolicyAdmin) {
+    return matrixError("ATTENDANCE_REPORT_UNAVAILABLE");
+  }
+
+  const requestFingerprint = computeSlotPolicyCreateRequestFingerprint({
+    app_user_id: actorResult.app_user_id,
+    effective_from_date: parsedBody.value.effective_from_date,
+    slot_1_time: parsedBody.value.slot_1_time,
+    slot_1_grace_before_minutes: parsedBody.value.slot_1_grace_before_minutes,
+    slot_1_grace_after_minutes: parsedBody.value.slot_1_grace_after_minutes,
+    slot_2_time: parsedBody.value.slot_2_time,
+    slot_2_grace_before_minutes: parsedBody.value.slot_2_grace_before_minutes,
+    slot_2_grace_after_minutes: parsedBody.value.slot_2_grace_after_minutes,
+    slot_3_time: parsedBody.value.slot_3_time,
+    slot_3_grace_before_minutes: parsedBody.value.slot_3_grace_before_minutes,
+    slot_3_grace_after_minutes: parsedBody.value.slot_3_grace_after_minutes,
+    slot_4_time: parsedBody.value.slot_4_time,
+    slot_4_grace_before_minutes: parsedBody.value.slot_4_grace_before_minutes,
+    slot_4_grace_after_minutes: parsedBody.value.slot_4_grace_after_minutes,
+    expected_version: parsedBody.value.expected_version,
+  });
+
+  const saved = await dependencies.repository.createSlotPolicyAdmin({
+    auth_subject: actorResult.auth_subject,
+    app_user_id: actorResult.app_user_id,
+    effective_from_date: parsedBody.value.effective_from_date,
+    slot_1_time: parsedBody.value.slot_1_time,
+    slot_1_grace_before_minutes: parsedBody.value.slot_1_grace_before_minutes,
+    slot_1_grace_after_minutes: parsedBody.value.slot_1_grace_after_minutes,
+    slot_2_time: parsedBody.value.slot_2_time,
+    slot_2_grace_before_minutes: parsedBody.value.slot_2_grace_before_minutes,
+    slot_2_grace_after_minutes: parsedBody.value.slot_2_grace_after_minutes,
+    slot_3_time: parsedBody.value.slot_3_time,
+    slot_3_grace_before_minutes: parsedBody.value.slot_3_grace_before_minutes,
+    slot_3_grace_after_minutes: parsedBody.value.slot_3_grace_after_minutes,
+    slot_4_time: parsedBody.value.slot_4_time,
+    slot_4_grace_before_minutes: parsedBody.value.slot_4_grace_before_minutes,
+    slot_4_grace_after_minutes: parsedBody.value.slot_4_grace_after_minutes,
+    expected_version: parsedBody.value.expected_version,
+    idempotency_key: parsedBody.value.idempotency_key,
+    request_fingerprint: requestFingerprint,
+  });
+
+  if (!saved.ok) {
+    return matrixError(saved.code);
+  }
+
+  return noStoreJson(
+    {
+      ok: true,
+      replayed: saved.result.replayed,
+      policy: saved.result.policy,
+    },
+    saved.result.replayed ? 200 : 201,
   );
 }
