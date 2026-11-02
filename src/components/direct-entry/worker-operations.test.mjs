@@ -351,6 +351,22 @@ test("R1.2-C: direct correction and proposal CTAs follow the server-projected ro
   assert.match(source, /Giữ nguyên trạng thái/);
 });
 
+test("quick offboarding reuses direct-edit authorization, OCC, and status proposal validation", () => {
+  assert.match(source, /Cho nghỉ nhanh/);
+  assert.match(source, /selectedQuickOffboardingIds/);
+  assert.match(source, /canSelectQuickOffboardingWorker\(row\)/);
+  assert.match(source, /buildWorkStatusProposal\([\s\S]*?status: "OFF"/);
+  assert.match(source, /expected_entry_version: row\.entry_version/);
+  assert.match(source, /patch: \{ employment_status: status\.proposal \}/);
+  assert.match(source, /privileged-edit/);
+  assert.match(source, /Lý do nghỉ/);
+  assert.match(source, /Đã chọn \{quickOffboardingIds\.size\} NLĐ; lựa chọn được giữ khi tải thêm\./);
+  const loadMoreStart = source.indexOf("async function loadMore<T>(");
+  const selectTabStart = source.indexOf("function selectTab(", loadMoreStart);
+  assert.ok(loadMoreStart >= 0 && selectTabStart > loadMoreStart);
+  assert.doesNotMatch(source.slice(loadMoreStart, selectTabStart), /setQuickOffboardingIds/);
+});
+
 test("R1.1: B-owned action reasons are optional while OFF leave reason stays required", () => {
   assert.doesNotMatch(source, /<textarea id=\{reasonId\} required/);
   assert.doesNotMatch(source, /Lý do là bắt buộc\./);

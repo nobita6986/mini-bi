@@ -13,6 +13,7 @@ import {
   applyPage,
   bankAccountSummary,
   beginLoad,
+  canSelectQuickOffboardingWorker,
   canReviewChangeRequests,
   canViewGlobalChangeRequestHistory,
   checkDirectEditDocumentFile,
@@ -106,6 +107,21 @@ test("W06-R1: bon view khong tron quan he; scope=all chi khi server cho phep", (
   assert.deepEqual([...visibleWorkerTabs(true)], ["uploader", "recruited", "managed", "all"]);
   assert.deepEqual([...visibleWorkerTabs(false, true)], ["uploader", "recruited", "managed", "team"]);
   assert.deepEqual([...visibleWorkerTabs(true, true)], ["uploader", "recruited", "managed", "team", "all"]);
+});
+
+test("quick offboarding only selects editable ON or UNCONFIRMED workers", () => {
+  assert.equal(canSelectQuickOffboardingWorker(row({
+    employment_status: "ON", allowed_actions: actions({ direct_edit: true }),
+  })), true);
+  assert.equal(canSelectQuickOffboardingWorker(row({
+    employment_status: "UNCONFIRMED", allowed_actions: actions({ direct_edit: true }),
+  })), true);
+  assert.equal(canSelectQuickOffboardingWorker(row({
+    employment_status: "OFF", allowed_actions: actions({ direct_edit: true }),
+  })), false);
+  assert.equal(canSelectQuickOffboardingWorker(row({
+    employment_status: "ON", allowed_actions: actions({ direct_edit: false }),
+  })), false);
 });
 
 test("W06-R1: review queue chi khi change_review + all scope", () => {

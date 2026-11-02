@@ -179,6 +179,13 @@ export function proposeCta(row: Pick<WorkerDirectoryRow, "allowed_actions">): Pr
   return { show: false, code, message: workerDenialMessage(code) };
 }
 
+export function canSelectQuickOffboardingWorker(
+  row: Pick<WorkerDirectoryRow, "employment_status" | "allowed_actions">,
+): boolean {
+  return (row.employment_status === "ON" || row.employment_status === "UNCONFIRMED") &&
+    row.allowed_actions.direct_edit === true;
+}
+
 /* ---------- PRE-W2-P2: sua ho ten NLĐ qua luong duyet (target WORKER) ---------- */
 
 /** Du quyen nhung chua nap duoc baseline canonical day du (khong bia gia tri). */

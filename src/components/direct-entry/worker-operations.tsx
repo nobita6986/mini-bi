@@ -47,6 +47,7 @@ import {
   WORKER_PROVIDER_TYPES,
   applyPage,
   bankAccountSummary,
+  canSelectQuickOffboardingWorker,
   buildDirectEditEntryFieldProposal,
   buildDirectEditPaymentPatch,
   checkDirectEditDocumentFile,
@@ -220,11 +221,18 @@ export function WorkerOperations({
   const [detailRow, setDetailRow] = useState<WorkerDirectoryRow | null>(null);
   const [busyRequestId, setBusyRequestId] = useState<string | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
+  const [quickOffboardingMode, setQuickOffboardingMode] = useState(false);
+  const [quickOffboardingIds, setQuickOffboardingIds] = useState<Set<string>>(() => new Set());
+  const [quickOffboardingOpen, setQuickOffboardingOpen] = useState(false);
+  const [quickOffboardingReason, setQuickOffboardingReason] = useState("");
+  const [quickOffboardingBusy, setQuickOffboardingBusy] = useState(false);
+  const [quickOffboardingProgress, setQuickOffboardingProgress] = useState(0);
   const [catalogs, setCatalogs] = useState<Record<string, DraftCatalog>>({});
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
   /** Radix Dialog khong tu tra focus khi khong dung Dialog.Trigger. */
   const drawerOpenerRef = useRef<HTMLElement | null>(null);
   const detailOpenerRef = useRef<HTMLElement | null>(null);
+  const quickOffboardingOpenerRef = useRef<HTMLElement | null>(null);
   const filterId = useId();
   const providerTypeFilterId = useId();
   const firstWorkDateFromId = useId();
@@ -370,7 +378,7 @@ export function WorkerOperations({
     apply: (outcome: FetchOutcome<T>, append: boolean) => void,
     isCurrent: () => boolean = () => true,
   ): Promise<void> {
-    if (page.cursor === null || !page.hasMore) return;
+    if (quickOffboardingBusy || page.cursor === null || !page.hasMore) return;
     setBusyRequestId("more");
     const outcome = await fetcher(page.cursor).catch(
       () => ({ ok: false as const, state: "unavailable" as PageState, message: WORKER_LOAD_FAILED_MESSAGE }));
@@ -386,11 +394,13 @@ export function WorkerOperations({
   }
 
   function selectTab(next: WorkerOperationsTab, focus = true) {
+    if (quickOffboardingBusy) return;
     if (next === tab) {
       if (focus) tabRefs.current[tabs.indexOf(next)]?.focus();
       return;
     }
     workerQueryGeneration.current += 1;
+    cancelQuickOffboarding();
     setWorkerSummary(null);
     setFilters({ ...EMPTY_WORKER_DIRECTORY_FILTERS });
     if (next === "uploader") setSubmissionPage(resetTabPage());
@@ -400,9 +410,11 @@ export function WorkerOperations({
   }
 
   function changeFilter(field: keyof WorkerDirectoryFilters, value: string) {
+    if (quickOffboardingBusy) return;
     const scope = tabScope(tab);
     if (scope === null) return;
     workerQueryGeneration.current += 1;
+    cancelQuickOffboarding();
     setWorkerSummary(null);
     const next = updateWorkerDirectoryFilter({
       page: workerPages[scope], filters, field, value,
@@ -412,9 +424,11 @@ export function WorkerOperations({
   }
 
   function clearFilters() {
+    if (quickOffboardingBusy) return;
     const scope = tabScope(tab);
     if (scope === null) return;
     workerQueryGeneration.current += 1;
+    cancelQuickOffboarding();
     setWorkerSummary(null);
     setFilters({ ...EMPTY_WORKER_DIRECTORY_FILTERS });
     setWorkerPages((pages) => ({ ...pages, [scope]: resetTabPage() }));
@@ -423,7 +437,9 @@ export function WorkerOperations({
   const workerPageGeneration = workerQueryGeneration.current;
 
   async function reload(): Promise<void> {
+    if (quickOffboardingBusy) return;
     setConflict(null);
+    cancelQuickOffboarding();
     if (tab === "uploader") {
       setSubmissionPage(resetTabPage());
       applySubmissionPage(await fetchSubmissions(null).catch(
@@ -467,6 +483,103 @@ export function WorkerOperations({
   const workerPage = scope === null ? null : workerPages[scope as WorkerScopeTab];
   const activePage: { state: PageState; message: string | null } =
     workerPage ?? submissionPage;
+
+  function cancelQuickOffboarding(): void {
+    if (quickOffboardingBusy) return;
+    setQuickOffboardingMode(false);
+    setQuickOffboardingIds(new Set());
+    setQuickOffboardingOpen(false);
+    setQuickOffboardingReason("");
+  }
+
+  function toggleQuickOffboardingWorker(entryId: string): void {
+    setQuickOffboardingIds((current) => {
+      const next = new Set(current);
+      if (next.has(entryId)) next.delete(entryId);
+      else next.add(entryId);
+      return next;
+    });
+  }
+
+  async function submitQuickOffboarding(): Promise<void> {
+    if (quickOffboardingBusy || workerPage === null) return;
+    const reason = quickOffboardingReason.trim();
+    if (reason === "" || reason.length > 4000) return;
+    const selected = workerPage.items.filter((row) =>
+      quickOffboardingIds.has(row.entry_id) && canSelectQuickOffboardingWorker(row));
+    if (selected.length === 0) return;
+
+    setQuickOffboardingBusy(true);
+    setQuickOffboardingProgress(0);
+    let succeeded = 0;
+    let failureMessage: string | null = null;
+    for (const row of selected) {
+      const status = buildWorkStatusProposal({
+        baseline: row.employment_status === null ? null : {
+          status: row.employment_status,
+          effective_date: row.first_work_date,
+        },
+        status: "OFF",
+        effectiveDate: today,
+        leaveReason: reason,
+        today,
+      });
+      if (!status.ok) {
+        failureMessage = proposalErrorMessage(status.code);
+        break;
+      }
+      try {
+        const response = await fetch(API + "/entries/" + encodeURIComponent(row.entry_id) +
+          "/privileged-edit", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "idempotency-key": crypto.randomUUID(),
+          },
+          credentials: "same-origin",
+          body: JSON.stringify({
+            expected_entry_version: row.entry_version,
+            patch: { employment_status: status.proposal },
+            reason,
+          }),
+        });
+        const payload = await readJson(response);
+        if (response.status !== 200) {
+          const errorCode = typeof payload === "object" && payload !== null &&
+              typeof (payload as { code?: unknown }).code === "string"
+            ? (payload as { code: string }).code
+            : undefined;
+          failureMessage = privilegedEditErrorMessage(response.status, errorCode);
+          break;
+        }
+        succeeded += 1;
+        setQuickOffboardingProgress(succeeded);
+      } catch {
+        failureMessage = "Mất kết nối khi cập nhật. Hãy tải lại danh sách để kiểm tra trạng thái từng hồ sơ.";
+        break;
+      }
+    }
+
+    setQuickOffboardingBusy(false);
+    setQuickOffboardingOpen(false);
+    setQuickOffboardingMode(false);
+    setQuickOffboardingIds(new Set());
+    setQuickOffboardingReason("");
+    await reload();
+    if (failureMessage !== null) {
+      notify.error({
+        title: succeeded > 0
+          ? `Đã cho nghỉ ${succeeded}/${selected.length} NLĐ. Dừng ở lỗi: ${failureMessage}`
+          : failureMessage,
+        dedupeKey: "worker-quick-offboarding-err",
+      });
+    } else {
+      notify.success({
+        title: `Đã cho nghỉ ${succeeded} NLĐ.`,
+        dedupeKey: "worker-quick-offboarding-done",
+      });
+    }
+  }
 
   return (
     <main className="mx-auto flex w-full max-w-7xl flex-col gap-4 px-3.5 py-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:gap-5 sm:px-6 sm:py-6 lg:px-8 overflow-x-clip">
@@ -739,7 +852,43 @@ export function WorkerOperations({
         ) : null}
         {workerPage !== null && workerPage.state === "ready" ? (
           <>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {quickOffboardingMode ? (
+                <>
+                  <span role="status" className="mr-auto text-sm text-muted">
+                    Đã chọn {quickOffboardingIds.size} NLĐ; lựa chọn được giữ khi tải thêm.
+                  </span>
+                  <button type="button" className={buttonClass}
+                    disabled={quickOffboardingBusy} onClick={cancelQuickOffboarding}>
+                    Hủy chọn
+                  </button>
+                  <button type="button" className={primaryClass}
+                    data-testid="worker-quick-offboarding-submit"
+                    disabled={quickOffboardingIds.size === 0 || quickOffboardingBusy}
+                    onClick={(event) => {
+                      quickOffboardingOpenerRef.current = event.currentTarget;
+                      setQuickOffboardingReason("");
+                      setQuickOffboardingOpen(true);
+                    }}>
+                    Cho nghỉ
+                  </button>
+                </>
+              ) : (
+                <button type="button" className={buttonClass}
+                  data-testid="worker-quick-offboarding-start"
+                  onClick={(event) => {
+                    quickOffboardingOpenerRef.current = event.currentTarget;
+                    setQuickOffboardingIds(new Set());
+                    setQuickOffboardingMode(true);
+                  }}>
+                  Cho nghỉ nhanh
+                </button>
+              )}
+            </div>
             <WorkerTable rows={workerPage.items}
+              quickOffboardingMode={quickOffboardingMode}
+              selectedQuickOffboardingIds={quickOffboardingIds}
+              onToggleQuickOffboarding={toggleQuickOffboardingWorker}
               onViewDetail={(row, opener) => {
                 detailOpenerRef.current = opener;
                 setDetailRow(row);
@@ -816,6 +965,73 @@ export function WorkerOperations({
         onOpenChange={(open) => { if (!open) setDetailRow(null); }}
       />
 
+      <Dialog.Root open={quickOffboardingOpen}
+        onOpenChange={(open) => { if (!open && !quickOffboardingBusy) setQuickOffboardingOpen(false); }}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 z-40 bg-black/50" data-ui-overlay-motion="true" />
+          <Dialog.Content
+            data-ui-dialog-motion="true"
+            onCloseAutoFocus={(event) => {
+              const opener = quickOffboardingOpenerRef.current;
+              if (opener && opener.isConnected) {
+                event.preventDefault();
+                opener.focus();
+              }
+            }}
+            className="fixed left-1/2 top-1/2 z-50 flex max-h-[calc(100dvh-2rem)]
+              w-[calc(100vw-2rem)] max-w-xl -translate-x-1/2 -translate-y-1/2
+              overflow-hidden rounded-2xl border border-border bg-surface text-foreground shadow-2xl outline-none"
+          >
+            <form className="flex min-h-0 w-full flex-col"
+              onSubmit={(event) => { event.preventDefault(); void submitQuickOffboarding(); }}>
+              <header className="flex shrink-0 items-start justify-between gap-4 border-b border-border
+                bg-surface px-4 py-4 sm:px-5">
+                <div>
+                  <Dialog.Title className="text-xl font-semibold">Cho nghỉ {quickOffboardingIds.size} NLĐ</Dialog.Title>
+                  <Dialog.Description className="mt-1 text-sm text-muted">
+                    Trạng thái có hiệu lực từ hôm nay ({today}). Nếu một hồ sơ cập nhật lỗi, hệ thống dừng
+                    tại hồ sơ đó và báo số hồ sơ đã xử lý.
+                  </Dialog.Description>
+                </div>
+                <button type="button" aria-label="Đóng xác nhận cho nghỉ" disabled={quickOffboardingBusy}
+                  className="inline-flex size-10 shrink-0 items-center justify-center rounded-full
+                    border border-border bg-surface text-xl text-muted hover:bg-muted/10
+                    hover:text-foreground focus-visible:outline-none focus-visible:ring-2
+                    focus-visible:ring-ring/40 disabled:opacity-50"
+                  onClick={() => setQuickOffboardingOpen(false)}>×</button>
+              </header>
+              <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:px-5">
+                <div className="flex flex-col gap-1.5">
+                  <label htmlFor="worker-quick-offboarding-reason" className="text-sm font-medium">
+                    Lý do nghỉ
+                  </label>
+                  <textarea id="worker-quick-offboarding-reason" required maxLength={4000}
+                    disabled={quickOffboardingBusy}
+                    className="min-h-24 w-full rounded-md border border-border bg-surface p-3 text-sm
+                      text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:opacity-60"
+                    value={quickOffboardingReason}
+                    onChange={(event) => setQuickOffboardingReason(event.target.value)} />
+                </div>
+                {quickOffboardingBusy ? (
+                  <p role="status" aria-live="polite" className={infoClass}>
+                    Đang xử lý {quickOffboardingProgress}/{quickOffboardingIds.size} hồ sơ…
+                  </p>
+                ) : null}
+              </div>
+              <footer className="flex shrink-0 justify-end gap-2 border-t border-border bg-surface px-4 py-3 sm:px-5">
+                <button type="button" className={buttonClass} disabled={quickOffboardingBusy}
+                  onClick={() => setQuickOffboardingOpen(false)}>Hủy</button>
+                <button type="submit" className={primaryClass}
+                  disabled={quickOffboardingBusy || quickOffboardingReason.trim() === ""}
+                  aria-busy={quickOffboardingBusy}>
+                  {quickOffboardingBusy ? "Đang xử lý…" : "Xác nhận cho nghỉ"}
+                </button>
+              </footer>
+            </form>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
+
     </main>
   );
 }
@@ -878,9 +1094,13 @@ function SubmissionTable({ submissions }: { submissions: readonly SubmissionRead
 }
 
 function WorkerTable({
-  rows, onViewDetail, onPropose, onCorrect,
+  rows, quickOffboardingMode, selectedQuickOffboardingIds, onToggleQuickOffboarding,
+  onViewDetail, onPropose, onCorrect,
 }: {
   rows: readonly WorkerDirectoryRow[];
+  quickOffboardingMode: boolean;
+  selectedQuickOffboardingIds: ReadonlySet<string>;
+  onToggleQuickOffboarding: (entryId: string) => void;
   /** W2S1: mo dialog chi tiet dung chung; `allowed_actions.view` luon true theo server. */
   onViewDetail: (row: WorkerDirectoryRow, opener: HTMLElement | null) => void;
   /** P2.5-HF-R5A: nhan kem nut da bam de tra focus khi dong drawer. */
@@ -910,6 +1130,7 @@ function WorkerTable({
           {rows.map((row) => {
             const cta = proposeCta(row);
             const canDirectEdit = row.allowed_actions.direct_edit;
+            const canQuickOffboard = canSelectQuickOffboardingWorker(row);
             const bank = bankAccountSummary(row.payment);
             const statusTone = row.employment_status === "ON"
               ? "success"
@@ -919,7 +1140,19 @@ function WorkerTable({
             return (
               <tr key={row.entry_id} className={DATA_TABLE_ROW_CLASS}>
                 <td className={DATA_TABLE_TD_CLASS + " font-semibold"} data-card-header="true">
-                  {row.display_name}
+                  <span className="flex items-center gap-2">
+                    {quickOffboardingMode ? (
+                      <input type="checkbox" className="size-4 shrink-0 accent-primary"
+                        aria-label={`Chọn ${row.display_name} (${row.employee_code}) để cho nghỉ`}
+                        checked={selectedQuickOffboardingIds.has(row.entry_id)}
+                        disabled={!canQuickOffboard}
+                        title={!canQuickOffboard
+                          ? row.employment_status === "OFF" ? "NLĐ đã nghỉ việc" : "Bạn không có quyền sửa trạng thái NLĐ này"
+                          : undefined}
+                        onChange={() => onToggleQuickOffboarding(row.entry_id)} />
+                    ) : null}
+                    <span>{row.display_name}</span>
+                  </span>
                 </td>
                 <td className={DATA_TABLE_TD_CLASS + " font-mono text-xs whitespace-nowrap text-muted"} data-label="Mã NLĐ">
                   {row.employee_code}
