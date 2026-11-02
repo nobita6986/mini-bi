@@ -666,6 +666,8 @@ begin
 end;
 $$;
 
+revoke all on function public.direct_entry_offboarding_authority(uuid, uuid)
+  from public, anon, authenticated, service_role;
 revoke all on function public.direct_entry__internal_offboarding_candidates(text, uuid, date)
   from public, anon, authenticated, service_role;
 revoke all on function public.direct_entry__internal_offboarding_rows(uuid, uuid, text, uuid, boolean)

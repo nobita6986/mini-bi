@@ -707,6 +707,12 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
         .toLowerCase();
       assert.ok(
         hfOffboardingPerfNormalized.includes(
+          "revoke all on function public.direct_entry_offboarding_authority(uuid, uuid) from public, anon, authenticated, service_role;",
+        ),
+        "HF offboarding performance authority helper revokes EXECUTE from all runtime roles",
+      );
+      assert.ok(
+        hfOffboardingPerfNormalized.includes(
           "revoke all on function public.direct_entry__internal_offboarding_candidates(text, uuid, date) from public, anon, authenticated, service_role;",
         ),
         "HF offboarding performance internal candidate helper revokes EXECUTE from all runtime roles",
