@@ -7,6 +7,7 @@ import {
   buildRenameRequest,
   buildSetActiveRequest,
   buildUnassignRequest,
+  buildUpdateProjectLocationRequest,
   candidateLabel,
   classifyResponse,
   executeProjectRequest,
@@ -15,6 +16,7 @@ import {
   parseCandidatesResponse,
   parseDetailResponse,
   parseListResponse,
+  parseProjectLocation,
   paginateProjects,
   projectStatusLabel,
   splitAssignments,
@@ -356,4 +358,132 @@ test("W06A-R2: parse candidates + label (name/code, never auth/user)", () => {
   for (const key of ["auth_subject", "app_user_id"]) {
     assert.equal(key in payload.candidates[0], false, "candidate projection khong tra " + key);
   }
+});
+
+test("project location: parse location + buildUpdateProjectLocationRequest (all-or-nothing lat/lon, radius 50-2000, clear)", () => {
+  const validLoc = parseProjectLocation({
+    address: "123 Nguyễn Huệ, Q.1, TP.HCM",
+    latitude: 10.776889,
+    longitude: 106.700806,
+    radius_meters: 250,
+    confirmed_at: "2026-10-20T08:30:00Z",
+  });
+  assert.deepEqual(validLoc, {
+    address: "123 Nguyễn Huệ, Q.1, TP.HCM",
+    latitude: 10.776889,
+    longitude: 106.700806,
+    radius_meters: 250,
+    confirmed_at: "2026-10-20T08:30:00Z",
+  });
+  assert.equal(parseProjectLocation({ address: null, latitude: 10, longitude: 106, radius_meters: 49, confirmed_at: null }), null);
+  assert.equal(parseProjectLocation({ address: null, latitude: 95, longitude: 106, radius_meters: 200, confirmed_at: null }), null);
+
+  const listWithLocation = parseListResponse({
+    ok: true,
+    list: {
+      projects: [
+        {
+          project_id: "p1",
+          display_name: "Dự án A",
+          active: true,
+          version: 3,
+          can_manage_project_master: true,
+          can_assign_managers: true,
+          location: {
+            address: "KCN Bắc Thăng Long",
+            latitude: 21.123456,
+            longitude: 105.765432,
+            radius_meters: 200,
+            confirmed_at: "2026-10-21T01:00:00Z",
+          },
+        },
+      ],
+    },
+  });
+  assert.equal(listWithLocation?.[0]?.location?.radius_meters, 200);
+  assert.equal(listWithLocation?.[0]?.location?.confirmed_at, "2026-10-21T01:00:00Z");
+
+  // Fail when only latitude or only longitude is provided
+  const missingLon = buildUpdateProjectLocationRequest({
+    address: "Test",
+    latitudeInput: "10.77",
+    longitudeInput: "",
+    radiusInput: "200",
+    expectedVersion: 3,
+    idempotencyKey: KEY,
+  });
+  assert.equal(missingLon.ok, false);
+
+  const missingLat = buildUpdateProjectLocationRequest({
+    address: "Test",
+    latitudeInput: "",
+    longitudeInput: "106.70",
+    radiusInput: "200",
+    expectedVersion: 3,
+    idempotencyKey: KEY,
+  });
+  assert.equal(missingLat.ok, false);
+
+  // Radius out of range (50..2000)
+  assert.equal(
+    buildUpdateProjectLocationRequest({
+      latitudeInput: "10.77",
+      longitudeInput: "106.70",
+      radiusInput: "40",
+      expectedVersion: 3,
+      idempotencyKey: KEY,
+    }).ok,
+    false,
+  );
+  assert.equal(
+    buildUpdateProjectLocationRequest({
+      latitudeInput: "10.77",
+      longitudeInput: "106.70",
+      radiusInput: "2500",
+      expectedVersion: 3,
+      idempotencyKey: KEY,
+    }).ok,
+    false,
+  );
+
+  // Valid update with default radius 200 when blank
+  const updated = buildUpdateProjectLocationRequest({
+    address: "  Số 1 Lê Duẩn  ",
+    latitudeInput: "10.776889",
+    longitudeInput: "106.700806",
+    radiusInput: "",
+    reason: "Cập nhật vị trí dự án",
+    expectedVersion: 3,
+    idempotencyKey: KEY,
+  });
+  assert.equal(updated.ok, true);
+  assert.deepEqual(updated.body, {
+    expected_version: 3,
+    address: "Số 1 Lê Duẩn",
+    latitude: 10.776889,
+    longitude: 106.700806,
+    radius_meters: 200,
+    clear: false,
+    reason: "Cập nhật vị trí dự án",
+    idempotency_key: KEY,
+  });
+
+  // Clear location (explicit clear: true or both coordinates blank)
+  const cleared = buildUpdateProjectLocationRequest({
+    clear: true,
+    reason: "Xóa tọa độ cũ",
+    expectedVersion: 4,
+    idempotencyKey: KEY,
+  });
+  assert.equal(cleared.ok, true);
+  assert.deepEqual(cleared.body, {
+    expected_version: 4,
+    address: null,
+    latitude: null,
+    longitude: null,
+    radius_meters: 200,
+    clear: true,
+    reason: "Xóa tọa độ cũ",
+    idempotency_key: KEY,
+  });
 });
