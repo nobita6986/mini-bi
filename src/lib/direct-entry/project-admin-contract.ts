@@ -14,6 +14,14 @@
  * tra ve doi tuong mot phan).
  */
 
+export type AdminProjectLocation = {
+  address: string | null;
+  latitude: number;
+  longitude: number;
+  radius_meters: number;
+  confirmed_at: string | null;
+};
+
 export type AdminProject = {
   project_id: string;
   display_name: string;
@@ -25,6 +33,7 @@ export type AdminProject = {
   active_assignment_count: number;
   can_manage_project_master: boolean;
   can_assign_managers: boolean;
+  location?: AdminProjectLocation | null;
 };
 
 export type AdminAssignment = {
@@ -78,6 +87,11 @@ export type AdminProjectMutation = {
 /** create tra them created: true (6 key). */
 export type AdminProjectCreateMutation = AdminProjectMutation & { created: boolean };
 
+/** update_project_location tra 6 key (project_id, display_name, active, version, revision_id, location). */
+export type AdminProjectLocationMutation = AdminProjectMutation & {
+  location: AdminProjectLocation | null;
+};
+
 /** assign/unassign tra assignment version + project OCC version moi. */
 export type AdminAssignmentMutation = {
   assignment_id: string;
@@ -112,13 +126,54 @@ function exactKeys(value: Record<string, unknown>, keys: readonly string[]): boo
 const PROJECT_KEYS = ["project_id", "display_name", "active", "version",
   "created_at", "updated_at", "revision_count", "active_assignment_count",
   "can_manage_project_master", "can_assign_managers"] as const;
+const PROJECT_WITH_LOCATION_KEYS = [...PROJECT_KEYS, "location"] as const;
+const PROJECT_LOCATION_KEYS = [
+  "address",
+  "latitude",
+  "longitude",
+  "radius_meters",
+  "confirmed_at",
+] as const;
 const ASSIGNMENT_KEYS = ["assignment_id", "project_id", "project_version",
   "manager_recruiter_id", "valid_from", "valid_to", "effective", "version",
   "revoked_at", "created_at", "updated_at"] as const;
 
-/** Master row 10 key (list item + get_project_admin). */
+export function projectAdminLocation(value: unknown): AdminProjectLocation | null {
+  if (!isRecord(value) || !exactKeys(value, PROJECT_LOCATION_KEYS)) return null;
+  const address = value.address === null ? null : str(value.address);
+  if (value.address !== null && (address === null || address.length > 500)) return null;
+  if (
+    typeof value.latitude !== "number" ||
+    !Number.isFinite(value.latitude) ||
+    value.latitude < -90 ||
+    value.latitude > 90 ||
+    typeof value.longitude !== "number" ||
+    !Number.isFinite(value.longitude) ||
+    value.longitude < -180 ||
+    value.longitude > 180
+  ) {
+    return null;
+  }
+  const radius_meters = int(value.radius_meters);
+  if (radius_meters === null || radius_meters < 50 || radius_meters > 2000) return null;
+  const confirmed_at = nullableStr(value.confirmed_at);
+  if (confirmed_at === undefined) return null;
+  return {
+    address,
+    latitude: Object.is(value.latitude, -0) ? 0 : value.latitude,
+    longitude: Object.is(value.longitude, -0) ? 0 : value.longitude,
+    radius_meters,
+    confirmed_at,
+  };
+}
+
+/** Master row 10 key hoac 11 key kem location (list item + get_project_admin). */
 export function projectAdminProject(value: unknown): AdminProject | null {
-  if (!isRecord(value) || !exactKeys(value, PROJECT_KEYS)) return null;
+  if (!isRecord(value)) return null;
+  const hasLocation = "location" in value;
+  if (hasLocation ? !exactKeys(value, PROJECT_WITH_LOCATION_KEYS) : !exactKeys(value, PROJECT_KEYS)) {
+    return null;
+  }
   const project_id = str(value.project_id);
   const display_name = str(value.display_name);
   const active = bool(value.active);
@@ -135,8 +190,25 @@ export function projectAdminProject(value: unknown): AdminProject | null {
       can_manage_project_master === null || can_assign_managers === null) {
     return null;
   }
-  return { project_id, display_name, active, version, created_at, updated_at,
-    revision_count, active_assignment_count, can_manage_project_master, can_assign_managers };
+  const base: AdminProject = {
+    project_id,
+    display_name,
+    active,
+    version,
+    created_at,
+    updated_at,
+    revision_count,
+    active_assignment_count,
+    can_manage_project_master,
+    can_assign_managers,
+  };
+  if (!hasLocation) return base;
+  if (value.location === null) {
+    return { ...base, location: null };
+  }
+  const location = projectAdminLocation(value.location);
+  if (!location) return null;
+  return { ...base, location };
 }
 
 export function projectAdminAssignment(value: unknown): AdminAssignment | null {
@@ -227,6 +299,32 @@ export function projectAdminCreateMutation(value: unknown): AdminProjectCreateMu
   if (project_id === null || display_name === null || active === null ||
       version === null || revision_id === null || created !== true) return null;
   return { project_id, display_name, active, version, revision_id, created };
+}
+
+export function projectAdminLocationMutation(value: unknown): AdminProjectLocationMutation | null {
+  if (
+    !isRecord(value) ||
+    !exactKeys(value, ["project_id", "display_name", "active", "version", "revision_id", "location"])
+  ) {
+    return null;
+  }
+  const project_id = str(value.project_id);
+  const display_name = str(value.display_name);
+  const active = bool(value.active);
+  const version = int(value.version);
+  const revision_id = str(value.revision_id);
+  if (
+    project_id === null ||
+    display_name === null ||
+    active === null ||
+    version === null ||
+    revision_id === null
+  ) {
+    return null;
+  }
+  const location = value.location === null ? null : projectAdminLocation(value.location);
+  if (value.location !== null && !location) return null;
+  return { project_id, display_name, active, version, revision_id, location };
 }
 
 /** assign: 8 key (manager_recruiter_id + valid_from co mat). */

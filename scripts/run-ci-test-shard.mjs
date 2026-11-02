@@ -96,6 +96,7 @@ const TEST_WEIGHTS = {
   "test:leave-management-wp2-ui": 2.0,
   "test:salary-advance-wp1": 11.0,
   "test:salary-advance-wp2-ui": 2.0,
+  "test:attendance-monthly-matrix": 12.0,
 };
 
 const target = process.argv[2];

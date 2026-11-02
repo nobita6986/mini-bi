@@ -83,6 +83,8 @@ import {
   DASHBOARD_DETAILED_RECRUITMENT_MATRIX_CATALOG_MIGRATION_NAME,
   DASHBOARD_DETAILED_RECRUITMENT_MATRIX_CATALOG_RPC_SIGNATURE,
   WORKER_EDIT_HISTORY_ADMIN_RPC_SIGNATURES,
+  ATTENDANCE_MONTHLY_MATRIX_BRANCHES_PROJECT_COORDS_MIGRATION_NAME,
+  ATTENDANCE_MONTHLY_MATRIX_BRANCHES_PROJECT_COORDS_RPC_SIGNATURES,
   OFFBOARDING_REPORT_MIGRATION_NAME,
   OFFBOARDING_REPORT_RPC_SIGNATURES,
   migrationChecksum,
@@ -99,7 +101,7 @@ const R1_2_MIGRATION = "20261021100000_r1_2_worker_management_uat_fixes.sql";
 const R2_1_MIGRATION = "20261021120000_r2_1_change_request_queues_and_project_team_guard.sql";
 const R1_2_SERVICE_RPC =
   "public.direct_entry_list_workers(uuid, uuid, text, text, uuid, text, text, integer, text)";
-const TARGET_PATTERN = "^(direct_entry_|worker_edit_history_|work_report_|attendance_|org_department_|vendor_finance_|leave_management_|salary_advance_|ai_report_|ai_provider_config_|recruitment_|(expand|replace|reject|upsert)_daily_recruitment|record_recruitment_source_failure_|set_updated_at$)";
+const TARGET_PATTERN = "^(direct_entry_|worker_edit_history_|work_report_|attendance_|org_department_|vendor_finance_|leave_management_|salary_advance_|hrp_sync_|ai_report_|ai_provider_config_|recruitment_|(expand|replace|reject|upsert)_daily_recruitment|record_recruitment_source_failure_|set_updated_at$)";
 
 function binary(name) {
   const binDir = process.env.P3_1_W02A_PG_BIN
@@ -1079,7 +1081,8 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
         HF_SALARY_ADVANCE_PM_WORKER_HISTORY_RPC_SIGNATURE,
         ...HF_DUPLICATE_CCCD_RESIGNED_WITHDRAW_AND_WORKER_FILTERS_RPC_SIGNATURES,
         DASHBOARD_DETAILED_RECRUITMENT_MATRIX_CATALOG_RPC_SIGNATURE,
-        ...WORKER_EDIT_HISTORY_ADMIN_RPC_SIGNATURES);
+        ...WORKER_EDIT_HISTORY_ADMIN_RPC_SIGNATURES,
+        ...ATTENDANCE_MONTHLY_MATRIX_BRANCHES_PROJECT_COORDS_RPC_SIGNATURES);
       assert.ok(expectedSignatures.length > 0, "the explicit server/invoker allowlist is not empty");
       assert.equal(new Set(expectedSignatures).size, expectedSignatures.length, "the allowlist has no duplicates");
       const { rows: resolvedExpected } = await client.query(
@@ -1126,13 +1129,37 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
           HF_SALARY_ADVANCE_PM_WORKER_HISTORY_RPC_SIGNATURE,
           ...HF_DUPLICATE_CCCD_RESIGNED_WITHDRAW_AND_WORKER_FILTERS_RPC_SIGNATURES,
           DASHBOARD_DETAILED_RECRUITMENT_MATRIX_CATALOG_RPC_SIGNATURE,
-          ...WORKER_EDIT_HISTORY_ADMIN_RPC_SIGNATURES].sort(),
+          ...WORKER_EDIT_HISTORY_ADMIN_RPC_SIGNATURES,
+          ...ATTENDANCE_MONTHLY_MATRIX_BRANCHES_PROJECT_COORDS_RPC_SIGNATURES].sort(),
         "only explicitly reviewed post-S0 RPCs add service_role grants after the S0 baseline",
       );
       const dashboardDetailedMatrixCatalogMigration = await readFile(
         path.join(MIGRATION_DIR, DASHBOARD_DETAILED_RECRUITMENT_MATRIX_CATALOG_MIGRATION_NAME),
         "utf8",
       );
+      const attendanceMonthlyMatrixBranchesMigration = await readFile(
+        path.join(MIGRATION_DIR, ATTENDANCE_MONTHLY_MATRIX_BRANCHES_PROJECT_COORDS_MIGRATION_NAME),
+        "utf8",
+      );
+      const attendanceMonthlyMatrixBranchesNormalized = attendanceMonthlyMatrixBranchesMigration
+        .replace(/\s+/g, " ")
+        .replace(/\(\s+/g, "(")
+        .replace(/\s+\)/g, ")")
+        .toLowerCase();
+      for (const sig of ATTENDANCE_MONTHLY_MATRIX_BRANCHES_PROJECT_COORDS_RPC_SIGNATURES) {
+        assert.ok(
+          attendanceMonthlyMatrixBranchesNormalized.includes(
+            `revoke all on function ${sig.toLowerCase()} from public, anon, authenticated, service_role;`,
+          ),
+          `attendance monthly matrix / branch / project location / hrp catalog RPC ${sig} revokes inherited RPC grants`,
+        );
+        assert.ok(
+          attendanceMonthlyMatrixBranchesNormalized.includes(
+            `grant execute on function ${sig.toLowerCase()} to service_role;`,
+          ),
+          `attendance monthly matrix / branch / project location / hrp catalog RPC ${sig} grants EXECUTE only to service_role`,
+        );
+      }
       const dashboardDetailedMatrixCatalogNormalized =
         dashboardDetailedMatrixCatalogMigration
           .replace(/\s+/g, " ")

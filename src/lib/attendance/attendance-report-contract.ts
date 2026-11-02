@@ -20,6 +20,7 @@ export type AttendanceReportTimeSource = (typeof ATTENDANCE_REPORT_TIME_SOURCES)
 export const ATTENDANCE_DISTANCE_STATUSES = [
   "COMPUTED",
   "HQ_NOT_CONFIGURED",
+  "BRANCH_NOT_CONFIGURED",
   "INVALID_GPS",
 ] as const;
 
@@ -121,6 +122,10 @@ export type AttendanceReportItemProjection = {
   distance_meters: number | null;
   distance_status: AttendanceDistanceStatus;
   hq_version_used: number | null;
+  branch_id_used?: string | null;
+  branch_code_used?: string | null;
+  branch_name_used?: string | null;
+  branch_version_used?: number | null;
 };
 
 export type AttendanceEmployeeOptionProjection = {
@@ -573,30 +578,45 @@ function projectPagination(value: unknown): AttendanceReportPaginationProjection
   };
 }
 
+const REPORT_ITEM_LEGACY_KEYS = [
+  "checkin_id",
+  "employee_display_name",
+  "personnel_code",
+  "business_date",
+  "sequence_in_day",
+  "captured_at",
+  "captured_at_local",
+  "received_at",
+  "time_source",
+  "time_verified",
+  "sync_delay_seconds",
+  "latitude",
+  "longitude",
+  "accuracy_meters",
+  "address_hint",
+  "note",
+  "distance_meters",
+  "distance_status",
+  "hq_version_used",
+] as const;
+
+const REPORT_ITEM_BRANCH_KEYS = [
+  ...REPORT_ITEM_LEGACY_KEYS,
+  "branch_id_used",
+  "branch_code_used",
+  "branch_name_used",
+  "branch_version_used",
+] as const;
+
 function projectReportItem(value: unknown): AttendanceReportItemProjection | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const hasBranchKeys = "branch_id_used" in value;
   if (
-    !isRecord(value) ||
-    !hasExactKeys(value, [
-      "checkin_id",
-      "employee_display_name",
-      "personnel_code",
-      "business_date",
-      "sequence_in_day",
-      "captured_at",
-      "captured_at_local",
-      "received_at",
-      "time_source",
-      "time_verified",
-      "sync_delay_seconds",
-      "latitude",
-      "longitude",
-      "accuracy_meters",
-      "address_hint",
-      "note",
-      "distance_meters",
-      "distance_status",
-      "hq_version_used",
-    ])
+    hasBranchKeys
+      ? !hasExactKeys(value, REPORT_ITEM_BRANCH_KEYS)
+      : !hasExactKeys(value, REPORT_ITEM_LEGACY_KEYS)
   ) {
     return null;
   }
@@ -650,30 +670,78 @@ function projectReportItem(value: unknown): AttendanceReportItemProjection | nul
     return null;
   }
 
+  const branchIdUsed = hasBranchKeys ? value.branch_id_used : null;
+  const branchCodeUsed = hasBranchKeys ? value.branch_code_used : null;
+  const branchNameUsed = hasBranchKeys ? value.branch_name_used : null;
+  const branchVersionUsed = hasBranchKeys ? value.branch_version_used : null;
+
+  if (hasBranchKeys) {
+    if (branchIdUsed !== null && !isUuidString(branchIdUsed)) return null;
+    if (branchCodeUsed !== null && (typeof branchCodeUsed !== "string" || branchCodeUsed.trim().length === 0)) {
+      return null;
+    }
+    if (branchNameUsed !== null && (typeof branchNameUsed !== "string" || branchNameUsed.trim().length === 0)) {
+      return null;
+    }
+    if (
+      branchVersionUsed !== null &&
+      (typeof branchVersionUsed !== "number" ||
+        !Number.isSafeInteger(branchVersionUsed) ||
+        branchVersionUsed < 1)
+    ) {
+      return null;
+    }
+    if ((branchIdUsed === null) !== (branchCodeUsed === null) || (branchIdUsed === null) !== (branchNameUsed === null)) {
+      return null;
+    }
+  }
+
   const distanceStatus = value.distance_status;
   if (
     distanceStatus !== "COMPUTED" &&
     distanceStatus !== "HQ_NOT_CONFIGURED" &&
+    distanceStatus !== "BRANCH_NOT_CONFIGURED" &&
     distanceStatus !== "INVALID_GPS"
   ) {
     return null;
   }
 
+  const validHqVersion =
+    typeof value.hq_version_used === "number" &&
+    Number.isSafeInteger(value.hq_version_used) &&
+    value.hq_version_used >= 1;
+  const validBranchVersion =
+    typeof branchVersionUsed === "number" &&
+    Number.isSafeInteger(branchVersionUsed) &&
+    branchVersionUsed >= 1 &&
+    branchIdUsed !== null;
+
   if (distanceStatus === "COMPUTED") {
     if (
       !isFiniteNumber(value.distance_meters) ||
       value.distance_meters < 0 ||
-      typeof value.hq_version_used !== "number" ||
-      !Number.isSafeInteger(value.hq_version_used) ||
-      value.hq_version_used < 1
+      !((validHqVersion && branchVersionUsed === null && branchIdUsed === null) ||
+        (validBranchVersion && value.hq_version_used === null))
     ) {
       return null;
     }
-  } else if (value.distance_meters !== null || value.hq_version_used !== null) {
+  } else if (distanceStatus === "BRANCH_NOT_CONFIGURED") {
+    if (
+      value.distance_meters !== null ||
+      value.hq_version_used !== null ||
+      !validBranchVersion
+    ) {
+      return null;
+    }
+  } else if (
+    value.distance_meters !== null ||
+    value.hq_version_used !== null ||
+    branchVersionUsed !== null
+  ) {
     return null;
   }
 
-  return {
+  const base: AttendanceReportItemProjection = {
     checkin_id: value.checkin_id,
     employee_display_name: value.employee_display_name,
     personnel_code: value.personnel_code,
@@ -698,6 +766,15 @@ function projectReportItem(value: unknown): AttendanceReportItemProjection | nul
     distance_status: distanceStatus,
     hq_version_used: value.hq_version_used as number | null,
   };
+
+  if (hasBranchKeys) {
+    base.branch_id_used = branchIdUsed === null ? null : (branchIdUsed as string).toLowerCase();
+    base.branch_code_used = branchCodeUsed as string | null;
+    base.branch_name_used = branchNameUsed as string | null;
+    base.branch_version_used = branchVersionUsed as number | null;
+  }
+
+  return base;
 }
 
 export function projectEmployeeOption(

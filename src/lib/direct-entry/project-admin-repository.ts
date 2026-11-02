@@ -16,6 +16,7 @@ import {
   projectAdminCreateMutation,
   projectAdminCandidates,
   projectAdminList,
+  projectAdminLocationMutation,
   projectAdminMutation,
   projectAdminProject,
   projectAdminUnassignMutation,
@@ -28,6 +29,7 @@ import type {
   AdminProjectCreateMutation,
   AdminProjectDetail,
   AdminProjectList,
+  AdminProjectLocationMutation,
   AdminProjectMutation,
 } from "./project-admin-contract.ts";
 
@@ -76,6 +78,17 @@ export type ProjectAdminRepository = {
     assignment_id: string; expected_version: number; expected_project_version: number;
     reason: string | null; idempotency_key: string;
   }): Promise<ProjectAdminOutcome<AdminAssignmentMutation>>;
+  updateProjectLocation?(input: AdminActorRef & {
+    project_id: string;
+    expected_version: number;
+    address: string | null;
+    latitude: number | null;
+    longitude: number | null;
+    radius_meters: number;
+    clear: boolean;
+    reason: string | null;
+    idempotency_key: string;
+  }): Promise<ProjectAdminOutcome<AdminProjectLocationMutation>>;
 };
 
 function serviceRoleRpc(): Rpc {
@@ -250,6 +263,21 @@ export function createProjectAdminRepository(rpc?: Rpc): ProjectAdminRepository 
         p_reason: input.reason,
         p_idempotency_key: input.idempotency_key,
       }, projectAdminUnassignMutation);
+    },
+    updateProjectLocation(input) {
+      return mutation("direct_entry_update_project_location", {
+        p_auth_subject: input.auth_subject,
+        p_app_user_id: input.app_user_id,
+        p_project_id: input.project_id,
+        p_expected_version: input.expected_version,
+        p_address: input.address,
+        p_latitude: input.latitude,
+        p_longitude: input.longitude,
+        p_radius_meters: input.radius_meters,
+        p_clear: input.clear,
+        p_reason: input.reason,
+        p_idempotency_key: input.idempotency_key,
+      }, projectAdminLocationMutation);
     },
   };
 }
