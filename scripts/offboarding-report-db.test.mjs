@@ -278,6 +278,18 @@ test("HF migration rollback atomicity, checksum stability, Forced RLS, immutabil
 test("Offboarding suppression end-to-end: phone: null, authority matrix, export parity, fact preservation, idempotency, lifecycle reappearance & zero CCCD leak", async () => {
   const { db } = await createDatabase();
   try {
+    for (const role of ["anon", "authenticated", "service_role"]) {
+      const candidateHelperPriv = await db.query(
+        `select has_function_privilege($1, 'public.direct_entry__internal_offboarding_candidates(text,uuid,date)', 'EXECUTE') as allowed`,
+        [role],
+      );
+      assert.equal(
+        candidateHelperPriv.rows[0].allowed,
+        false,
+        `${role} must not execute internal candidate helper direct_entry__internal_offboarding_candidates`,
+      );
+    }
+
     const authDateRes = await db.query(
       "select (public.direct_entry_authorization_date() - 5)::text as off_5d, (public.direct_entry_authorization_date() - 4)::text as off_4d, (public.direct_entry_authorization_date() - 10)::text as start_10d",
     );

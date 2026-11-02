@@ -48,6 +48,24 @@ function serviceRoleRpc(): Rpc {
   return async (name, args) => (await client).rpc(name, args);
 }
 
+const SAFE_ERROR_CODE_RE = /^[A-Z0-9_]{1,32}$/i;
+
+function sanitizeErrorCode(code: unknown): string {
+  if (typeof code !== "string") return "unknown";
+  const trimmed = code.trim();
+  return SAFE_ERROR_CODE_RE.test(trimmed) ? trimmed : "unknown";
+}
+
+function logRepositoryFailure(
+  operation: string,
+  kind: OffboardingHideFailureKind,
+  code: unknown,
+): void {
+  console.error(
+    `[offboarding-report] operation=${operation} kind=${kind} code=${sanitizeErrorCode(code)}`,
+  );
+}
+
 function classify(error: { code?: string; message?: string }): "denied" | "invalid" | "unavailable" {
   if (error?.code === "42501") return "denied";
   if (error?.code === "22023") return "invalid";
@@ -76,10 +94,19 @@ export function createOffboardingReportRepository(rpc?: Rpc): OffboardingReportR
   ): Promise<OffboardingOutcome<T>> {
     try {
       const { data, error } = await invoke(name, args);
-      if (error) return { ok: false, kind: classify(error) };
+      if (error) {
+        const kind = classify(error);
+        logRepositoryFailure(name, kind, error.code);
+        return { ok: false, kind };
+      }
       const parsed = project(data);
-      return parsed === null ? { ok: false, kind: "unavailable" } : { ok: true, data: parsed };
+      if (parsed === null) {
+        logRepositoryFailure(name, "unavailable", "INVALID_PROJECTION");
+        return { ok: false, kind: "unavailable" };
+      }
+      return { ok: true, data: parsed };
     } catch {
+      logRepositoryFailure(name, "unavailable", "RPC_EXCEPTION");
       return { ok: false, kind: "unavailable" };
     }
   }
@@ -117,10 +144,27 @@ export function createOffboardingReportRepository(rpc?: Rpc): OffboardingReportR
           p_reason: input.reason,
           p_idempotency_key: input.idempotency_key,
         });
-        if (error) return { ok: false, kind: classifyHide(error) };
+        if (error) {
+          const kind = classifyHide(error);
+          logRepositoryFailure("direct_entry_offboarding_hide_snapshot", kind, error.code);
+          return { ok: false, kind };
+        }
         const parsed = parseOffboardingHideResult(data);
-        return parsed === null ? { ok: false, kind: "unavailable" } : { ok: true, data: parsed };
+        if (parsed === null) {
+          logRepositoryFailure(
+            "direct_entry_offboarding_hide_snapshot",
+            "unavailable",
+            "INVALID_PROJECTION",
+          );
+          return { ok: false, kind: "unavailable" };
+        }
+        return { ok: true, data: parsed };
       } catch {
+        logRepositoryFailure(
+          "direct_entry_offboarding_hide_snapshot",
+          "unavailable",
+          "RPC_EXCEPTION",
+        );
         return { ok: false, kind: "unavailable" };
       }
     },

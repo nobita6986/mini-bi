@@ -41,6 +41,7 @@ import {
   ASYNC_DOCUMENTS_ATTENDANCE_PHOTO_RPC_SIGNATURE,
   HF_OFFBOARDING_SUPPRESSION_AND_ATTENDANCE_FILTER_MIGRATION_NAME,
   HF_OFFBOARDING_SUPPRESSION_AND_ATTENDANCE_FILTER_RPC_SIGNATURES,
+  HF_OFFBOARDING_REPORT_QUERY_PERFORMANCE_MIGRATION_NAME,
   ATTENDANCE_SELF_HISTORY_MIGRATION_NAME,
   ATTENDANCE_SELF_HISTORY_RPC_SIGNATURES,
   ORG_SHELL_01_DEPARTMENTS_MIGRATION_NAME,
@@ -693,6 +694,38 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
         assert.ok(
           hfOffboardingAndAttendanceNormalized.includes(sigRevoke),
           `HF offboarding/attendance RPC ${sig} revokes client and inherited EXECUTE before granting service_role`,
+        );
+      }
+      const hfOffboardingPerfMigration = await readFile(
+        path.join(MIGRATION_DIR, HF_OFFBOARDING_REPORT_QUERY_PERFORMANCE_MIGRATION_NAME),
+        "utf8",
+      );
+      const hfOffboardingPerfNormalized = hfOffboardingPerfMigration
+        .replace(/\s+/g, " ")
+        .replace(/\(\s+/g, "(")
+        .replace(/\s+\)/g, ")")
+        .toLowerCase();
+      assert.ok(
+        hfOffboardingPerfNormalized.includes(
+          "revoke all on function public.direct_entry__internal_offboarding_candidates(text, uuid, date) from public, anon, authenticated, service_role;",
+        ),
+        "HF offboarding performance internal candidate helper revokes EXECUTE from all runtime roles",
+      );
+      for (const sig of [
+        ...OFFBOARDING_REPORT_RPC_SIGNATURES,
+        "public.direct_entry_offboarding_hide_snapshot(uuid, uuid, uuid, uuid, text, text)",
+      ]) {
+        assert.ok(
+          hfOffboardingPerfNormalized.includes(
+            `revoke all on function ${sig.toLowerCase()} from public, anon, authenticated, service_role;`,
+          ),
+          `HF offboarding performance RPC ${sig} revokes inherited EXECUTE before granting service_role`,
+        );
+        assert.ok(
+          hfOffboardingPerfNormalized.includes(
+            `grant execute on function ${sig.toLowerCase()} to service_role;`,
+          ),
+          `HF offboarding performance RPC ${sig} grants EXECUTE only to service_role`,
         );
       }
       const attendanceSelfHistoryMigration = await readFile(

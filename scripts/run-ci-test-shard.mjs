@@ -21,6 +21,7 @@ const POSTGRES_TEST_FILES = new Set([
   "scripts/vfin-02-project-ledgers-concurrency.test.mjs",
   "scripts/leave-management-wp1-concurrency.test.mjs",
   "scripts/w2s2-salary-advance-wp1-concurrency.test.mjs",
+  "scripts/offboarding-report-performance-pg.test.mjs",
 ]);
 // shortcut: weights come from the latest successful main CI run; refresh when shard times drift.
 const TEST_WEIGHTS = {
