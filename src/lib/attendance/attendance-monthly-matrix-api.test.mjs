@@ -137,6 +137,7 @@ function buildValidMonthlyMatrixReport(overrides = {}) {
       total_rows: 1,
       total_pages: 1,
       has_more: false,
+      snapshot_token: "a".repeat(32),
     },
     items: [
       {
@@ -395,6 +396,7 @@ test("GET /api/admin/attendance/monthly-matrix/export aggregates multi-page data
                 total_rows: 2,
                 total_pages: 2,
                 has_more: input.page < 2,
+                snapshot_token: "a".repeat(32),
               },
               items: [item],
             }),
@@ -435,6 +437,7 @@ test("GET /api/admin/attendance/monthly-matrix/export aggregates multi-page data
               total_rows: ATTENDANCE_MONTHLY_MATRIX_EXPORT_ROW_LIMIT + 1,
               total_pages: 11,
               has_more: true,
+              snapshot_token: "a".repeat(32),
             },
           }),
         }),
@@ -462,6 +465,7 @@ test("GET /api/admin/attendance/monthly-matrix/export aggregates multi-page data
               total_rows: 3,
               total_pages: 1,
               has_more: false,
+              snapshot_token: "a".repeat(32),
             },
             items: [buildValidMonthlyMatrixReport().items[0]],
           }),
@@ -475,6 +479,47 @@ test("GET /api/admin/attendance/monthly-matrix/export aggregates multi-page data
   );
   assert.equal(incompleteRes.status, 409);
   assert.equal((await incompleteRes.json()).code, "ATTENDANCE_MATRIX_EXPORT_PAGINATION_INCOMPLETE");
+
+  // Regression: mid-export data edit or same-count employee replacement where total_rows,
+  // total_pages, and distinct app_user_ids remain valid, but snapshot_token changes across pages.
+  const midExportEditSameCountRes = await exportAttendanceMonthlyMatrixXlsx(
+    new Request("https://bi.example.com/api/admin/attendance/monthly-matrix/export?year_month=2026-10"),
+    {
+      resolveSession: async () => makeSessionOk(FULL_ADMIN_CAPS, ALL_SCOPE),
+      repository: {
+        getMonthlyMatrixReport: async (input) => {
+          const item = {
+            ...buildValidMonthlyMatrixReport().items[0],
+            app_user_id: input.page === 1 ? STAFF_USER_ID : APP_USER_ID,
+            employee_display_name: input.page === 1 ? "Nhân viên Trang 1" : "Nhân viên Thay Thế Cùng Số Dòng",
+          };
+          return {
+            ok: true,
+            report: buildValidMonthlyMatrixReport({
+              pagination: {
+                page: input.page,
+                page_size: 100,
+                total_rows: 2,
+                total_pages: 2,
+                has_more: input.page < 2,
+                snapshot_token: input.page === 1 ? "a".repeat(32) : "b".repeat(32),
+              },
+              items: [item],
+            }),
+          };
+        },
+        listBranchesAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        upsertBranchAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        assignEmployeeBranchAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        unassignEmployeeBranchAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+      },
+    },
+  );
+  assert.equal(midExportEditSameCountRes.status, 409);
+  assert.equal(
+    (await midExportEditSameCountRes.json()).code,
+    "ATTENDANCE_MATRIX_EXPORT_PAGINATION_INCOMPLETE",
+  );
 });
 
 test("HRP Branch Admin contracts and handlers enforce entry_admin @ all, coordinate pair rules, and app_user_id assignment", async () => {

@@ -884,6 +884,59 @@ test("HRP Branches, Branch Check-In Distance Snapshot Immutability, Project Coor
     assert.equal(bnFiltered.items.length, 1);
     assert.equal(bnFiltered.items[0].app_user_id, ACTORS.STAFF_A.app);
 
+    // Snapshot token consistency across paginated RPC calls & change detection when data mutates with identical total_rows
+    const page1BeforeEdit = projectAttendanceMonthlyMatrixReport(
+      await callAsServiceRole(
+        db,
+        `select public.attendance_monthly_matrix_report(
+          $1::uuid, $2::uuid, '2026-11', null, null, null, 1, 1
+        ) as data`,
+        [ACTORS.FULL_ADMIN.auth, ACTORS.FULL_ADMIN.app],
+      ),
+    );
+    const page2BeforeEdit = projectAttendanceMonthlyMatrixReport(
+      await callAsServiceRole(
+        db,
+        `select public.attendance_monthly_matrix_report(
+          $1::uuid, $2::uuid, '2026-11', null, null, null, 2, 1
+        ) as data`,
+        [ACTORS.FULL_ADMIN.auth, ACTORS.FULL_ADMIN.app],
+      ),
+    );
+    assert.ok(page1BeforeEdit && page2BeforeEdit);
+    assert.match(page1BeforeEdit.pagination.snapshot_token, /^[0-9a-f]{32}$/);
+    assert.equal(
+      page2BeforeEdit.pagination.snapshot_token,
+      page1BeforeEdit.pagination.snapshot_token,
+      "snapshot_token must match across pages when reading the same dataset state",
+    );
+
+    // Approve leaveReqId2 (Nov 7) mid-export: total_rows remains identical, but dataset snapshot changes
+    await db.query(
+      "update public.leave_requests set status = 'APPROVED', decided_at = now(), decided_by_app_user_id = $2::uuid where request_id = $1::uuid",
+      [leaveReqId2, ACTORS.FULL_ADMIN.app],
+    );
+    const page2AfterEdit = projectAttendanceMonthlyMatrixReport(
+      await callAsServiceRole(
+        db,
+        `select public.attendance_monthly_matrix_report(
+          $1::uuid, $2::uuid, '2026-11', null, null, null, 2, 1
+        ) as data`,
+        [ACTORS.FULL_ADMIN.auth, ACTORS.FULL_ADMIN.app],
+      ),
+    );
+    assert.ok(page2AfterEdit);
+    assert.equal(
+      page2AfterEdit.pagination.total_rows,
+      page1BeforeEdit.pagination.total_rows,
+      "total_rows stays identical after mid-export edit",
+    );
+    assert.notEqual(
+      page2AfterEdit.pagination.snapshot_token,
+      page1BeforeEdit.pagination.snapshot_token,
+      "snapshot_token must change when underlying attendance/leave data changes with identical row count",
+    );
+
     // -------------------------------------------------------------------------
     // 6. Project Coordinates Admin CRUD & HRP Sync Catalog RPC
     // -------------------------------------------------------------------------

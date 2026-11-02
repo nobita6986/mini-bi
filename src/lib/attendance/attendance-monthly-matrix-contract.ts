@@ -179,6 +179,7 @@ export type AttendanceMonthlyMatrixPaginationProjection = {
   total_rows: number;
   total_pages: number;
   has_more: boolean;
+  snapshot_token: string;
 };
 
 export type AttendanceMonthlyMatrixEmployeeBranchProjection = {
@@ -998,7 +999,14 @@ function projectOverview(value: unknown): AttendanceMonthlyMatrixOverviewProject
 function projectPagination(value: unknown): AttendanceMonthlyMatrixPaginationProjection | null {
   if (
     !isRecord(value) ||
-    !hasExactKeys(value, ["page", "page_size", "total_rows", "total_pages", "has_more"])
+    !hasExactKeys(value, [
+      "page",
+      "page_size",
+      "total_rows",
+      "total_pages",
+      "has_more",
+      "snapshot_token",
+    ])
   ) {
     return null;
   }
@@ -1015,7 +1023,9 @@ function projectPagination(value: unknown): AttendanceMonthlyMatrixPaginationPro
     typeof value.total_pages !== "number" ||
     !Number.isSafeInteger(value.total_pages) ||
     value.total_pages < 0 ||
-    typeof value.has_more !== "boolean"
+    typeof value.has_more !== "boolean" ||
+    typeof value.snapshot_token !== "string" ||
+    !/^[0-9a-f]{32}$/.test(value.snapshot_token)
   ) {
     return null;
   }
@@ -1025,6 +1035,7 @@ function projectPagination(value: unknown): AttendanceMonthlyMatrixPaginationPro
     total_rows: value.total_rows,
     total_pages: value.total_pages,
     has_more: value.has_more,
+    snapshot_token: value.snapshot_token,
   };
 }
 

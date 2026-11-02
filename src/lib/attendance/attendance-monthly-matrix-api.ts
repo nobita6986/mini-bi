@@ -341,6 +341,7 @@ export async function exportAttendanceMonthlyMatrixXlsx(
   const firstReport = firstPageResult.report;
   const expectedTotalRows = firstReport.pagination.total_rows;
   const expectedTotalPages = firstReport.pagination.total_pages;
+  const expectedSnapshotToken = firstReport.pagination.snapshot_token;
 
   if (expectedTotalRows > ATTENDANCE_MONTHLY_MATRIX_EXPORT_ROW_LIMIT) {
     return matrixError("ATTENDANCE_MATRIX_EXPORT_ROW_LIMIT_EXCEEDED");
@@ -386,6 +387,7 @@ export async function exportAttendanceMonthlyMatrixXlsx(
       if (
         nextReport.pagination.total_rows !== expectedTotalRows ||
         nextReport.pagination.total_pages !== expectedTotalPages ||
+        nextReport.pagination.snapshot_token !== expectedSnapshotToken ||
         nextReport.items.length === 0
       ) {
         return matrixError("ATTENDANCE_MATRIX_EXPORT_PAGINATION_INCOMPLETE");

@@ -2491,6 +2491,7 @@ declare
   v_items jsonb;
   v_total_rows integer := 0;
   v_total_pages integer := 0;
+  v_snapshot_token text;
 begin
   v_can_configure_hq := public.attendance__internal_assert_report_reader(
     p_auth_subject,
@@ -2952,7 +2953,93 @@ begin
       coalesce(sum(er.approved_leave_day_count), 0)::integer as total_approved_leave_days,
       coalesce(round(sum(er.approved_leave_units)::numeric, 1)::double precision, 0.0::double precision) as total_approved_leave_units,
       coalesce(sum(er.no_checkin_day_count), 0)::integer as total_no_checkin_days,
-      coalesce(sum(er.no_checkin_without_leave_day_count), 0)::integer as total_no_checkin_without_leave_days
+      coalesce(sum(er.no_checkin_without_leave_day_count), 0)::integer as total_no_checkin_without_leave_days,
+      pg_catalog.md5(
+        coalesce(
+          (
+            select pg_catalog.jsonb_agg(
+              pg_catalog.jsonb_build_object(
+                'u', er2.app_user_id,
+                'n', er2.employee_display_name,
+                'p', er2.personnel_code,
+                'e', er2.enabled,
+                'b', er2.branch_id,
+                'bc', er2.branch_code,
+                'bn', er2.branch_display_name,
+                'ba', er2.branch_address,
+                'blat', er2.branch_latitude,
+                'blon', er2.branch_longitude,
+                'bact', er2.branch_active,
+                'bv', er2.branch_version,
+                'bf', er2.branch_valid_from,
+                'bt', er2.branch_valid_to,
+                'cd', er2.checkin_day_count,
+                'tc', er2.total_checkins,
+                'dc', er2.distance_computed_count,
+                'du', er2.distance_unavailable_count,
+                'dmin', er2.min_distance_meters,
+                'dmax', er2.max_distance_meters,
+                'ld', er2.approved_leave_day_count,
+                'lu', er2.approved_leave_units,
+                'ov', er2.checkin_and_leave_day_count
+              )
+              order by
+                lower(er2.employee_display_name) asc,
+                coalesce(er2.personnel_code, '') asc,
+                er2.app_user_id asc
+            )::text
+            from employee_rollup er2
+          ),
+          '[]'
+        )
+        || '|' ||
+        coalesce(
+          (
+            select pg_catalog.jsonb_agg(
+              pg_catalog.jsonb_build_object(
+                'u', dc2.app_user_id,
+                'd', dc2.business_date,
+                'c', dc2.checkin_count,
+                'vc', dc2.verified_checkin_count,
+                'uc', dc2.unverified_checkin_count,
+                'f', dc2.first_checkin_id,
+                'l', dc2.last_checkin_id,
+                'ft', dc2.first_captured_at,
+                'lt', dc2.last_captured_at,
+                'k', dc2.distance_target_kind,
+                'bi', dc2.branch_id_used,
+                'bc', dc2.branch_code_used,
+                'bn', dc2.branch_name_used,
+                'bv', dc2.branch_version_used,
+                'hv', dc2.hq_version_used,
+                'ds', dc2.distance_status,
+                'dm', dc2.distance_meters,
+                'dmin', dc2.min_distance_meters,
+                'dmax', dc2.max_distance_meters
+              )
+              order by dc2.app_user_id asc, dc2.business_date asc
+            )::text
+            from daily_checkins dc2
+          ),
+          '[]'
+        )
+        || '|' ||
+        coalesce(
+          (
+            select pg_catalog.jsonb_agg(
+              pg_catalog.jsonb_build_object(
+                'u', dl2.app_user_id,
+                'd', dl2.business_date,
+                'h', dl2.half_day_units,
+                'l', dl2.approved_leaves
+              )
+              order by dl2.app_user_id asc, dl2.business_date asc
+            )::text
+            from daily_leaves dl2
+          ),
+          '[]'
+        )
+      ) as snapshot_token
     from employee_rollup er
   ),
   paged_employees as (
@@ -3036,6 +3123,7 @@ begin
   )
   select
     a.total_employees,
+    a.snapshot_token,
     jsonb_build_object(
       'total_employees', a.total_employees,
       'employees_with_checkins', a.employees_with_checkins,
@@ -3095,7 +3183,7 @@ begin
       ),
       '[]'::jsonb
     )
-  into v_total_rows, v_overview, v_items
+  into v_total_rows, v_snapshot_token, v_overview, v_items
   from agg a;
 
   v_total_pages := case
@@ -3128,7 +3216,8 @@ begin
       'page_size', v_page_size,
       'total_rows', v_total_rows,
       'total_pages', v_total_pages,
-      'has_more', (v_page < v_total_pages)
+      'has_more', (v_page < v_total_pages),
+      'snapshot_token', v_snapshot_token
     ),
     'items', v_items
   );
