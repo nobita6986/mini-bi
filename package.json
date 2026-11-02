@@ -155,7 +155,7 @@
     "test:work-reports-reader-contract": "node --conditions=react-server --test src/lib/work-reports/report-reader-api.test.mjs scripts/work-reports-reader-contract-db.test.mjs",
     "test:attendance-wp1": "node --conditions=react-server --test src/lib/attendance/attendance-api.test.mjs && node --test scripts/attendance-wp1-db.test.mjs scripts/attendance-wp1-concurrency.test.mjs",
     "test:attendance-admin-report": "node --conditions=react-server --test src/lib/attendance/attendance-report-api.test.mjs scripts/attendance-admin-report-db.test.mjs",
-    "test:offboarding-report": "node --conditions=react-server --test src/lib/workforce/offboarding-report-api.test.mjs scripts/offboarding-report-db.test.mjs",
+    "test:offboarding-report": "node --conditions=react-server --test src/lib/workforce/offboarding-report-api.test.mjs scripts/offboarding-report-db.test.mjs scripts/offboarding-report-performance-pg.test.mjs",
     "test:org-shell-01": "node --conditions=react-server --test src/lib/departments/department-contract.test.mjs src/lib/departments/department-api.test.mjs scripts/org-shell-01-departments-db.test.mjs && node --test scripts/org-shell-01-departments-concurrency.test.mjs",
     "test:org-shell-01-ui": "node --test src/lib/admin/department-ui-model.test.mjs src/components/admin/department-admin-ui.test.mjs src/lib/admin/admin-navigation.test.mjs src/app/admin/admin-access.test.mjs src/lib/auth/direct-entry-page-access.test.mjs",
     "test:vfin-01": "node --conditions=react-server --test src/lib/vendor-finance/vendor-finance-contract.test.mjs src/lib/vendor-finance/r2-evidence-storage.test.mjs src/lib/vendor-finance/vendor-finance-api.test.mjs scripts/vfin-01-backend-db.test.mjs && node --test scripts/vfin-01-concurrency.test.mjs",

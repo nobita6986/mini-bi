@@ -567,6 +567,60 @@ test("POST /api/workforce/offboarding/hide enforces CSRF, content-type, body lim
     false,
     "hide reason must never be written to server logs",
   );
+  assert.equal(
+    loggedMessages.some((msg) => msg.includes(AUTH_SUBJECT) || msg.includes(APP_USER_ID)),
+    false,
+    "actor UUIDs must never be written to server logs",
+  );
+  assert.ok(
+    loggedMessages.some((msg) =>
+      msg.includes(
+        "[offboarding-report] operation=direct_entry_offboarding_hide_snapshot kind=stale code=PT409",
+      ),
+    ),
+    "sanitized operation/kind/code diagnostic is logged on hide conflict",
+  );
+});
+
+test("Offboarding repository logs sanitized operation/kind/code on RPC failure (including 57014 timeout) without leaking sensitive data", async () => {
+  const logged = [];
+  const origError = console.error;
+  console.error = (...args) => {
+    logged.push(args.map((a) => String(a)).join(" "));
+  };
+  try {
+    const repo = createOffboardingReportRepository(async (name) => ({
+      data: null,
+      error: {
+        code: name === "direct_entry_offboarding_report" ? "57014" : "PGRST202",
+        message: `canceling statement due to statement timeout ${AUTH_SUBJECT} ${APP_USER_ID} 001099000111 0901234567`,
+      },
+    }));
+
+    const listOutcome = await repo.list({
+      auth_subject: AUTH_SUBJECT,
+      app_user_id: APP_USER_ID,
+      page: 1,
+      page_size: 25,
+    });
+    assert.deepEqual(listOutcome, { ok: false, kind: "unavailable" });
+
+    const exportOutcome = await repo.export({
+      auth_subject: AUTH_SUBJECT,
+      app_user_id: APP_USER_ID,
+    });
+    assert.deepEqual(exportOutcome, { ok: false, kind: "unavailable" });
+  } finally {
+    console.error = origError;
+  }
+
+  assert.deepEqual(logged, [
+    "[offboarding-report] operation=direct_entry_offboarding_report kind=unavailable code=57014",
+    "[offboarding-report] operation=direct_entry_offboarding_report_export kind=unavailable code=PGRST202",
+  ]);
+  for (const forbidden of [AUTH_SUBJECT, APP_USER_ID, "001099000111", "0901234567"]) {
+    assert.equal(logged.some((m) => m.includes(forbidden)), false);
+  }
 });
 
 test("Offboarding UI panel, Dashboard tab, standalone page, and route handler satisfy deduplicated contract and FormDialog rules", () => {

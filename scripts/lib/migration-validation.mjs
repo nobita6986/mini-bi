@@ -91,6 +91,8 @@ export const HF_OFFBOARDING_SUPPRESSION_AND_ATTENDANCE_FILTER_RPC_SIGNATURES = O
   "public.direct_entry_offboarding_hide_snapshot(uuid, uuid, uuid, uuid, text, text)",
   "public.attendance_admin_report(uuid, uuid, date, date, integer, integer, text, uuid)",
 ]);
+export const HF_OFFBOARDING_REPORT_QUERY_PERFORMANCE_MIGRATION_NAME =
+  "20261102090000_hf_offboarding_report_query_performance.sql";
 export const ATTENDANCE_SELF_HISTORY_MIGRATION_NAME =
   "20261025130000_attendance_self_history.sql";
 export const ATTENDANCE_SELF_HISTORY_RPC_SIGNATURES = Object.freeze([
