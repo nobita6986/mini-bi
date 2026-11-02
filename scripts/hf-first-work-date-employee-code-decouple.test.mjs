@@ -1555,3 +1555,142 @@ test("HF Worker Profile Direct Edit: banking (payment) in direct_entry_privilege
     await db.close();
   }
 });
+
+test("direct edit keeps saved recruiter/team/provider when that recruiter is no longer current", async () => {
+  const { db } = await buildDb();
+  try {
+    await seedActorsAndCatalog(db);
+    const worker = await seedSubmittedWorker(db, {
+      employeeCode: "hrp-2026-009901",
+      firstWorkDate: "2026-03-10",
+      cccd: "079095009901",
+      recruiterId: REC_C,
+      teamId: TEAM_A,
+    });
+
+    await db.query("update public.recruiters set active = false where recruiter_id = $1", [REC_C]);
+    await db.query(
+      "update public.recruiter_provider_memberships set is_current = false where recruiter_id = $1",
+      [REC_C],
+    );
+    await db.query(
+      "update public.recruiter_team_memberships set is_current = false where recruiter_id = $1",
+      [REC_C],
+    );
+
+    const effectiveDate = (
+      await db.query("select public.direct_entry_authorization_date()::text as date")
+    ).rows[0].date;
+    const statusEdit = (
+      await db.query(
+        "select public.direct_entry_privileged_edit($1::uuid, $2::uuid, $3::uuid, 1, $4::jsonb, null, 'inactive-recruiter-status') as data",
+        [
+          PM_A_AUTH,
+          PM_A_APP,
+          worker.entryId,
+          JSON.stringify({
+            employment_status: {
+              status: "OFF",
+              effective_date: effectiveDate,
+              leave_reason: "Đã nghỉ việc",
+            },
+          }),
+        ],
+      )
+    ).rows[0].data;
+    assert.deepEqual(statusEdit, { entry_id: worker.entryId, version: 2 });
+
+    const preserved = (
+      await db.query(
+        "select recruiter_id::text as recruiter_id, team_id::text as team_id, provider_type, first_work_date::text as first_work_date, version from public.direct_entries where entry_id = $1::uuid",
+        [worker.entryId],
+      )
+    ).rows[0];
+    assert.deepEqual(preserved, {
+      recruiter_id: REC_C,
+      team_id: TEAM_A,
+      provider_type: "hrp",
+      first_work_date: "2026-03-10",
+      version: 2,
+    });
+
+    const statusAudit = (
+      await db.query(
+        "select action, outcome, changed_fields from public.direct_entry_audit_events where resource_ref = $1",
+        [worker.entryId],
+      )
+    ).rows;
+    assert.deepEqual(statusAudit, [
+      {
+        action: "entry_privileged_edit",
+        outcome: "APPLIED",
+        changed_fields: ["employment_status"],
+      },
+    ]);
+    const statusEvent = (
+      await db.query(
+        "select status, effective_date::text as effective_date, leave_reason_text from public.direct_entry_employment_status_events where entry_id = $1::uuid order by version desc limit 1",
+        [worker.entryId],
+      )
+    ).rows[0];
+    assert.deepEqual(statusEvent, {
+      status: "OFF",
+      effective_date: effectiveDate,
+      leave_reason_text: "Đã nghỉ việc",
+    });
+
+    const sameRecruiterEdit = (
+      await db.query(
+        "select public.direct_entry_privileged_edit($1::uuid, $2::uuid, $3::uuid, 2, $4::jsonb, null, 'inactive-recruiter-same-links') as data",
+        [
+          PM_A_AUTH,
+          PM_A_APP,
+          worker.entryId,
+          JSON.stringify({
+            recruiter_id: REC_C,
+            first_work_date: "2026-03-10",
+            worker_details: workerDetails("079095009901", "Worker HF Updated"),
+          }),
+        ],
+      )
+    ).rows[0].data;
+    assert.deepEqual(sameRecruiterEdit, { entry_id: worker.entryId, version: 3 });
+
+    await db.query("update public.recruiters set active = false where recruiter_id = $1", [REC_B]);
+    await db.query(
+      "update public.recruiter_provider_memberships set is_current = false where recruiter_id = $1",
+      [REC_B],
+    );
+    await db.query(
+      "update public.recruiter_team_memberships set is_current = false where recruiter_id = $1",
+      [REC_B],
+    );
+    await assert.rejects(
+      db.query(
+        "select public.direct_entry_privileged_edit($1::uuid, $2::uuid, $3::uuid, 3, $4::jsonb, null, 'inactive-recruiter-changed-link')",
+        [
+          PM_A_AUTH,
+          PM_A_APP,
+          worker.entryId,
+          JSON.stringify({ recruiter_id: REC_B }),
+        ],
+      ),
+      (error) => error.code === "42501",
+    );
+
+    const afterDeniedChange = (
+      await db.query(
+        "select recruiter_id::text as recruiter_id, team_id::text as team_id, provider_type, version from public.direct_entries where entry_id = $1::uuid",
+        [worker.entryId],
+      )
+    ).rows[0];
+    assert.deepEqual(afterDeniedChange, {
+      recruiter_id: REC_C,
+      team_id: TEAM_A,
+      provider_type: "hrp",
+      version: 3,
+    });
+  } finally {
+    await db.close();
+  }
+});
