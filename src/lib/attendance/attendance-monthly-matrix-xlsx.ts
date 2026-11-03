@@ -1,4 +1,7 @@
 import {
+  resolveAttendanceEmployeeDisplayIdentity,
+} from "./attendance-report-contract.ts";
+import {
   DEFAULT_ATTENDANCE_SLOT_POLICY,
   type AttendanceMonthlyMatrixCalendarDayProjection,
   type AttendanceMonthlyMatrixDayCellProjection,
@@ -142,10 +145,15 @@ export async function buildAttendanceMonthlyMatrixXlsx(input: {
       dayByDate.set(d.business_date, d);
     }
 
+    const resolvedIdentity = resolveAttendanceEmployeeDisplayIdentity({
+      displayName: emp.employee_display_name,
+      personnelCode: emp.personnel_code,
+    });
+
     const rowValues: Array<string | number> = [
       index + 1,
-      sanitizeSpreadsheetText(emp.employee_display_name),
-      sanitizeSpreadsheetText(emp.personnel_code ?? ""),
+      sanitizeSpreadsheetText(resolvedIdentity.displayName),
+      sanitizeSpreadsheetText(resolvedIdentity.personnelCode ?? ""),
       sanitizeSpreadsheetText(emp.branch?.display_name ?? "Mặc định (HQ)"),
       sanitizeSpreadsheetText(emp.branch?.branch_code ?? "HQ"),
       emp.summary.checkin_day_count,
@@ -267,6 +275,10 @@ export async function buildAttendanceMonthlyMatrixXlsx(input: {
   detailSheet.getColumn(4).numFmt = "@";
 
   for (const emp of input.items) {
+    const resolvedIdentity = resolveAttendanceEmployeeDisplayIdentity({
+      displayName: emp.employee_display_name,
+      personnelCode: emp.personnel_code,
+    });
     for (const day of emp.days) {
       const presentation = describeMatrixDayCell(day);
       const targetLabel =
@@ -288,8 +300,8 @@ export async function buildAttendanceMonthlyMatrixXlsx(input: {
 
       detailSheet.addRow([
         day.business_date,
-        sanitizeSpreadsheetText(emp.employee_display_name),
-        sanitizeSpreadsheetText(emp.personnel_code ?? ""),
+        sanitizeSpreadsheetText(resolvedIdentity.displayName),
+        sanitizeSpreadsheetText(resolvedIdentity.personnelCode ?? ""),
         sanitizeSpreadsheetText(emp.branch?.display_name ?? "Mặc định (HQ)"),
         MATRIX_DAY_STATUS_LABELS[day.day_status],
         `v${presentation.policyVersionUsed}`,

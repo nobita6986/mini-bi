@@ -9,15 +9,21 @@ import {
 } from "react";
 
 import {
+  computeClampedTableScrollTarget,
   computeTableScrollAvailability,
+  computeTableScrollStepPx,
   type TableScrollAvailability,
+  type TableScrollDirection,
   type TableScrollMetrics,
 } from "@/lib/attendance/attendance-monthly-matrix-ui-model";
 import { cn } from "@/lib/utils";
 
 export {
+  computeClampedTableScrollTarget,
   computeTableScrollAvailability,
+  computeTableScrollStepPx,
   type TableScrollAvailability,
+  type TableScrollDirection,
   type TableScrollMetrics,
 };
 
@@ -29,14 +35,11 @@ export type FloatingTableNavProps = {
   className?: string;
 };
 
-const DEFAULT_HORIZONTAL_STEP_PX = 360;
-const DEFAULT_VERTICAL_STEP_PX = 280;
-
 export function FloatingTableNav({
   containerRef,
   tableLabel,
-  horizontalStepPx = DEFAULT_HORIZONTAL_STEP_PX,
-  verticalStepPx = DEFAULT_VERTICAL_STEP_PX,
+  horizontalStepPx,
+  verticalStepPx,
   className,
 }: FloatingTableNavProps) {
   const [availability, setAvailability] = useState<TableScrollAvailability>({
@@ -112,19 +115,42 @@ export function FloatingTableNav({
     };
   }, [containerRef, syncScrollState]);
 
-  const scrollByDelta = useCallback(
-    (dx: number, dy: number) => {
+  const scrollInDirection = useCallback(
+    (direction: TableScrollDirection) => {
       const el = containerRef.current;
       if (!el) return;
+      const customStepPx =
+        direction === "left" || direction === "right"
+          ? horizontalStepPx
+          : verticalStepPx;
+      const target = computeClampedTableScrollTarget(
+        {
+          scrollLeft: el.scrollLeft,
+          scrollTop: el.scrollTop,
+          scrollWidth: el.scrollWidth,
+          scrollHeight: el.scrollHeight,
+          clientWidth: el.clientWidth,
+          clientHeight: el.clientHeight,
+        },
+        direction,
+        customStepPx,
+      );
+      if (target.deltaLeft === 0 && target.deltaTop === 0) {
+        return;
+      }
       if (typeof el.scrollBy === "function") {
-        el.scrollBy({ left: dx, top: dy, behavior: "smooth" });
+        el.scrollBy({
+          left: target.deltaLeft,
+          top: target.deltaTop,
+          behavior: "smooth",
+        });
       } else {
-        el.scrollLeft += dx;
-        el.scrollTop += dy;
+        el.scrollLeft = target.left;
+        el.scrollTop = target.top;
       }
       window.setTimeout(syncScrollState, 180);
     },
-    [containerRef, syncScrollState],
+    [containerRef, horizontalStepPx, syncScrollState, verticalStepPx],
   );
 
   const handleKeyDown = useCallback(
@@ -132,22 +158,22 @@ export function FloatingTableNav({
       if (event.key === "ArrowLeft") {
         event.preventDefault();
         if (availability.canScrollLeft) {
-          scrollByDelta(-horizontalStepPx, 0);
+          scrollInDirection("left");
         }
       } else if (event.key === "ArrowRight") {
         event.preventDefault();
         if (availability.canScrollRight) {
-          scrollByDelta(horizontalStepPx, 0);
+          scrollInDirection("right");
         }
       } else if (event.key === "ArrowUp") {
         event.preventDefault();
         if (availability.canScrollUp) {
-          scrollByDelta(0, -verticalStepPx);
+          scrollInDirection("up");
         }
       } else if (event.key === "ArrowDown") {
         event.preventDefault();
         if (availability.canScrollDown) {
-          scrollByDelta(0, verticalStepPx);
+          scrollInDirection("down");
         }
       }
     },
@@ -156,9 +182,7 @@ export function FloatingTableNav({
       availability.canScrollLeft,
       availability.canScrollRight,
       availability.canScrollUp,
-      horizontalStepPx,
-      scrollByDelta,
-      verticalStepPx,
+      scrollInDirection,
     ],
   );
 
@@ -179,20 +203,16 @@ export function FloatingTableNav({
       aria-label={regionLabel}
       onKeyDown={handleKeyDown}
       className={cn(
-        "fixed bottom-4 left-4 z-40 flex items-center gap-1.5 rounded-2xl border border-border/90 bg-surface/95 px-2.5 py-2 shadow-lg backdrop-blur-xs",
+        "fixed bottom-4 right-4 z-40 flex max-w-[calc(100vw-2rem)] items-center gap-1.5 rounded-2xl border border-border/90 bg-surface/95 px-2.5 py-2 shadow-lg backdrop-blur-xs",
         className,
       )}
     >
-      <span className="hidden pr-1 text-[11px] font-medium text-muted sm:inline">
-        Điều hướng bảng
-      </span>
-
       <button
         type="button"
         aria-label="Cuộn bảng sang trái"
         title="Cuộn bảng sang trái (Phím mũi tên trái)"
         disabled={!availability.canScrollLeft}
-        onClick={() => scrollByDelta(-horizontalStepPx, 0)}
+        onClick={() => scrollInDirection("left")}
         className={buttonClass}
       >
         ←
@@ -204,7 +224,7 @@ export function FloatingTableNav({
           aria-label="Cuộn bảng lên trên"
           title="Cuộn bảng lên trên (Phím mũi tên lên)"
           disabled={!availability.canScrollUp}
-          onClick={() => scrollByDelta(0, -verticalStepPx)}
+          onClick={() => scrollInDirection("up")}
           className={cn(buttonClass, "h-7 w-8")}
         >
           ↑
@@ -214,7 +234,7 @@ export function FloatingTableNav({
           aria-label="Cuộn bảng xuống dưới"
           title="Cuộn bảng xuống dưới (Phím mũi tên xuống)"
           disabled={!availability.canScrollDown}
-          onClick={() => scrollByDelta(0, verticalStepPx)}
+          onClick={() => scrollInDirection("down")}
           className={cn(buttonClass, "h-7 w-8")}
         >
           ↓
@@ -226,7 +246,7 @@ export function FloatingTableNav({
         aria-label="Cuộn bảng sang phải"
         title="Cuộn bảng sang phải (Phím mũi tên phải)"
         disabled={!availability.canScrollRight}
-        onClick={() => scrollByDelta(horizontalStepPx, 0)}
+        onClick={() => scrollInDirection("right")}
         className={buttonClass}
       >
         →

@@ -1615,6 +1615,83 @@ export type TableScrollAvailability = {
 
 const TABLE_SCROLL_EPSILON_PX = 2;
 
+export const DEFAULT_TABLE_HORIZONTAL_STEP_PX = 560;
+export const DEFAULT_TABLE_VERTICAL_STEP_PX = 360;
+export const MIN_TABLE_HORIZONTAL_STEP_PX = 280;
+export const MIN_TABLE_VERTICAL_STEP_PX = 240;
+export const TABLE_SCROLL_VIEWPORT_STEP_RATIO = 0.75;
+
+export type TableScrollDirection = "left" | "right" | "up" | "down";
+
+export function computeTableScrollStepPx(
+  viewportSize: number | null | undefined,
+  options?: {
+    minStepPx?: number;
+    fallbackStepPx?: number;
+    ratio?: number;
+  },
+): number {
+  const minStepPx = options?.minStepPx ?? MIN_TABLE_HORIZONTAL_STEP_PX;
+  const fallbackStepPx = options?.fallbackStepPx ?? DEFAULT_TABLE_HORIZONTAL_STEP_PX;
+  const ratio = options?.ratio ?? TABLE_SCROLL_VIEWPORT_STEP_RATIO;
+
+  if (typeof viewportSize !== "number" || !Number.isFinite(viewportSize) || viewportSize <= 0) {
+    return fallbackStepPx;
+  }
+  return Math.max(minStepPx, Math.round(viewportSize * ratio));
+}
+
+export function computeClampedTableScrollTarget(
+  metrics: TableScrollMetrics,
+  direction: TableScrollDirection,
+  customStepPx?: number,
+): {
+  left: number;
+  top: number;
+  deltaLeft: number;
+  deltaTop: number;
+} {
+  const maxScrollLeft = Math.max(0, metrics.scrollWidth - metrics.clientWidth);
+  const maxScrollTop = Math.max(0, metrics.scrollHeight - metrics.clientHeight);
+  const currentLeft = Math.min(maxScrollLeft, Math.max(0, metrics.scrollLeft));
+  const currentTop = Math.min(maxScrollTop, Math.max(0, metrics.scrollTop));
+
+  const horizontalStep =
+    typeof customStepPx === "number" && Number.isFinite(customStepPx) && customStepPx > 0
+      ? Math.round(customStepPx)
+      : computeTableScrollStepPx(metrics.clientWidth, {
+          minStepPx: MIN_TABLE_HORIZONTAL_STEP_PX,
+          fallbackStepPx: DEFAULT_TABLE_HORIZONTAL_STEP_PX,
+        });
+  const verticalStep =
+    typeof customStepPx === "number" && Number.isFinite(customStepPx) && customStepPx > 0
+      ? Math.round(customStepPx)
+      : computeTableScrollStepPx(metrics.clientHeight, {
+          minStepPx: MIN_TABLE_VERTICAL_STEP_PX,
+          fallbackStepPx: DEFAULT_TABLE_VERTICAL_STEP_PX,
+        });
+
+  let nextLeft = currentLeft;
+  let nextTop = currentTop;
+
+  if (direction === "left") {
+    nextLeft = Math.max(0, currentLeft - horizontalStep);
+  } else if (direction === "right") {
+    nextLeft = Math.min(maxScrollLeft, currentLeft + horizontalStep);
+  } else if (direction === "up") {
+    nextTop = Math.max(0, currentTop - verticalStep);
+  } else if (direction === "down") {
+    nextTop = Math.min(maxScrollTop, currentTop + verticalStep);
+  }
+
+  return {
+    left: nextLeft,
+    top: nextTop,
+    deltaLeft: nextLeft - currentLeft,
+    deltaTop: nextTop - currentTop,
+  };
+}
+
 export function computeTableScrollAvailability(
   metrics: TableScrollMetrics | null | undefined,
 ): TableScrollAvailability {

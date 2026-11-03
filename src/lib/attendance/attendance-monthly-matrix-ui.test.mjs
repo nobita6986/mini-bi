@@ -7,6 +7,12 @@ import {
   evaluateAttendanceDaySlots,
 } from "./attendance-monthly-matrix-contract.ts";
 import {
+  ATTENDANCE_MISSING_EMPLOYEE_NAME_LABEL,
+  describeAttendanceCheckinDistanceTarget,
+  isAttendanceLoginOrCodeLike,
+  resolveAttendanceEmployeeDisplayIdentity,
+} from "./attendance-report-contract.ts";
+import {
   MATRIX_EXPLAINED_APPROVED_LABEL,
   MATRIX_EXPLANATION_PENDING_LABEL,
   MATRIX_EXPLANATION_REJECTED_LABEL,
@@ -20,7 +26,9 @@ import {
   buildSubmitAttendanceExplanationPayload,
   buildUnassignEmployeeFromBranchPayload,
   buildUpsertBranchPayload,
+  computeClampedTableScrollTarget,
   computeTableScrollAvailability,
+  computeTableScrollStepPx,
   describeBranchAssignmentStatus,
   describeMatrixDayCell,
   formatMatrixDistanceStatusLabel,
@@ -35,6 +43,7 @@ import {
   validateMonthlyMatrixFilters,
 } from "./attendance-monthly-matrix-ui-model.ts";
 import {
+  buildAttendanceMonthlyMatrixXlsx,
   formatMatrixDayCellText,
   formatMatrixExplanationSummary,
 } from "./attendance-monthly-matrix-xlsx.ts";
@@ -53,6 +62,10 @@ const detailedMatrixPanelSource = readFileSync(
 );
 const explanationWorkspaceSource = readFileSync(
   new URL("../../components/attendance/attendance-explanation-workspace.tsx", import.meta.url),
+  "utf8",
+);
+const floatingTableNavSource = readFileSync(
+  new URL("../../components/ui/floating-table-nav.tsx", import.meta.url),
   "utf8",
 );
 
@@ -1056,7 +1069,7 @@ test("Wave 2 attendance explanation payload builders and error mapper", () => {
   assert.match(explanationWorkspaceSource, /\/api\/attendance\/explanations\/approvals/);
 });
 
-test("Wave 2 reusable bottom-left FloatingTableNav scroll availability and integration across Báo cáo tháng and Báo cáo chi tiết", () => {
+test("Hotfix 1 & 2: FloatingTableNav bottom-right placement, arrow-only accessible controls, viewport-proportional horizontal scroll step, and smooth scroll sync", () => {
   assert.deepEqual(computeTableScrollAvailability(null), {
     hasHorizontalOverflow: false,
     hasVerticalOverflow: false,
@@ -1087,8 +1100,264 @@ test("Wave 2 reusable bottom-left FloatingTableNav scroll availability and integ
     },
   );
 
-  // Integrated in Báo cáo tháng, Báo cáo chi tiết lượt chấm công, and Báo cáo chi tiết tuyển dụng
+  // 1. FloatingTableNav is anchored at bottom-right (not bottom-left) and hides the visible "Điều hướng bảng" label
+  assert.match(floatingTableNavSource, /fixed\s+bottom-4\s+right-4\s+z-40/);
+  assert.doesNotMatch(floatingTableNavSource, /bottom-4\s+left-4/);
+  assert.doesNotMatch(floatingTableNavSource, /<span[^>]*>\s*Điều hướng bảng\s*<\/span>/);
+
+  // All 4 arrow buttons retain accessible names (aria-label) and tooltips (title)
+  for (const label of [
+    "Cuộn bảng sang trái",
+    "Cuộn bảng sang phải",
+    "Cuộn bảng lên trên",
+    "Cuộn bảng xuống dưới",
+  ]) {
+    assert.match(floatingTableNavSource, new RegExp(`aria-label="${label}"`));
+    assert.match(floatingTableNavSource, new RegExp(`title="${label}`));
+  }
+
+  // Shared component used across Báo cáo tháng and Báo cáo chi tiết
   assert.match(matrixPanelSource, /FloatingTableNav/);
   assert.match(managerSource, /FloatingTableNav/);
   assert.match(detailedMatrixPanelSource, /FloatingTableNav/);
+
+  // 2. Viewport-proportional horizontal & vertical scroll step (~75% of container viewport, min 280px horizontal / 240px vertical)
+  assert.equal(computeTableScrollStepPx(1200, { minStepPx: 280 }), 900);
+  assert.equal(computeTableScrollStepPx(800, { minStepPx: 280 }), 600);
+  assert.equal(computeTableScrollStepPx(300, { minStepPx: 280 }), 280);
+  assert.equal(computeTableScrollStepPx(0, { minStepPx: 280, fallbackStepPx: 560 }), 560);
+  assert.equal(computeTableScrollStepPx(600, { minStepPx: 240 }), 450);
+
+  const metrics = {
+    scrollLeft: 200,
+    scrollTop: 100,
+    scrollWidth: 2400,
+    clientWidth: 1000, // step = 750, maxLeft = 1400
+    scrollHeight: 1500,
+    clientHeight: 600, // step = 450, maxTop = 900
+  };
+  assert.deepEqual(computeClampedTableScrollTarget(metrics, "right"), {
+    left: 950,
+    top: 100,
+    deltaLeft: 750,
+    deltaTop: 0,
+  });
+  assert.deepEqual(computeClampedTableScrollTarget(metrics, "left"), {
+    left: 0,
+    top: 100,
+    deltaLeft: -200,
+    deltaTop: 0,
+  });
+  assert.deepEqual(computeClampedTableScrollTarget(metrics, "down"), {
+    left: 200,
+    top: 550,
+    deltaLeft: 0,
+    deltaTop: 450,
+  });
+  assert.deepEqual(computeClampedTableScrollTarget(metrics, "up"), {
+    left: 200,
+    top: 0,
+    deltaLeft: 0,
+    deltaTop: -100,
+  });
+
+  // Clamps cleanly at right/bottom edge without overshooting
+  assert.deepEqual(
+    computeClampedTableScrollTarget({ ...metrics, scrollLeft: 1100 }, "right"),
+    {
+      left: 1400,
+      top: 100,
+      deltaLeft: 300,
+      deltaTop: 0,
+    },
+  );
+  assert.deepEqual(
+    computeClampedTableScrollTarget({ ...metrics, scrollTop: 700 }, "down"),
+    {
+      left: 200,
+      top: 900,
+      deltaLeft: 0,
+      deltaTop: 200,
+    },
+  );
+
+  // Adapts when viewport resizes (e.g., 1600px wide -> 1200px step, clamped to maxLeft = 800)
+  assert.deepEqual(
+    computeClampedTableScrollTarget({ ...metrics, clientWidth: 1600, scrollLeft: 0 }, "right"),
+    {
+      left: 800,
+      top: 100,
+      deltaLeft: 800,
+      deltaTop: 0,
+    },
+  );
+
+  // Smooth horizontal scroll in Detailed Recruitment Matrix uses a settle timer so topScrollRef doesn't cancel smooth scrolling after 1 frame
+  assert.match(detailedMatrixPanelSource, /syncingScrollTimerRef/);
+  assert.match(detailedMatrixPanelSource, /computeTableScrollStepPx\(tableEl\.clientWidth\)/);
+
+  // Attendance check-in detail table attaches scrollRef directly to DataTableContainer's scrollable viewport
+  assert.match(managerSource, /scrollRef=\{checkinsTableContainerRef\}/);
+});
+
+test("Hotfix 3: describeAttendanceCheckinDistanceTarget distinguishes branch vs headquarters snapshot at check-in time", () => {
+  // Branch check-in with computed distance
+  const branchComputed = describeAttendanceCheckinDistanceTarget({
+    distance_status: "COMPUTED",
+    distance_meters: 120.4,
+    hq_version_used: null,
+    branch_id_used: BRANCH_ID,
+    branch_code_used: "HRP-HN",
+    branch_name_used: "Chi nhánh Hà Nội",
+    branch_version_used: 3,
+  });
+  assert.equal(branchComputed.targetKind, "BRANCH");
+  assert.equal(branchComputed.tone, "computed");
+  assert.equal(branchComputed.subtitleText, "Theo chi nhánh Chi nhánh Hà Nội v3");
+  assert.equal(branchComputed.detailSectionTitle, "Khoảng cách tới chi nhánh");
+
+  // Even if legacy/defensive payload has hq_version_used alongside branch_id_used, branch snapshot wins
+  const branchWithFallbackCode = describeAttendanceCheckinDistanceTarget({
+    distance_status: "COMPUTED",
+    distance_meters: 85,
+    hq_version_used: 1,
+    branch_id_used: BRANCH_ID,
+    branch_code_used: "HRP-BN",
+    branch_name_used: null,
+    branch_version_used: 2,
+  });
+  assert.equal(branchWithFallbackCode.targetKind, "BRANCH");
+  assert.equal(branchWithFallbackCode.subtitleText, "Theo chi nhánh HRP-BN v2");
+
+  // Headquarters check-in with computed distance
+  const hqComputed = describeAttendanceCheckinDistanceTarget({
+    distance_status: "COMPUTED",
+    distance_meters: 45,
+    hq_version_used: 4,
+    branch_id_used: null,
+    branch_code_used: null,
+    branch_name_used: null,
+    branch_version_used: null,
+  });
+  assert.equal(hqComputed.targetKind, "HQ");
+  assert.equal(hqComputed.tone, "computed");
+  assert.equal(hqComputed.subtitleText, "Theo trụ sở v4");
+  assert.equal(hqComputed.detailSectionTitle, "Khoảng cách tới trụ sở");
+
+  // Branch without coordinates at check-in time
+  const branchNotConfigured = describeAttendanceCheckinDistanceTarget({
+    distance_status: "BRANCH_NOT_CONFIGURED",
+    distance_meters: null,
+    hq_version_used: null,
+    branch_id_used: BRANCH_ID,
+    branch_code_used: "HRP-DN",
+    branch_name_used: "Chi nhánh Đà Nẵng",
+    branch_version_used: 1,
+  });
+  assert.equal(branchNotConfigured.targetKind, "BRANCH");
+  assert.equal(branchNotConfigured.tone, "not_configured");
+  assert.equal(branchNotConfigured.primaryText, "Chi nhánh chưa cấu hình tọa độ");
+  assert.equal(
+    branchNotConfigured.subtitleText,
+    "Theo chi nhánh Chi nhánh Đà Nẵng v1 (chưa cấu hình tọa độ tại thời điểm chấm công)",
+  );
+  assert.equal(branchNotConfigured.detailSectionTitle, "Khoảng cách tới chi nhánh");
+
+  // Headquarters without coordinates at check-in time
+  const hqNotConfigured = describeAttendanceCheckinDistanceTarget({
+    distance_status: "HQ_NOT_CONFIGURED",
+    distance_meters: null,
+    hq_version_used: null,
+    branch_id_used: null,
+    branch_code_used: null,
+    branch_name_used: null,
+    branch_version_used: null,
+  });
+  assert.equal(hqNotConfigured.targetKind, "HQ");
+  assert.equal(hqNotConfigured.tone, "not_configured");
+  assert.equal(hqNotConfigured.primaryText, "Trụ sở chưa cấu hình");
+  assert.equal(hqNotConfigured.subtitleText, "Chưa cấu hình trụ sở tại thời điểm chấm công");
+  assert.equal(hqNotConfigured.detailSectionTitle, "Khoảng cách tới trụ sở");
+
+  // Both DistanceCell and AttendanceCheckinDetailBody use describeAttendanceCheckinDistanceTarget
+  assert.match(managerSource, /describeAttendanceCheckinDistanceTarget\(item\)/);
+});
+
+test("Hotfix 4: resolveAttendanceEmployeeDisplayIdentity normalizes employee full names and prevents login_id from appearing as primary name", async () => {
+  // Real full name is preserved
+  assert.equal(isAttendanceLoginOrCodeLike("Nguyễn Thị Huệ", "NV001", "huent.td"), false);
+  assert.deepEqual(
+    resolveAttendanceEmployeeDisplayIdentity({
+      displayName: "Nguyễn Thị Huệ",
+      personnelCode: "NV001",
+      loginId: "huent.td",
+    }),
+    {
+      displayName: "Nguyễn Thị Huệ",
+      personnelCode: "NV001",
+      isMissingFullName: false,
+    },
+  );
+
+  // Login ID like "anhhn.td" or "lannt.hrp" is detected as non-full-name and moved to secondary code when personnelCode is absent
+  assert.equal(isAttendanceLoginOrCodeLike("anhhn.td", null, null), true);
+  assert.equal(isAttendanceLoginOrCodeLike("user@company.vn", null, null), true);
+  assert.equal(isAttendanceLoginOrCodeLike("NV_MAT_01", "NV_MAT_01", null), true);
+
+  assert.deepEqual(
+    resolveAttendanceEmployeeDisplayIdentity({
+      displayName: "anhhn.td",
+      personnelCode: null,
+    }),
+    {
+      displayName: ATTENDANCE_MISSING_EMPLOYEE_NAME_LABEL,
+      personnelCode: "anhhn.td",
+      isMissingFullName: true,
+    },
+  );
+
+  assert.deepEqual(
+    resolveAttendanceEmployeeDisplayIdentity({
+      displayName: "anhhn.td",
+      personnelCode: "NV088",
+      loginId: "anhhn.td",
+    }),
+    {
+      displayName: ATTENDANCE_MISSING_EMPLOYEE_NAME_LABEL,
+      personnelCode: "NV088",
+      isMissingFullName: true,
+    },
+  );
+
+  // Monthly Matrix Excel export also normalizes login-like display names
+  const xlsxBytes = await buildAttendanceMonthlyMatrixXlsx({
+    year_month: "2026-10",
+    from_date: "2026-10-01",
+    to_date: "2026-10-01",
+    calendar_days: [
+      {
+        business_date: "2026-10-01",
+        day_of_month: 1,
+        day_of_week: 4,
+        is_weekend: false,
+      },
+    ],
+    items: [
+      {
+        app_user_id: EMPLOYEE_ID,
+        employee_display_name: "anhhn.td",
+        personnel_code: null,
+        branch: null,
+        summary: {
+          checkin_day_count: 0,
+          total_checkins: 0,
+          approved_leave_day_count: 0,
+          approved_leave_units: 0,
+          no_checkin_without_leave_day_count: 1,
+        },
+        days: [],
+      },
+    ],
+  });
+  assert.ok(xlsxBytes.byteLength > 0);
 });

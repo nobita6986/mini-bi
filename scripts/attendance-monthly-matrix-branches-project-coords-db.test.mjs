@@ -1725,6 +1725,84 @@ test("HRP Branches, Branch Check-In Distance Snapshot Immutability, Project Coor
     // Only SLOT_3 and SLOT_5 (2 slots) remain MISSING -> missing_slot_count decreased from 3 to 2
     assert.equal(oct10After.missing_slot_count, 2);
 
+    // 8g. Verify Employee Full Name Resolution across attendance_admin_report, attendance_monthly_matrix_report, and attendance_list_branches_admin
+    const loginStaffMatchedAuth = "19100000-0000-4000-8000-000000000021";
+    const loginStaffMatchedApp = "29100000-0000-4000-8000-000000000021";
+    const loginStaffMatchedRecruiter = "39100000-0000-4000-8000-000000000021";
+    const loginStaffUnmatchedAuth = "19100000-0000-4000-8000-000000000022";
+    const loginStaffUnmatchedApp = "29100000-0000-4000-8000-000000000022";
+
+    await db.query("insert into auth.users (id) values ($1::uuid), ($2::uuid)", [
+      loginStaffMatchedAuth,
+      loginStaffUnmatchedAuth,
+    ]);
+    await db.query(
+      `insert into public.direct_entry_app_users (app_user_id, auth_subject, display_name, enabled)
+       values
+         ($1::uuid, $2::uuid, 'anhhn.td', true),
+         ($3::uuid, $4::uuid, 'loginonly.td', true)`,
+      [
+        loginStaffMatchedApp,
+        loginStaffMatchedAuth,
+        loginStaffUnmatchedApp,
+        loginStaffUnmatchedAuth,
+      ],
+    );
+    // Unambiguous active recruiter matching code 'anhhn.td' -> full name 'Nguyễn Thị Huệ' (even without verified link row)
+    await db.query(
+      `insert into public.recruiters (recruiter_id, display_name, personnel_code, active)
+       values ($1::uuid, 'Nguyễn Thị Huệ', 'anhhn.td', true)`,
+      [loginStaffMatchedRecruiter],
+    );
+
+    const branchesWithIdentity = projectAttendanceBranchesAdminList(
+      await callAsServiceRole(
+        db,
+        "select public.attendance_list_branches_admin($1::uuid, $2::uuid) as data",
+        [ACTORS.FULL_ADMIN.auth, ACTORS.FULL_ADMIN.app],
+      ),
+    );
+    assert.ok(branchesWithIdentity);
+    const matchedOpt = branchesWithIdentity.employee_options.find(
+      (opt) => opt.app_user_id === loginStaffMatchedApp,
+    );
+    assert.ok(matchedOpt);
+    assert.equal(matchedOpt.display_name, "Nguyễn Thị Huệ");
+    assert.equal(matchedOpt.personnel_code, "anhhn.td");
+
+    const unmatchedOpt = branchesWithIdentity.employee_options.find(
+      (opt) => opt.app_user_id === loginStaffUnmatchedApp,
+    );
+    assert.ok(unmatchedOpt);
+    assert.equal(unmatchedOpt.display_name, "Chưa cập nhật họ tên");
+    assert.equal(unmatchedOpt.personnel_code, "loginonly.td");
+
+    const matrixMatched = projectAttendanceMonthlyMatrixReport(
+      await callAsServiceRole(
+        db,
+        `select public.attendance_monthly_matrix_report(
+          $1::uuid, $2::uuid, '2026-10', null, $3::uuid, null, 1, 25
+        ) as data`,
+        [ACTORS.FULL_ADMIN.auth, ACTORS.FULL_ADMIN.app, loginStaffMatchedApp],
+      ),
+    );
+    assert.ok(matrixMatched);
+    assert.equal(matrixMatched.items[0].employee_display_name, "Nguyễn Thị Huệ");
+    assert.equal(matrixMatched.items[0].personnel_code, "anhhn.td");
+
+    const matrixUnmatched = projectAttendanceMonthlyMatrixReport(
+      await callAsServiceRole(
+        db,
+        `select public.attendance_monthly_matrix_report(
+          $1::uuid, $2::uuid, '2026-10', null, $3::uuid, null, 1, 25
+        ) as data`,
+        [ACTORS.FULL_ADMIN.auth, ACTORS.FULL_ADMIN.app, loginStaffUnmatchedApp],
+      ),
+    );
+    assert.ok(matrixUnmatched);
+    assert.equal(matrixUnmatched.items[0].employee_display_name, "Chưa cập nhật họ tên");
+    assert.equal(matrixUnmatched.items[0].personnel_code, "loginonly.td");
+
     for (const sig of ATTENDANCE_EXPLANATIONS_WAVE2_RPC_SIGNATURES) {
       const { rows } = await db.query("select to_regprocedure($1)::text as oid_name", [sig]);
       assert.ok(rows[0].oid_name, `RPC ${sig} must exist`);
