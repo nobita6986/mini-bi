@@ -13,6 +13,7 @@ import {
 import { Alert } from "@/components/ui/alert";
 import { StatusBadge } from "@/components/ui/badge";
 import { Card, CardHeader } from "@/components/ui/card";
+import { FloatingTableNav } from "@/components/ui/floating-table-nav";
 import { useNotify } from "@/components/ui/notify-provider";
 import { formatTimestamp } from "@/lib/format";
 import {
@@ -787,7 +788,7 @@ export function DetailedRecruitmentMatrixPanel({
                 onScroll={handleTableScroll}
                 onKeyDown={handleHorizontalScrollKeyDown}
                 style={matrixZoomStyles}
-                className="overflow-x-auto rounded-b-xl border border-border bg-surface focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                className="max-h-[75vh] overflow-auto rounded-b-xl border border-border bg-surface focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
               >
                 <table
                   ref={tableRef}
@@ -799,7 +800,7 @@ export function DetailedRecruitmentMatrixPanel({
                   <caption className="sr-only">
                     Bảng báo cáo chi tiết tuyển dụng theo nhân viên ({activeProviderLabel}, {selectedTeamLabel}, độ phân giải {activeResolutionOption.label})
                   </caption>
-                  <thead className="bg-surface-muted uppercase tracking-wide text-muted">
+                  <thead className="sticky top-0 z-30 bg-surface-muted uppercase tracking-wide text-muted">
                     <tr className="border-b border-border">
                       <th
                         scope="col"
@@ -1011,6 +1012,11 @@ export function DetailedRecruitmentMatrixPanel({
                   </tfoot>
                 </table>
               </div>
+
+              <FloatingTableNav
+                containerRef={tableScrollRef}
+                tableLabel="Báo cáo chi tiết"
+              />
             </div>
           )}
         </Card>

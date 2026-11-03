@@ -7,19 +7,26 @@ import {
   evaluateAttendanceDaySlots,
 } from "./attendance-monthly-matrix-contract.ts";
 import {
+  MATRIX_EXPLAINED_APPROVED_LABEL,
+  MATRIX_EXPLANATION_PENDING_LABEL,
+  MATRIX_EXPLANATION_REJECTED_LABEL,
   MATRIX_LEGEND_ITEMS,
   buildAssignEmployeeToBranchPayload,
   buildCreateSlotPolicyPayload,
+  buildDecideAttendanceExplanationPayload,
   buildGoogleMapsCoordinatesUrl,
   buildMonthlyMatrixExportUrl,
   buildMonthlyMatrixReportQuery,
+  buildSubmitAttendanceExplanationPayload,
   buildUnassignEmployeeFromBranchPayload,
   buildUpsertBranchPayload,
+  computeTableScrollAvailability,
   describeBranchAssignmentStatus,
   describeMatrixDayCell,
   formatMatrixDistanceStatusLabel,
   formatMatrixWeekdayLabel,
   getVietnamCurrentYearMonth,
+  mapAttendanceExplanationMutationError,
   mapBranchAdminMutationError,
   mapMonthlyMatrixExportError,
   mapMonthlyMatrixReportError,
@@ -29,6 +36,7 @@ import {
 } from "./attendance-monthly-matrix-ui-model.ts";
 import {
   formatMatrixDayCellText,
+  formatMatrixExplanationSummary,
 } from "./attendance-monthly-matrix-xlsx.ts";
 
 const managerSource = readFileSync(
@@ -37,6 +45,14 @@ const managerSource = readFileSync(
 );
 const matrixPanelSource = readFileSync(
   new URL("../../components/admin/attendance-monthly-matrix-panel.tsx", import.meta.url),
+  "utf8",
+);
+const detailedMatrixPanelSource = readFileSync(
+  new URL("../../components/dashboard/detailed-recruitment-matrix-panel.tsx", import.meta.url),
+  "utf8",
+);
+const explanationWorkspaceSource = readFileSync(
+  new URL("../../components/attendance/attendance-explanation-workspace.tsx", import.meta.url),
   "utf8",
 );
 
@@ -430,7 +446,8 @@ test("Google Maps coordinate link helper and detailed attendance GpsDetailCell w
   // Verify tabs and sections are wired in attendance-report-manager.tsx and attendance-monthly-matrix-panel.tsx
   assert.match(managerSource, /role="tablist"/);
   assert.match(managerSource, /Chi tiết lượt chấm công/);
-  assert.match(managerSource, /Ma trận tháng/);
+  assert.match(managerSource, /Báo cáo tháng/);
+  assert.match(managerSource, /Giải trình chấm công/);
   assert.match(managerSource, /Chi nhánh HRP/);
   assert.match(matrixPanelSource, /\/api\/admin\/attendance\/monthly-matrix/);
   assert.match(matrixPanelSource, /\/api\/admin\/attendance\/branches/);
@@ -754,7 +771,7 @@ test("5-slot default leave coverage: FULL covers all 5 slots, AM covers Time 1..
 });
 
 test("Slot policy payload builder, error mapper, and legend items", () => {
-  assert.equal(MATRIX_LEGEND_ITEMS.length, 4);
+  assert.equal(MATRIX_LEGEND_ITEMS.length, 6);
 
   const validPolicy = buildCreateSlotPolicyPayload({
     effectiveFromDate: "2026-11-01",
@@ -833,4 +850,229 @@ test("Slot policy payload builder, error mapper, and legend items", () => {
     assert.equal(mapped.isConflict, expectedConflict, `conflict flag for ${code}`);
     assert.ok(mapped.message.length > 10);
   }
+});
+
+test("Wave 2 attendance explanations: approved explanation marks slot EXPLAINED_APPROVED without creating check-ins; rejected explanation retains MISSING/OUT_OF_GRACE and shows 'Giải trình bị từ chối'", () => {
+  const explanations = [
+    {
+      explanation_id: "55555555-5555-4555-8555-555555555551",
+      slot_code: "SLOT_1",
+      status: "APPROVED",
+      original_slot_status: "MISSING",
+      reason: "Đi gặp ứng viên tại dự án",
+      decision_note: "Đồng ý giải trình",
+      submitted_at: "2026-10-07T02:00:00Z",
+      decided_at: "2026-10-07T03:00:00Z",
+    },
+    {
+      explanation_id: "55555555-5555-4555-8555-555555555552",
+      slot_code: "SLOT_2",
+      status: "REJECTED",
+      original_slot_status: "OUT_OF_GRACE",
+      reason: "Kẹt xe đường Vành đai 3",
+      decision_note: "Không đủ căn cứ",
+      submitted_at: "2026-10-07T04:00:00Z",
+      decided_at: "2026-10-07T05:00:00Z",
+    },
+    {
+      explanation_id: "55555555-5555-4555-8555-555555555553",
+      slot_code: "SLOT_3",
+      status: "PENDING",
+      original_slot_status: "MISSING",
+      reason: "Điện thoại hết pin",
+      decision_note: null,
+      submitted_at: "2026-10-07T06:00:00Z",
+      decided_at: null,
+    },
+  ];
+
+  const evaluated = evaluateAttendanceDaySlots({
+    policy: DEFAULT_ATTENDANCE_SLOT_POLICY,
+    checkins: [
+      {
+        checkin_id: "c-1025",
+        sequence_in_day: 1,
+        captured_at: "2026-10-07T03:25:00Z",
+        captured_at_local: "2026-10-07 10:25:00",
+        time_local: "10:25",
+        time_verified: true,
+        distance_target_kind: "HQ",
+        distance_status: "COMPUTED",
+        distance_meters: 10,
+      },
+    ],
+    approved_leaves: [],
+    explanations,
+  });
+
+  // SLOT_1 had no check-in, but explanation is APPROVED -> slot_status becomes EXPLAINED_APPROVED, checkins remains []
+  assert.equal(evaluated.slots[0].slot_code, "SLOT_1");
+  assert.equal(evaluated.slots[0].slot_status, "EXPLAINED_APPROVED");
+  assert.equal(evaluated.slots[0].checkins.length, 0);
+  assert.equal(evaluated.slots[0].explanation?.status, "APPROVED");
+
+  // SLOT_2 had a late check-in (10:25 vs 10:00 +15m) and explanation is REJECTED -> keeps OUT_OF_GRACE
+  assert.equal(evaluated.slots[1].slot_code, "SLOT_2");
+  assert.equal(evaluated.slots[1].slot_status, "OUT_OF_GRACE");
+  assert.equal(evaluated.slots[1].checkins.length, 1);
+  assert.equal(evaluated.slots[1].explanation?.status, "REJECTED");
+
+  // SLOT_3 has PENDING explanation -> keeps MISSING
+  assert.equal(evaluated.slots[2].slot_code, "SLOT_3");
+  assert.equal(evaluated.slots[2].slot_status, "MISSING");
+  assert.equal(evaluated.slots[2].explanation?.status, "PENDING");
+
+  // Missing slots = SLOT_3, SLOT_4, SLOT_5 (3 slots, since SLOT_1 is EXPLAINED_APPROVED and SLOT_2 has check-in)
+  assert.equal(evaluated.missing_slot_count, 3);
+
+  const cellProjection = {
+    business_date: "2026-10-07",
+    day_of_month: 7,
+    policy_version_used: 1,
+    has_checkin: true,
+    checkin_count: 1,
+    first_checkin_id: "c-1025",
+    last_checkin_id: "c-1025",
+    first_captured_at: "2026-10-07T03:25:00Z",
+    first_captured_at_local: "2026-10-07 10:25:00",
+    first_time_local: "10:25",
+    last_captured_at: "2026-10-07T03:25:00Z",
+    last_captured_at_local: "2026-10-07 10:25:00",
+    last_time_local: "10:25",
+    verified_checkin_count: 1,
+    unverified_checkin_count: 0,
+    distance_target_kind: "HQ",
+    branch_id_used: null,
+    branch_code_used: null,
+    branch_name_used: null,
+    branch_version_used: null,
+    hq_version_used: 1,
+    distance_status: "COMPUTED",
+    distance_meters: 10,
+    min_distance_meters: 10,
+    max_distance_meters: 10,
+    has_approved_leave: false,
+    approved_leave_units: 0,
+    approved_leaves: [],
+    day_status: "CHECKED_IN",
+    missing_slot_count: evaluated.missing_slot_count,
+    late_or_early_checkin_count: evaluated.late_or_early_checkin_count,
+    slots: evaluated.slots,
+  };
+
+  const presentation = describeMatrixDayCell(cellProjection);
+  assert.equal(presentation.slots[0].statusLabel, MATRIX_EXPLAINED_APPROVED_LABEL);
+  assert.equal(presentation.slots[0].explanationStatusLabel, MATRIX_EXPLAINED_APPROVED_LABEL);
+  assert.equal(presentation.slots[0].tone, "emerald");
+  assert.equal(presentation.slots[1].explanationStatusLabel, MATRIX_EXPLANATION_REJECTED_LABEL);
+  assert.equal(presentation.slots[1].tone, "amber");
+  assert.equal(presentation.slots[2].explanationStatusLabel, MATRIX_EXPLANATION_PENDING_LABEL);
+  assert.equal(presentation.slots[2].tone, "red");
+
+  const excelText = formatMatrixDayCellText(cellProjection);
+  assert.match(excelText, /Time 1 \(07:30\): Giải trình được duyệt/);
+  assert.match(excelText, /Time 2 \(10:00\): 10:25 \(Muộn 25p\) · Giải trình bị từ chối/);
+  assert.match(excelText, /Time 3 \(13:00\): Chưa có lượt chấm · Chờ duyệt giải trình/);
+
+  const explanationSummary = formatMatrixExplanationSummary(cellProjection);
+  assert.match(explanationSummary, /Time 1: Giải trình được duyệt \(Đi gặp ứng viên tại dự án\)/);
+  assert.match(explanationSummary, /Time 2: Giải trình bị từ chối \(Kẹt xe đường Vành đai 3\)/);
+  assert.match(explanationSummary, /Time 3: Chờ duyệt giải trình \(Điện thoại hết pin\)/);
+});
+
+test("Wave 2 attendance explanation payload builders and error mapper", () => {
+  const validSubmit = buildSubmitAttendanceExplanationPayload({
+    businessDate: "2026-10-07",
+    slotCode: "SLOT_1",
+    reason: "  Đi khảo sát thực địa dự án  ",
+    idempotencyKey: INTENT_KEY,
+  });
+  assert.equal(validSubmit.ok, true);
+  if (validSubmit.ok) {
+    assert.deepEqual(validSubmit.body, {
+      business_date: "2026-10-07",
+      slot_code: "SLOT_1",
+      reason: "Đi khảo sát thực địa dự án",
+      idempotency_key: INTENT_KEY,
+    });
+  }
+
+  assert.equal(
+    buildSubmitAttendanceExplanationPayload({
+      businessDate: "2026-10-07",
+      slotCode: "SLOT_1",
+      reason: "   ",
+      idempotencyKey: INTENT_KEY,
+    }).ok,
+    false,
+  );
+
+  const validDecision = buildDecideAttendanceExplanationPayload({
+    decision: "APPROVE",
+    expectedRowVersion: 1,
+    decisionNote: "  Xác nhận công tác  ",
+    idempotencyKey: INTENT_KEY,
+  });
+  assert.equal(validDecision.ok, true);
+  if (validDecision.ok) {
+    assert.deepEqual(validDecision.body, {
+      decision: "APPROVE",
+      expected_row_version: 1,
+      decision_note: "Xác nhận công tác",
+      idempotency_key: INTENT_KEY,
+    });
+  }
+
+  for (const [code, expectedConflict] of [
+    ["ATTENDANCE_EXPLANATION_ALREADY_SUBMITTED", true],
+    ["ATTENDANCE_EXPLANATION_ALREADY_DECIDED", true],
+    ["ATTENDANCE_EXPLANATION_VERSION_CONFLICT", true],
+    ["IDEMPOTENCY_CONFLICT", true],
+    ["ATTENDANCE_EXPLANATION_SLOT_NOT_ELIGIBLE", false],
+    ["ATTENDANCE_EXPLANATION_DECISION_DENIED", false],
+  ]) {
+    const mapped = mapAttendanceExplanationMutationError(409, code);
+    assert.equal(mapped.isConflict, expectedConflict, `conflict flag for ${code}`);
+    assert.ok(mapped.message.length > 10);
+  }
+
+  assert.match(explanationWorkspaceSource, /\/api\/attendance\/explanations/);
+  assert.match(explanationWorkspaceSource, /\/api\/attendance\/explanations\/approvals/);
+});
+
+test("Wave 2 reusable bottom-left FloatingTableNav scroll availability and integration across Báo cáo tháng and Báo cáo chi tiết", () => {
+  assert.deepEqual(computeTableScrollAvailability(null), {
+    hasHorizontalOverflow: false,
+    hasVerticalOverflow: false,
+    hasOverflow: false,
+    canScrollLeft: false,
+    canScrollRight: false,
+    canScrollUp: false,
+    canScrollDown: false,
+  });
+
+  assert.deepEqual(
+    computeTableScrollAvailability({
+      scrollLeft: 0,
+      scrollTop: 50,
+      scrollWidth: 1600,
+      clientWidth: 800,
+      scrollHeight: 900,
+      clientHeight: 400,
+    }),
+    {
+      hasHorizontalOverflow: true,
+      hasVerticalOverflow: true,
+      hasOverflow: true,
+      canScrollLeft: false,
+      canScrollRight: true,
+      canScrollUp: true,
+      canScrollDown: true,
+    },
+  );
+
+  // Integrated in Báo cáo tháng, Báo cáo chi tiết lượt chấm công, and Báo cáo chi tiết tuyển dụng
+  assert.match(matrixPanelSource, /FloatingTableNav/);
+  assert.match(managerSource, /FloatingTableNav/);
+  assert.match(detailedMatrixPanelSource, /FloatingTableNav/);
 });

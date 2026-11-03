@@ -4,6 +4,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type FormEvent,
 } from "react";
@@ -24,6 +25,7 @@ import {
   DataTableContainer,
 } from "@/components/ui/data-table";
 import { FilterToolbar } from "@/components/ui/filter-toolbar";
+import { FloatingTableNav } from "@/components/ui/floating-table-nav";
 import { FormDialog } from "@/components/ui/form-dialog";
 import { useNotify } from "@/components/ui/notify-provider";
 import { OffsetPager } from "@/components/ui/offset-pager";
@@ -164,7 +166,7 @@ function MatrixDayCell({ cell }: { cell: AttendanceMonthlyMatrixDayCellProjectio
         </div>
       </div>
 
-      {/* 4 Daily Slots */}
+      {/* Daily Slots (Dynamic 1..12 slots from effective policy) */}
       <div className="space-y-1">
         {presentation.slots.map((slot) => {
           const slotRowClass =
@@ -184,22 +186,44 @@ function MatrixDayCell({ cell }: { cell: AttendanceMonthlyMatrixDayCellProjectio
                 slotRowClass,
               )}
             >
-              <div className="flex items-center justify-between gap-1">
+              <div className="flex flex-wrap items-center justify-between gap-1">
                 <span className="font-semibold">
                   {slot.slotShortLabel}{" "}
                   <span className="font-mono font-normal opacity-80">
                     ({slot.targetTime})
                   </span>
                 </span>
-                {slot.slotStatus === "MISSING" ? (
-                  <span className="rounded bg-red-200/90 px-1 py-0.5 text-[10px] font-bold text-red-950 dark:bg-red-900/80 dark:text-red-100">
-                    Chưa có lượt chấm
-                  </span>
-                ) : slot.slotStatus === "LEAVE_COVERED" && slot.checkins.length === 0 ? (
-                  <span className="rounded bg-sky-200/80 px-1 py-0.5 text-[10px] font-semibold text-sky-950 dark:bg-sky-900/70 dark:text-sky-100">
-                    {slot.statusLabel}
-                  </span>
-                ) : null}
+                <div className="flex flex-wrap items-center gap-1">
+                  {slot.slotStatus === "EXPLAINED_APPROVED" ? (
+                    <span className="rounded bg-emerald-200/90 px-1 py-0.5 text-[10px] font-bold text-emerald-950 dark:bg-emerald-900/80 dark:text-emerald-100">
+                      Giải trình được duyệt
+                    </span>
+                  ) : slot.slotStatus === "MISSING" ? (
+                    <span className="rounded bg-red-200/90 px-1 py-0.5 text-[10px] font-bold text-red-950 dark:bg-red-900/80 dark:text-red-100">
+                      Chưa có lượt chấm
+                    </span>
+                  ) : slot.slotStatus === "LEAVE_COVERED" && slot.checkins.length === 0 ? (
+                    <span className="rounded bg-sky-200/80 px-1 py-0.5 text-[10px] font-semibold text-sky-950 dark:bg-sky-900/70 dark:text-sky-100">
+                      {slot.statusLabel}
+                    </span>
+                  ) : null}
+
+                  {slot.slotStatus !== "EXPLAINED_APPROVED" &&
+                  slot.explanationStatusLabel ? (
+                    <span
+                      className={cn(
+                        "rounded px-1 py-0.5 text-[10px] font-bold",
+                        slot.explanationBadgeTone === "red"
+                          ? "bg-red-300/95 text-red-950 dark:bg-red-900/90 dark:text-red-100"
+                          : slot.explanationBadgeTone === "amber"
+                            ? "bg-amber-300/95 text-amber-950 dark:bg-amber-900/90 dark:text-amber-100"
+                            : "bg-emerald-200/90 text-emerald-950 dark:bg-emerald-900/80 dark:text-emerald-100",
+                      )}
+                    >
+                      {slot.explanationStatusLabel}
+                    </span>
+                  ) : null}
+                </div>
               </div>
 
               {slot.checkins.length > 0 ? (
@@ -218,6 +242,15 @@ function MatrixDayCell({ cell }: { cell: AttendanceMonthlyMatrixDayCellProjectio
                     </span>
                   ))}
                 </div>
+              ) : null}
+
+              {slot.explanation?.reason ? (
+                <p
+                  title={slot.explanation.reason}
+                  className="mt-1 truncate text-[10px] opacity-85"
+                >
+                  Lý do: {slot.explanation.reason}
+                </p>
               ) : null}
             </div>
           );
@@ -1120,6 +1153,7 @@ export function AttendanceMonthlyMatrixSection() {
     message: string;
     canRetry: boolean;
   } | null>(null);
+  const matrixTableContainerRef = useRef<HTMLDivElement | null>(null);
 
   const requestReload = useCallback(() => {
     setLoadState({ kind: "loading" });
@@ -1636,8 +1670,8 @@ export function AttendanceMonthlyMatrixSection() {
         <div className="space-y-3">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
             <CardHeader
-              title={`Bảng ma trận chấm công tháng ${activeReport?.filters.year_month ?? appliedFilters.yearMonth}`}
-              description="Mỗi ô ngày hiển thị đầy đủ các mốc giờ chuẩn theo phiên bản cấu hình đang có hiệu lực tại ngày đó. Toàn bộ lượt check-in trong ngày được gán vào mốc có giờ chuẩn gần nhất (nếu cách đều 2 mốc liền kề thì ưu tiên mốc sớm hơn) và sắp xếp tăng dần theo thời gian."
+              title={`Báo cáo tháng ${activeReport?.filters.year_month ?? appliedFilters.yearMonth}`}
+              description="Mỗi ô ngày hiển thị đầy đủ các mốc giờ chuẩn theo phiên bản cấu hình đang có hiệu lực tại ngày đó. Toàn bộ lượt check-in trong ngày được gán vào mốc có giờ chuẩn gần nhất (nếu cách đều 2 mốc liền kề thì ưu tiên mốc sớm hơn) và hiển thị từng thời điểm chấm công cụ thể."
             />
           </div>
 
@@ -1700,13 +1734,16 @@ export function AttendanceMonthlyMatrixSection() {
           />
         ) : (
           <>
-            <div className="overflow-x-auto rounded-xl border border-border">
+            <div
+              ref={matrixTableContainerRef}
+              className="max-h-[75vh] overflow-auto rounded-xl border border-border"
+            >
               <table className="min-w-max border-collapse text-left text-sm">
-                <thead className={DATA_TABLE_HEAD_CLASS}>
+                <thead className={cn(DATA_TABLE_HEAD_CLASS, "sticky top-0 z-20")}>
                   <tr>
                     <th
                       scope="col"
-                      className="sticky left-0 z-20 min-w-[17rem] border-b border-r border-border bg-surface px-3 py-3 text-xs font-semibold uppercase tracking-wide text-muted shadow-[1px_0_0_var(--border)]"
+                      className="sticky left-0 z-30 min-w-[17rem] border-b border-r border-border bg-surface px-3 py-3 text-xs font-semibold uppercase tracking-wide text-muted shadow-[1px_0_0_var(--border)]"
                     >
                       Nhân sự &amp; Tổng hợp tháng
                     </th>
@@ -1715,7 +1752,7 @@ export function AttendanceMonthlyMatrixSection() {
                         key={calDay.business_date}
                         scope="col"
                         title={calDay.business_date}
-                        className="min-w-[14.5rem] border-b border-r border-border px-2 py-2 text-center text-xs font-semibold text-foreground last:border-r-0"
+                        className="min-w-[14.5rem] border-b border-r border-border bg-surface px-2 py-2 text-center text-xs font-semibold text-foreground last:border-r-0"
                       >
                         <div className="font-mono text-sm">
                           Ngày {String(calDay.day_of_month).padStart(2, "0")}
@@ -1749,6 +1786,11 @@ export function AttendanceMonthlyMatrixSection() {
                 </tbody>
               </table>
             </div>
+
+            <FloatingTableNav
+              containerRef={matrixTableContainerRef}
+              tableLabel="Báo cáo tháng"
+            />
 
             <OffsetPager
               page={activeReport.pagination.page}

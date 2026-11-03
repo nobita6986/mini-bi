@@ -59,6 +59,8 @@ import {
   AttendanceBranchesAdminSection,
   AttendanceMonthlyMatrixSection,
 } from "@/components/admin/attendance-monthly-matrix-panel";
+import { AttendanceExplanationWorkspace } from "@/components/attendance/attendance-explanation-workspace";
+import { FloatingTableNav } from "@/components/ui/floating-table-nav";
 import {
   buildGoogleMapsCoordinatesUrl,
   type AttendanceAdminWorkspaceTab,
@@ -847,6 +849,7 @@ export function AttendanceReportManager() {
   const photoAbortRef = useRef<AbortController | null>(null);
   const photoObjectUrlRef = useRef<string | null>(null);
   const photoRequestSeqRef = useRef(0);
+  const checkinsTableContainerRef = useRef<HTMLDivElement | null>(null);
 
   const releaseActivePhotoResources = useCallback(() => {
     photoRequestSeqRef.current += 1;
@@ -1420,7 +1423,23 @@ export function AttendanceReportManager() {
               : "text-muted hover:bg-surface-muted/70 hover:text-foreground",
           )}
         >
-          Ma trận tháng
+          Báo cáo tháng
+        </button>
+        <button
+          type="button"
+          role="tab"
+          id="attendance-tab-explanations"
+          aria-selected={activeTab === "explanations"}
+          aria-controls="attendance-panel-explanations"
+          onClick={() => setActiveTab("explanations")}
+          className={cn(
+            "min-h-10 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors",
+            activeTab === "explanations"
+              ? "bg-accent text-on-primary shadow-2xs"
+              : "text-muted hover:bg-surface-muted/70 hover:text-foreground",
+          )}
+        >
+          Giải trình chấm công
         </button>
         <button
           type="button"
@@ -1623,6 +1642,16 @@ export function AttendanceReportManager() {
           aria-labelledby="attendance-tab-monthly-matrix"
         >
           <AttendanceMonthlyMatrixSection />
+        </div>
+      ) : null}
+
+      {activeTab === "explanations" ? (
+        <div
+          id="attendance-panel-explanations"
+          role="tabpanel"
+          aria-labelledby="attendance-tab-explanations"
+        >
+          <AttendanceExplanationWorkspace loginRedirectPath="/admin/attendance" />
         </div>
       ) : null}
 
@@ -1875,94 +1904,101 @@ export function AttendanceReportManager() {
           />
         ) : (
           <>
-            <DataTableContainer>
-              <table className={DATA_TABLE_CLASS}>
-                <thead className={DATA_TABLE_HEAD_CLASS}>
-                  <tr>
-                    <th scope="col" className={DATA_TABLE_TH_CLASS}>
-                      Nhân viên
-                    </th>
-                    <th scope="col" className={DATA_TABLE_TH_CLASS}>
-                      Ngày &amp; giờ chấm công
-                    </th>
-                    <th scope="col" className={DATA_TABLE_TH_CLASS}>
-                      Xác minh thời gian
-                    </th>
-                    <th scope="col" className={DATA_TABLE_TH_CLASS}>
-                      Tọa độ GPS &amp; ghi chú
-                    </th>
-                    <th scope="col" className={DATA_TABLE_TH_CLASS}>
-                      Khoảng cách tới trụ sở
-                    </th>
-                    <th scope="col" className={DATA_TABLE_TH_CLASS}>
-                      Thao tác
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {activeReport.items.map((item) => (
-                    <tr key={item.checkin_id} className={DATA_TABLE_ROW_CLASS}>
-                      <td data-label="Nhân viên" className={DATA_TABLE_TD_CLASS}>
-                        <div className="space-y-0.5">
-                          <p className="font-medium text-foreground">
-                            {item.employee_display_name}
-                          </p>
-                          {item.personnel_code ? (
-                            <p className="font-mono text-xs text-muted">
-                              Mã NS: {item.personnel_code}
-                            </p>
-                          ) : null}
-                        </div>
-                      </td>
-                      <td
-                        data-label="Ngày & giờ chấm công"
-                        className={DATA_TABLE_TD_CLASS}
-                      >
-                        <div className="space-y-0.5">
-                          <p className="font-mono text-sm font-medium tabular-nums text-foreground">
-                            {item.captured_at_local}
-                          </p>
-                          <p className="text-xs text-muted">
-                            Ngày NV:{" "}
-                            <span className="font-mono">{item.business_date}</span> · Lần #
-                            {item.sequence_in_day}
-                          </p>
-                        </div>
-                      </td>
-                      <td
-                        data-label="Xác minh thời gian"
-                        className={DATA_TABLE_TD_CLASS}
-                      >
-                        <TimeVerificationCell item={item} />
-                      </td>
-                      <td
-                        data-label="Tọa độ GPS & ghi chú"
-                        className={DATA_TABLE_TD_CLASS}
-                      >
-                        <GpsDetailCell item={item} />
-                      </td>
-                      <td
-                        data-label="Khoảng cách tới trụ sở"
-                        className={DATA_TABLE_TD_CLASS}
-                      >
-                        <DistanceCell item={item} />
-                      </td>
-                      <td data-label="Thao tác" className={DATA_TABLE_TD_CLASS}>
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          size="sm"
-                          aria-label={`Xem chi tiết lượt chấm công của ${item.employee_display_name} lúc ${item.captured_at_local}`}
-                          onClick={() => openDetailDialog(item)}
-                        >
-                          Chi tiết
-                        </Button>
-                      </td>
+            <div ref={checkinsTableContainerRef} className="max-h-[75vh] overflow-auto">
+              <DataTableContainer>
+                <table className={DATA_TABLE_CLASS}>
+                  <thead className={cn(DATA_TABLE_HEAD_CLASS, "sticky top-0 z-10")}>
+                    <tr>
+                      <th scope="col" className={DATA_TABLE_TH_CLASS}>
+                        Nhân viên
+                      </th>
+                      <th scope="col" className={DATA_TABLE_TH_CLASS}>
+                        Ngày &amp; giờ chấm công
+                      </th>
+                      <th scope="col" className={DATA_TABLE_TH_CLASS}>
+                        Xác minh thời gian
+                      </th>
+                      <th scope="col" className={DATA_TABLE_TH_CLASS}>
+                        Tọa độ GPS &amp; ghi chú
+                      </th>
+                      <th scope="col" className={DATA_TABLE_TH_CLASS}>
+                        Khoảng cách tới trụ sở
+                      </th>
+                      <th scope="col" className={DATA_TABLE_TH_CLASS}>
+                        Thao tác
+                      </th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </DataTableContainer>
+                  </thead>
+                  <tbody>
+                    {activeReport.items.map((item) => (
+                      <tr key={item.checkin_id} className={DATA_TABLE_ROW_CLASS}>
+                        <td data-label="Nhân viên" className={DATA_TABLE_TD_CLASS}>
+                          <div className="space-y-0.5">
+                            <p className="font-medium text-foreground">
+                              {item.employee_display_name}
+                            </p>
+                            {item.personnel_code ? (
+                              <p className="font-mono text-xs text-muted">
+                                Mã NS: {item.personnel_code}
+                              </p>
+                            ) : null}
+                          </div>
+                        </td>
+                        <td
+                          data-label="Ngày & giờ chấm công"
+                          className={DATA_TABLE_TD_CLASS}
+                        >
+                          <div className="space-y-0.5">
+                            <p className="font-mono text-sm font-medium tabular-nums text-foreground">
+                              {item.captured_at_local}
+                            </p>
+                            <p className="text-xs text-muted">
+                              Ngày NV:{" "}
+                              <span className="font-mono">{item.business_date}</span> · Lần #
+                              {item.sequence_in_day}
+                            </p>
+                          </div>
+                        </td>
+                        <td
+                          data-label="Xác minh thời gian"
+                          className={DATA_TABLE_TD_CLASS}
+                        >
+                          <TimeVerificationCell item={item} />
+                        </td>
+                        <td
+                          data-label="Tọa độ GPS & ghi chú"
+                          className={DATA_TABLE_TD_CLASS}
+                        >
+                          <GpsDetailCell item={item} />
+                        </td>
+                        <td
+                          data-label="Khoảng cách tới trụ sở"
+                          className={DATA_TABLE_TD_CLASS}
+                        >
+                          <DistanceCell item={item} />
+                        </td>
+                        <td data-label="Thao tác" className={DATA_TABLE_TD_CLASS}>
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            size="sm"
+                            aria-label={`Xem chi tiết lượt chấm công của ${item.employee_display_name} lúc ${item.captured_at_local}`}
+                            onClick={() => openDetailDialog(item)}
+                          >
+                            Chi tiết
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </DataTableContainer>
+            </div>
+
+            <FloatingTableNav
+              containerRef={checkinsTableContainerRef}
+              tableLabel="Chi tiết lượt chấm công"
+            />
 
             <OffsetPager
               page={activeReport.pagination.page}

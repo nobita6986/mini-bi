@@ -77,8 +77,77 @@ export const ATTENDANCE_SLOT_STATUSES = [
   "OUT_OF_GRACE",
   "LEAVE_COVERED",
   "MISSING",
+  "EXPLAINED_APPROVED",
 ] as const;
 export type AttendanceSlotStatus = (typeof ATTENDANCE_SLOT_STATUSES)[number];
+
+export const ATTENDANCE_EXPLANATION_STATUSES = [
+  "PENDING",
+  "APPROVED",
+  "REJECTED",
+] as const;
+export type AttendanceExplanationStatus =
+  (typeof ATTENDANCE_EXPLANATION_STATUSES)[number];
+
+export const ATTENDANCE_EXPLANATION_ORIGINAL_SLOT_STATUSES = [
+  "MISSING",
+  "OUT_OF_GRACE",
+] as const;
+export type AttendanceExplanationOriginalSlotStatus =
+  (typeof ATTENDANCE_EXPLANATION_ORIGINAL_SLOT_STATUSES)[number];
+
+export const ATTENDANCE_EXPLANATION_DECISIONS = ["APPROVE", "REJECT"] as const;
+export type AttendanceExplanationDecision =
+  (typeof ATTENDANCE_EXPLANATION_DECISIONS)[number];
+
+export const ATTENDANCE_EXPLANATION_MIN_REASON_LENGTH = 3;
+export const ATTENDANCE_EXPLANATION_MAX_REASON_LENGTH = 500;
+export const ATTENDANCE_EXPLANATION_MAX_DECISION_NOTE_LENGTH = 500;
+
+export const ATTENDANCE_EXPLANATION_ROUTE_KINDS = [
+  "TEAM_LEADER",
+  "DEPARTMENT_HEAD",
+  "ADMIN_BOD_DIRECT",
+  "ADMIN_BOD_FALLBACK",
+  "RECRUITMENT_TEAM_LEADER",
+  "RECRUITMENT_HEAD",
+  "ACCOUNTING_HEAD",
+  "LEGAL_ADMIN_HEAD",
+  "BOD_DIRECT",
+] as const;
+export type AttendanceExplanationRouteKind =
+  (typeof ATTENDANCE_EXPLANATION_ROUTE_KINDS)[number];
+
+export const ATTENDANCE_EXPLANATION_UNIT_KINDS = [
+  "UNCLASSIFIED",
+  "RECRUITMENT",
+  "MARKETING",
+  "IT",
+  "ACCOUNTING",
+  "MANAGEMENT_BOD",
+  "LEGAL_ADMIN",
+] as const;
+export type AttendanceExplanationUnitKind =
+  (typeof ATTENDANCE_EXPLANATION_UNIT_KINDS)[number];
+
+export const ATTENDANCE_EXPLANATION_FALLBACK_REASONS = [
+  "DEPARTMENT_APPROVER_NOT_CONFIGURED",
+  "TEAM_WITHOUT_ACTIVE_LEADER",
+  "TEAM_MULTIPLE_LEADERS_OR_SELF",
+  "RECRUITER_WITHOUT_ACTIVE_TEAM",
+  "RECRUITER_MULTI_ACTIVE_TEAMS",
+  "PROFILE_UNCONFIGURED_OR_UNMAPPED",
+  "UNMAPPED_UNIT_OR_RECRUITER",
+  "UNCONFIGURED_UNIT",
+  "MISSING_RECRUITMENT_TEAM",
+  "MISSING_TEAM_LEADER",
+  "TEAM_LEADER_SELF",
+  "MISSING_DEPARTMENT_HEAD",
+  "DEPARTMENT_HEAD_SELF",
+  "PRIVILEGED_REQUESTER",
+] as const;
+export type AttendanceExplanationFallbackReason =
+  (typeof ATTENDANCE_EXPLANATION_FALLBACK_REASONS)[number];
 
 export const ATTENDANCE_CHECKIN_DEVIATION_STATUSES = [
   "ON_TIME",
@@ -124,6 +193,31 @@ export const ATTENDANCE_MONTHLY_MATRIX_ERROR_CODES = [
   "ATTENDANCE_SLOT_POLICY_EFFECTIVE_DATE_PAST",
   "ATTENDANCE_SLOT_POLICY_OVERLAP",
   "ATTENDANCE_SLOT_POLICY_VERSION_CONFLICT",
+  "ATTENDANCE_EXPLANATION_INVALID",
+  "ATTENDANCE_EXPLANATION_QUERY_INVALID",
+  "ATTENDANCE_EXPLANATION_DATE_INVALID",
+  "ATTENDANCE_EXPLANATION_DATE_FUTURE",
+  "ATTENDANCE_EXPLANATION_FUTURE_DATE_NOT_ALLOWED",
+  "ATTENDANCE_EXPLANATION_SLOT_INVALID",
+  "ATTENDANCE_EXPLANATION_REASON_INVALID",
+  "ATTENDANCE_EXPLANATION_FILTER_INVALID",
+  "ATTENDANCE_EXPLANATION_PAGINATION_INVALID",
+  "ATTENDANCE_EXPLANATION_DECISION_INVALID",
+  "ATTENDANCE_EXPLANATION_NOTE_INVALID",
+  "ATTENDANCE_EXPLANATION_APPROVER_UNCONFIGURED",
+  "ATTENDANCE_EXPLANATION_ACCESS_DENIED",
+  "ATTENDANCE_EXPLANATION_SUBMIT_DENIED",
+  "ATTENDANCE_EXPLANATION_APPROVAL_ACCESS_DENIED",
+  "ATTENDANCE_EXPLANATION_DECIDE_DENIED",
+  "ATTENDANCE_EXPLANATION_DECISION_DENIED",
+  "ATTENDANCE_EXPLANATION_SELF_APPROVAL_FORBIDDEN",
+  "ATTENDANCE_EXPLANATION_NOT_FOUND",
+  "ATTENDANCE_EXPLANATION_ALREADY_EXISTS",
+  "ATTENDANCE_EXPLANATION_ALREADY_SUBMITTED",
+  "ATTENDANCE_EXPLANATION_SLOT_NOT_ELIGIBLE",
+  "ATTENDANCE_EXPLANATION_VERSION_CONFLICT",
+  "ATTENDANCE_EXPLANATION_ALREADY_DECIDED",
+  "ATTENDANCE_EXPLANATION_STATE_INVALID",
   "IDEMPOTENCY_KEY_INVALID",
   "IDEMPOTENCY_CONFLICT",
   "ATTENDANCE_REPORT_UNAVAILABLE",
@@ -166,6 +260,31 @@ const MATRIX_ERROR_HTTP_STATUS: Readonly<Record<AttendanceMonthlyMatrixErrorCode
   ATTENDANCE_SLOT_POLICY_EFFECTIVE_DATE_PAST: 422,
   ATTENDANCE_SLOT_POLICY_OVERLAP: 409,
   ATTENDANCE_SLOT_POLICY_VERSION_CONFLICT: 409,
+  ATTENDANCE_EXPLANATION_INVALID: 400,
+  ATTENDANCE_EXPLANATION_QUERY_INVALID: 400,
+  ATTENDANCE_EXPLANATION_DATE_INVALID: 400,
+  ATTENDANCE_EXPLANATION_DATE_FUTURE: 400,
+  ATTENDANCE_EXPLANATION_FUTURE_DATE_NOT_ALLOWED: 400,
+  ATTENDANCE_EXPLANATION_SLOT_INVALID: 400,
+  ATTENDANCE_EXPLANATION_REASON_INVALID: 400,
+  ATTENDANCE_EXPLANATION_FILTER_INVALID: 400,
+  ATTENDANCE_EXPLANATION_PAGINATION_INVALID: 400,
+  ATTENDANCE_EXPLANATION_DECISION_INVALID: 400,
+  ATTENDANCE_EXPLANATION_NOTE_INVALID: 400,
+  ATTENDANCE_EXPLANATION_APPROVER_UNCONFIGURED: 422,
+  ATTENDANCE_EXPLANATION_ACCESS_DENIED: 403,
+  ATTENDANCE_EXPLANATION_SUBMIT_DENIED: 403,
+  ATTENDANCE_EXPLANATION_APPROVAL_ACCESS_DENIED: 403,
+  ATTENDANCE_EXPLANATION_DECIDE_DENIED: 403,
+  ATTENDANCE_EXPLANATION_DECISION_DENIED: 403,
+  ATTENDANCE_EXPLANATION_SELF_APPROVAL_FORBIDDEN: 403,
+  ATTENDANCE_EXPLANATION_NOT_FOUND: 404,
+  ATTENDANCE_EXPLANATION_ALREADY_EXISTS: 409,
+  ATTENDANCE_EXPLANATION_ALREADY_SUBMITTED: 409,
+  ATTENDANCE_EXPLANATION_SLOT_NOT_ELIGIBLE: 409,
+  ATTENDANCE_EXPLANATION_VERSION_CONFLICT: 409,
+  ATTENDANCE_EXPLANATION_ALREADY_DECIDED: 409,
+  ATTENDANCE_EXPLANATION_STATE_INVALID: 409,
   IDEMPOTENCY_KEY_INVALID: 400,
   IDEMPOTENCY_CONFLICT: 409,
   ATTENDANCE_REPORT_UNAVAILABLE: 503,
@@ -316,6 +435,20 @@ export type AttendanceSlotCheckinItemProjection = {
   distance_meters: number | null;
 };
 
+export type AttendanceDaySlotExplanationSummaryProjection = {
+  explanation_id: string;
+  status: AttendanceExplanationStatus;
+  original_slot_status: AttendanceExplanationOriginalSlotStatus;
+  reason: string;
+  submitted_at: string;
+  submitted_at_local: string;
+  decided_at: string | null;
+  decided_at_local: string | null;
+  decided_by_display_name: string | null;
+  decision_note: string;
+  row_version: number;
+};
+
 export type AttendanceMonthlyMatrixDaySlotProjection = {
   slot_code: AttendanceSlotCode;
   slot_index: number;
@@ -327,6 +460,172 @@ export type AttendanceMonthlyMatrixDaySlotProjection = {
   is_leave_covered: boolean;
   slot_status: AttendanceSlotStatus;
   checkins: AttendanceSlotCheckinItemProjection[];
+  explanation?: AttendanceDaySlotExplanationSummaryProjection | null;
+};
+
+export type AttendanceExplanationAccountSummaryProjection = {
+  app_user_id: string;
+  display_name: string | null;
+  login_id: string | null;
+  personnel_code: string | null;
+  recruiter_id: string | null;
+  account_enabled: boolean;
+};
+
+export type AttendanceExplanationAuditEventProjection = {
+  audit_event_id: string;
+  action: "SUBMITTED" | "APPROVED" | "REJECTED";
+  actor: AttendanceExplanationAccountSummaryProjection;
+  before_status: AttendanceExplanationStatus | null;
+  after_status: AttendanceExplanationStatus;
+  note: string;
+  created_at: string;
+  created_at_local: string;
+};
+
+export type AttendanceExplanationItemProjection = {
+  explanation_id: string;
+  app_user_id: string;
+  requester: AttendanceExplanationAccountSummaryProjection;
+  business_date: string;
+  slot_code: AttendanceSlotCode;
+  slot_index: number;
+  slot_label: string;
+  session_code: AttendanceSlotSessionCode;
+  target_time: string;
+  grace_before_minutes: number;
+  grace_after_minutes: number;
+  policy_version_used: number;
+  original_slot_status: AttendanceExplanationOriginalSlotStatus;
+  effective_slot_status: AttendanceSlotStatus;
+  related_checkins: AttendanceSlotCheckinItemProjection[];
+  reason: string;
+  status: AttendanceExplanationStatus;
+  unit_kind_snapshot: AttendanceExplanationUnitKind | null;
+  route_kind: AttendanceExplanationRouteKind;
+  primary_approver: AttendanceExplanationAccountSummaryProjection | null;
+  routed_team: {
+    team_id: string;
+    team_code: string | null;
+    team_name: string | null;
+  } | null;
+  fallback_reason: AttendanceExplanationFallbackReason | null;
+  submitted_at: string;
+  submitted_at_local: string;
+  decided_at: string | null;
+  decided_at_local: string | null;
+  decided_by: AttendanceExplanationAccountSummaryProjection | null;
+  decision_note: string;
+  row_version: number;
+  updated_at: string;
+  audit_events: AttendanceExplanationAuditEventProjection[];
+  can_decide?: boolean;
+};
+
+export type AttendanceExplanationDaySlotEvaluationProjection = {
+  slot_code: AttendanceSlotCode;
+  slot_index: number;
+  slot_label: string;
+  session_code: AttendanceSlotSessionCode;
+  target_time: string;
+  grace_before_minutes: number;
+  grace_after_minutes: number;
+  is_leave_covered: boolean;
+  original_slot_status: AttendanceSlotStatus;
+  slot_status: AttendanceSlotStatus;
+  eligible_for_explanation: boolean;
+  checkins: AttendanceSlotCheckinItemProjection[];
+  explanation: AttendanceDaySlotExplanationSummaryProjection | null;
+};
+
+export type AttendanceMyExplanationsOverviewProjection = {
+  viewer: {
+    app_user_id: string;
+    can_submit_explanation: boolean;
+    can_approve_explanations: boolean;
+    is_shared_non_employee: boolean;
+    is_full_admin: boolean;
+    is_bod: boolean;
+  };
+  routing: {
+    route_kind: AttendanceExplanationRouteKind;
+    unit_kind: AttendanceExplanationUnitKind | null;
+    primary_approver: AttendanceExplanationAccountSummaryProjection | null;
+    team_id: string | null;
+    team_code: string | null;
+    team_name: string | null;
+    fallback_reason: AttendanceExplanationFallbackReason | null;
+    profile_configured: boolean;
+  };
+  today_local: string;
+  selected_date: string;
+  day_evaluation: {
+    business_date: string;
+    policy_version_used: number;
+    slots: AttendanceExplanationDaySlotEvaluationProjection[];
+  };
+  pagination: {
+    limit: number;
+    offset: number;
+    total_rows: number;
+  };
+  items: AttendanceExplanationItemProjection[];
+};
+
+export type SubmitAttendanceExplanationResultProjection = {
+  replayed: boolean;
+  explanation: AttendanceExplanationItemProjection;
+};
+
+export type AttendanceExplanationApprovalInboxProjection = {
+  viewer: {
+    app_user_id: string;
+    can_approve_explanations: boolean;
+    is_full_admin: boolean;
+    is_bod: boolean;
+  };
+  pagination: {
+    limit: number;
+    offset: number;
+    total_rows: number;
+    pending_count: number;
+  };
+  items: (AttendanceExplanationItemProjection & { can_decide: boolean })[];
+};
+
+export type DecideAttendanceExplanationResultProjection = {
+  replayed: boolean;
+  explanation: AttendanceExplanationItemProjection;
+};
+
+export type ParsedMyAttendanceExplanationsQuery = {
+  business_date: string | null;
+  limit: number;
+  offset: number;
+};
+
+export type ParsedSubmitAttendanceExplanationRequest = {
+  business_date: string;
+  slot_code: AttendanceSlotCode;
+  reason: string;
+  idempotency_key: string;
+};
+
+export type AttendanceMonthlyMatrixSlotExplanationProjection =
+  AttendanceDaySlotExplanationSummaryProjection;
+
+export type ParsedAttendanceExplanationApprovalInboxQuery = {
+  status: "ALL" | AttendanceExplanationStatus | null;
+  status_filter: "ALL" | AttendanceExplanationStatus | null;
+  limit: number;
+  offset: number;
+};
+
+export type ParsedDecideAttendanceExplanationRequest = {
+  decision: AttendanceExplanationDecision;
+  expected_row_version: number;
+  decision_note: string;
+  idempotency_key: string;
 };
 
 export const DEFAULT_ATTENDANCE_SLOT_POLICY: AttendanceSlotPolicyProjection = {
@@ -654,6 +953,9 @@ export function evaluateAttendanceDaySlots(input: {
     AttendanceMonthlyMatrixApprovedLeaveItemProjection,
     "session_code"
   >[];
+  explanations?: readonly (AttendanceDaySlotExplanationSummaryProjection & {
+    slot_code: AttendanceSlotCode;
+  })[];
 }): {
   policy_version_used: number;
   missing_slot_count: number;
@@ -667,6 +969,14 @@ export function evaluateAttendanceDaySlots(input: {
   const pmCovered = input.approved_leaves.some(
     (item) => item.session_code === "FULL" || item.session_code === "PM",
   );
+  const explanationBySlotCode = new Map<
+    AttendanceSlotCode,
+    AttendanceDaySlotExplanationSummaryProjection
+  >();
+  for (const exp of input.explanations ?? []) {
+    const { slot_code, ...summary } = exp;
+    explanationBySlotCode.set(slot_code, summary);
+  }
 
   const slotTargets = policy.slots.map((slot) => ({
     ...slot,
@@ -687,8 +997,6 @@ export function evaluateAttendanceDaySlots(input: {
   for (const slot of slotTargets) {
     bucketBySlotIndex.set(slot.slot_index, []);
   }
-
-  let lateOrEarlyCount = 0;
 
   for (const checkin of sortedCheckins) {
     const checkinMinute = parseHhMmToMinutes(checkin.time_local) ?? 0;
@@ -712,11 +1020,9 @@ export function evaluateAttendanceDaySlots(input: {
     if (deltaMinutes < -bestSlot.grace_before_minutes) {
       deviationStatus = "EARLY";
       overGraceMinutes = -deltaMinutes - bestSlot.grace_before_minutes;
-      lateOrEarlyCount += 1;
     } else if (deltaMinutes > bestSlot.grace_after_minutes) {
       deviationStatus = "LATE";
       overGraceMinutes = deltaMinutes - bestSlot.grace_after_minutes;
-      lateOrEarlyCount += 1;
     }
 
     bucketBySlotIndex.get(bestSlot.slot_index)!.push({
@@ -738,14 +1044,25 @@ export function evaluateAttendanceDaySlots(input: {
   }
 
   let missingSlotCount = 0;
+  let lateOrEarlyCount = 0;
   const slots: AttendanceMonthlyMatrixDaySlotProjection[] = slotTargets.map((slot) => {
     const slotCheckins = bucketBySlotIndex.get(slot.slot_index) ?? [];
     const isLeaveCovered = slot.session_code === "AM" ? amCovered : pmCovered;
-    const hasOutOfGrace = slotCheckins.some((item) => item.deviation_status !== "ON_TIME");
+    const outOfGraceCount = slotCheckins.filter((item) => item.deviation_status !== "ON_TIME").length;
+    const hasOutOfGrace = outOfGraceCount > 0;
+    const explanation = explanationBySlotCode.get(slot.slot_code) ?? null;
+    const isApprovedExplanation = explanation?.status === "APPROVED";
 
     let slotStatus: AttendanceSlotStatus;
-    if (slotCheckins.length > 0 && hasOutOfGrace) {
+    if (
+      isApprovedExplanation &&
+      ((slotCheckins.length > 0 && hasOutOfGrace) ||
+        (slotCheckins.length === 0 && !isLeaveCovered))
+    ) {
+      slotStatus = "EXPLAINED_APPROVED";
+    } else if (slotCheckins.length > 0 && hasOutOfGrace) {
       slotStatus = "OUT_OF_GRACE";
+      lateOrEarlyCount += outOfGraceCount;
     } else if (slotCheckins.length > 0) {
       slotStatus = "ON_TIME";
     } else if (isLeaveCovered) {
@@ -766,6 +1083,7 @@ export function evaluateAttendanceDaySlots(input: {
       is_leave_covered: isLeaveCovered,
       slot_status: slotStatus,
       checkins: slotCheckins,
+      explanation,
     };
   });
 
@@ -1568,6 +1886,65 @@ function projectSlotCheckinItem(
   };
 }
 
+function projectDaySlotExplanationSummary(
+  value: unknown,
+): AttendanceDaySlotExplanationSummaryProjection | null {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      "explanation_id",
+      "status",
+      "original_slot_status",
+      "reason",
+      "submitted_at",
+      "submitted_at_local",
+      "decided_at",
+      "decided_at_local",
+      "decided_by_display_name",
+      "decision_note",
+      "row_version",
+    ])
+  ) {
+    return null;
+  }
+  if (
+    !isUuidString(value.explanation_id) ||
+    !ATTENDANCE_EXPLANATION_STATUSES.includes(value.status as AttendanceExplanationStatus) ||
+    !ATTENDANCE_EXPLANATION_ORIGINAL_SLOT_STATUSES.includes(
+      value.original_slot_status as AttendanceExplanationOriginalSlotStatus,
+    ) ||
+    typeof value.reason !== "string" ||
+    value.reason.trim().length < 3 ||
+    value.reason.trim().length > 500 ||
+    typeof value.submitted_at !== "string" ||
+    typeof value.submitted_at_local !== "string" ||
+    (value.decided_at !== null && typeof value.decided_at !== "string") ||
+    (value.decided_at_local !== null && typeof value.decided_at_local !== "string") ||
+    (value.decided_by_display_name !== null &&
+      typeof value.decided_by_display_name !== "string") ||
+    typeof value.decision_note !== "string" ||
+    typeof value.row_version !== "number" ||
+    !Number.isSafeInteger(value.row_version) ||
+    value.row_version < 1
+  ) {
+    return null;
+  }
+
+  return {
+    explanation_id: value.explanation_id.toLowerCase(),
+    status: value.status as AttendanceExplanationStatus,
+    original_slot_status: value.original_slot_status as AttendanceExplanationOriginalSlotStatus,
+    reason: value.reason,
+    submitted_at: value.submitted_at,
+    submitted_at_local: value.submitted_at_local,
+    decided_at: value.decided_at,
+    decided_at_local: value.decided_at_local,
+    decided_by_display_name: value.decided_by_display_name,
+    decision_note: value.decision_note,
+    row_version: value.row_version,
+  };
+}
+
 function projectDaySlot(
   value: unknown,
   expectedIndex: number,
@@ -1588,9 +1965,16 @@ function projectDaySlot(
     "checkins",
   ] as const;
   const withLabelKeys = [...baseKeys, "slot_label"] as const;
-  const hasLabelKey = hasExactKeys(value, withLabelKeys);
-  const hasLegacyKeys = !hasLabelKey && hasExactKeys(value, baseKeys);
-  if (!hasLabelKey && !hasLegacyKeys) {
+  const withExplanationKeys = [...withLabelKeys, "explanation"] as const;
+  const baseWithExplanationKeys = [...baseKeys, "explanation"] as const;
+  const hasLabelAndExplanation = hasExactKeys(value, withExplanationKeys);
+  const hasLabelKey =
+    hasLabelAndExplanation || (!hasLabelAndExplanation && hasExactKeys(value, withLabelKeys));
+  const hasBaseWithExplanation =
+    !hasLabelKey && hasExactKeys(value, baseWithExplanationKeys);
+  const hasLegacyKeys =
+    !hasLabelKey && !hasBaseWithExplanation && hasExactKeys(value, baseKeys);
+  if (!hasLabelKey && !hasBaseWithExplanation && !hasLegacyKeys) {
     return null;
   }
 
@@ -1637,6 +2021,14 @@ function projectDaySlot(
     checkins.push(projectedCheckin);
   }
 
+  let explanation: AttendanceDaySlotExplanationSummaryProjection | null = null;
+  if (hasLabelAndExplanation || hasBaseWithExplanation) {
+    if (value.explanation !== null) {
+      explanation = projectDaySlotExplanationSummary(value.explanation);
+      if (!explanation) return null;
+    }
+  }
+
   return {
     slot_code: expectedCode,
     slot_index: expectedIndex,
@@ -1648,6 +2040,7 @@ function projectDaySlot(
     is_leave_covered: value.is_leave_covered,
     slot_status: value.slot_status as AttendanceSlotStatus,
     checkins,
+    explanation,
   };
 }
 
@@ -2980,3 +3373,844 @@ export function projectUnassignBranchResult(
     },
   };
 }
+
+export function parseMyAttendanceExplanationsQuery(
+  url: URL,
+):
+  | { ok: true; value: ParsedMyAttendanceExplanationsQuery }
+  | { ok: false; code: AttendanceMonthlyMatrixErrorCode } {
+  const allowedKeys = new Set(["business_date", "limit", "offset"]);
+  for (const key of url.searchParams.keys()) {
+    if (!allowedKeys.has(key) || url.searchParams.getAll(key).length > 1) {
+      return { ok: false, code: "ATTENDANCE_EXPLANATION_QUERY_INVALID" };
+    }
+  }
+
+  let businessDate: string | null = null;
+  const rawDate = url.searchParams.get("business_date");
+  if (rawDate !== null && rawDate.trim() !== "") {
+    const trimmed = rawDate.trim();
+    if (
+      !isValidIsoCalendarDate(trimmed) ||
+      trimmed < "2000-01-01" ||
+      trimmed > "2100-12-31"
+    ) {
+      return { ok: false, code: "ATTENDANCE_EXPLANATION_DATE_INVALID" };
+    }
+    businessDate = trimmed;
+  }
+
+  const rawLimit = url.searchParams.get("limit") ?? "50";
+  const rawOffset = url.searchParams.get("offset") ?? "0";
+  if (!/^\d{1,6}$/.test(rawLimit) || !/^\d{1,6}$/.test(rawOffset)) {
+    return { ok: false, code: "ATTENDANCE_EXPLANATION_PAGINATION_INVALID" };
+  }
+  const limit = Number(rawLimit);
+  const offset = Number(rawOffset);
+  if (
+    !Number.isSafeInteger(limit) ||
+    limit < 1 ||
+    limit > 200 ||
+    !Number.isSafeInteger(offset) ||
+    offset < 0
+  ) {
+    return { ok: false, code: "ATTENDANCE_EXPLANATION_PAGINATION_INVALID" };
+  }
+
+  return {
+    ok: true,
+    value: {
+      business_date: businessDate,
+      limit,
+      offset,
+    },
+  };
+}
+
+export const parseAttendanceExplanationsQuery = parseMyAttendanceExplanationsQuery;
+
+export function parseSubmitAttendanceExplanationBody(
+  body: unknown,
+  headerIdempotencyKey?: string | null,
+):
+  | { ok: true; value: ParsedSubmitAttendanceExplanationRequest }
+  | { ok: false; code: AttendanceMonthlyMatrixErrorCode } {
+  if (!isRecord(body)) {
+    return { ok: false, code: "ATTENDANCE_EXPLANATION_QUERY_INVALID" };
+  }
+  const allowedKeys = new Set(["business_date", "slot_code", "reason", "idempotency_key"]);
+  for (const key of Object.keys(body)) {
+    if (!allowedKeys.has(key)) {
+      return { ok: false, code: "ATTENDANCE_EXPLANATION_QUERY_INVALID" };
+    }
+  }
+
+  const businessDate =
+    typeof body.business_date === "string" ? body.business_date.trim() : "";
+  if (
+    !isValidIsoCalendarDate(businessDate) ||
+    businessDate < "2000-01-01" ||
+    businessDate > "2100-12-31"
+  ) {
+    return { ok: false, code: "ATTENDANCE_EXPLANATION_DATE_INVALID" };
+  }
+
+  const rawSlotCode =
+    typeof body.slot_code === "string" ? body.slot_code.trim().toUpperCase() : "";
+  if (!ATTENDANCE_SLOT_CODES.includes(rawSlotCode as AttendanceSlotCode)) {
+    return { ok: false, code: "ATTENDANCE_EXPLANATION_SLOT_INVALID" };
+  }
+
+  const reason = typeof body.reason === "string" ? body.reason.trim() : "";
+  if (
+    reason.length < 3 ||
+    reason.length > 500 ||
+    ADDRESS_CONTROL_CHAR_PATTERN.test(reason)
+  ) {
+    return { ok: false, code: "ATTENDANCE_EXPLANATION_REASON_INVALID" };
+  }
+
+  const idempotencyKey = resolveIdempotencyKey(body.idempotency_key, headerIdempotencyKey);
+  if (!idempotencyKey) {
+    return { ok: false, code: "IDEMPOTENCY_KEY_INVALID" };
+  }
+
+  return {
+    ok: true,
+    value: {
+      business_date: businessDate,
+      slot_code: rawSlotCode as AttendanceSlotCode,
+      reason,
+      idempotency_key: idempotencyKey,
+    },
+  };
+}
+
+export function parseAttendanceExplanationApprovalInboxQuery(
+  url: URL,
+):
+  | { ok: true; value: ParsedAttendanceExplanationApprovalInboxQuery }
+  | { ok: false; code: AttendanceMonthlyMatrixErrorCode } {
+  const allowedKeys = new Set(["status", "limit", "offset"]);
+  for (const key of url.searchParams.keys()) {
+    if (!allowedKeys.has(key) || url.searchParams.getAll(key).length > 1) {
+      return { ok: false, code: "ATTENDANCE_EXPLANATION_QUERY_INVALID" };
+    }
+  }
+
+  let status: "ALL" | AttendanceExplanationStatus | null = null;
+  const rawStatus = url.searchParams.get("status");
+  if (rawStatus !== null && rawStatus.trim() !== "") {
+    const normalized = rawStatus.trim().toUpperCase();
+    if (
+      normalized !== "ALL" &&
+      !ATTENDANCE_EXPLANATION_STATUSES.includes(normalized as AttendanceExplanationStatus)
+    ) {
+      return { ok: false, code: "ATTENDANCE_EXPLANATION_FILTER_INVALID" };
+    }
+    status = normalized as "ALL" | AttendanceExplanationStatus;
+  }
+
+  const rawLimit = url.searchParams.get("limit") ?? "50";
+  const rawOffset = url.searchParams.get("offset") ?? "0";
+  if (!/^\d{1,6}$/.test(rawLimit) || !/^\d{1,6}$/.test(rawOffset)) {
+    return { ok: false, code: "ATTENDANCE_EXPLANATION_PAGINATION_INVALID" };
+  }
+  const limit = Number(rawLimit);
+  const offset = Number(rawOffset);
+  if (
+    !Number.isSafeInteger(limit) ||
+    limit < 1 ||
+    limit > 200 ||
+    !Number.isSafeInteger(offset) ||
+    offset < 0
+  ) {
+    return { ok: false, code: "ATTENDANCE_EXPLANATION_PAGINATION_INVALID" };
+  }
+
+  return {
+    ok: true,
+    value: {
+      status,
+      status_filter: status,
+      limit,
+      offset,
+    },
+  };
+}
+
+export function parseDecideAttendanceExplanationBody(
+  body: unknown,
+  headerIdempotencyKey?: string | null,
+):
+  | { ok: true; value: ParsedDecideAttendanceExplanationRequest }
+  | { ok: false; code: AttendanceMonthlyMatrixErrorCode } {
+  if (!isRecord(body)) {
+    return { ok: false, code: "ATTENDANCE_EXPLANATION_DECISION_INVALID" };
+  }
+  const allowedKeys = new Set([
+    "decision",
+    "expected_row_version",
+    "decision_note",
+    "idempotency_key",
+  ]);
+  for (const key of Object.keys(body)) {
+    if (!allowedKeys.has(key)) {
+      return { ok: false, code: "ATTENDANCE_EXPLANATION_DECISION_INVALID" };
+    }
+  }
+
+  const rawDecision =
+    typeof body.decision === "string" ? body.decision.trim().toUpperCase() : "";
+  if (!ATTENDANCE_EXPLANATION_DECISIONS.includes(rawDecision as AttendanceExplanationDecision)) {
+    return { ok: false, code: "ATTENDANCE_EXPLANATION_DECISION_INVALID" };
+  }
+
+  const expectedRowVersion = body.expected_row_version;
+  if (
+    typeof expectedRowVersion !== "number" ||
+    !Number.isSafeInteger(expectedRowVersion) ||
+    expectedRowVersion < 1
+  ) {
+    return { ok: false, code: "ATTENDANCE_EXPLANATION_DECISION_INVALID" };
+  }
+
+  const decisionNote =
+    body.decision_note === undefined || body.decision_note === null
+      ? ""
+      : typeof body.decision_note === "string"
+        ? body.decision_note.trim()
+        : null;
+  if (
+    decisionNote === null ||
+    decisionNote.length > 500 ||
+    ADDRESS_CONTROL_CHAR_PATTERN.test(decisionNote)
+  ) {
+    return { ok: false, code: "ATTENDANCE_EXPLANATION_NOTE_INVALID" };
+  }
+
+  const idempotencyKey = resolveIdempotencyKey(body.idempotency_key, headerIdempotencyKey);
+  if (!idempotencyKey) {
+    return { ok: false, code: "IDEMPOTENCY_KEY_INVALID" };
+  }
+
+  return {
+    ok: true,
+    value: {
+      decision: rawDecision as AttendanceExplanationDecision,
+      expected_row_version: expectedRowVersion,
+      decision_note: decisionNote,
+      idempotency_key: idempotencyKey,
+    },
+  };
+}
+
+function projectExplanationAccountSummary(
+  value: unknown,
+): AttendanceExplanationAccountSummaryProjection | null {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      "app_user_id",
+      "display_name",
+      "login_id",
+      "personnel_code",
+      "recruiter_id",
+      "account_enabled",
+    ])
+  ) {
+    return null;
+  }
+  if (
+    !isUuidString(value.app_user_id) ||
+    (value.display_name !== null && typeof value.display_name !== "string") ||
+    (value.login_id !== null && typeof value.login_id !== "string") ||
+    (value.personnel_code !== null && typeof value.personnel_code !== "string") ||
+    (value.recruiter_id !== null && !isUuidString(value.recruiter_id)) ||
+    typeof value.account_enabled !== "boolean"
+  ) {
+    return null;
+  }
+  return {
+    app_user_id: value.app_user_id.toLowerCase(),
+    display_name: value.display_name,
+    login_id: value.login_id,
+    personnel_code: value.personnel_code,
+    recruiter_id: value.recruiter_id === null ? null : value.recruiter_id.toLowerCase(),
+    account_enabled: value.account_enabled,
+  };
+}
+
+function projectExplanationAuditEvent(
+  value: unknown,
+): AttendanceExplanationAuditEventProjection | null {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      "audit_event_id",
+      "action",
+      "actor",
+      "before_status",
+      "after_status",
+      "note",
+      "created_at",
+      "created_at_local",
+    ])
+  ) {
+    return null;
+  }
+  if (
+    !isUuidString(value.audit_event_id) ||
+    (value.action !== "SUBMITTED" &&
+      value.action !== "APPROVED" &&
+      value.action !== "REJECTED") ||
+    (value.before_status !== null &&
+      !ATTENDANCE_EXPLANATION_STATUSES.includes(
+        value.before_status as AttendanceExplanationStatus,
+      )) ||
+    !ATTENDANCE_EXPLANATION_STATUSES.includes(
+      value.after_status as AttendanceExplanationStatus,
+    ) ||
+    typeof value.note !== "string" ||
+    typeof value.created_at !== "string" ||
+    typeof value.created_at_local !== "string"
+  ) {
+    return null;
+  }
+  const actor = projectExplanationAccountSummary(value.actor);
+  if (!actor) return null;
+
+  return {
+    audit_event_id: value.audit_event_id.toLowerCase(),
+    action: value.action,
+    actor,
+    before_status: value.before_status as AttendanceExplanationStatus | null,
+    after_status: value.after_status as AttendanceExplanationStatus,
+    note: value.note,
+    created_at: value.created_at,
+    created_at_local: value.created_at_local,
+  };
+}
+
+export function projectAttendanceExplanationItem(
+  value: unknown,
+): AttendanceExplanationItemProjection | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const baseKeys = [
+    "explanation_id",
+    "app_user_id",
+    "requester",
+    "business_date",
+    "slot_code",
+    "slot_index",
+    "slot_label",
+    "session_code",
+    "target_time",
+    "grace_before_minutes",
+    "grace_after_minutes",
+    "policy_version_used",
+    "original_slot_status",
+    "effective_slot_status",
+    "related_checkins",
+    "reason",
+    "status",
+    "unit_kind_snapshot",
+    "route_kind",
+    "primary_approver",
+    "routed_team",
+    "fallback_reason",
+    "submitted_at",
+    "submitted_at_local",
+    "decided_at",
+    "decided_at_local",
+    "decided_by",
+    "decision_note",
+    "row_version",
+    "updated_at",
+    "audit_events",
+  ] as const;
+  const withCanDecideKeys = [...baseKeys, "can_decide"] as const;
+  const hasCanDecide = hasExactKeys(value, withCanDecideKeys);
+  const hasBase = !hasCanDecide && hasExactKeys(value, baseKeys);
+  if (!hasCanDecide && !hasBase) {
+    return null;
+  }
+
+  const slotCode = value.slot_code as AttendanceSlotCode;
+  if (
+    !isUuidString(value.explanation_id) ||
+    !isUuidString(value.app_user_id) ||
+    typeof value.business_date !== "string" ||
+    !isValidIsoCalendarDate(value.business_date) ||
+    !ATTENDANCE_SLOT_CODES.includes(slotCode) ||
+    typeof value.slot_index !== "number" ||
+    !Number.isSafeInteger(value.slot_index) ||
+    value.slot_index < 1 ||
+    value.slot_index > 12 ||
+    value.slot_code !== ATTENDANCE_SLOT_CODES[value.slot_index - 1] ||
+    typeof value.slot_label !== "string" ||
+    value.slot_label.trim().length === 0 ||
+    !ATTENDANCE_SLOT_SESSION_CODES.includes(
+      value.session_code as AttendanceSlotSessionCode,
+    ) ||
+    typeof value.target_time !== "string" ||
+    !HH_MM_PATTERN.test(value.target_time) ||
+    typeof value.grace_before_minutes !== "number" ||
+    !Number.isSafeInteger(value.grace_before_minutes) ||
+    typeof value.grace_after_minutes !== "number" ||
+    !Number.isSafeInteger(value.grace_after_minutes) ||
+    typeof value.policy_version_used !== "number" ||
+    !Number.isSafeInteger(value.policy_version_used) ||
+    value.policy_version_used < 1 ||
+    !ATTENDANCE_EXPLANATION_ORIGINAL_SLOT_STATUSES.includes(
+      value.original_slot_status as AttendanceExplanationOriginalSlotStatus,
+    ) ||
+    !ATTENDANCE_SLOT_STATUSES.includes(value.effective_slot_status as AttendanceSlotStatus) ||
+    !Array.isArray(value.related_checkins) ||
+    typeof value.reason !== "string" ||
+    !ATTENDANCE_EXPLANATION_STATUSES.includes(value.status as AttendanceExplanationStatus) ||
+    (value.unit_kind_snapshot !== null &&
+      !ATTENDANCE_EXPLANATION_UNIT_KINDS.includes(
+        value.unit_kind_snapshot as AttendanceExplanationUnitKind,
+      )) ||
+    !ATTENDANCE_EXPLANATION_ROUTE_KINDS.includes(
+      value.route_kind as AttendanceExplanationRouteKind,
+    ) ||
+    (value.fallback_reason !== null &&
+      !ATTENDANCE_EXPLANATION_FALLBACK_REASONS.includes(
+        value.fallback_reason as AttendanceExplanationFallbackReason,
+      )) ||
+    typeof value.submitted_at !== "string" ||
+    typeof value.submitted_at_local !== "string" ||
+    (value.decided_at !== null && typeof value.decided_at !== "string") ||
+    (value.decided_at_local !== null && typeof value.decided_at_local !== "string") ||
+    typeof value.decision_note !== "string" ||
+    typeof value.row_version !== "number" ||
+    !Number.isSafeInteger(value.row_version) ||
+    value.row_version < 1 ||
+    typeof value.updated_at !== "string" ||
+    !Array.isArray(value.audit_events) ||
+    (hasCanDecide && typeof value.can_decide !== "boolean")
+  ) {
+    return null;
+  }
+
+  const requester = projectExplanationAccountSummary(value.requester);
+  if (!requester) return null;
+
+  let primaryApprover: AttendanceExplanationAccountSummaryProjection | null = null;
+  if (value.primary_approver !== null) {
+    primaryApprover = projectExplanationAccountSummary(value.primary_approver);
+    if (!primaryApprover) return null;
+  }
+
+  let decidedBy: AttendanceExplanationAccountSummaryProjection | null = null;
+  if (value.decided_by !== null) {
+    decidedBy = projectExplanationAccountSummary(value.decided_by);
+    if (!decidedBy) return null;
+  }
+
+  let routedTeam: {
+    team_id: string;
+    team_code: string | null;
+    team_name: string | null;
+  } | null = null;
+  if (value.routed_team !== null) {
+    if (
+      !isRecord(value.routed_team) ||
+      !hasExactKeys(value.routed_team, ["team_id", "team_code", "team_name"]) ||
+      !isUuidString(value.routed_team.team_id) ||
+      (value.routed_team.team_code !== null && typeof value.routed_team.team_code !== "string") ||
+      (value.routed_team.team_name !== null && typeof value.routed_team.team_name !== "string")
+    ) {
+      return null;
+    }
+    routedTeam = {
+      team_id: value.routed_team.team_id.toLowerCase(),
+      team_code: value.routed_team.team_code,
+      team_name: value.routed_team.team_name,
+    };
+  }
+
+  const relatedCheckins: AttendanceSlotCheckinItemProjection[] = [];
+  for (const rawCheckin of value.related_checkins) {
+    const projectedCheckin = projectSlotCheckinItem(rawCheckin, slotCode);
+    if (!projectedCheckin) return null;
+    relatedCheckins.push(projectedCheckin);
+  }
+
+  const auditEvents: AttendanceExplanationAuditEventProjection[] = [];
+  for (const rawEvent of value.audit_events) {
+    const projectedEvent = projectExplanationAuditEvent(rawEvent);
+    if (!projectedEvent) return null;
+    auditEvents.push(projectedEvent);
+  }
+
+  return {
+    explanation_id: value.explanation_id.toLowerCase(),
+    app_user_id: value.app_user_id.toLowerCase(),
+    requester,
+    business_date: value.business_date,
+    slot_code: slotCode,
+    slot_index: value.slot_index,
+    slot_label: value.slot_label.trim(),
+    session_code: value.session_code as AttendanceSlotSessionCode,
+    target_time: value.target_time,
+    grace_before_minutes: value.grace_before_minutes,
+    grace_after_minutes: value.grace_after_minutes,
+    policy_version_used: value.policy_version_used,
+    original_slot_status: value.original_slot_status as AttendanceExplanationOriginalSlotStatus,
+    effective_slot_status: value.effective_slot_status as AttendanceSlotStatus,
+    related_checkins: relatedCheckins,
+    reason: value.reason,
+    status: value.status as AttendanceExplanationStatus,
+    unit_kind_snapshot: value.unit_kind_snapshot as AttendanceExplanationUnitKind | null,
+    route_kind: value.route_kind as AttendanceExplanationRouteKind,
+    primary_approver: primaryApprover,
+    routed_team: routedTeam,
+    fallback_reason: value.fallback_reason as AttendanceExplanationFallbackReason | null,
+    submitted_at: value.submitted_at,
+    submitted_at_local: value.submitted_at_local,
+    decided_at: value.decided_at,
+    decided_at_local: value.decided_at_local,
+    decided_by: decidedBy,
+    decision_note: value.decision_note,
+    row_version: value.row_version,
+    updated_at: value.updated_at,
+    audit_events: auditEvents,
+    ...(hasCanDecide ? { can_decide: value.can_decide as boolean } : {}),
+  };
+}
+
+function projectExplanationDaySlotEvaluation(
+  value: unknown,
+  expectedIndex: number,
+): AttendanceExplanationDaySlotEvaluationProjection | null {
+  const expectedCode = ATTENDANCE_SLOT_CODES[expectedIndex - 1];
+  if (
+    !expectedCode ||
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      "slot_code",
+      "slot_index",
+      "slot_label",
+      "session_code",
+      "target_time",
+      "grace_before_minutes",
+      "grace_after_minutes",
+      "is_leave_covered",
+      "original_slot_status",
+      "slot_status",
+      "eligible_for_explanation",
+      "checkins",
+      "explanation",
+    ])
+  ) {
+    return null;
+  }
+  if (
+    value.slot_code !== expectedCode ||
+    value.slot_index !== expectedIndex ||
+    typeof value.slot_label !== "string" ||
+    value.slot_label.trim().length === 0 ||
+    !ATTENDANCE_SLOT_SESSION_CODES.includes(
+      value.session_code as AttendanceSlotSessionCode,
+    ) ||
+    typeof value.target_time !== "string" ||
+    !HH_MM_PATTERN.test(value.target_time) ||
+    typeof value.grace_before_minutes !== "number" ||
+    !Number.isSafeInteger(value.grace_before_minutes) ||
+    typeof value.grace_after_minutes !== "number" ||
+    !Number.isSafeInteger(value.grace_after_minutes) ||
+    typeof value.is_leave_covered !== "boolean" ||
+    !ATTENDANCE_SLOT_STATUSES.includes(value.original_slot_status as AttendanceSlotStatus) ||
+    !ATTENDANCE_SLOT_STATUSES.includes(value.slot_status as AttendanceSlotStatus) ||
+    typeof value.eligible_for_explanation !== "boolean" ||
+    !Array.isArray(value.checkins)
+  ) {
+    return null;
+  }
+
+  const checkins: AttendanceSlotCheckinItemProjection[] = [];
+  for (const rawCheckin of value.checkins) {
+    const projectedCheckin = projectSlotCheckinItem(rawCheckin, expectedCode);
+    if (!projectedCheckin) return null;
+    checkins.push(projectedCheckin);
+  }
+
+  let explanation: AttendanceDaySlotExplanationSummaryProjection | null = null;
+  if (value.explanation !== null) {
+    explanation = projectDaySlotExplanationSummary(value.explanation);
+    if (!explanation) return null;
+  }
+
+  return {
+    slot_code: expectedCode,
+    slot_index: expectedIndex,
+    slot_label: value.slot_label.trim(),
+    session_code: value.session_code as AttendanceSlotSessionCode,
+    target_time: value.target_time,
+    grace_before_minutes: value.grace_before_minutes,
+    grace_after_minutes: value.grace_after_minutes,
+    is_leave_covered: value.is_leave_covered,
+    original_slot_status: value.original_slot_status as AttendanceSlotStatus,
+    slot_status: value.slot_status as AttendanceSlotStatus,
+    eligible_for_explanation: value.eligible_for_explanation,
+    checkins,
+    explanation,
+  };
+}
+
+export function projectAttendanceMyExplanationsOverview(
+  value: unknown,
+): AttendanceMyExplanationsOverviewProjection | null {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      "viewer",
+      "routing",
+      "today_local",
+      "selected_date",
+      "day_evaluation",
+      "pagination",
+      "items",
+    ])
+  ) {
+    return null;
+  }
+
+  if (
+    !isRecord(value.viewer) ||
+    !hasExactKeys(value.viewer, [
+      "app_user_id",
+      "can_submit_explanation",
+      "can_approve_explanations",
+      "is_shared_non_employee",
+      "is_full_admin",
+      "is_bod",
+    ]) ||
+    !isUuidString(value.viewer.app_user_id) ||
+    typeof value.viewer.can_submit_explanation !== "boolean" ||
+    typeof value.viewer.can_approve_explanations !== "boolean" ||
+    typeof value.viewer.is_shared_non_employee !== "boolean" ||
+    typeof value.viewer.is_full_admin !== "boolean" ||
+    typeof value.viewer.is_bod !== "boolean"
+  ) {
+    return null;
+  }
+
+  if (
+    !isRecord(value.routing) ||
+    !hasExactKeys(value.routing, [
+      "route_kind",
+      "unit_kind",
+      "primary_approver",
+      "team_id",
+      "team_code",
+      "team_name",
+      "fallback_reason",
+      "profile_configured",
+    ]) ||
+    !ATTENDANCE_EXPLANATION_ROUTE_KINDS.includes(
+      value.routing.route_kind as AttendanceExplanationRouteKind,
+    ) ||
+    (value.routing.unit_kind !== null &&
+      !ATTENDANCE_EXPLANATION_UNIT_KINDS.includes(
+        value.routing.unit_kind as AttendanceExplanationUnitKind,
+      )) ||
+    (value.routing.team_id !== null && !isUuidString(value.routing.team_id)) ||
+    (value.routing.team_code !== null && typeof value.routing.team_code !== "string") ||
+    (value.routing.team_name !== null && typeof value.routing.team_name !== "string") ||
+    (value.routing.fallback_reason !== null &&
+      !ATTENDANCE_EXPLANATION_FALLBACK_REASONS.includes(
+        value.routing.fallback_reason as AttendanceExplanationFallbackReason,
+      )) ||
+    typeof value.routing.profile_configured !== "boolean"
+  ) {
+    return null;
+  }
+
+  let primaryApprover: AttendanceExplanationAccountSummaryProjection | null = null;
+  if (value.routing.primary_approver !== null) {
+    primaryApprover = projectExplanationAccountSummary(value.routing.primary_approver);
+    if (!primaryApprover) return null;
+  }
+
+  if (
+    typeof value.today_local !== "string" ||
+    !isValidIsoCalendarDate(value.today_local) ||
+    typeof value.selected_date !== "string" ||
+    !isValidIsoCalendarDate(value.selected_date) ||
+    !isRecord(value.day_evaluation) ||
+    !hasExactKeys(value.day_evaluation, ["business_date", "policy_version_used", "slots"]) ||
+    typeof value.day_evaluation.business_date !== "string" ||
+    !isValidIsoCalendarDate(value.day_evaluation.business_date) ||
+    typeof value.day_evaluation.policy_version_used !== "number" ||
+    !Number.isSafeInteger(value.day_evaluation.policy_version_used) ||
+    value.day_evaluation.policy_version_used < 1 ||
+    !Array.isArray(value.day_evaluation.slots) ||
+    value.day_evaluation.slots.length < ATTENDANCE_SLOT_MIN_COUNT ||
+    value.day_evaluation.slots.length > ATTENDANCE_SLOT_MAX_COUNT
+  ) {
+    return null;
+  }
+
+  const evalSlots: AttendanceExplanationDaySlotEvaluationProjection[] = [];
+  for (let i = 0; i < value.day_evaluation.slots.length; i += 1) {
+    const projectedSlot = projectExplanationDaySlotEvaluation(
+      value.day_evaluation.slots[i],
+      i + 1,
+    );
+    if (!projectedSlot) return null;
+    evalSlots.push(projectedSlot);
+  }
+
+  if (
+    !isRecord(value.pagination) ||
+    !hasExactKeys(value.pagination, ["limit", "offset", "total_rows"]) ||
+    typeof value.pagination.limit !== "number" ||
+    !Number.isSafeInteger(value.pagination.limit) ||
+    typeof value.pagination.offset !== "number" ||
+    !Number.isSafeInteger(value.pagination.offset) ||
+    typeof value.pagination.total_rows !== "number" ||
+    !Number.isSafeInteger(value.pagination.total_rows) ||
+    !Array.isArray(value.items)
+  ) {
+    return null;
+  }
+
+  const items: AttendanceExplanationItemProjection[] = [];
+  for (const rawItem of value.items) {
+    const projectedItem = projectAttendanceExplanationItem(rawItem);
+    if (!projectedItem) return null;
+    items.push(projectedItem);
+  }
+
+  return {
+    viewer: {
+      app_user_id: value.viewer.app_user_id.toLowerCase(),
+      can_submit_explanation: value.viewer.can_submit_explanation,
+      can_approve_explanations: value.viewer.can_approve_explanations,
+      is_shared_non_employee: value.viewer.is_shared_non_employee,
+      is_full_admin: value.viewer.is_full_admin,
+      is_bod: value.viewer.is_bod,
+    },
+    routing: {
+      route_kind: value.routing.route_kind as AttendanceExplanationRouteKind,
+      unit_kind: value.routing.unit_kind as AttendanceExplanationUnitKind | null,
+      primary_approver: primaryApprover,
+      team_id:
+        value.routing.team_id === null ? null : value.routing.team_id.toLowerCase(),
+      team_code: value.routing.team_code,
+      team_name: value.routing.team_name,
+      fallback_reason:
+        value.routing.fallback_reason as AttendanceExplanationFallbackReason | null,
+      profile_configured: value.routing.profile_configured,
+    },
+    today_local: value.today_local,
+    selected_date: value.selected_date,
+    day_evaluation: {
+      business_date: value.day_evaluation.business_date,
+      policy_version_used: value.day_evaluation.policy_version_used,
+      slots: evalSlots,
+    },
+    pagination: {
+      limit: value.pagination.limit,
+      offset: value.pagination.offset,
+      total_rows: value.pagination.total_rows,
+    },
+    items,
+  };
+}
+
+export function projectSubmitAttendanceExplanationResult(
+  value: unknown,
+): SubmitAttendanceExplanationResultProjection | null {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ["replayed", "explanation"]) ||
+    typeof value.replayed !== "boolean"
+  ) {
+    return null;
+  }
+  const explanation = projectAttendanceExplanationItem(value.explanation);
+  if (!explanation) return null;
+
+  return {
+    replayed: value.replayed,
+    explanation,
+  };
+}
+
+export function projectAttendanceExplanationApprovalInbox(
+  value: unknown,
+): AttendanceExplanationApprovalInboxProjection | null {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ["viewer", "pagination", "items"])
+  ) {
+    return null;
+  }
+  if (
+    !isRecord(value.viewer) ||
+    !hasExactKeys(value.viewer, [
+      "app_user_id",
+      "can_approve_explanations",
+      "is_full_admin",
+      "is_bod",
+    ]) ||
+    !isUuidString(value.viewer.app_user_id) ||
+    typeof value.viewer.can_approve_explanations !== "boolean" ||
+    typeof value.viewer.is_full_admin !== "boolean" ||
+    typeof value.viewer.is_bod !== "boolean" ||
+    !isRecord(value.pagination) ||
+    !hasExactKeys(value.pagination, ["limit", "offset", "total_rows", "pending_count"]) ||
+    typeof value.pagination.limit !== "number" ||
+    !Number.isSafeInteger(value.pagination.limit) ||
+    typeof value.pagination.offset !== "number" ||
+    !Number.isSafeInteger(value.pagination.offset) ||
+    typeof value.pagination.total_rows !== "number" ||
+    !Number.isSafeInteger(value.pagination.total_rows) ||
+    typeof value.pagination.pending_count !== "number" ||
+    !Number.isSafeInteger(value.pagination.pending_count) ||
+    !Array.isArray(value.items)
+  ) {
+    return null;
+  }
+
+  const items: (AttendanceExplanationItemProjection & { can_decide: boolean })[] = [];
+  for (const rawItem of value.items) {
+    const projectedItem = projectAttendanceExplanationItem(rawItem);
+    if (!projectedItem || typeof projectedItem.can_decide !== "boolean") {
+      return null;
+    }
+    items.push(projectedItem as AttendanceExplanationItemProjection & { can_decide: boolean });
+  }
+
+  return {
+    viewer: {
+      app_user_id: value.viewer.app_user_id.toLowerCase(),
+      can_approve_explanations: value.viewer.can_approve_explanations,
+      is_full_admin: value.viewer.is_full_admin,
+      is_bod: value.viewer.is_bod,
+    },
+    pagination: {
+      limit: value.pagination.limit,
+      offset: value.pagination.offset,
+      total_rows: value.pagination.total_rows,
+      pending_count: value.pagination.pending_count,
+    },
+    items,
+  };
+}
+
+export function projectDecideAttendanceExplanationResult(
+  value: unknown,
+): DecideAttendanceExplanationResultProjection | null {
+  return projectSubmitAttendanceExplanationResult(value);
+}
+
+export const projectMyAttendanceExplanationsOverview =
+  projectAttendanceMyExplanationsOverview;
