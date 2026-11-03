@@ -1615,13 +1615,27 @@ export type TableScrollAvailability = {
 
 const TABLE_SCROLL_EPSILON_PX = 2;
 
-export const DEFAULT_TABLE_HORIZONTAL_STEP_PX = 560;
+export const TABLE_HORIZONTAL_SCROLL_STEP_SCALE = 0.7;
+export const DEFAULT_TABLE_HORIZONTAL_STEP_PX = 392;
 export const DEFAULT_TABLE_VERTICAL_STEP_PX = 360;
-export const MIN_TABLE_HORIZONTAL_STEP_PX = 280;
+export const MIN_TABLE_HORIZONTAL_STEP_PX = 196;
 export const MIN_TABLE_VERTICAL_STEP_PX = 240;
-export const TABLE_SCROLL_VIEWPORT_STEP_RATIO = 0.75;
+export const TABLE_SCROLL_HORIZONTAL_VIEWPORT_STEP_RATIO = 0.525;
+export const TABLE_SCROLL_VERTICAL_VIEWPORT_STEP_RATIO = 0.75;
+export const TABLE_SCROLL_VIEWPORT_STEP_RATIO =
+  TABLE_SCROLL_HORIZONTAL_VIEWPORT_STEP_RATIO;
 
 export type TableScrollDirection = "left" | "right" | "up" | "down";
+
+export type FloatingTableNavPosition = "bottom-right" | "bottom-left";
+
+export function resolveFloatingTableNavPositionClass(
+  position: FloatingTableNavPosition = "bottom-right",
+): string {
+  return position === "bottom-left"
+    ? "fixed bottom-4 left-4 z-40"
+    : "fixed bottom-4 right-4 z-40";
+}
 
 export function computeTableScrollStepPx(
   viewportSize: number | null | undefined,
@@ -1633,7 +1647,7 @@ export function computeTableScrollStepPx(
 ): number {
   const minStepPx = options?.minStepPx ?? MIN_TABLE_HORIZONTAL_STEP_PX;
   const fallbackStepPx = options?.fallbackStepPx ?? DEFAULT_TABLE_HORIZONTAL_STEP_PX;
-  const ratio = options?.ratio ?? TABLE_SCROLL_VIEWPORT_STEP_RATIO;
+  const ratio = options?.ratio ?? TABLE_SCROLL_HORIZONTAL_VIEWPORT_STEP_RATIO;
 
   if (typeof viewportSize !== "number" || !Number.isFinite(viewportSize) || viewportSize <= 0) {
     return fallbackStepPx;
@@ -1662,6 +1676,7 @@ export function computeClampedTableScrollTarget(
       : computeTableScrollStepPx(metrics.clientWidth, {
           minStepPx: MIN_TABLE_HORIZONTAL_STEP_PX,
           fallbackStepPx: DEFAULT_TABLE_HORIZONTAL_STEP_PX,
+          ratio: TABLE_SCROLL_HORIZONTAL_VIEWPORT_STEP_RATIO,
         });
   const verticalStep =
     typeof customStepPx === "number" && Number.isFinite(customStepPx) && customStepPx > 0
@@ -1669,6 +1684,7 @@ export function computeClampedTableScrollTarget(
       : computeTableScrollStepPx(metrics.clientHeight, {
           minStepPx: MIN_TABLE_VERTICAL_STEP_PX,
           fallbackStepPx: DEFAULT_TABLE_VERTICAL_STEP_PX,
+          ratio: TABLE_SCROLL_VERTICAL_VIEWPORT_STEP_RATIO,
         });
 
   let nextLeft = currentLeft;

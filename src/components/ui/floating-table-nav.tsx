@@ -7,11 +7,14 @@ import {
   type KeyboardEvent,
   type RefObject,
 } from "react";
+import { createPortal } from "react-dom";
 
 import {
   computeClampedTableScrollTarget,
   computeTableScrollAvailability,
   computeTableScrollStepPx,
+  resolveFloatingTableNavPositionClass,
+  type FloatingTableNavPosition,
   type TableScrollAvailability,
   type TableScrollDirection,
   type TableScrollMetrics,
@@ -22,6 +25,8 @@ export {
   computeClampedTableScrollTarget,
   computeTableScrollAvailability,
   computeTableScrollStepPx,
+  resolveFloatingTableNavPositionClass,
+  type FloatingTableNavPosition,
   type TableScrollAvailability,
   type TableScrollDirection,
   type TableScrollMetrics,
@@ -30,6 +35,7 @@ export {
 export type FloatingTableNavProps = {
   containerRef: RefObject<HTMLElement | null>;
   tableLabel?: string;
+  position?: FloatingTableNavPosition;
   horizontalStepPx?: number;
   verticalStepPx?: number;
   className?: string;
@@ -38,6 +44,7 @@ export type FloatingTableNavProps = {
 export function FloatingTableNav({
   containerRef,
   tableLabel,
+  position = "bottom-right",
   horizontalStepPx,
   verticalStepPx,
   className,
@@ -197,13 +204,16 @@ export function FloatingTableNav({
   const buttonClass =
     "inline-flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-surface text-xs font-semibold text-foreground shadow-2xs transition-colors hover:bg-surface-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40";
 
-  return (
+  const navNode = (
     <div
       role="region"
       aria-label={regionLabel}
+      data-testid="floating-table-nav"
+      data-position={position}
       onKeyDown={handleKeyDown}
       className={cn(
-        "fixed bottom-4 right-4 z-40 flex max-w-[calc(100vw-2rem)] items-center gap-1.5 rounded-2xl border border-border/90 bg-surface/95 px-2.5 py-2 shadow-lg backdrop-blur-xs",
+        resolveFloatingTableNavPositionClass(position),
+        "flex max-w-[calc(100vw-2rem)] items-center gap-1.5 rounded-2xl border border-border/90 bg-surface/95 px-2.5 py-2 shadow-lg backdrop-blur-xs",
         className,
       )}
     >
@@ -253,4 +263,10 @@ export function FloatingTableNav({
       </button>
     </div>
   );
+
+  if (typeof document !== "undefined" && document.body) {
+    return createPortal(navNode, document.body);
+  }
+
+  return navNode;
 }
