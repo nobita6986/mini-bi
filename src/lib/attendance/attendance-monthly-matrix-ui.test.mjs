@@ -13,10 +13,17 @@ import {
   resolveAttendanceEmployeeDisplayIdentity,
 } from "./attendance-report-contract.ts";
 import {
+  DEFAULT_TABLE_HORIZONTAL_STEP_PX,
+  DEFAULT_TABLE_VERTICAL_STEP_PX,
   MATRIX_EXPLAINED_APPROVED_LABEL,
   MATRIX_EXPLANATION_PENDING_LABEL,
   MATRIX_EXPLANATION_REJECTED_LABEL,
   MATRIX_LEGEND_ITEMS,
+  MIN_TABLE_HORIZONTAL_STEP_PX,
+  MIN_TABLE_VERTICAL_STEP_PX,
+  TABLE_HORIZONTAL_SCROLL_STEP_SCALE,
+  TABLE_SCROLL_HORIZONTAL_VIEWPORT_STEP_RATIO,
+  TABLE_SCROLL_VERTICAL_VIEWPORT_STEP_RATIO,
   buildAssignEmployeeToBranchPayload,
   buildCreateSlotPolicyPayload,
   buildDecideAttendanceExplanationPayload,
@@ -39,6 +46,7 @@ import {
   mapMonthlyMatrixExportError,
   mapMonthlyMatrixReportError,
   mapSlotPolicyMutationError,
+  resolveFloatingTableNavPositionClass,
   resolveMutualExclusiveEmployeeOrSearch,
   validateMonthlyMatrixFilters,
 } from "./attendance-monthly-matrix-ui-model.ts";
@@ -1069,7 +1077,7 @@ test("Wave 2 attendance explanation payload builders and error mapper", () => {
   assert.match(explanationWorkspaceSource, /\/api\/attendance\/explanations\/approvals/);
 });
 
-test("Hotfix 1 & 2: FloatingTableNav bottom-right placement, arrow-only accessible controls, viewport-proportional horizontal scroll step, and smooth scroll sync", () => {
+test("Hotfix 1 & 2: FloatingTableNav viewport portal & placement (bottom-left on Detailed Report, bottom-right elsewhere), arrow-only accessible controls, 70% horizontal scroll step, and unchanged vertical scroll step", () => {
   assert.deepEqual(computeTableScrollAvailability(null), {
     hasHorizontalOverflow: false,
     hasVerticalOverflow: false,
@@ -1100,10 +1108,29 @@ test("Hotfix 1 & 2: FloatingTableNav bottom-right placement, arrow-only accessib
     },
   );
 
-  // 1. FloatingTableNav is anchored at bottom-right (not bottom-left) and hides the visible "Điều hướng bảng" label
-  assert.match(floatingTableNavSource, /fixed\s+bottom-4\s+right-4\s+z-40/);
-  assert.doesNotMatch(floatingTableNavSource, /bottom-4\s+left-4/);
+  // 1. FloatingTableNav supports bottom-right (default) and bottom-left (for Báo cáo chi tiết),
+  // portals to document.body so it is fixed to viewport (never trapped by transformed/overflow ancestors),
+  // and keeps the compact UI without the "Điều hướng bảng" text label
+  assert.equal(resolveFloatingTableNavPositionClass(), "fixed bottom-4 right-4 z-40");
+  assert.equal(
+    resolveFloatingTableNavPositionClass("bottom-right"),
+    "fixed bottom-4 right-4 z-40",
+  );
+  assert.equal(
+    resolveFloatingTableNavPositionClass("bottom-left"),
+    "fixed bottom-4 left-4 z-40",
+  );
+  assert.match(floatingTableNavSource, /createPortal\(navNode,\s*document\.body\)/);
+  assert.match(floatingTableNavSource, /resolveFloatingTableNavPositionClass\(position\)/);
   assert.doesNotMatch(floatingTableNavSource, /<span[^>]*>\s*Điều hướng bảng\s*<\/span>/);
+
+  // Detailed Report ("Báo cáo chi tiết") uses position="bottom-left"; other pages keep default bottom-right
+  assert.match(
+    detailedMatrixPanelSource,
+    /<FloatingTableNav[\s\S]*?tableLabel="Báo cáo chi tiết"[\s\S]*?position="bottom-left"/,
+  );
+  assert.doesNotMatch(matrixPanelSource, /position="bottom-left"/);
+  assert.doesNotMatch(managerSource, /position="bottom-left"/);
 
   // All 4 arrow buttons retain accessible names (aria-label) and tooltips (title)
   for (const label of [
@@ -1121,25 +1148,42 @@ test("Hotfix 1 & 2: FloatingTableNav bottom-right placement, arrow-only accessib
   assert.match(managerSource, /FloatingTableNav/);
   assert.match(detailedMatrixPanelSource, /FloatingTableNav/);
 
-  // 2. Viewport-proportional horizontal & vertical scroll step (~75% of container viewport, min 280px horizontal / 240px vertical)
-  assert.equal(computeTableScrollStepPx(1200, { minStepPx: 280 }), 900);
-  assert.equal(computeTableScrollStepPx(800, { minStepPx: 280 }), 600);
-  assert.equal(computeTableScrollStepPx(300, { minStepPx: 280 }), 280);
-  assert.equal(computeTableScrollStepPx(0, { minStepPx: 280, fallbackStepPx: 560 }), 560);
-  assert.equal(computeTableScrollStepPx(600, { minStepPx: 240 }), 450);
+  // 2. Horizontal scroll step is reduced to 70% of previous horizontal step (0.75 * 0.7 = 0.525, min 196px, fallback 392px),
+  // while vertical scroll step remains unchanged (0.75, min 240px, fallback 360px)
+  assert.equal(TABLE_HORIZONTAL_SCROLL_STEP_SCALE, 0.7);
+  assert.equal(TABLE_SCROLL_HORIZONTAL_VIEWPORT_STEP_RATIO, 0.525);
+  assert.equal(MIN_TABLE_HORIZONTAL_STEP_PX, 196);
+  assert.equal(DEFAULT_TABLE_HORIZONTAL_STEP_PX, 392);
+  assert.equal(TABLE_SCROLL_VERTICAL_VIEWPORT_STEP_RATIO, 0.75);
+  assert.equal(MIN_TABLE_VERTICAL_STEP_PX, 240);
+  assert.equal(DEFAULT_TABLE_VERTICAL_STEP_PX, 360);
+
+  assert.equal(computeTableScrollStepPx(1200), 630); // 70% of 900
+  assert.equal(computeTableScrollStepPx(1000), 525); // 70% of 750
+  assert.equal(computeTableScrollStepPx(800), 420); // 70% of 600
+  assert.equal(computeTableScrollStepPx(300), 196); // 70% of 280
+  assert.equal(computeTableScrollStepPx(0), 392); // 70% of 560
+  assert.equal(
+    computeTableScrollStepPx(600, {
+      minStepPx: MIN_TABLE_VERTICAL_STEP_PX,
+      fallbackStepPx: DEFAULT_TABLE_VERTICAL_STEP_PX,
+      ratio: TABLE_SCROLL_VERTICAL_VIEWPORT_STEP_RATIO,
+    }),
+    450,
+  );
 
   const metrics = {
     scrollLeft: 200,
     scrollTop: 100,
     scrollWidth: 2400,
-    clientWidth: 1000, // step = 750, maxLeft = 1400
+    clientWidth: 1000, // horizontal step = 525 (70% of 750), maxLeft = 1400
     scrollHeight: 1500,
-    clientHeight: 600, // step = 450, maxTop = 900
+    clientHeight: 600, // vertical step = 450 (unchanged), maxTop = 900
   };
   assert.deepEqual(computeClampedTableScrollTarget(metrics, "right"), {
-    left: 950,
+    left: 725,
     top: 100,
-    deltaLeft: 750,
+    deltaLeft: 525,
     deltaTop: 0,
   });
   assert.deepEqual(computeClampedTableScrollTarget(metrics, "left"), {
@@ -1181,7 +1225,7 @@ test("Hotfix 1 & 2: FloatingTableNav bottom-right placement, arrow-only accessib
     },
   );
 
-  // Adapts when viewport resizes (e.g., 1600px wide -> 1200px step, clamped to maxLeft = 800)
+  // Adapts when viewport resizes (e.g., 1600px wide -> 840px step, clamped to maxLeft = 800)
   assert.deepEqual(
     computeClampedTableScrollTarget({ ...metrics, clientWidth: 1600, scrollLeft: 0 }, "right"),
     {
