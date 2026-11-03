@@ -16,7 +16,10 @@ begin
     join auth.users au on au.id = u.auth_subject
    where lower(btrim(au.email)) = 'luanpt@hrpartner.vn';
 
-  if v_account_count <> 1 then
+  if v_account_count = 0 then
+    raise notice 'Skipping luanpt all-scope grant because luanpt@hrpartner.vn is not provisioned in this database';
+    return;
+  elsif v_account_count > 1 then
     raise exception 'expected exactly one app user for luanpt@hrpartner.vn';
   end if;
 
