@@ -1012,7 +1012,7 @@ test("Hồ sơ thiếu & Lịch sử chỉnh sửa NLĐ: enforces Recruiter view
     await assert.rejects(
       db.query(
         "select public.worker_edit_history_search($1::uuid, $2::uuid, null, null, " +
-          "current_date - 92, current_date, $3::text, $4::text, null, 50, null)",
+          "(clock_timestamp() at time zone 'Asia/Ho_Chi_Minh')::date - 92, (clock_timestamp() at time zone 'Asia/Ho_Chi_Minh')::date, $3::text, $4::text, null, 50, null)",
         [deniedActor.auth_subject, deniedActor.app_user_id, projectId, recruiterId],
       ),
       (err) => err.code === "42501",
@@ -1022,7 +1022,7 @@ test("Hồ sơ thiếu & Lịch sử chỉnh sửa NLĐ: enforces Recruiter view
   // - Allowed to allowlistedAdmin (lienvu@hrpartner.vn): returns NEW_ENTRY and DOCUMENT_CHANGE revisions
   const historySearchRes = await db.query(
     "select public.worker_edit_history_search($1::uuid, $2::uuid, null, null, " +
-      "current_date - 92, current_date, $3::text, $4::text, null, 50, null) as data",
+      "(clock_timestamp() at time zone 'Asia/Ho_Chi_Minh')::date - 92, (clock_timestamp() at time zone 'Asia/Ho_Chi_Minh')::date, $3::text, $4::text, null, 50, null) as data",
     [allowlistedAdmin.auth_subject, allowlistedAdmin.app_user_id, projectId, recruiterId],
   );
   const historySearch = historySearchRes.rows[0].data;
@@ -1057,7 +1057,7 @@ test("Hồ sơ thiếu & Lịch sử chỉnh sửa NLĐ: enforces Recruiter view
   assert.equal(legacyRevision.rowCount, 1);
   const legacyHistory = await db.query(
     "select public.worker_edit_history_search($1::uuid, $2::uuid, null, null, " +
-      "current_date - 92, current_date, $3::text, $4::text, null, 50, null) as data",
+      "(clock_timestamp() at time zone 'Asia/Ho_Chi_Minh')::date - 92, (clock_timestamp() at time zone 'Asia/Ho_Chi_Minh')::date, $3::text, $4::text, null, 50, null) as data",
     [allowlistedAdmin.auth_subject, allowlistedAdmin.app_user_id, projectId, recruiterId],
   );
   assert.ok(

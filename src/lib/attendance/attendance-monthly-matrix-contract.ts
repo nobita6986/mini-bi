@@ -40,14 +40,46 @@ export const ATTENDANCE_MATRIX_LEAVE_SESSION_CODES = ["FULL", "AM", "PM"] as con
 export type AttendanceMatrixLeaveSessionCode =
   (typeof ATTENDANCE_MATRIX_LEAVE_SESSION_CODES)[number];
 
-export const ATTENDANCE_MATRIX_LEAVE_TYPES = ["ANNUAL", "MATERNITY", "UNPAID"] as const;
+export const ATTENDANCE_MATRIX_LEAVE_TYPES = [
+  "ANNUAL",
+  "BEREAVEMENT",
+  "MARRIAGE",
+  "SICK",
+  "UNPAID",
+  "MATERNITY",
+] as const;
 export type AttendanceMatrixLeaveType = (typeof ATTENDANCE_MATRIX_LEAVE_TYPES)[number];
+
+export const ATTENDANCE_SLOT_CODES = ["SLOT_1", "SLOT_2", "SLOT_3", "SLOT_4"] as const;
+export type AttendanceSlotCode = (typeof ATTENDANCE_SLOT_CODES)[number];
+
+export const ATTENDANCE_SLOT_SESSION_CODES = ["AM", "PM"] as const;
+export type AttendanceSlotSessionCode = (typeof ATTENDANCE_SLOT_SESSION_CODES)[number];
+
+export const ATTENDANCE_SLOT_STATUSES = [
+  "ON_TIME",
+  "OUT_OF_GRACE",
+  "LEAVE_COVERED",
+  "MISSING",
+] as const;
+export type AttendanceSlotStatus = (typeof ATTENDANCE_SLOT_STATUSES)[number];
+
+export const ATTENDANCE_CHECKIN_DEVIATION_STATUSES = [
+  "ON_TIME",
+  "EARLY",
+  "LATE",
+] as const;
+export type AttendanceCheckinDeviationStatus =
+  (typeof ATTENDANCE_CHECKIN_DEVIATION_STATUSES)[number];
+
+export const ATTENDANCE_SLOT_MAX_GRACE_MINUTES = 240;
 
 export const ATTENDANCE_MONTHLY_MATRIX_ERROR_CODES = [
   "UNAUTHENTICATED",
   "ACTOR_NOT_AVAILABLE",
   "ATTENDANCE_REPORT_ACCESS_DENIED",
   "ATTENDANCE_BRANCH_WRITE_DENIED",
+  "ATTENDANCE_SLOT_POLICY_WRITE_DENIED",
   "CSRF_REJECTED",
   "CONTENT_TYPE_INVALID",
   "BODY_TOO_LARGE",
@@ -72,6 +104,10 @@ export const ATTENDANCE_MONTHLY_MATRIX_ERROR_CODES = [
   "ATTENDANCE_BRANCH_ASSIGNMENT_ALREADY_CLOSED",
   "ATTENDANCE_BRANCH_ASSIGNMENT_RANGE_INVALID",
   "ATTENDANCE_BRANCH_ASSIGNMENT_VERSION_CONFLICT",
+  "ATTENDANCE_SLOT_POLICY_INVALID",
+  "ATTENDANCE_SLOT_POLICY_EFFECTIVE_DATE_PAST",
+  "ATTENDANCE_SLOT_POLICY_OVERLAP",
+  "ATTENDANCE_SLOT_POLICY_VERSION_CONFLICT",
   "IDEMPOTENCY_KEY_INVALID",
   "IDEMPOTENCY_CONFLICT",
   "ATTENDANCE_REPORT_UNAVAILABLE",
@@ -85,6 +121,7 @@ const MATRIX_ERROR_HTTP_STATUS: Readonly<Record<AttendanceMonthlyMatrixErrorCode
   ACTOR_NOT_AVAILABLE: 403,
   ATTENDANCE_REPORT_ACCESS_DENIED: 403,
   ATTENDANCE_BRANCH_WRITE_DENIED: 403,
+  ATTENDANCE_SLOT_POLICY_WRITE_DENIED: 403,
   CSRF_REJECTED: 403,
   CONTENT_TYPE_INVALID: 400,
   BODY_TOO_LARGE: 413,
@@ -109,6 +146,10 @@ const MATRIX_ERROR_HTTP_STATUS: Readonly<Record<AttendanceMonthlyMatrixErrorCode
   ATTENDANCE_BRANCH_ASSIGNMENT_ALREADY_CLOSED: 409,
   ATTENDANCE_BRANCH_ASSIGNMENT_RANGE_INVALID: 400,
   ATTENDANCE_BRANCH_ASSIGNMENT_VERSION_CONFLICT: 409,
+  ATTENDANCE_SLOT_POLICY_INVALID: 400,
+  ATTENDANCE_SLOT_POLICY_EFFECTIVE_DATE_PAST: 422,
+  ATTENDANCE_SLOT_POLICY_OVERLAP: 409,
+  ATTENDANCE_SLOT_POLICY_VERSION_CONFLICT: 409,
   IDEMPOTENCY_KEY_INVALID: 400,
   IDEMPOTENCY_CONFLICT: 409,
   ATTENDANCE_REPORT_UNAVAILABLE: 503,
@@ -217,9 +258,111 @@ export type AttendanceMonthlyMatrixApprovedLeaveItemProjection = {
   half_day_units: number;
 };
 
+export type AttendanceSlotConfigItemProjection = {
+  slot_code: AttendanceSlotCode;
+  slot_index: 1 | 2 | 3 | 4;
+  session_code: AttendanceSlotSessionCode;
+  target_time: string;
+  grace_before_minutes: number;
+  grace_after_minutes: number;
+};
+
+export type AttendanceSlotPolicyProjection = {
+  version: number;
+  effective_from_date: string;
+  effective_to_date: string | null;
+  configured_at: string;
+  configured_at_local: string;
+  configured_by_display_name: string;
+  slots: [
+    AttendanceSlotConfigItemProjection,
+    AttendanceSlotConfigItemProjection,
+    AttendanceSlotConfigItemProjection,
+    AttendanceSlotConfigItemProjection,
+  ];
+};
+
+export type AttendanceMonthlyMatrixSlotPolicySummaryProjection = {
+  current_policy: AttendanceSlotPolicyProjection;
+  latest_policy: AttendanceSlotPolicyProjection;
+  month_policies: AttendanceSlotPolicyProjection[];
+};
+
+export type AttendanceSlotCheckinItemProjection = {
+  checkin_id: string;
+  sequence_in_day: number;
+  captured_at: string;
+  captured_at_local: string;
+  time_local: string;
+  time_verified: boolean;
+  assigned_slot_code: AttendanceSlotCode;
+  delta_minutes: number;
+  over_grace_minutes: number;
+  deviation_status: AttendanceCheckinDeviationStatus;
+  distance_target_kind: AttendanceDistanceTargetKind | null;
+  distance_status: AttendanceDistanceStatus | null;
+  distance_meters: number | null;
+};
+
+export type AttendanceMonthlyMatrixDaySlotProjection = {
+  slot_code: AttendanceSlotCode;
+  slot_index: 1 | 2 | 3 | 4;
+  session_code: AttendanceSlotSessionCode;
+  target_time: string;
+  grace_before_minutes: number;
+  grace_after_minutes: number;
+  is_leave_covered: boolean;
+  slot_status: AttendanceSlotStatus;
+  checkins: AttendanceSlotCheckinItemProjection[];
+};
+
+export const DEFAULT_ATTENDANCE_SLOT_POLICY: AttendanceSlotPolicyProjection = {
+  version: 1,
+  effective_from_date: "2000-01-01",
+  effective_to_date: null,
+  configured_at: "2000-01-01T00:00:00.000Z",
+  configured_at_local: "2000-01-01 00:00:00",
+  configured_by_display_name: "Mặc định hệ thống",
+  slots: [
+    {
+      slot_code: "SLOT_1",
+      slot_index: 1,
+      session_code: "AM",
+      target_time: "08:00",
+      grace_before_minutes: 15,
+      grace_after_minutes: 15,
+    },
+    {
+      slot_code: "SLOT_2",
+      slot_index: 2,
+      session_code: "AM",
+      target_time: "11:00",
+      grace_before_minutes: 15,
+      grace_after_minutes: 15,
+    },
+    {
+      slot_code: "SLOT_3",
+      slot_index: 3,
+      session_code: "PM",
+      target_time: "13:00",
+      grace_before_minutes: 15,
+      grace_after_minutes: 15,
+    },
+    {
+      slot_code: "SLOT_4",
+      slot_index: 4,
+      session_code: "PM",
+      target_time: "17:00",
+      grace_before_minutes: 15,
+      grace_after_minutes: 15,
+    },
+  ],
+};
+
 export type AttendanceMonthlyMatrixDayCellProjection = {
   business_date: string;
   day_of_month: number;
+  policy_version_used: number;
   has_checkin: boolean;
   checkin_count: number;
   first_checkin_id: string | null;
@@ -246,6 +389,9 @@ export type AttendanceMonthlyMatrixDayCellProjection = {
   approved_leave_units: number;
   approved_leaves: AttendanceMonthlyMatrixApprovedLeaveItemProjection[];
   day_status: AttendanceMonthlyMatrixDayStatus;
+  missing_slot_count: number;
+  late_or_early_checkin_count: number;
+  slots: AttendanceMonthlyMatrixDaySlotProjection[];
 };
 
 export type AttendanceMonthlyMatrixEmployeeRowProjection = {
@@ -262,6 +408,7 @@ export type AttendanceMonthlyMatrixReportProjection = {
   viewer: {
     can_configure_hq: boolean;
     can_manage_branches: boolean;
+    can_manage_slot_policy: boolean;
   };
   filters: {
     year_month: string;
@@ -275,11 +422,45 @@ export type AttendanceMonthlyMatrixReportProjection = {
   days_in_month: number;
   calendar_days: AttendanceMonthlyMatrixCalendarDayProjection[];
   current_hq: AttendanceHqLocationProjection | null;
+  slot_policy: AttendanceMonthlyMatrixSlotPolicySummaryProjection;
   branch_options: AttendanceBranchOptionProjection[];
   employee_options: AttendanceMonthlyMatrixEmployeeOptionProjection[];
   overview: AttendanceMonthlyMatrixOverviewProjection;
   pagination: AttendanceMonthlyMatrixPaginationProjection;
   items: AttendanceMonthlyMatrixEmployeeRowProjection[];
+};
+
+export type AttendanceSlotPoliciesAdminListProjection = {
+  viewer: {
+    can_manage_slot_policy: boolean;
+  };
+  business_date: string;
+  current_policy: AttendanceSlotPolicyProjection;
+  latest_policy: AttendanceSlotPolicyProjection;
+  versions: AttendanceSlotPolicyProjection[];
+};
+
+export type CreateAttendanceSlotPolicyResultProjection = {
+  replayed: boolean;
+  policy: AttendanceSlotPolicyProjection;
+};
+
+export type ParsedCreateSlotPolicyRequest = {
+  effective_from_date: string;
+  slot_1_time: string;
+  slot_1_grace_before_minutes: number;
+  slot_1_grace_after_minutes: number;
+  slot_2_time: string;
+  slot_2_grace_before_minutes: number;
+  slot_2_grace_after_minutes: number;
+  slot_3_time: string;
+  slot_3_grace_before_minutes: number;
+  slot_3_grace_after_minutes: number;
+  slot_4_time: string;
+  slot_4_grace_before_minutes: number;
+  slot_4_grace_after_minutes: number;
+  expected_version: number;
+  idempotency_key: string;
 };
 
 export type AttendanceBranchAdminItemProjection = {
@@ -423,11 +604,161 @@ function normalizeZero(value: number): number {
   return Object.is(value, -0) ? 0 : value;
 }
 
+export function parseHhMmToMinutes(value: string): number | null {
+  if (!HH_MM_PATTERN.test(value)) return null;
+  const [hh, mm] = value.split(":");
+  return Number(hh) * 60 + Number(mm);
+}
+
 export function isValidYearMonth(value: string): boolean {
   const match = YEAR_MONTH_PATTERN.exec(value);
   if (!match) return false;
   const year = Number(match[1]);
   return year >= 2000 && year <= 2100;
+}
+
+/**
+ * Deterministic 4-slot evaluation helper shared between contract fallbacks and tests.
+ * Tie-break rule: when a check-in is equidistant between two adjacent slots,
+ * it is deterministically assigned to the earlier slot (`slot_index asc`).
+ */
+export function evaluateAttendanceDaySlots(input: {
+  policy?: Pick<AttendanceSlotPolicyProjection, "version" | "slots">;
+  checkins: readonly {
+    checkin_id: string;
+    sequence_in_day: number;
+    captured_at: string;
+    captured_at_local: string;
+    time_local: string;
+    time_verified: boolean;
+    distance_target_kind: AttendanceDistanceTargetKind | null;
+    distance_status: AttendanceDistanceStatus | null;
+    distance_meters: number | null;
+  }[];
+  approved_leaves: readonly Pick<
+    AttendanceMonthlyMatrixApprovedLeaveItemProjection,
+    "session_code"
+  >[];
+}): {
+  policy_version_used: number;
+  missing_slot_count: number;
+  late_or_early_checkin_count: number;
+  slots: AttendanceMonthlyMatrixDaySlotProjection[];
+} {
+  const policy = input.policy ?? DEFAULT_ATTENDANCE_SLOT_POLICY;
+  const amCovered = input.approved_leaves.some(
+    (item) => item.session_code === "FULL" || item.session_code === "AM",
+  );
+  const pmCovered = input.approved_leaves.some(
+    (item) => item.session_code === "FULL" || item.session_code === "PM",
+  );
+
+  const slotTargets = policy.slots.map((slot) => ({
+    ...slot,
+    target_minute: parseHhMmToMinutes(slot.target_time) ?? 0,
+  }));
+
+  const sortedCheckins = [...input.checkins].sort((a, b) => {
+    if (a.captured_at !== b.captured_at) {
+      return a.captured_at.localeCompare(b.captured_at);
+    }
+    if (a.sequence_in_day !== b.sequence_in_day) {
+      return a.sequence_in_day - b.sequence_in_day;
+    }
+    return a.checkin_id.localeCompare(b.checkin_id);
+  });
+
+  const bucketBySlotIndex = new Map<number, AttendanceSlotCheckinItemProjection[]>();
+  for (const slot of slotTargets) {
+    bucketBySlotIndex.set(slot.slot_index, []);
+  }
+
+  let lateOrEarlyCount = 0;
+
+  for (const checkin of sortedCheckins) {
+    const checkinMinute = parseHhMmToMinutes(checkin.time_local) ?? 0;
+    let bestSlot = slotTargets[0]!;
+    let bestDistance = Math.abs(checkinMinute - bestSlot.target_minute);
+
+    for (let i = 1; i < slotTargets.length; i += 1) {
+      const candidate = slotTargets[i]!;
+      const distance = Math.abs(checkinMinute - candidate.target_minute);
+      // Strictly `<` preserves deterministic tie-break to earlier slot (`slot_index asc`).
+      if (distance < bestDistance) {
+        bestSlot = candidate;
+        bestDistance = distance;
+      }
+    }
+
+    const deltaMinutes = checkinMinute - bestSlot.target_minute;
+    let deviationStatus: AttendanceCheckinDeviationStatus = "ON_TIME";
+    let overGraceMinutes = 0;
+
+    if (deltaMinutes < -bestSlot.grace_before_minutes) {
+      deviationStatus = "EARLY";
+      overGraceMinutes = -deltaMinutes - bestSlot.grace_before_minutes;
+      lateOrEarlyCount += 1;
+    } else if (deltaMinutes > bestSlot.grace_after_minutes) {
+      deviationStatus = "LATE";
+      overGraceMinutes = deltaMinutes - bestSlot.grace_after_minutes;
+      lateOrEarlyCount += 1;
+    }
+
+    bucketBySlotIndex.get(bestSlot.slot_index)!.push({
+      checkin_id: checkin.checkin_id.toLowerCase(),
+      sequence_in_day: checkin.sequence_in_day,
+      captured_at: checkin.captured_at,
+      captured_at_local: checkin.captured_at_local,
+      time_local: checkin.time_local,
+      time_verified: checkin.time_verified,
+      assigned_slot_code: bestSlot.slot_code,
+      delta_minutes: deltaMinutes,
+      over_grace_minutes: overGraceMinutes,
+      deviation_status: deviationStatus,
+      distance_target_kind: checkin.distance_target_kind,
+      distance_status: checkin.distance_status,
+      distance_meters:
+        checkin.distance_meters === null ? null : normalizeZero(checkin.distance_meters),
+    });
+  }
+
+  let missingSlotCount = 0;
+  const slots: AttendanceMonthlyMatrixDaySlotProjection[] = slotTargets.map((slot) => {
+    const slotCheckins = bucketBySlotIndex.get(slot.slot_index) ?? [];
+    const isLeaveCovered = slot.session_code === "AM" ? amCovered : pmCovered;
+    const hasOutOfGrace = slotCheckins.some((item) => item.deviation_status !== "ON_TIME");
+
+    let slotStatus: AttendanceSlotStatus;
+    if (slotCheckins.length > 0 && hasOutOfGrace) {
+      slotStatus = "OUT_OF_GRACE";
+    } else if (slotCheckins.length > 0) {
+      slotStatus = "ON_TIME";
+    } else if (isLeaveCovered) {
+      slotStatus = "LEAVE_COVERED";
+    } else {
+      slotStatus = "MISSING";
+      missingSlotCount += 1;
+    }
+
+    return {
+      slot_code: slot.slot_code,
+      slot_index: slot.slot_index,
+      session_code: slot.session_code,
+      target_time: slot.target_time,
+      grace_before_minutes: slot.grace_before_minutes,
+      grace_after_minutes: slot.grace_after_minutes,
+      is_leave_covered: isLeaveCovered,
+      slot_status: slotStatus,
+      checkins: slotCheckins,
+    };
+  });
+
+  return {
+    policy_version_used: policy.version,
+    missing_slot_count: missingSlotCount,
+    late_or_early_checkin_count: lateOrEarlyCount,
+    slots,
+  };
 }
 
 function parseSharedMatrixFilters(
@@ -612,6 +943,159 @@ function resolveIdempotencyKey(
     return null;
   }
   return resolvedKey.toLowerCase();
+}
+
+export function parseCreateSlotPolicyBody(
+  body: unknown,
+  headerIdempotencyKey?: string | null,
+):
+  | { ok: true; value: ParsedCreateSlotPolicyRequest }
+  | { ok: false; code: AttendanceMonthlyMatrixErrorCode } {
+  if (!isRecord(body)) {
+    return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+  }
+  const allowedKeys = new Set([
+    "effective_from_date",
+    "slots",
+    "slot_1",
+    "slot_2",
+    "slot_3",
+    "slot_4",
+    "expected_version",
+    "idempotency_key",
+  ]);
+  for (const key of Object.keys(body)) {
+    if (!allowedKeys.has(key)) {
+      return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+    }
+  }
+
+  const effectiveFromDate =
+    typeof body.effective_from_date === "string" ? body.effective_from_date.trim() : "";
+  if (
+    !isValidIsoCalendarDate(effectiveFromDate) ||
+    effectiveFromDate < "2000-01-01" ||
+    effectiveFromDate > "2100-12-31"
+  ) {
+    return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+  }
+
+  const rawSlotsList = Array.isArray(body.slots)
+    ? body.slots
+    : body.slot_1 !== undefined ||
+        body.slot_2 !== undefined ||
+        body.slot_3 !== undefined ||
+        body.slot_4 !== undefined
+      ? [body.slot_1, body.slot_2, body.slot_3, body.slot_4]
+      : null;
+
+  if (!rawSlotsList || rawSlotsList.length !== 4) {
+    return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+  }
+
+  const parsedSlots: {
+    slot_code: AttendanceSlotCode;
+    target_time: string;
+    grace_before_minutes: number;
+    grace_after_minutes: number;
+  }[] = [];
+
+  for (let i = 0; i < 4; i += 1) {
+    const rawSlot = rawSlotsList[i];
+    const expectedCode = ATTENDANCE_SLOT_CODES[i]!;
+    if (!isRecord(rawSlot)) {
+      return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+    }
+    const slotAllowedKeys = new Set([
+      "slot_code",
+      "target_time",
+      "grace_before_minutes",
+      "grace_after_minutes",
+    ]);
+    for (const key of Object.keys(rawSlot)) {
+      if (!slotAllowedKeys.has(key)) {
+        return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+      }
+    }
+
+    if (
+      rawSlot.slot_code !== undefined &&
+      rawSlot.slot_code !== expectedCode
+    ) {
+      return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+    }
+
+    const targetTime =
+      typeof rawSlot.target_time === "string" ? rawSlot.target_time.trim() : "";
+    const graceBefore = rawSlot.grace_before_minutes;
+    const graceAfter = rawSlot.grace_after_minutes;
+
+    if (
+      !HH_MM_PATTERN.test(targetTime) ||
+      typeof graceBefore !== "number" ||
+      !Number.isSafeInteger(graceBefore) ||
+      graceBefore < 0 ||
+      graceBefore > ATTENDANCE_SLOT_MAX_GRACE_MINUTES ||
+      typeof graceAfter !== "number" ||
+      !Number.isSafeInteger(graceAfter) ||
+      graceAfter < 0 ||
+      graceAfter > ATTENDANCE_SLOT_MAX_GRACE_MINUTES
+    ) {
+      return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+    }
+
+    parsedSlots.push({
+      slot_code: expectedCode,
+      target_time: targetTime,
+      grace_before_minutes: graceBefore,
+      grace_after_minutes: graceAfter,
+    });
+  }
+
+  if (
+    !(
+      parsedSlots[0]!.target_time < parsedSlots[1]!.target_time &&
+      parsedSlots[1]!.target_time < parsedSlots[2]!.target_time &&
+      parsedSlots[2]!.target_time < parsedSlots[3]!.target_time
+    )
+  ) {
+    return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+  }
+
+  const expectedVersion = body.expected_version;
+  if (
+    typeof expectedVersion !== "number" ||
+    !Number.isSafeInteger(expectedVersion) ||
+    expectedVersion < 1
+  ) {
+    return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+  }
+
+  const idempotencyKey = resolveIdempotencyKey(body.idempotency_key, headerIdempotencyKey);
+  if (!idempotencyKey) {
+    return { ok: false, code: "IDEMPOTENCY_KEY_INVALID" };
+  }
+
+  return {
+    ok: true,
+    value: {
+      effective_from_date: effectiveFromDate,
+      slot_1_time: parsedSlots[0]!.target_time,
+      slot_1_grace_before_minutes: parsedSlots[0]!.grace_before_minutes,
+      slot_1_grace_after_minutes: parsedSlots[0]!.grace_after_minutes,
+      slot_2_time: parsedSlots[1]!.target_time,
+      slot_2_grace_before_minutes: parsedSlots[1]!.grace_before_minutes,
+      slot_2_grace_after_minutes: parsedSlots[1]!.grace_after_minutes,
+      slot_3_time: parsedSlots[2]!.target_time,
+      slot_3_grace_before_minutes: parsedSlots[2]!.grace_before_minutes,
+      slot_3_grace_after_minutes: parsedSlots[2]!.grace_after_minutes,
+      slot_4_time: parsedSlots[3]!.target_time,
+      slot_4_grace_before_minutes: parsedSlots[3]!.grace_before_minutes,
+      slot_4_grace_after_minutes: parsedSlots[3]!.grace_after_minutes,
+      expected_version: expectedVersion,
+      idempotency_key: idempotencyKey,
+    },
+  };
 }
 
 export function parseUpsertBranchBody(
@@ -825,6 +1309,282 @@ export function parseUnassignBranchBody(
       expected_version: expectedVersion,
       idempotency_key: idempotencyKey,
     },
+  };
+}
+
+function projectSlotConfigItem(
+  value: unknown,
+  expectedIndex: 1 | 2 | 3 | 4,
+): AttendanceSlotConfigItemProjection | null {
+  const expectedCode = ATTENDANCE_SLOT_CODES[expectedIndex - 1]!;
+  const expectedSession: AttendanceSlotSessionCode = expectedIndex <= 2 ? "AM" : "PM";
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      "slot_code",
+      "slot_index",
+      "session_code",
+      "target_time",
+      "grace_before_minutes",
+      "grace_after_minutes",
+    ])
+  ) {
+    return null;
+  }
+  if (
+    value.slot_code !== expectedCode ||
+    value.slot_index !== expectedIndex ||
+    value.session_code !== expectedSession ||
+    typeof value.target_time !== "string" ||
+    !HH_MM_PATTERN.test(value.target_time) ||
+    typeof value.grace_before_minutes !== "number" ||
+    !Number.isSafeInteger(value.grace_before_minutes) ||
+    value.grace_before_minutes < 0 ||
+    value.grace_before_minutes > ATTENDANCE_SLOT_MAX_GRACE_MINUTES ||
+    typeof value.grace_after_minutes !== "number" ||
+    !Number.isSafeInteger(value.grace_after_minutes) ||
+    value.grace_after_minutes < 0 ||
+    value.grace_after_minutes > ATTENDANCE_SLOT_MAX_GRACE_MINUTES
+  ) {
+    return null;
+  }
+
+  return {
+    slot_code: expectedCode,
+    slot_index: expectedIndex,
+    session_code: expectedSession,
+    target_time: value.target_time,
+    grace_before_minutes: value.grace_before_minutes,
+    grace_after_minutes: value.grace_after_minutes,
+  };
+}
+
+export function projectAttendanceSlotPolicy(
+  value: unknown,
+): AttendanceSlotPolicyProjection | null {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      "version",
+      "effective_from_date",
+      "effective_to_date",
+      "configured_at",
+      "configured_at_local",
+      "configured_by_display_name",
+      "slots",
+    ])
+  ) {
+    return null;
+  }
+  if (
+    typeof value.version !== "number" ||
+    !Number.isSafeInteger(value.version) ||
+    value.version < 1 ||
+    typeof value.effective_from_date !== "string" ||
+    !isValidIsoCalendarDate(value.effective_from_date) ||
+    (value.effective_to_date !== null &&
+      (typeof value.effective_to_date !== "string" ||
+        !isValidIsoCalendarDate(value.effective_to_date))) ||
+    typeof value.configured_at !== "string" ||
+    typeof value.configured_at_local !== "string" ||
+    typeof value.configured_by_display_name !== "string" ||
+    value.configured_by_display_name.trim().length === 0 ||
+    !Array.isArray(value.slots) ||
+    value.slots.length !== 4
+  ) {
+    return null;
+  }
+
+  const slot1 = projectSlotConfigItem(value.slots[0], 1);
+  const slot2 = projectSlotConfigItem(value.slots[1], 2);
+  const slot3 = projectSlotConfigItem(value.slots[2], 3);
+  const slot4 = projectSlotConfigItem(value.slots[3], 4);
+  if (!slot1 || !slot2 || !slot3 || !slot4) {
+    return null;
+  }
+  if (
+    !(
+      slot1.target_time < slot2.target_time &&
+      slot2.target_time < slot3.target_time &&
+      slot3.target_time < slot4.target_time
+    )
+  ) {
+    return null;
+  }
+
+  return {
+    version: value.version,
+    effective_from_date: value.effective_from_date,
+    effective_to_date: value.effective_to_date,
+    configured_at: value.configured_at,
+    configured_at_local: value.configured_at_local,
+    configured_by_display_name: value.configured_by_display_name,
+    slots: [slot1, slot2, slot3, slot4],
+  };
+}
+
+function projectSlotPolicySummary(
+  value: unknown,
+): AttendanceMonthlyMatrixSlotPolicySummaryProjection | null {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ["current_policy", "latest_policy", "month_policies"]) ||
+    !Array.isArray(value.month_policies)
+  ) {
+    return null;
+  }
+  const currentPolicy = projectAttendanceSlotPolicy(value.current_policy);
+  const latestPolicy = projectAttendanceSlotPolicy(value.latest_policy);
+  if (!currentPolicy || !latestPolicy) {
+    return null;
+  }
+  const monthPolicies: AttendanceSlotPolicyProjection[] = [];
+  for (const raw of value.month_policies) {
+    const projected = projectAttendanceSlotPolicy(raw);
+    if (!projected) return null;
+    monthPolicies.push(projected);
+  }
+  return {
+    current_policy: currentPolicy,
+    latest_policy: latestPolicy,
+    month_policies: monthPolicies,
+  };
+}
+
+function projectSlotCheckinItem(
+  value: unknown,
+  expectedSlotCode: AttendanceSlotCode,
+): AttendanceSlotCheckinItemProjection | null {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      "checkin_id",
+      "sequence_in_day",
+      "captured_at",
+      "captured_at_local",
+      "time_local",
+      "time_verified",
+      "assigned_slot_code",
+      "delta_minutes",
+      "over_grace_minutes",
+      "deviation_status",
+      "distance_target_kind",
+      "distance_status",
+      "distance_meters",
+    ])
+  ) {
+    return null;
+  }
+  if (
+    !isUuidString(value.checkin_id) ||
+    typeof value.sequence_in_day !== "number" ||
+    !Number.isSafeInteger(value.sequence_in_day) ||
+    value.sequence_in_day < 1 ||
+    typeof value.captured_at !== "string" ||
+    typeof value.captured_at_local !== "string" ||
+    typeof value.time_local !== "string" ||
+    !HH_MM_PATTERN.test(value.time_local) ||
+    typeof value.time_verified !== "boolean" ||
+    value.assigned_slot_code !== expectedSlotCode ||
+    typeof value.delta_minutes !== "number" ||
+    !Number.isSafeInteger(value.delta_minutes) ||
+    typeof value.over_grace_minutes !== "number" ||
+    !Number.isSafeInteger(value.over_grace_minutes) ||
+    value.over_grace_minutes < 0 ||
+    !ATTENDANCE_CHECKIN_DEVIATION_STATUSES.includes(
+      value.deviation_status as AttendanceCheckinDeviationStatus,
+    ) ||
+    (value.distance_target_kind !== null &&
+      !ATTENDANCE_DISTANCE_TARGET_KINDS.includes(
+        value.distance_target_kind as AttendanceDistanceTargetKind,
+      )) ||
+    (value.distance_status !== null &&
+      !ATTENDANCE_DISTANCE_STATUSES.includes(value.distance_status as AttendanceDistanceStatus)) ||
+    (value.distance_meters !== null &&
+      (!isFiniteNumber(value.distance_meters) || value.distance_meters < 0))
+  ) {
+    return null;
+  }
+
+  return {
+    checkin_id: value.checkin_id.toLowerCase(),
+    sequence_in_day: value.sequence_in_day,
+    captured_at: value.captured_at,
+    captured_at_local: value.captured_at_local,
+    time_local: value.time_local,
+    time_verified: value.time_verified,
+    assigned_slot_code: expectedSlotCode,
+    delta_minutes: value.delta_minutes,
+    over_grace_minutes: value.over_grace_minutes,
+    deviation_status: value.deviation_status as AttendanceCheckinDeviationStatus,
+    distance_target_kind: value.distance_target_kind as AttendanceDistanceTargetKind | null,
+    distance_status: value.distance_status as AttendanceDistanceStatus | null,
+    distance_meters:
+      value.distance_meters === null ? null : normalizeZero(value.distance_meters),
+  };
+}
+
+function projectDaySlot(
+  value: unknown,
+  expectedIndex: 1 | 2 | 3 | 4,
+): AttendanceMonthlyMatrixDaySlotProjection | null {
+  const expectedCode = ATTENDANCE_SLOT_CODES[expectedIndex - 1]!;
+  const expectedSession: AttendanceSlotSessionCode = expectedIndex <= 2 ? "AM" : "PM";
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      "slot_code",
+      "slot_index",
+      "session_code",
+      "target_time",
+      "grace_before_minutes",
+      "grace_after_minutes",
+      "is_leave_covered",
+      "slot_status",
+      "checkins",
+    ])
+  ) {
+    return null;
+  }
+
+  if (
+    value.slot_code !== expectedCode ||
+    value.slot_index !== expectedIndex ||
+    value.session_code !== expectedSession ||
+    typeof value.target_time !== "string" ||
+    !HH_MM_PATTERN.test(value.target_time) ||
+    typeof value.grace_before_minutes !== "number" ||
+    !Number.isSafeInteger(value.grace_before_minutes) ||
+    value.grace_before_minutes < 0 ||
+    value.grace_before_minutes > ATTENDANCE_SLOT_MAX_GRACE_MINUTES ||
+    typeof value.grace_after_minutes !== "number" ||
+    !Number.isSafeInteger(value.grace_after_minutes) ||
+    value.grace_after_minutes < 0 ||
+    value.grace_after_minutes > ATTENDANCE_SLOT_MAX_GRACE_MINUTES ||
+    typeof value.is_leave_covered !== "boolean" ||
+    !ATTENDANCE_SLOT_STATUSES.includes(value.slot_status as AttendanceSlotStatus) ||
+    !Array.isArray(value.checkins)
+  ) {
+    return null;
+  }
+
+  const checkins: AttendanceSlotCheckinItemProjection[] = [];
+  for (const rawCheckin of value.checkins) {
+    const projectedCheckin = projectSlotCheckinItem(rawCheckin, expectedCode);
+    if (!projectedCheckin) return null;
+    checkins.push(projectedCheckin);
+  }
+
+  return {
+    slot_code: expectedCode,
+    slot_index: expectedIndex,
+    session_code: expectedSession,
+    target_time: value.target_time,
+    grace_before_minutes: value.grace_before_minutes,
+    grace_after_minutes: value.grace_after_minutes,
+    is_leave_covered: value.is_leave_covered,
+    slot_status: value.slot_status as AttendanceSlotStatus,
+    checkins,
   };
 }
 
@@ -1210,39 +1970,51 @@ function projectApprovedLeaveItem(
 }
 
 function projectDayCell(value: unknown): AttendanceMonthlyMatrixDayCellProjection | null {
-  if (
-    !isRecord(value) ||
-    !hasExactKeys(value, [
-      "business_date",
-      "day_of_month",
-      "has_checkin",
-      "checkin_count",
-      "first_checkin_id",
-      "last_checkin_id",
-      "first_captured_at",
-      "first_captured_at_local",
-      "first_time_local",
-      "last_captured_at",
-      "last_captured_at_local",
-      "last_time_local",
-      "verified_checkin_count",
-      "unverified_checkin_count",
-      "distance_target_kind",
-      "branch_id_used",
-      "branch_code_used",
-      "branch_name_used",
-      "branch_version_used",
-      "hq_version_used",
-      "distance_status",
-      "distance_meters",
-      "min_distance_meters",
-      "max_distance_meters",
-      "has_approved_leave",
-      "approved_leave_units",
-      "approved_leaves",
-      "day_status",
-    ])
-  ) {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const baseKeys = [
+    "business_date",
+    "day_of_month",
+    "has_checkin",
+    "checkin_count",
+    "first_checkin_id",
+    "last_checkin_id",
+    "first_captured_at",
+    "first_captured_at_local",
+    "first_time_local",
+    "last_captured_at",
+    "last_captured_at_local",
+    "last_time_local",
+    "verified_checkin_count",
+    "unverified_checkin_count",
+    "distance_target_kind",
+    "branch_id_used",
+    "branch_code_used",
+    "branch_name_used",
+    "branch_version_used",
+    "hq_version_used",
+    "distance_status",
+    "distance_meters",
+    "min_distance_meters",
+    "max_distance_meters",
+    "has_approved_leave",
+    "approved_leave_units",
+    "approved_leaves",
+    "day_status",
+  ] as const;
+
+  const fullKeys = [
+    ...baseKeys,
+    "policy_version_used",
+    "missing_slot_count",
+    "late_or_early_checkin_count",
+    "slots",
+  ] as const;
+
+  const hasFullFourSlotKeys = hasExactKeys(value, fullKeys);
+  const hasLegacyBaseKeys = !hasFullFourSlotKeys && hasExactKeys(value, baseKeys);
+  if (!hasFullFourSlotKeys && !hasLegacyBaseKeys) {
     return null;
   }
 
@@ -1356,9 +2128,111 @@ function projectDayCell(value: unknown): AttendanceMonthlyMatrixDayCellProjectio
     approvedLeaves.push(projectedLeave);
   }
 
+  let policyVersionUsed = 1;
+  let missingSlotCount = 0;
+  let lateOrEarlyCheckinCount = 0;
+  let slots: AttendanceMonthlyMatrixDaySlotProjection[] = [];
+
+  if (hasFullFourSlotKeys) {
+    if (
+      typeof value.policy_version_used !== "number" ||
+      !Number.isSafeInteger(value.policy_version_used) ||
+      value.policy_version_used < 1 ||
+      typeof value.missing_slot_count !== "number" ||
+      !Number.isSafeInteger(value.missing_slot_count) ||
+      value.missing_slot_count < 0 ||
+      value.missing_slot_count > 4 ||
+      typeof value.late_or_early_checkin_count !== "number" ||
+      !Number.isSafeInteger(value.late_or_early_checkin_count) ||
+      value.late_or_early_checkin_count < 0 ||
+      !Array.isArray(value.slots) ||
+      value.slots.length !== 4
+    ) {
+      return null;
+    }
+
+    const s1 = projectDaySlot(value.slots[0], 1);
+    const s2 = projectDaySlot(value.slots[1], 2);
+    const s3 = projectDaySlot(value.slots[2], 3);
+    const s4 = projectDaySlot(value.slots[3], 4);
+    if (!s1 || !s2 || !s3 || !s4) {
+      return null;
+    }
+
+    policyVersionUsed = value.policy_version_used;
+    missingSlotCount = value.missing_slot_count;
+    lateOrEarlyCheckinCount = value.late_or_early_checkin_count;
+    slots = [s1, s2, s3, s4];
+  } else {
+    const synthesizedCheckins: {
+      checkin_id: string;
+      sequence_in_day: number;
+      captured_at: string;
+      captured_at_local: string;
+      time_local: string;
+      time_verified: boolean;
+      distance_target_kind: AttendanceDistanceTargetKind | null;
+      distance_status: AttendanceDistanceStatus | null;
+      distance_meters: number | null;
+    }[] = [];
+
+    if (
+      value.has_checkin &&
+      value.first_checkin_id &&
+      value.first_captured_at &&
+      value.first_captured_at_local &&
+      value.first_time_local
+    ) {
+      synthesizedCheckins.push({
+        checkin_id: value.first_checkin_id,
+        sequence_in_day: 1,
+        captured_at: value.first_captured_at,
+        captured_at_local: value.first_captured_at_local,
+        time_local: value.first_time_local,
+        time_verified: value.unverified_checkin_count === 0,
+        distance_target_kind: value.distance_target_kind as AttendanceDistanceTargetKind | null,
+        distance_status: value.distance_status as AttendanceDistanceStatus | null,
+        distance_meters:
+          value.distance_meters === null ? null : normalizeZero(value.distance_meters),
+      });
+
+      if (
+        value.checkin_count > 1 &&
+        value.last_checkin_id &&
+        value.last_checkin_id.toLowerCase() !== value.first_checkin_id.toLowerCase() &&
+        value.last_captured_at &&
+        value.last_captured_at_local &&
+        value.last_time_local
+      ) {
+        synthesizedCheckins.push({
+          checkin_id: value.last_checkin_id,
+          sequence_in_day: value.checkin_count,
+          captured_at: value.last_captured_at,
+          captured_at_local: value.last_captured_at_local,
+          time_local: value.last_time_local,
+          time_verified: value.unverified_checkin_count === 0,
+          distance_target_kind: value.distance_target_kind as AttendanceDistanceTargetKind | null,
+          distance_status: value.distance_status as AttendanceDistanceStatus | null,
+          distance_meters:
+            value.max_distance_meters === null ? null : normalizeZero(value.max_distance_meters),
+        });
+      }
+    }
+
+    const evaluated = evaluateAttendanceDaySlots({
+      checkins: synthesizedCheckins,
+      approved_leaves: approvedLeaves,
+    });
+    policyVersionUsed = evaluated.policy_version_used;
+    missingSlotCount = evaluated.missing_slot_count;
+    lateOrEarlyCheckinCount = evaluated.late_or_early_checkin_count;
+    slots = evaluated.slots;
+  }
+
   return {
     business_date: value.business_date,
     day_of_month: value.day_of_month,
+    policy_version_used: policyVersionUsed,
     has_checkin: value.has_checkin,
     checkin_count: value.checkin_count,
     first_checkin_id:
@@ -1389,6 +2263,9 @@ function projectDayCell(value: unknown): AttendanceMonthlyMatrixDayCellProjectio
     approved_leave_units: normalizeZero(value.approved_leave_units),
     approved_leaves: approvedLeaves,
     day_status: value.day_status as AttendanceMonthlyMatrixDayStatus,
+    missing_slot_count: missingSlotCount,
+    late_or_early_checkin_count: lateOrEarlyCheckinCount,
+    slots,
   };
 }
 
@@ -1452,29 +2329,45 @@ function projectEmployeeRow(
 export function projectAttendanceMonthlyMatrixReport(
   value: unknown,
 ): AttendanceMonthlyMatrixReportProjection | null {
-  if (
-    !isRecord(value) ||
-    !hasExactKeys(value, [
-      "viewer",
-      "filters",
-      "days_in_month",
-      "calendar_days",
-      "current_hq",
-      "branch_options",
-      "employee_options",
-      "overview",
-      "pagination",
-      "items",
-    ])
-  ) {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const baseRootKeys = [
+    "viewer",
+    "filters",
+    "days_in_month",
+    "calendar_days",
+    "current_hq",
+    "branch_options",
+    "employee_options",
+    "overview",
+    "pagination",
+    "items",
+  ] as const;
+  const fullRootKeys = [...baseRootKeys, "slot_policy"] as const;
+
+  const hasSlotPolicyKey = hasExactKeys(value, fullRootKeys);
+  const hasBaseRootKeys = !hasSlotPolicyKey && hasExactKeys(value, baseRootKeys);
+  if (!hasSlotPolicyKey && !hasBaseRootKeys) {
     return null;
   }
 
+  if (!isRecord(value.viewer)) {
+    return null;
+  }
+  const viewerHasSlotFlag = hasExactKeys(value.viewer, [
+    "can_configure_hq",
+    "can_manage_branches",
+    "can_manage_slot_policy",
+  ]);
+  const viewerHasLegacyFlags =
+    !viewerHasSlotFlag &&
+    hasExactKeys(value.viewer, ["can_configure_hq", "can_manage_branches"]);
   if (
-    !isRecord(value.viewer) ||
-    !hasExactKeys(value.viewer, ["can_configure_hq", "can_manage_branches"]) ||
+    (!viewerHasSlotFlag && !viewerHasLegacyFlags) ||
     typeof value.viewer.can_configure_hq !== "boolean" ||
-    typeof value.viewer.can_manage_branches !== "boolean"
+    typeof value.viewer.can_manage_branches !== "boolean" ||
+    (viewerHasSlotFlag && typeof value.viewer.can_manage_slot_policy !== "boolean")
   ) {
     return null;
   }
@@ -1512,7 +2405,7 @@ export function projectAttendanceMonthlyMatrixReport(
   if (
     typeof value.days_in_month !== "number" ||
     !Number.isSafeInteger(value.days_in_month) ||
-    value.days_in_month < 28 ||
+    value.days_in_month < 1 ||
     value.days_in_month > 31 ||
     !Array.isArray(value.calendar_days) ||
     value.calendar_days.length !== value.days_in_month
@@ -1531,6 +2424,17 @@ export function projectAttendanceMonthlyMatrixReport(
   if (value.current_hq !== null) {
     currentHq = projectHqLocation(value.current_hq);
     if (!currentHq) return null;
+  }
+
+  let slotPolicy: AttendanceMonthlyMatrixSlotPolicySummaryProjection = {
+    current_policy: DEFAULT_ATTENDANCE_SLOT_POLICY,
+    latest_policy: DEFAULT_ATTENDANCE_SLOT_POLICY,
+    month_policies: [DEFAULT_ATTENDANCE_SLOT_POLICY],
+  };
+  if (hasSlotPolicyKey) {
+    const projectedPolicySummary = projectSlotPolicySummary(value.slot_policy);
+    if (!projectedPolicySummary) return null;
+    slotPolicy = projectedPolicySummary;
   }
 
   if (!Array.isArray(value.branch_options) || !Array.isArray(value.employee_options)) {
@@ -1568,6 +2472,9 @@ export function projectAttendanceMonthlyMatrixReport(
     viewer: {
       can_configure_hq: value.viewer.can_configure_hq,
       can_manage_branches: value.viewer.can_manage_branches,
+      can_manage_slot_policy: viewerHasSlotFlag
+        ? (value.viewer.can_manage_slot_policy as boolean)
+        : value.viewer.can_configure_hq,
     },
     filters: {
       year_month: filters.year_month,
@@ -1581,11 +2488,82 @@ export function projectAttendanceMonthlyMatrixReport(
     days_in_month: value.days_in_month,
     calendar_days: calendarDays,
     current_hq: currentHq,
+    slot_policy: slotPolicy,
     branch_options: branchOptions,
     employee_options: employeeOptions,
     overview,
     pagination,
     items,
+  };
+}
+
+export function projectAttendanceSlotPoliciesAdminList(
+  value: unknown,
+): AttendanceSlotPoliciesAdminListProjection | null {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      "viewer",
+      "business_date",
+      "current_policy",
+      "latest_policy",
+      "versions",
+    ])
+  ) {
+    return null;
+  }
+  if (
+    !isRecord(value.viewer) ||
+    !hasExactKeys(value.viewer, ["can_manage_slot_policy"]) ||
+    typeof value.viewer.can_manage_slot_policy !== "boolean" ||
+    typeof value.business_date !== "string" ||
+    !isValidIsoCalendarDate(value.business_date) ||
+    !Array.isArray(value.versions) ||
+    value.versions.length < 1
+  ) {
+    return null;
+  }
+
+  const currentPolicy = projectAttendanceSlotPolicy(value.current_policy);
+  const latestPolicy = projectAttendanceSlotPolicy(value.latest_policy);
+  if (!currentPolicy || !latestPolicy) {
+    return null;
+  }
+
+  const versions: AttendanceSlotPolicyProjection[] = [];
+  for (const raw of value.versions) {
+    const projected = projectAttendanceSlotPolicy(raw);
+    if (!projected) return null;
+    versions.push(projected);
+  }
+
+  return {
+    viewer: {
+      can_manage_slot_policy: value.viewer.can_manage_slot_policy,
+    },
+    business_date: value.business_date,
+    current_policy: currentPolicy,
+    latest_policy: latestPolicy,
+    versions,
+  };
+}
+
+export function projectCreateSlotPolicyResult(
+  value: unknown,
+): CreateAttendanceSlotPolicyResultProjection | null {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ["replayed", "policy"]) ||
+    typeof value.replayed !== "boolean"
+  ) {
+    return null;
+  }
+  const policy = projectAttendanceSlotPolicy(value.policy);
+  if (!policy) return null;
+
+  return {
+    replayed: value.replayed,
+    policy,
   };
 }
 

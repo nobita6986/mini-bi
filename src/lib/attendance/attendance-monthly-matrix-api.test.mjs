@@ -5,14 +5,18 @@ import {
   exportAttendanceMonthlyMatrixXlsx,
   getAttendanceBranchesAdmin,
   getAttendanceMonthlyMatrixReport,
+  getAttendanceSlotPoliciesAdmin,
   postAttendanceBranchAssignmentAdmin,
   postAttendanceBranchUnassignAdmin,
+  postAttendanceSlotPolicyAdmin,
   postOrPutAttendanceBranchAdmin,
 } from "./attendance-monthly-matrix-api.ts";
 import {
   ATTENDANCE_MONTHLY_MATRIX_EXPORT_ROW_LIMIT,
+  DEFAULT_ATTENDANCE_SLOT_POLICY,
   parseAssignBranchBody,
   parseAttendanceMonthlyMatrixQuery,
+  parseCreateSlotPolicyBody,
   parseUnassignBranchBody,
   parseUpsertBranchBody,
 } from "./attendance-monthly-matrix-contract.ts";
@@ -942,4 +946,157 @@ test("HRP Integration Catalog API enforces Bearer M2M auth, key rotation, kill s
     assert.equal(rateLimited.code, "RATE_LIMITED");
     assert.ok(rateLimited.retryAfterSeconds >= 1);
   }
+});
+
+test("Attendance Slot Policy Admin contract and handlers enforce Full Admin on POST, allow BoD on GET, and map overlap/past/version conflict errors", async () => {
+  const validBody = {
+    effective_from_date: "2026-11-01",
+    slot_1: { target_time: "07:30", grace_before_minutes: 15, grace_after_minutes: 15 },
+    slot_2: { target_time: "11:30", grace_before_minutes: 15, grace_after_minutes: 15 },
+    slot_3: { target_time: "13:00", grace_before_minutes: 15, grace_after_minutes: 15 },
+    slot_4: { target_time: "17:00", grace_before_minutes: 15, grace_after_minutes: 15 },
+    expected_version: 1,
+    idempotency_key: IDEMPOTENCY_KEY,
+  };
+
+  const parsed = parseCreateSlotPolicyBody(validBody);
+  assert.equal(parsed.ok, true);
+
+  // Non-monotonic slot times rejected with ATTENDANCE_SLOT_POLICY_INVALID
+  const badOrder = parseCreateSlotPolicyBody({
+    ...validBody,
+    slot_2: { target_time: "07:00", grace_before_minutes: 15, grace_after_minutes: 15 },
+  });
+  assert.equal(badOrder.ok, false);
+  if (!badOrder.ok) {
+    assert.equal(badOrder.code, "ATTENDANCE_SLOT_POLICY_INVALID");
+  }
+
+  // GET allowed for BoD reader
+  const getRes = await getAttendanceSlotPoliciesAdmin(
+    new Request("https://bi.example.com/api/admin/attendance/slot-policies"),
+    {
+      resolveSession: async () => makeSessionOk(BOD_PRIVILEGED_CAPS, ALL_SCOPE),
+      repository: {
+        getMonthlyMatrixReport: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        listBranchesAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        upsertBranchAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        assignEmployeeBranchAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        unassignEmployeeBranchAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        getSlotPoliciesAdmin: async () => ({
+          ok: true,
+          data: {
+            viewer: { can_manage_slot_policy: false },
+            business_date: "2026-10-25",
+            current_policy: DEFAULT_ATTENDANCE_SLOT_POLICY,
+            latest_policy: DEFAULT_ATTENDANCE_SLOT_POLICY,
+            versions: [DEFAULT_ATTENDANCE_SLOT_POLICY],
+          },
+        }),
+        createSlotPolicyAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+      },
+    },
+  );
+  assert.equal(getRes.status, 200);
+  const getJson = await getRes.json();
+  assert.equal(getJson.ok, true);
+  assert.equal(getJson.current_policy.version, 1);
+  assert.equal(getJson.current_policy.slots.length, 4);
+
+  // POST denied for BoD reader
+  const bodDeniedRes = await postAttendanceSlotPolicyAdmin(
+    makeJsonRequest("https://bi.example.com/api/admin/attendance/slot-policies", "POST", validBody),
+    {
+      resolveSession: async () => makeSessionOk(BOD_PRIVILEGED_CAPS, ALL_SCOPE),
+      repository: {
+        getMonthlyMatrixReport: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        listBranchesAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        upsertBranchAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        assignEmployeeBranchAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        unassignEmployeeBranchAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        getSlotPoliciesAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        createSlotPolicyAdmin: async () => {
+          throw new Error("BoD must not reach createSlotPolicyAdmin RPC");
+        },
+      },
+    },
+  );
+  assert.equal(bodDeniedRes.status, 403);
+  assert.equal((await bodDeniedRes.json()).code, "ATTENDANCE_SLOT_POLICY_WRITE_DENIED");
+
+  // POST past effective date returns 422 ATTENDANCE_SLOT_POLICY_EFFECTIVE_DATE_PAST
+  const pastRes = await postAttendanceSlotPolicyAdmin(
+    makeJsonRequest("https://bi.example.com/api/admin/attendance/slot-policies", "POST", validBody),
+    {
+      resolveSession: async () => makeSessionOk(FULL_ADMIN_CAPS, ALL_SCOPE),
+      repository: {
+        getMonthlyMatrixReport: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        listBranchesAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        upsertBranchAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        assignEmployeeBranchAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        unassignEmployeeBranchAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        getSlotPoliciesAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        createSlotPolicyAdmin: async () => ({
+          ok: false,
+          code: "ATTENDANCE_SLOT_POLICY_EFFECTIVE_DATE_PAST",
+        }),
+      },
+    },
+  );
+  assert.equal(pastRes.status, 422);
+  assert.equal((await pastRes.json()).code, "ATTENDANCE_SLOT_POLICY_EFFECTIVE_DATE_PAST");
+
+  // POST overlap returns 409 ATTENDANCE_SLOT_POLICY_OVERLAP
+  const overlapRes = await postAttendanceSlotPolicyAdmin(
+    makeJsonRequest("https://bi.example.com/api/admin/attendance/slot-policies", "POST", validBody),
+    {
+      resolveSession: async () => makeSessionOk(FULL_ADMIN_CAPS, ALL_SCOPE),
+      repository: {
+        getMonthlyMatrixReport: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        listBranchesAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        upsertBranchAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        assignEmployeeBranchAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        unassignEmployeeBranchAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        getSlotPoliciesAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        createSlotPolicyAdmin: async () => ({
+          ok: false,
+          code: "ATTENDANCE_SLOT_POLICY_OVERLAP",
+        }),
+      },
+    },
+  );
+  assert.equal(overlapRes.status, 409);
+  assert.equal((await overlapRes.json()).code, "ATTENDANCE_SLOT_POLICY_OVERLAP");
+
+  // POST success returns 201 and projected policy
+  const okRes = await postAttendanceSlotPolicyAdmin(
+    makeJsonRequest("https://bi.example.com/api/admin/attendance/slot-policies", "POST", validBody),
+    {
+      resolveSession: async () => makeSessionOk(FULL_ADMIN_CAPS, ALL_SCOPE),
+      repository: {
+        getMonthlyMatrixReport: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        listBranchesAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        upsertBranchAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        assignEmployeeBranchAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        unassignEmployeeBranchAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        getSlotPoliciesAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        createSlotPolicyAdmin: async () => ({
+          ok: true,
+          result: {
+            replayed: false,
+            policy: {
+              ...DEFAULT_ATTENDANCE_SLOT_POLICY,
+              version: 2,
+              effective_from_date: "2026-11-01",
+            },
+          },
+        }),
+      },
+    },
+  );
+  assert.equal(okRes.status, 201);
+  const okJson = await okRes.json();
+  assert.equal(okJson.ok, true);
+  assert.equal(okJson.policy.version, 2);
+  assert.equal(okJson.policy.effective_from_date, "2026-11-01");
 });

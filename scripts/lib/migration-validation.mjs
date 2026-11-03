@@ -312,6 +312,12 @@ export const ATTENDANCE_MONTHLY_MATRIX_BRANCHES_PROJECT_COORDS_RPC_SIGNATURES = 
   "public.direct_entry_update_project_location(uuid, uuid, text, integer, text, numeric, numeric, integer, boolean, text, text)",
   "public.hrp_sync_catalog(uuid, uuid, uuid)",
 ]);
+export const ATTENDANCE_SLOT_POLICY_AND_FOUR_SLOT_MATRIX_MIGRATION_NAME =
+  "20261103100000_attendance_slot_policy_and_four_slot_matrix.sql";
+export const ATTENDANCE_SLOT_POLICY_AND_FOUR_SLOT_MATRIX_RPC_SIGNATURES = Object.freeze([
+  "public.attendance_get_slot_policies_admin(uuid, uuid)",
+  "public.attendance_create_slot_policy_admin(uuid, uuid, date, text, integer, integer, text, integer, integer, text, integer, integer, text, integer, integer, integer, uuid, text)",
+]);
 export const F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES = Object.freeze([
   "public.work_report_list_templates(uuid, uuid)",
   "public.work_report_get_template(uuid, uuid, uuid)",
@@ -554,7 +560,8 @@ export async function verifyS0T1CHistoricalCompatibility(
     hfDuplicateCccdResignedWithdrawAndWorkerFiltersApplied = false,
     dashboardDetailedRecruitmentMatrixCatalogApplied = false,
     workerEditHistoryAdminApplied = false,
-    attendanceMonthlyMatrixBranchesProjectCoordsApplied = false } = {},
+    attendanceMonthlyMatrixBranchesProjectCoordsApplied = false,
+    attendanceSlotPolicyAndFourSlotMatrixApplied = false } = {},
 ) {
   const baseAllowlist = extractS0T1CAllowlistSignatures(migrationSql);
   if (baseAllowlist.length === 0) {
@@ -640,6 +647,9 @@ export async function verifyS0T1CHistoricalCompatibility(
     ...(workerEditHistoryAdminApplied ? WORKER_EDIT_HISTORY_ADMIN_RPC_SIGNATURES : []),
     ...(attendanceMonthlyMatrixBranchesProjectCoordsApplied
       ? ATTENDANCE_MONTHLY_MATRIX_BRANCHES_PROJECT_COORDS_RPC_SIGNATURES
+      : []),
+    ...(attendanceSlotPolicyAndFourSlotMatrixApplied
+      ? ATTENDANCE_SLOT_POLICY_AND_FOUR_SLOT_MATRIX_RPC_SIGNATURES
       : []),
   ];
 
@@ -897,6 +907,8 @@ export async function verifyAppliedMigrationChecksum(
           appliedMap.has(WORKER_EDIT_HISTORY_ADMIN_MIGRATION_NAME),
         attendanceMonthlyMatrixBranchesProjectCoordsApplied:
           appliedMap.has(ATTENDANCE_MONTHLY_MATRIX_BRANCHES_PROJECT_COORDS_MIGRATION_NAME),
+        attendanceSlotPolicyAndFourSlotMatrixApplied:
+          appliedMap.has(ATTENDANCE_SLOT_POLICY_AND_FOUR_SLOT_MATRIX_MIGRATION_NAME),
       },
     );
     if (postconditions.ok) {
