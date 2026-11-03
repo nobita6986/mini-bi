@@ -222,7 +222,8 @@ security definer
 set search_path = pg_catalog, public
 as $$
 declare
-  v_today_local date := (clock_timestamp() at time zone 'Asia/Ho_Chi_Minh')::date;
+  v_now_local timestamp without time zone := clock_timestamp() at time zone 'Asia/Ho_Chi_Minh';
+  v_today_local date := v_now_local::date;
   v_policy public.attendance_slot_policy_versions%rowtype;
   v_slots jsonb;
 begin
@@ -261,7 +262,16 @@ begin
         + split_part(slot_elem->>'target_time', ':', 2)::integer
       ) as target_minute,
       (slot_elem->>'grace_before_minutes')::integer as grace_before_minutes,
-      (slot_elem->>'grace_after_minutes')::integer as grace_after_minutes
+      (slot_elem->>'grace_after_minutes')::integer as grace_after_minutes,
+      (
+        p_business_date < v_today_local
+        or (
+          p_business_date = v_today_local
+          and v_now_local > p_business_date
+            + (slot_elem->>'target_time')::time
+            + make_interval(mins => (slot_elem->>'grace_after_minutes')::integer)
+        )
+      ) as is_due
     from jsonb_array_elements(v_policy.slots) as slot_elem
   ),
   raw_checkins as (
@@ -487,11 +497,12 @@ begin
                 else lc.pm_covered
               end
             ) then 'LEAVE_COVERED'
+            when not sd.is_due then 'UPCOMING'
             else 'MISSING'
           end
         ),
         'eligible_for_explanation', (
-          p_business_date <= v_today_local
+          sd.is_due
           and coalesce(se.status, '') not in ('PENDING', 'APPROVED')
           and (
             (coalesce(sc.checkin_count, 0) > 0 and coalesce(sc.out_of_grace_count, 0) > 0)
@@ -884,7 +895,8 @@ begin
   end if;
 
   v_original_slot_status := v_slot_eval ->> 'original_slot_status';
-  if v_original_slot_status not in ('MISSING', 'OUT_OF_GRACE') then
+  if coalesce((v_slot_eval ->> 'eligible_for_explanation')::boolean, false) is not true
+     or v_original_slot_status not in ('MISSING', 'OUT_OF_GRACE') then
     raise exception 'ATTENDANCE_EXPLANATION_SLOT_NOT_ELIGIBLE'
       using errcode = 'PT409';
   end if;
@@ -1323,7 +1335,8 @@ set search_path = pg_catalog, public
 as $$
 declare
   v_can_configure_hq boolean;
-  v_today_vn date := (clock_timestamp() at time zone 'Asia/Ho_Chi_Minh')::date;
+  v_now_vn timestamp without time zone := clock_timestamp() at time zone 'Asia/Ho_Chi_Minh';
+  v_today_vn date := v_now_vn::date;
   v_year_month text := coalesce(
     nullif(btrim(coalesce(p_year_month, '')), ''),
     to_char(v_today_vn, 'YYYY-MM')
@@ -1333,6 +1346,7 @@ declare
   v_month_start date;
   v_month_end date;
   v_days_in_month integer;
+  v_completed_days_in_month integer;
   v_page integer := coalesce(p_page, 1);
   v_page_size integer := coalesce(p_page_size, 25);
   v_search text := nullif(btrim(coalesce(p_search, '')), '');
@@ -1369,6 +1383,10 @@ begin
   v_month_start := make_date(v_year, v_month, 1);
   v_month_end := (v_month_start + interval '1 month - 1 day')::date;
   v_days_in_month := (v_month_end - v_month_start) + 1;
+  v_completed_days_in_month := greatest(
+    0,
+    least(v_month_end, v_today_vn - 1) - v_month_start + 1
+  );
 
   if v_page < 1 or v_page > 10000 or v_page_size < 1 or v_page_size > 100 then
     raise exception 'ATTENDANCE_REPORT_PAGINATION_INVALID'
@@ -1627,7 +1645,16 @@ begin
         + split_part(slot_elem->>'target_time', ':', 2)::integer
       ) as target_minute,
       (slot_elem->>'grace_before_minutes')::integer as grace_before_minutes,
-      (slot_elem->>'grace_after_minutes')::integer as grace_after_minutes
+      (slot_elem->>'grace_after_minutes')::integer as grace_after_minutes,
+      (
+        mdp.business_date < v_today_vn
+        or (
+          mdp.business_date = v_today_vn
+          and v_now_vn > mdp.business_date
+            + (slot_elem->>'target_time')::time
+            + make_interval(mins => (slot_elem->>'grace_after_minutes')::integer)
+        )
+      ) as is_due
     from month_day_policies mdp
     cross join lateral jsonb_array_elements(mdp.policy_slots) as slot_elem
   ),
@@ -2002,11 +2029,14 @@ begin
       coalesce(lv.approved_leave_day_count, 0) as approved_leave_day_count,
       coalesce(lv.approved_leave_units, 0.0::double precision) as approved_leave_units,
       coalesce(both_days.overlap_day_count, 0) as checkin_and_leave_day_count,
-      (v_days_in_month - coalesce(chk.checkin_day_count, 0))::integer as no_checkin_day_count,
+      greatest(
+        0,
+        v_completed_days_in_month - coalesce(completed.elapsed_checkin_day_count, 0)
+      )::integer as no_checkin_day_count,
       (
-        v_days_in_month
-        - coalesce(chk.checkin_day_count, 0)
-        - (coalesce(lv.approved_leave_day_count, 0) - coalesce(both_days.overlap_day_count, 0))
+        v_completed_days_in_month
+        - coalesce(completed.elapsed_checkin_day_count, 0)
+        - (coalesce(completed.elapsed_leave_day_count, 0) - coalesce(completed.elapsed_overlap_day_count, 0))
       )::integer as no_checkin_without_leave_day_count
     from candidate_employees ce
     left join lateral (
@@ -2035,6 +2065,22 @@ begin
        and dl.business_date = dc.business_date
       where dc.app_user_id = ce.app_user_id
     ) both_days on true
+    left join lateral (
+      select
+        count(*) filter (where coalesce(dc.checkin_count, 0) > 0)::integer as elapsed_checkin_day_count,
+        count(*) filter (where coalesce(dl.leave_units, 0) > 0)::integer as elapsed_leave_day_count,
+        count(*) filter (
+          where coalesce(dc.checkin_count, 0) > 0 and coalesce(dl.leave_units, 0) > 0
+        )::integer as elapsed_overlap_day_count
+      from month_day_policies mdp_elapsed
+      left join daily_checkins dc
+        on dc.app_user_id = ce.app_user_id
+       and dc.business_date = mdp_elapsed.business_date
+      left join daily_leaves dl
+        on dl.app_user_id = ce.app_user_id
+       and dl.business_date = mdp_elapsed.business_date
+      where mdp_elapsed.business_date < v_today_vn
+    ) completed on true
   ),
   agg as (
     select
@@ -2162,6 +2208,20 @@ begin
           ),
           '[]'
         )
+        || '|' || coalesce(
+          (
+            select pg_catalog.jsonb_agg(
+              pg_catalog.jsonb_build_object(
+                'd', mds2.business_date,
+                'sc', mds2.slot_code,
+                'due', mds2.is_due
+              )
+              order by mds2.business_date asc, mds2.slot_index asc
+            )::text
+            from month_day_slot_defs mds2
+          ),
+          '[]'
+        )
       ) as snapshot_token
     from employee_rollup er
   ),
@@ -2230,7 +2290,8 @@ begin
                    and dl.leave_units is not null and dl.leave_units > 0 then 'CHECKED_IN_AND_LEAVE'
               when dc.checkin_count is not null and dc.checkin_count > 0 then 'CHECKED_IN'
               when dl.leave_units is not null and dl.leave_units > 0 then 'APPROVED_LEAVE'
-              else 'NO_CHECKIN'
+              when day_slots.missing_slot_count > 0 then 'NO_CHECKIN'
+              else 'UPCOMING'
             end,
             'missing_slot_count', day_slots.missing_slot_count,
             'late_or_early_checkin_count', day_slots.late_or_early_checkin_count,
@@ -2248,7 +2309,8 @@ begin
         cross join lateral (
           select
             count(*) filter (
-              where coalesce(dsc.checkin_count, 0) = 0
+              where mds.is_due
+                and coalesce(dsc.checkin_count, 0) = 0
                 and not (
                   case
                     when mds.session_code = 'AM' then coalesce(dl.am_covered, false)
@@ -2298,6 +2360,7 @@ begin
                         else coalesce(dl.pm_covered, false)
                       end
                     ) then 'LEAVE_COVERED'
+                    when not mds.is_due then 'UPCOMING'
                     else 'MISSING'
                   end,
                   'checkins', coalesce(dsc.checkins, '[]'::jsonb),

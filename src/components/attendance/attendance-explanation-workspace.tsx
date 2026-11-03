@@ -660,6 +660,8 @@ export function AttendanceExplanationWorkspace({
                       ? "border-sky-300/80 bg-sky-50/50 dark:border-sky-800/60 dark:bg-sky-950/25"
                       : slot.slot_status === "OUT_OF_GRACE"
                         ? "border-amber-300/80 bg-amber-50/50 dark:border-amber-800/60 dark:bg-amber-950/25"
+                        : slot.slot_status === "UPCOMING"
+                          ? "border-sky-300/80 bg-sky-50/50 dark:border-sky-800/60 dark:bg-sky-950/25"
                         : "border-red-300/80 bg-red-50/50 dark:border-red-800/60 dark:bg-red-950/25";
 
                 return (
@@ -694,6 +696,8 @@ export function AttendanceExplanationWorkspace({
                           <StatusBadge tone="info">Nghỉ phép đã duyệt</StatusBadge>
                         ) : slot.slot_status === "OUT_OF_GRACE" ? (
                           <StatusBadge tone="warning">Lệch khung giờ</StatusBadge>
+                        ) : slot.slot_status === "UPCOMING" ? (
+                          <StatusBadge tone="info">Chưa đến giờ chấm</StatusBadge>
                         ) : (
                           <StatusBadge tone="danger">
                             {MATRIX_MISSING_SLOT_LABEL}

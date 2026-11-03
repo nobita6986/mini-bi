@@ -175,6 +175,22 @@ test("monthly matrix day cell presentation: renders CHECKED_IN, APPROVED_LEAVE, 
   }
   assert.equal(/vắng không phép/i.test(noCheckin.statusLabel), false);
 
+  const upcoming = describeMatrixDayCell({
+    ...baseCell,
+    day_status: "UPCOMING",
+    missing_slot_count: 0,
+    slots: evaluateAttendanceDaySlots({
+      policy: DEFAULT_ATTENDANCE_SLOT_POLICY,
+      checkins: [],
+      approved_leaves: [],
+    }).slots.map((slot) => ({ ...slot, slot_status: "UPCOMING" })),
+  });
+  assert.equal(upcoming.statusLabel, "Chưa đến giờ chấm");
+  assert.equal(upcoming.tone, "sky");
+  assert.equal(upcoming.isRedHighlight, false);
+  assert.ok(upcoming.slots.every((slot) => slot.statusLabel === "Chưa đến giờ chấm"));
+  assert.ok(upcoming.slots.every((slot) => !slot.isMissingHighlight));
+
   // 2. APPROVED_LEAVE -> red tone + explicit leave type and session (FULL, AM, PM)
   const approvedLeave = describeMatrixDayCell({
     ...baseCell,

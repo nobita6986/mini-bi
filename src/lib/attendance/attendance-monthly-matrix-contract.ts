@@ -27,6 +27,7 @@ export const ATTENDANCE_MONTHLY_MATRIX_DAY_STATUSES = [
   "APPROVED_LEAVE",
   "CHECKED_IN_AND_LEAVE",
   "NO_CHECKIN",
+  "UPCOMING",
 ] as const;
 
 export type AttendanceMonthlyMatrixDayStatus =
@@ -78,6 +79,7 @@ export const ATTENDANCE_SLOT_STATUSES = [
   "LEAVE_COVERED",
   "MISSING",
   "EXPLAINED_APPROVED",
+  "UPCOMING",
 ] as const;
 export type AttendanceSlotStatus = (typeof ATTENDANCE_SLOT_STATUSES)[number];
 

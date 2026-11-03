@@ -894,11 +894,33 @@ test("HRP Branches, Branch Check-In Distance Snapshot Immutability, Project Coor
     assert.equal(staffARow.summary.approved_leave_day_count, 2); // Nov 5 (PM) and Nov 6 (FULL); Nov 7 SUBMITTED is excluded
     assert.equal(staffARow.summary.approved_leave_units, 1.5); // 3 half-day units = 1.5 days
     assert.equal(staffARow.summary.checkin_and_leave_day_count, 1); // Nov 5 has both check-in and PM leave
-    assert.equal(staffARow.summary.no_checkin_day_count, 28); // 30 - 2 check-in days
+    const { rows: businessDateRows } = await db.query(
+      "select to_char(clock_timestamp() at time zone 'Asia/Ho_Chi_Minh', 'YYYY-MM-DD') as today_vn",
+    );
+    const [todayYear, todayMonth, todayDay] = businessDateRows[0].today_vn
+      .split("-")
+      .map(Number);
+    const todayMonthKey = todayYear * 12 + todayMonth;
+    const reportMonthKey = 2026 * 12 + 11;
+    const completedDayCount = Math.min(
+      30,
+      Math.max(
+        0,
+        todayMonthKey > reportMonthKey
+          ? 30
+          : todayMonthKey === reportMonthKey
+            ? todayDay - 1
+            : 0,
+      ),
+    );
+    const elapsedCheckinDays = [5, 17].filter((day) => day <= completedDayCount).length;
+    const elapsedLeaveDays = [5, 6].filter((day) => day <= completedDayCount).length;
+    const elapsedOverlapDays = [5].filter((day) => day <= completedDayCount).length;
+    assert.equal(staffARow.summary.no_checkin_day_count, completedDayCount - elapsedCheckinDays);
     assert.equal(
       staffARow.summary.no_checkin_without_leave_day_count,
-      27,
-      "30 days - 2 check-in days - 1 leave-only day (Nov 6) = 27 NO_CHECKIN days",
+      completedDayCount - elapsedCheckinDays - (elapsedLeaveDays - elapsedOverlapDays),
+      "Only completed calendar days contribute to missing-attendance totals",
     );
 
     const nov05Cell = staffARow.days.find((d) => d.business_date === "2026-11-05");
@@ -928,8 +950,12 @@ test("HRP Branches, Branch Check-In Distance Snapshot Immutability, Project Coor
 
     const nov07Cell = staffARow.days.find((d) => d.business_date === "2026-11-07");
     assert.ok(nov07Cell);
-    assert.equal(nov07Cell.day_status, "NO_CHECKIN", "unapproved leave must remain NO_CHECKIN");
+    assert.ok(
+      ["UPCOMING", "NO_CHECKIN"].includes(nov07Cell.day_status),
+      "unapproved leave does not cover attendance; the day is upcoming until slots are due",
+    );
     assert.equal(nov07Cell.has_approved_leave, false);
+    assert.ok(nov07Cell.slots.every((slot) => slot.slot_status !== "LEAVE_COVERED"));
 
     const nov17Cell = staffARow.days.find((d) => d.business_date === "2026-11-17");
     assert.ok(nov17Cell);
@@ -1357,8 +1383,10 @@ test("HRP Branches, Branch Check-In Distance Snapshot Immutability, Project Coor
       dec10Cell.slots[2].checkins.map((c) => c.time_local),
       ["14:00"],
     );
-    assert.equal(dec10Cell.slots[3].slot_status, "MISSING");
-    assert.equal(dec10Cell.slots[4].slot_status, "MISSING");
+    assert.equal(dec10Cell.slots[3].slot_status, "UPCOMING");
+    assert.equal(dec10Cell.slots[4].slot_status, "UPCOMING");
+    assert.equal(dec10Cell.day_status, "CHECKED_IN");
+    assert.equal(dec10Cell.missing_slot_count, 0);
 
     const dec16Cell = staffBDecRow.days.find((d) => d.business_date === "2026-12-16");
     assert.ok(dec16Cell);
@@ -1527,6 +1555,31 @@ test("HRP Branches, Branch Check-In Distance Snapshot Immutability, Project Coor
     assert.ok(expSlot4, "submit explanation SLOT_4 projection passes");
     assert.equal(expSlot4.explanation.original_slot_status, "MISSING");
     assert.equal(expSlot4.explanation.related_checkins.length, 0);
+
+    // Future slots must not be submittable before their configured time window.
+    const futureExplanationBody = {
+      app_user_id: ACTORS.STAFF_B.app,
+      business_date: "2099-12-31",
+      slot_code: "SLOT_1",
+      reason: "Không thể chấm công ở thời điểm tương lai",
+    };
+    await assert.rejects(
+      () =>
+        callAsServiceRole(
+          db,
+          `select public.attendance_submit_explanation(
+            $1::uuid, $2::uuid, '2099-12-31'::date, 'SLOT_1', $3::text, $4::text, $5::text
+          ) as data`,
+          [
+            ACTORS.STAFF_B.auth,
+            ACTORS.STAFF_B.app,
+            futureExplanationBody.reason,
+            nextUuid(),
+            computeExplanationSubmitRequestFingerprint(futureExplanationBody),
+          ],
+        ),
+      (err) => /ATTENDANCE_EXPLANATION_FUTURE_DATE_NOT_ALLOWED/.test(err.message),
+    );
 
     // Duplicate explanation for same employee + date + slot with new idempotency key is rejected
     await assert.rejects(

@@ -121,6 +121,7 @@ export const MATRIX_DAY_STATUS_LABELS: Readonly<Record<AttendanceMonthlyMatrixDa
     APPROVED_LEAVE: "Nghỉ phép đã duyệt",
     CHECKED_IN_AND_LEAVE: "Có check-in & Nghỉ phép",
     NO_CHECKIN: MATRIX_MISSING_SLOT_LABEL,
+    UPCOMING: "Chưa đến giờ chấm",
   };
 
 export type MatrixDayCellTone = "emerald" | "red" | "amber" | "sky";
@@ -651,6 +652,10 @@ export function describeMatrixDayCell(
       tone = "sky";
       slotStatusLabel = resolveSessionLeaveCoverageLabel(slot.session_code, leaveBadges);
       summaryText = slotStatusLabel;
+    } else if (slot.slot_status === "UPCOMING") {
+      tone = "sky";
+      slotStatusLabel = "Chưa đến giờ chấm";
+      summaryText = slotStatusLabel;
     } else {
       tone = "red";
       slotStatusLabel = MATRIX_MISSING_SLOT_LABEL;
@@ -702,6 +707,8 @@ export function describeMatrixDayCell(
     tone = "red";
   } else if (cell.day_status === "CHECKED_IN_AND_LEAVE") {
     tone = "amber";
+  } else if (cell.day_status === "UPCOMING") {
+    tone = "sky";
   } else {
     tone = "emerald";
   }
