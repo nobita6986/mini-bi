@@ -82,6 +82,27 @@ async function connect(port, database = "postgres") {
   return client;
 }
 
+async function resetUserFunctionStats(client) {
+  await client.query("select pg_stat_force_next_flush()");
+  await client.query("select pg_stat_reset()");
+  await client.query("select pg_stat_clear_snapshot()");
+}
+
+async function readUserFunctionStats(client, funcNames) {
+  await client.query("select pg_stat_force_next_flush()");
+  await client.query("select pg_stat_clear_snapshot()");
+  const { rows } = await client.query(
+    `
+      select funcname, calls::int as calls
+      from pg_stat_user_functions
+      where funcname = any($1::text[])
+      order by funcname
+    `,
+    [funcNames],
+  );
+  return rows;
+}
+
 test(
   "Real PostgreSQL offboarding performance (3,000 entries / 4,000 status events): single candidate pass, <8s timeout safety, and 100% legacy oracle parity",
   async (t) => {
@@ -447,7 +468,7 @@ test(
       assert.equal(hideRes.replayed, false);
 
       // 3. Measure BEFORE (legacy implementation) and capture oracle outputs
-      await client.query("select pg_stat_reset(); select pg_stat_clear_snapshot();");
+      await resetUserFunctionStats(client);
       const beforeStartMs = performance.now();
       const legacyAdminPage1 = (
         await client.query(
@@ -457,16 +478,10 @@ test(
       ).rows[0].data;
       const beforeDurationMs = performance.now() - beforeStartMs;
 
-      await client.query("select pg_stat_force_next_flush(); select pg_stat_clear_snapshot();");
-      const { rows: beforeFnStats } = await client.query(`
-        select funcname, calls::int as calls
-        from pg_stat_user_functions
-        where funcname in (
-          'direct_entry_offboarding_report',
-          'direct_entry__internal_offboarding_rows'
-        )
-        order by funcname
-      `);
+      const beforeFnStats = await readUserFunctionStats(client, [
+        "direct_entry_offboarding_report",
+        "direct_entry__internal_offboarding_rows",
+      ]);
       const beforeRowsHelperCalls =
         beforeFnStats.find((r) => r.funcname === "direct_entry__internal_offboarding_rows")?.calls ?? 0;
       assert.equal(
@@ -495,7 +510,7 @@ test(
       await client.query("analyze;");
 
       // 5. Execute under PostgREST-equivalent 8s statement_timeout and verify single-pass execution
-      await client.query("select pg_stat_reset(); select pg_stat_clear_snapshot();");
+      await resetUserFunctionStats(client);
       await client.query("begin");
       await client.query("set local role service_role");
       await client.query("set local statement_timeout = '8s'");
@@ -509,17 +524,11 @@ test(
       const afterDurationMs = performance.now() - afterStartMs;
       await client.query("commit");
 
-      await client.query("select pg_stat_force_next_flush(); select pg_stat_clear_snapshot();");
-      const { rows: afterFnStats } = await client.query(`
-        select funcname, calls::int as calls
-        from pg_stat_user_functions
-        where funcname in (
-          'direct_entry_offboarding_report',
-          'direct_entry__internal_offboarding_candidates',
-          'direct_entry__internal_offboarding_rows'
-        )
-        order by funcname
-      `);
+      const afterFnStats = await readUserFunctionStats(client, [
+        "direct_entry_offboarding_report",
+        "direct_entry__internal_offboarding_candidates",
+        "direct_entry__internal_offboarding_rows",
+      ]);
       const afterReportCalls =
         afterFnStats.find((r) => r.funcname === "direct_entry_offboarding_report")?.calls ?? 0;
       const afterCandidateCalls =
