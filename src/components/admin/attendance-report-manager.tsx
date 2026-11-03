@@ -33,6 +33,7 @@ import {
   ATTENDANCE_BUSINESS_TIMEZONE,
   ATTENDANCE_REPORT_DEFAULT_PAGE_SIZE,
   ATTENDANCE_REPORT_MAX_RANGE_DAYS,
+  describeAttendanceCheckinDistanceTarget,
   firstDayOfIsoMonth,
   formatCoordinatePair,
   formatDistanceMeters,
@@ -41,6 +42,7 @@ import {
   newAttendanceHqIntentKey,
   projectAttendanceAdminReport,
   projectSetHqLocationResult,
+  resolveAttendanceEmployeeDisplayIdentity,
   shiftIsoDateDays,
   type AttendanceAdminReportProjection,
   type AttendanceEmployeeOptionProjection,
@@ -114,9 +116,13 @@ function extractErrorCode(payload: unknown): string | null {
 }
 
 function formatEmployeeOptionLabel(option: AttendanceEmployeeOptionProjection): string {
-  return option.personnel_code
-    ? `${option.display_name} (${option.personnel_code})`
-    : option.display_name;
+  const resolved = resolveAttendanceEmployeeDisplayIdentity({
+    displayName: option.display_name,
+    personnelCode: option.personnel_code,
+  });
+  return resolved.personnelCode
+    ? `${resolved.displayName} (${resolved.personnelCode})`
+    : resolved.displayName;
 }
 
 function optionDomId(listId: string, employeeId: string): string {
@@ -233,14 +239,20 @@ function AttendanceEmployeeCombobox({
         displayName: allLabel,
         personnelCode: null,
       },
-      ...options.map((option) => ({
-        id: option.personnel_code ?? "",
-        employeeId: option.app_user_id,
-        label: formatEmployeeOptionLabel(option),
-        keywords: option.display_name,
-        displayName: option.display_name,
-        personnelCode: option.personnel_code,
-      })),
+      ...options.map((option) => {
+        const resolved = resolveAttendanceEmployeeDisplayIdentity({
+          displayName: option.display_name,
+          personnelCode: option.personnel_code,
+        });
+        return {
+          id: resolved.personnelCode ?? "",
+          employeeId: option.app_user_id,
+          label: formatEmployeeOptionLabel(option),
+          keywords: `${resolved.displayName} ${option.display_name}`,
+          displayName: resolved.displayName,
+          personnelCode: resolved.personnelCode,
+        };
+      }),
     ],
     [allLabel, options],
   );
@@ -452,14 +464,16 @@ function AttendanceEmployeeCombobox({
 }
 
 function DistanceCell({ item }: { item: AttendanceReportItemProjection }) {
+  const presentation = describeAttendanceCheckinDistanceTarget(item);
+
   if (item.distance_status === "COMPUTED" && item.distance_meters !== null) {
     return (
       <div className="space-y-0.5">
         <p className="font-mono text-sm font-semibold tabular-nums text-foreground">
-          {formatDistanceMeters(item.distance_meters)}
+          {presentation.primaryText}
         </p>
         <p className="text-xs text-muted">
-          Theo trụ sở v{item.hq_version_used}
+          {presentation.subtitleText}
         </p>
       </div>
     );
@@ -478,7 +492,7 @@ function DistanceCell({ item }: { item: AttendanceReportItemProjection }) {
     <div className="space-y-1">
       <StatusBadge tone="neutral">Không tính được</StatusBadge>
       <p className="text-xs text-muted">
-        Chưa cấu hình trụ sở tại thời điểm chấm công
+        {presentation.subtitleText}
       </p>
     </div>
   );
@@ -571,6 +585,11 @@ function AttendanceCheckinDetailBody({
     Number.isFinite(item.latitude) &&
     Number.isFinite(item.longitude);
   const syncDelayNote = formatSyncDelayNote(item.sync_delay_seconds);
+  const distancePresentation = describeAttendanceCheckinDistanceTarget(item);
+  const employeeIdentity = resolveAttendanceEmployeeDisplayIdentity({
+    displayName: item.employee_display_name,
+    personnelCode: item.personnel_code,
+  });
   const matchesCurrentHq =
     item.hq_version_used !== null &&
     currentHq !== null &&
@@ -598,7 +617,7 @@ function AttendanceCheckinDetailBody({
             /* eslint-disable-next-line @next/next/no-img-element -- blob URL tạo từ endpoint ảnh chấm công riêng tư có AbortController và thu hồi qua URL.revokeObjectURL */
             <img
               src={photoState.objectUrl}
-              alt={`Ảnh chấm công của ${item.employee_display_name} lúc ${item.captured_at_local}`}
+              alt={`Ảnh chấm công của ${employeeIdentity.displayName} lúc ${item.captured_at_local}`}
               className="mx-auto max-h-[42dvh] w-auto max-w-full rounded-lg object-contain sm:max-h-[48dvh]"
               onError={onPhotoDecodeError}
             />
@@ -636,13 +655,13 @@ function AttendanceCheckinDetailBody({
           <div>
             <dt className="text-xs text-muted">Tên nhân viên</dt>
             <dd className="mt-0.5 break-words font-medium text-foreground">
-              {item.employee_display_name}
+              {employeeIdentity.displayName}
             </dd>
           </div>
           <div>
             <dt className="text-xs text-muted">Mã nhân sự</dt>
             <dd className="mt-0.5 font-mono text-foreground">
-              {item.personnel_code ?? "Chưa liên kết mã nhân sự"}
+              {employeeIdentity.personnelCode ?? "Chưa liên kết mã nhân sự"}
             </dd>
           </div>
           <div>
@@ -739,11 +758,14 @@ function AttendanceCheckinDetailBody({
             </dd>
           </div>
           <div>
-            <dt className="text-xs text-muted">Khoảng cách tới trụ sở</dt>
+            <dt className="text-xs text-muted">{distancePresentation.detailSectionTitle}</dt>
             <dd className="mt-0.5 font-mono font-semibold tabular-nums text-foreground">
               {item.distance_status === "COMPUTED" && item.distance_meters !== null
                 ? formatDistanceMeters(item.distance_meters)
                 : "Không tính được"}
+            </dd>
+            <dd className="mt-0.5 text-xs text-muted">
+              {distancePresentation.subtitleText}
             </dd>
           </div>
           <div>
@@ -753,9 +775,33 @@ function AttendanceCheckinDetailBody({
             </dd>
           </div>
           <div className="sm:col-span-2">
-            <dt className="text-xs text-muted">Phiên bản / cấu hình trụ sở</dt>
+            <dt className="text-xs text-muted">
+              {distancePresentation.targetKind === "BRANCH"
+                ? "Phiên bản / cấu hình chi nhánh"
+                : "Phiên bản / cấu hình trụ sở"}
+            </dt>
             <dd className="mt-0.5 break-words text-foreground">
-              {item.hq_version_used !== null ? (
+              {distancePresentation.targetKind === "BRANCH" ? (
+                <span>
+                  Áp dụng chi nhánh{" "}
+                  <strong>{item.branch_name_used ?? item.branch_code_used ?? "Chi nhánh"}</strong>
+                  {item.branch_code_used ? (
+                    <span className="font-mono text-muted"> ({item.branch_code_used})</span>
+                  ) : null}
+                  {item.branch_version_used !== null && item.branch_version_used !== undefined ? (
+                    <>
+                      {" "}
+                      phiên bản <strong className="font-mono">v{item.branch_version_used}</strong>
+                    </>
+                  ) : null}
+                  {item.distance_status === "BRANCH_NOT_CONFIGURED" ? (
+                    <span className="text-muted">
+                      {" "}
+                      — Chi nhánh chưa được cấu hình tọa độ tại thời điểm chấm công
+                    </span>
+                  ) : null}
+                </span>
+              ) : item.hq_version_used !== null ? (
                 <span>
                   Áp dụng phiên bản trụ sở{" "}
                   <strong className="font-mono">v{item.hq_version_used}</strong>
@@ -1904,42 +1950,49 @@ export function AttendanceReportManager() {
           />
         ) : (
           <>
-            <div ref={checkinsTableContainerRef} className="max-h-[75vh] overflow-auto">
-              <DataTableContainer>
-                <table className={DATA_TABLE_CLASS}>
-                  <thead className={cn(DATA_TABLE_HEAD_CLASS, "sticky top-0 z-10")}>
-                    <tr>
-                      <th scope="col" className={DATA_TABLE_TH_CLASS}>
-                        Nhân viên
-                      </th>
-                      <th scope="col" className={DATA_TABLE_TH_CLASS}>
-                        Ngày &amp; giờ chấm công
-                      </th>
-                      <th scope="col" className={DATA_TABLE_TH_CLASS}>
-                        Xác minh thời gian
-                      </th>
-                      <th scope="col" className={DATA_TABLE_TH_CLASS}>
-                        Tọa độ GPS &amp; ghi chú
-                      </th>
-                      <th scope="col" className={DATA_TABLE_TH_CLASS}>
-                        Khoảng cách tới trụ sở
-                      </th>
-                      <th scope="col" className={DATA_TABLE_TH_CLASS}>
-                        Thao tác
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {activeReport.items.map((item) => (
+            <DataTableContainer
+              scrollRef={checkinsTableContainerRef}
+              scrollClassName="max-h-[75vh] overflow-auto"
+            >
+              <table className={DATA_TABLE_CLASS}>
+                <thead className={cn(DATA_TABLE_HEAD_CLASS, "sticky top-0 z-10")}>
+                  <tr>
+                    <th scope="col" className={DATA_TABLE_TH_CLASS}>
+                      Nhân viên
+                    </th>
+                    <th scope="col" className={DATA_TABLE_TH_CLASS}>
+                      Ngày &amp; giờ chấm công
+                    </th>
+                    <th scope="col" className={DATA_TABLE_TH_CLASS}>
+                      Xác minh thời gian
+                    </th>
+                    <th scope="col" className={DATA_TABLE_TH_CLASS}>
+                      Tọa độ GPS &amp; ghi chú
+                    </th>
+                    <th scope="col" className={DATA_TABLE_TH_CLASS}>
+                      Khoảng cách tới trụ sở
+                    </th>
+                    <th scope="col" className={DATA_TABLE_TH_CLASS}>
+                      Thao tác
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {activeReport.items.map((item) => {
+                    const employeeIdentity = resolveAttendanceEmployeeDisplayIdentity({
+                      displayName: item.employee_display_name,
+                      personnelCode: item.personnel_code,
+                    });
+                    return (
                       <tr key={item.checkin_id} className={DATA_TABLE_ROW_CLASS}>
                         <td data-label="Nhân viên" className={DATA_TABLE_TD_CLASS}>
                           <div className="space-y-0.5">
                             <p className="font-medium text-foreground">
-                              {item.employee_display_name}
+                              {employeeIdentity.displayName}
                             </p>
-                            {item.personnel_code ? (
+                            {employeeIdentity.personnelCode ? (
                               <p className="font-mono text-xs text-muted">
-                                Mã NS: {item.personnel_code}
+                                Mã NS: {employeeIdentity.personnelCode}
                               </p>
                             ) : null}
                           </div>
@@ -1982,18 +2035,18 @@ export function AttendanceReportManager() {
                             type="button"
                             variant="secondary"
                             size="sm"
-                            aria-label={`Xem chi tiết lượt chấm công của ${item.employee_display_name} lúc ${item.captured_at_local}`}
+                            aria-label={`Xem chi tiết lượt chấm công của ${employeeIdentity.displayName} lúc ${item.captured_at_local}`}
                             onClick={() => openDetailDialog(item)}
                           >
                             Chi tiết
                           </Button>
                         </td>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </DataTableContainer>
-            </div>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </DataTableContainer>
 
             <FloatingTableNav
               containerRef={checkinsTableContainerRef}
@@ -2027,7 +2080,12 @@ export function AttendanceReportManager() {
         }}
         title={
           detailItem
-            ? `Chi tiết lượt chấm công — ${detailItem.employee_display_name}`
+            ? `Chi tiết lượt chấm công — ${
+                resolveAttendanceEmployeeDisplayIdentity({
+                  displayName: detailItem.employee_display_name,
+                  personnelCode: detailItem.personnel_code,
+                }).displayName
+              }`
             : "Chi tiết lượt chấm công"
         }
         description={

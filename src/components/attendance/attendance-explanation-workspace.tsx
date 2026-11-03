@@ -27,6 +27,7 @@ import { useNotify } from "@/components/ui/notify-provider";
 import {
   getVietnamTodayIsoDate,
   newAttendanceHqIntentKey,
+  resolveAttendanceEmployeeDisplayIdentity,
 } from "@/lib/attendance/attendance-report-contract";
 import {
   projectAttendanceExplanationApprovalInbox,
@@ -986,30 +987,34 @@ export function AttendanceExplanationWorkspace({
                   </tr>
                 </thead>
                 <tbody>
-                  {activeInbox.items.map((item) => (
-                    <tr
-                      key={item.explanation_id}
-                      className={DATA_TABLE_ROW_CLASS}
-                    >
-                      <td data-label="Nhân sự" className={DATA_TABLE_TD_CLASS}>
-                        <div className="space-y-0.5 text-xs">
-                          <p className="font-semibold text-foreground">
-                            {item.requester.display_name ??
-                              item.requester.login_id ??
-                              "Nhân sự"}
-                          </p>
-                          {item.requester.personnel_code ? (
-                            <p className="font-mono text-muted">
-                              Mã NS: {item.requester.personnel_code}
+                  {activeInbox.items.map((item) => {
+                    const requesterIdentity = resolveAttendanceEmployeeDisplayIdentity({
+                      displayName: item.requester.display_name,
+                      personnelCode: item.requester.personnel_code,
+                      loginId: item.requester.login_id,
+                    });
+                    return (
+                      <tr
+                        key={item.explanation_id}
+                        className={DATA_TABLE_ROW_CLASS}
+                      >
+                        <td data-label="Nhân sự" className={DATA_TABLE_TD_CLASS}>
+                          <div className="space-y-0.5 text-xs">
+                            <p className="font-semibold text-foreground">
+                              {requesterIdentity.displayName}
                             </p>
-                          ) : null}
-                          {item.routed_team?.team_name ? (
-                            <p className="text-muted">
-                              Nhóm: {item.routed_team.team_name}
-                            </p>
-                          ) : null}
-                        </div>
-                      </td>
+                            {requesterIdentity.personnelCode ? (
+                              <p className="font-mono text-muted">
+                                Mã NS: {requesterIdentity.personnelCode}
+                              </p>
+                            ) : null}
+                            {item.routed_team?.team_name ? (
+                              <p className="text-muted">
+                                Nhóm: {item.routed_team.team_name}
+                              </p>
+                            ) : null}
+                          </div>
+                        </td>
                       <td
                         data-label="Ngày & Mốc giải trình"
                         className={DATA_TABLE_TD_CLASS}
@@ -1108,7 +1113,8 @@ export function AttendanceExplanationWorkspace({
                         )}
                       </td>
                     </tr>
-                  ))}
+                  );
+                })}
                 </tbody>
               </table>
             </DataTableContainer>
@@ -1223,7 +1229,13 @@ export function AttendanceExplanationWorkspace({
         }
         description={
           decisionDialog.kind === "open"
-            ? `${decisionDialog.item.requester.display_name ?? decisionDialog.item.requester.login_id ?? "Nhân sự"} · Ngày ${decisionDialog.item.business_date} · ${decisionDialog.item.slot_label} (${decisionDialog.item.target_time})`
+            ? `${
+                resolveAttendanceEmployeeDisplayIdentity({
+                  displayName: decisionDialog.item.requester.display_name,
+                  personnelCode: decisionDialog.item.requester.personnel_code,
+                  loginId: decisionDialog.item.requester.login_id,
+                }).displayName
+              } · Ngày ${decisionDialog.item.business_date} · ${decisionDialog.item.slot_label} (${decisionDialog.item.target_time})`
             : undefined
         }
         closeAriaLabel="Đóng hộp thoại phê duyệt giải trình"
@@ -1244,9 +1256,13 @@ export function AttendanceExplanationWorkspace({
               <p>
                 <span className="text-muted">Nhân sự: </span>
                 <strong className="text-foreground">
-                  {decisionDialog.item.requester.display_name ??
-                    decisionDialog.item.requester.login_id ??
-                    "Nhân sự"}
+                  {
+                    resolveAttendanceEmployeeDisplayIdentity({
+                      displayName: decisionDialog.item.requester.display_name,
+                      personnelCode: decisionDialog.item.requester.personnel_code,
+                      loginId: decisionDialog.item.requester.login_id,
+                    }).displayName
+                  }
                 </strong>
               </p>
               <p>

@@ -981,3 +981,180 @@ export function formatCoordinatePair(
 export function newAttendanceHqIntentKey(): string {
   return globalThis.crypto.randomUUID();
 }
+
+export const ATTENDANCE_MISSING_EMPLOYEE_NAME_LABEL = "Chưa cập nhật họ tên";
+
+export function isAttendanceLoginOrCodeLike(
+  value: string | null | undefined,
+  personnelCode?: string | null,
+  loginId?: string | null,
+): boolean {
+  if (typeof value !== "string") {
+    return true;
+  }
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return true;
+  }
+  const normalized = trimmed.toLowerCase();
+  const normalizedPersonnelCode =
+    typeof personnelCode === "string" && personnelCode.trim().length > 0
+      ? personnelCode.trim().toLowerCase()
+      : null;
+  if (normalizedPersonnelCode !== null && normalized === normalizedPersonnelCode) {
+    return true;
+  }
+  const normalizedLoginId =
+    typeof loginId === "string" && loginId.trim().length > 0
+      ? loginId.trim().toLowerCase()
+      : null;
+  if (normalizedLoginId !== null && normalized === normalizedLoginId) {
+    return true;
+  }
+  if (UUID_PATTERN.test(trimmed)) {
+    return true;
+  }
+  if (!/\s/.test(trimmed)) {
+    if (trimmed.includes("@")) {
+      return true;
+    }
+    if (/^[a-z0-9]+(?:[._:-][a-z0-9]+)+$/i.test(trimmed)) {
+      return true;
+    }
+    if (/^(?=.*\d)[a-z0-9._:-]+$/i.test(trimmed)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export type ResolvedAttendanceEmployeeIdentity = {
+  displayName: string;
+  personnelCode: string | null;
+  isMissingFullName: boolean;
+};
+
+export function resolveAttendanceEmployeeDisplayIdentity(input: {
+  displayName: string | null | undefined;
+  personnelCode?: string | null;
+  loginId?: string | null;
+}): ResolvedAttendanceEmployeeIdentity {
+  const trimmedDisplayName =
+    typeof input.displayName === "string" ? input.displayName.trim() : "";
+  const trimmedPersonnelCode =
+    typeof input.personnelCode === "string" && input.personnelCode.trim().length > 0
+      ? input.personnelCode.trim()
+      : null;
+  const trimmedLoginId =
+    typeof input.loginId === "string" && input.loginId.trim().length > 0
+      ? input.loginId.trim()
+      : null;
+  const fallbackCode = trimmedPersonnelCode ?? trimmedLoginId;
+
+  if (
+    trimmedDisplayName.length === 0 ||
+    trimmedDisplayName === ATTENDANCE_MISSING_EMPLOYEE_NAME_LABEL ||
+    isAttendanceLoginOrCodeLike(trimmedDisplayName, trimmedPersonnelCode, trimmedLoginId)
+  ) {
+    const preservedCode =
+      fallbackCode ??
+      (trimmedDisplayName.length > 0 &&
+      trimmedDisplayName !== ATTENDANCE_MISSING_EMPLOYEE_NAME_LABEL
+        ? trimmedDisplayName
+        : null);
+    return {
+      displayName: ATTENDANCE_MISSING_EMPLOYEE_NAME_LABEL,
+      personnelCode: preservedCode,
+      isMissingFullName: true,
+    };
+  }
+
+  return {
+    displayName: trimmedDisplayName,
+    personnelCode: fallbackCode,
+    isMissingFullName: false,
+  };
+}
+
+export type AttendanceCheckinDistancePresentation = {
+  targetKind: "BRANCH" | "HQ";
+  tone: "computed" | "not_configured" | "invalid_gps";
+  primaryText: string;
+  subtitleText: string;
+  detailSectionTitle: string;
+};
+
+export function describeAttendanceCheckinDistanceTarget(
+  item: Pick<
+    AttendanceReportItemProjection,
+    | "distance_status"
+    | "distance_meters"
+    | "hq_version_used"
+    | "branch_id_used"
+    | "branch_code_used"
+    | "branch_name_used"
+    | "branch_version_used"
+  >,
+): AttendanceCheckinDistancePresentation {
+  const isBranchTarget =
+    item.distance_status === "BRANCH_NOT_CONFIGURED" ||
+    (item.branch_version_used !== undefined && item.branch_version_used !== null) ||
+    (item.branch_id_used !== undefined && item.branch_id_used !== null);
+
+  const branchName =
+    typeof item.branch_name_used === "string" && item.branch_name_used.trim().length > 0
+      ? item.branch_name_used.trim()
+      : typeof item.branch_code_used === "string" && item.branch_code_used.trim().length > 0
+        ? item.branch_code_used.trim()
+        : "Chi nhánh";
+  const branchVersionSuffix =
+    typeof item.branch_version_used === "number" ? ` v${item.branch_version_used}` : "";
+  const hqVersionSuffix =
+    typeof item.hq_version_used === "number" ? ` v${item.hq_version_used}` : "";
+  const detailSectionTitle = isBranchTarget
+    ? "Khoảng cách tới chi nhánh"
+    : "Khoảng cách tới trụ sở";
+
+  if (item.distance_status === "COMPUTED") {
+    return {
+      targetKind: isBranchTarget ? "BRANCH" : "HQ",
+      tone: "computed",
+      primaryText: formatDistanceMeters(item.distance_meters),
+      subtitleText: isBranchTarget
+        ? `Theo chi nhánh ${branchName}${branchVersionSuffix}`
+        : `Theo trụ sở${hqVersionSuffix}`,
+      detailSectionTitle,
+    };
+  }
+
+  if (item.distance_status === "BRANCH_NOT_CONFIGURED") {
+    return {
+      targetKind: "BRANCH",
+      tone: "not_configured",
+      primaryText: "Chi nhánh chưa cấu hình tọa độ",
+      subtitleText: `Theo chi nhánh ${branchName}${branchVersionSuffix} (chưa cấu hình tọa độ tại thời điểm chấm công)`,
+      detailSectionTitle: "Khoảng cách tới chi nhánh",
+    };
+  }
+
+  if (item.distance_status === "HQ_NOT_CONFIGURED") {
+    return {
+      targetKind: "HQ",
+      tone: "not_configured",
+      primaryText: "Trụ sở chưa cấu hình",
+      subtitleText: "Chưa cấu hình trụ sở tại thời điểm chấm công",
+      detailSectionTitle: "Khoảng cách tới trụ sở",
+    };
+  }
+
+  return {
+    targetKind: isBranchTarget ? "BRANCH" : "HQ",
+    tone: "invalid_gps",
+    primaryText: "GPS không hợp lệ",
+    subtitleText: isBranchTarget
+      ? `Theo chi nhánh ${branchName}${branchVersionSuffix} · Không thể tính khoảng cách`
+      : "Không thể tính khoảng cách",
+    detailSectionTitle,
+  };
+}
+

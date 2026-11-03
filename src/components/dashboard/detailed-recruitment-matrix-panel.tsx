@@ -13,7 +13,10 @@ import {
 import { Alert } from "@/components/ui/alert";
 import { StatusBadge } from "@/components/ui/badge";
 import { Card, CardHeader } from "@/components/ui/card";
-import { FloatingTableNav } from "@/components/ui/floating-table-nav";
+import {
+  computeTableScrollStepPx,
+  FloatingTableNav,
+} from "@/components/ui/floating-table-nav";
 import { useNotify } from "@/components/ui/notify-provider";
 import { formatTimestamp } from "@/lib/format";
 import {
@@ -255,6 +258,7 @@ export function DetailedRecruitmentMatrixPanel({
   const tableScrollRef = useRef<HTMLDivElement | null>(null);
   const tableRef = useRef<HTMLTableElement | null>(null);
   const syncingScrollSourceRef = useRef<"top" | "table" | null>(null);
+  const syncingScrollTimerRef = useRef<number | null>(null);
   const notify = useNotify();
 
   const requestKey = `${filterSignature}|${selectedProvider}|${resolution}|${selectedTeamId}`;
@@ -400,6 +404,26 @@ export function DetailedRecruitmentMatrixPanel({
     };
   }, [effectiveMatrix, effectiveStatus, resolution, syncScrollMetrics, zoomPercent]);
 
+  useEffect(() => {
+    return () => {
+      if (syncingScrollTimerRef.current !== null) {
+        window.clearTimeout(syncingScrollTimerRef.current);
+      }
+    };
+  }, []);
+
+  function scheduleReleaseScrollSync(source: "top" | "table"): void {
+    if (syncingScrollTimerRef.current !== null) {
+      window.clearTimeout(syncingScrollTimerRef.current);
+    }
+    syncingScrollTimerRef.current = window.setTimeout(() => {
+      if (syncingScrollSourceRef.current === source) {
+        syncingScrollSourceRef.current = null;
+      }
+      syncingScrollTimerRef.current = null;
+    }, 180);
+  }
+
   function handleTopScroll(): void {
     const topEl = topScrollRef.current;
     const tableEl = tableScrollRef.current;
@@ -409,11 +433,7 @@ export function DetailedRecruitmentMatrixPanel({
     if (Math.abs(tableEl.scrollLeft - topEl.scrollLeft) > 0.5) {
       tableEl.scrollLeft = topEl.scrollLeft;
     }
-    requestAnimationFrame(() => {
-      if (syncingScrollSourceRef.current === "top") {
-        syncingScrollSourceRef.current = null;
-      }
-    });
+    scheduleReleaseScrollSync("top");
   }
 
   function handleTableScroll(): void {
@@ -425,11 +445,7 @@ export function DetailedRecruitmentMatrixPanel({
     if (Math.abs(topEl.scrollLeft - tableEl.scrollLeft) > 0.5) {
       topEl.scrollLeft = tableEl.scrollLeft;
     }
-    requestAnimationFrame(() => {
-      if (syncingScrollSourceRef.current === "table") {
-        syncingScrollSourceRef.current = null;
-      }
-    });
+    scheduleReleaseScrollSync("table");
   }
 
   function handleHorizontalScrollKeyDown(
@@ -442,7 +458,7 @@ export function DetailedRecruitmentMatrixPanel({
     const maxScrollLeft = Math.max(0, tableEl.scrollWidth - tableEl.clientWidth);
     if (maxScrollLeft <= 0) return;
 
-    const stepPx = 120;
+    const stepPx = computeTableScrollStepPx(tableEl.clientWidth);
     const pagePx = Math.max(200, Math.round(tableEl.clientWidth * 0.8));
     let nextScrollLeft: number | null = null;
 

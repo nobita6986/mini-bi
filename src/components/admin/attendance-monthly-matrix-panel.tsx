@@ -36,6 +36,7 @@ import {
   formatDistanceMeters,
   getVietnamTodayIsoDate,
   newAttendanceHqIntentKey,
+  resolveAttendanceEmployeeDisplayIdentity,
   shiftIsoDateDays,
 } from "@/lib/attendance/attendance-report-contract";
 import {
@@ -305,19 +306,25 @@ function MatrixEmployeeStickySummary({
     (sum, day) => sum + day.missing_slot_count,
     0,
   );
+  const employeeIdentity = resolveAttendanceEmployeeDisplayIdentity({
+    displayName: row.employee_display_name,
+    personnelCode: row.personnel_code,
+  });
 
   return (
     <div className="w-64 space-y-1.5">
       <div className="flex flex-wrap items-center gap-1.5">
         <span className="font-semibold text-foreground">
-          {row.employee_display_name}
+          {employeeIdentity.displayName}
         </span>
         {!row.enabled ? (
           <StatusBadge tone="neutral">Ngừng kích hoạt</StatusBadge>
         ) : null}
       </div>
       <p className="font-mono text-xs text-muted">
-        {row.personnel_code ? `Mã NS: ${row.personnel_code}` : "Chưa liên kết mã NS"}
+        {employeeIdentity.personnelCode
+          ? `Mã NS: ${employeeIdentity.personnelCode}`
+          : "Chưa liên kết mã NS"}
       </p>
       <div className="text-xs text-muted">
         {row.branch ? (
@@ -1526,13 +1533,19 @@ export function AttendanceMonthlyMatrixSection() {
                   className={INPUT_CLASS}
                 >
                   <option value="">Tất cả nhân sự</option>
-                  {(activeReport?.employee_options ?? []).map((emp) => (
-                    <option key={emp.app_user_id} value={emp.app_user_id}>
-                      {emp.display_name}
-                      {emp.personnel_code ? ` (${emp.personnel_code})` : ""}
-                      {emp.branch_code ? ` · CN ${emp.branch_code}` : ""}
-                    </option>
-                  ))}
+                  {(activeReport?.employee_options ?? []).map((emp) => {
+                    const resolved = resolveAttendanceEmployeeDisplayIdentity({
+                      displayName: emp.display_name,
+                      personnelCode: emp.personnel_code,
+                    });
+                    return (
+                      <option key={emp.app_user_id} value={emp.app_user_id}>
+                        {resolved.displayName}
+                        {resolved.personnelCode ? ` (${resolved.personnelCode})` : ""}
+                        {emp.branch_code ? ` · CN ${emp.branch_code}` : ""}
+                      </option>
+                    );
+                  })}
                 </select>
               </div>
             ) : (
@@ -2655,16 +2668,20 @@ export function AttendanceBranchesAdminSection() {
               <tbody>
                 {filteredAssignments.map((assignment) => {
                   const statusInfo = describeBranchAssignmentStatus(assignment);
+                  const employeeIdentity = resolveAttendanceEmployeeDisplayIdentity({
+                    displayName: assignment.employee_display_name,
+                    personnelCode: assignment.personnel_code,
+                  });
                   return (
                     <tr key={assignment.assignment_id} className={DATA_TABLE_ROW_CLASS}>
                       <td data-label="Nhân viên" className={DATA_TABLE_TD_CLASS}>
                         <div className="space-y-0.5">
                           <p className="font-medium text-foreground">
-                            {assignment.employee_display_name}
+                            {employeeIdentity.displayName}
                           </p>
                           <p className="font-mono text-xs text-muted">
-                            {assignment.personnel_code
-                              ? `Mã NS: ${assignment.personnel_code}`
+                            {employeeIdentity.personnelCode
+                              ? `Mã NS: ${employeeIdentity.personnelCode}`
                               : "Chưa có mã NS"}
                           </p>
                         </div>
@@ -2911,13 +2928,19 @@ export function AttendanceBranchesAdminSection() {
               className={INPUT_CLASS}
             >
               <option value="">-- Chọn nhân viên --</option>
-              {(activeData?.employee_options ?? []).map((emp) => (
-                <option key={emp.app_user_id} value={emp.app_user_id}>
-                  {emp.display_name}
-                  {emp.personnel_code ? ` (${emp.personnel_code})` : ""}
-                  {emp.enabled ? "" : " [Đã khóa]"}
-                </option>
-              ))}
+              {(activeData?.employee_options ?? []).map((emp) => {
+                const resolved = resolveAttendanceEmployeeDisplayIdentity({
+                  displayName: emp.display_name,
+                  personnelCode: emp.personnel_code,
+                });
+                return (
+                  <option key={emp.app_user_id} value={emp.app_user_id}>
+                    {resolved.displayName}
+                    {resolved.personnelCode ? ` (${resolved.personnelCode})` : ""}
+                    {emp.enabled ? "" : " [Đã khóa]"}
+                  </option>
+                );
+              })}
             </select>
           </div>
 
@@ -2995,7 +3018,12 @@ export function AttendanceBranchesAdminSection() {
         title="Kết thúc phân công Chi nhánh HRP"
         description={
           dialogMode.kind === "unassign"
-            ? `Nhân viên: ${dialogMode.assignment.employee_display_name} · Chi nhánh: ${dialogMode.assignment.branch_code} (hiệu lực từ ${dialogMode.assignment.valid_from})`
+            ? `Nhân viên: ${
+                resolveAttendanceEmployeeDisplayIdentity({
+                  displayName: dialogMode.assignment.employee_display_name,
+                  personnelCode: dialogMode.assignment.personnel_code,
+                }).displayName
+              } · Chi nhánh: ${dialogMode.assignment.branch_code} (hiệu lực từ ${dialogMode.assignment.valid_from})`
             : undefined
         }
         closeAriaLabel="Đóng hộp thoại kết thúc phân công"

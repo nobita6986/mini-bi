@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { ReactNode, RefObject } from "react";
 
 import { cn } from "@/lib/utils";
 
@@ -13,12 +13,14 @@ export function DataTableContainer({
   footer,
   className,
   scrollClassName,
+  scrollRef,
   dataTestId,
 }: {
   children: ReactNode;
   footer?: ReactNode;
   className?: string;
   scrollClassName?: string;
+  scrollRef?: RefObject<HTMLDivElement | null>;
   dataTestId?: string;
 }) {
   return (
@@ -30,6 +32,7 @@ export function DataTableContainer({
       )}
     >
       <div
+        ref={scrollRef}
         className={cn(
           "overflow-x-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
           scrollClassName,
