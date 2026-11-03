@@ -37,6 +37,9 @@ import {
   shiftIsoDateDays,
 } from "@/lib/attendance/attendance-report-contract";
 import {
+  ATTENDANCE_SLOT_MAX_COUNT,
+  ATTENDANCE_SLOT_MIN_COUNT,
+  DEFAULT_ATTENDANCE_SLOT_POLICY,
   projectAssignBranchResult,
   projectAttendanceBranchesAdminList,
   projectAttendanceMonthlyMatrixReport,
@@ -328,6 +331,39 @@ type SlotPolicyDialogMode =
   | { kind: "history" }
   | { kind: "create" };
 
+type SlotDraftItem = {
+  id: string;
+  slotLabel: string;
+  targetTime: string;
+  graceBeforeInput: string;
+  graceAfterInput: string;
+};
+
+function createSlotDraftsFromPolicy(
+  policy: Pick<AttendanceSlotPolicyProjection, "version" | "slots">,
+): SlotDraftItem[] {
+  return policy.slots.map((slot, index) => ({
+    id: `v${policy.version}-slot-${index + 1}-${slot.target_time}`,
+    slotLabel: slot.slot_label || `Time ${index + 1}`,
+    targetTime: slot.target_time,
+    graceBeforeInput: String(slot.grace_before_minutes),
+    graceAfterInput: String(slot.grace_after_minutes),
+  }));
+}
+
+function suggestNextSlotTargetTime(existingSlots: readonly SlotDraftItem[]): string {
+  const last = existingSlots[existingSlots.length - 1];
+  if (!last || !/^([01]\d|2[0-3]):[0-5]\d$/.test(last.targetTime)) {
+    return "17:30";
+  }
+  const [hh, mm] = last.targetTime.split(":").map((part) => Number(part));
+  const totalMinutes = (hh ?? 0) * 60 + (mm ?? 0);
+  const nextMinutes = Math.min(23 * 60 + 59, totalMinutes + 60);
+  const nextHh = String(Math.floor(nextMinutes / 60)).padStart(2, "0");
+  const nextMm = String(nextMinutes % 60).padStart(2, "0");
+  return `${nextHh}:${nextMm}`;
+}
+
 function AttendanceSlotPolicySummaryCard({
   activeReport,
   onPolicyCreated,
@@ -345,18 +381,9 @@ function AttendanceSlotPolicySummaryCard({
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [effectiveFromInput, setEffectiveFromInput] = useState("");
-  const [slot1TimeInput, setSlot1TimeInput] = useState("08:00");
-  const [slot1BeforeInput, setSlot1BeforeInput] = useState("15");
-  const [slot1AfterInput, setSlot1AfterInput] = useState("15");
-  const [slot2TimeInput, setSlot2TimeInput] = useState("11:00");
-  const [slot2BeforeInput, setSlot2BeforeInput] = useState("15");
-  const [slot2AfterInput, setSlot2AfterInput] = useState("15");
-  const [slot3TimeInput, setSlot3TimeInput] = useState("13:00");
-  const [slot3BeforeInput, setSlot3BeforeInput] = useState("15");
-  const [slot3AfterInput, setSlot3AfterInput] = useState("15");
-  const [slot4TimeInput, setSlot4TimeInput] = useState("17:00");
-  const [slot4BeforeInput, setSlot4BeforeInput] = useState("15");
-  const [slot4AfterInput, setSlot4AfterInput] = useState("15");
+  const [slotsInput, setSlotsInput] = useState<SlotDraftItem[]>(() =>
+    createSlotDraftsFromPolicy(DEFAULT_ATTENDANCE_SLOT_POLICY),
+  );
   const [mutationBusy, setMutationBusy] = useState(false);
   const [mutationError, setMutationError] = useState<string | null>(null);
 
@@ -366,30 +393,76 @@ function AttendanceSlotPolicySummaryCard({
 
   const populateFormFromPolicy = useCallback(
     (seedPolicy: AttendanceSlotPolicyProjection, businessDate: string) => {
-      const s1 = seedPolicy.slots[0];
-      const s2 = seedPolicy.slots[1];
-      const s3 = seedPolicy.slots[2];
-      const s4 = seedPolicy.slots[3];
       const defaultDate =
         seedPolicy.effective_from_date >= businessDate
           ? shiftIsoDateDays(seedPolicy.effective_from_date, 1)
           : businessDate;
       setEffectiveFromInput(defaultDate);
-      setSlot1TimeInput(s1.target_time);
-      setSlot1BeforeInput(String(s1.grace_before_minutes));
-      setSlot1AfterInput(String(s1.grace_after_minutes));
-      setSlot2TimeInput(s2.target_time);
-      setSlot2BeforeInput(String(s2.grace_before_minutes));
-      setSlot2AfterInput(String(s2.grace_after_minutes));
-      setSlot3TimeInput(s3.target_time);
-      setSlot3BeforeInput(String(s3.grace_before_minutes));
-      setSlot3AfterInput(String(s3.grace_after_minutes));
-      setSlot4TimeInput(s4.target_time);
-      setSlot4BeforeInput(String(s4.grace_before_minutes));
-      setSlot4AfterInput(String(s4.grace_after_minutes));
+      setSlotsInput(createSlotDraftsFromPolicy(seedPolicy));
     },
     [],
   );
+
+  function handleUpdateSlotDraft(
+    index: number,
+    patch: Partial<Omit<SlotDraftItem, "id">>,
+  ) {
+    setSlotsInput((current) =>
+      current.map((item, idx) => (idx === index ? { ...item, ...patch } : item)),
+    );
+  }
+
+  function handleAddSlotDraft() {
+    setSlotsInput((current) => {
+      if (current.length >= ATTENDANCE_SLOT_MAX_COUNT) {
+        return current;
+      }
+      const nextIndex = current.length + 1;
+      return [
+        ...current,
+        {
+          id: `draft-slot-${Date.now()}-${nextIndex}`,
+          slotLabel: `Time ${nextIndex}`,
+          targetTime: suggestNextSlotTargetTime(current),
+          graceBeforeInput: "15",
+          graceAfterInput: "15",
+        },
+      ];
+    });
+  }
+
+  function handleRemoveSlotDraft(index: number) {
+    setSlotsInput((current) => {
+      if (current.length <= ATTENDANCE_SLOT_MIN_COUNT) {
+        return current;
+      }
+      return current.filter((_, idx) => idx !== index);
+    });
+  }
+
+  function handleMoveSlotDraft(index: number, direction: -1 | 1) {
+    setSlotsInput((current) => {
+      const targetIndex = index + direction;
+      if (targetIndex < 0 || targetIndex >= current.length) {
+        return current;
+      }
+      const next = [...current];
+      const [moved] = next.splice(index, 1);
+      if (!moved) return current;
+      next.splice(targetIndex, 0, moved);
+      return next;
+    });
+  }
+
+  function handleSortSlotsByTime() {
+    setSlotsInput((current) =>
+      [...current].sort((a, b) => a.targetTime.localeCompare(b.targetTime)),
+    );
+  }
+
+  function handleResetDefaultFiveSlots() {
+    setSlotsInput(createSlotDraftsFromPolicy(DEFAULT_ATTENDANCE_SLOT_POLICY));
+  }
 
   const fetchSlotPolicies = useCallback(
     async (openModeAfterLoad?: "history" | "create") => {
@@ -477,18 +550,12 @@ function AttendanceSlotPolicySummaryCard({
 
     const built = buildCreateSlotPolicyPayload({
       effectiveFromDate: effectiveFromInput,
-      slot1Time: slot1TimeInput,
-      slot1GraceBeforeInput: slot1BeforeInput,
-      slot1GraceAfterInput: slot1AfterInput,
-      slot2Time: slot2TimeInput,
-      slot2GraceBeforeInput: slot2BeforeInput,
-      slot2GraceAfterInput: slot2AfterInput,
-      slot3Time: slot3TimeInput,
-      slot3GraceBeforeInput: slot3BeforeInput,
-      slot3GraceAfterInput: slot3AfterInput,
-      slot4Time: slot4TimeInput,
-      slot4GraceBeforeInput: slot4BeforeInput,
-      slot4GraceAfterInput: slot4AfterInput,
+      slots: slotsInput.map((item) => ({
+        slotLabel: item.slotLabel,
+        targetTime: item.targetTime,
+        graceBeforeInput: item.graceBeforeInput,
+        graceAfterInput: item.graceAfterInput,
+      })),
       expectedVersion: latestVersion,
       idempotencyKey,
     });
@@ -568,8 +635,8 @@ function AttendanceSlotPolicySummaryCard({
     <Card>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <CardHeader
-          title="Cấu hình khung giờ chấm công 4 mốc"
-          description="Áp dụng thống nhất 4 mốc giờ mục tiêu cho toàn bộ nhân sự. Đổi khung giờ mùa hè/mùa đông sẽ tạo phiên bản mới theo ngày hiệu lực, bảo toàn dữ liệu lịch sử."
+          title={`Cấu hình khung giờ chấm công (${currentPolicy ? `${currentPolicy.slots.length} mốc` : "linh hoạt"})`}
+          description="Áp dụng thống nhất các mốc giờ chuẩn đang có hiệu lực cho toàn bộ nhân sự. Admin có thể cấu hình số lượng mốc, chỉnh giờ chuẩn/dung sai, thêm, xóa hoặc sắp xếp lại mốc theo ngày hiệu lực mà vẫn bảo toàn dữ liệu lịch sử."
         />
         <div className="flex flex-wrap items-center gap-2">
           <Button
@@ -597,14 +664,14 @@ function AttendanceSlotPolicySummaryCard({
 
       {currentPolicy ? (
         <div className="space-y-3">
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
             {currentPolicy.slots.map((slot) => (
               <div
                 key={slot.slot_code}
                 className="rounded-xl border border-border bg-surface-muted/45 p-3 text-xs"
               >
                 <p className="font-semibold text-foreground">
-                  {MATRIX_SLOT_SHORT_LABELS[slot.slot_code]} (
+                  {slot.slot_label || MATRIX_SLOT_SHORT_LABELS[slot.slot_code]} (
                   {slot.session_code === "AM" ? "Ca sáng" : "Ca chiều"})
                 </p>
                 <p className="mt-1 font-mono text-lg font-bold tabular-nums text-foreground">
@@ -689,10 +756,10 @@ function AttendanceSlotPolicySummaryCard({
                       Phiên bản &amp; Hiệu lực
                     </th>
                     <th scope="col" className={DATA_TABLE_TH_CLASS}>
-                      Mốc 1 &amp; Mốc 2 (Ca sáng)
+                      Các mốc Ca sáng (&lt; 12:00)
                     </th>
                     <th scope="col" className={DATA_TABLE_TH_CLASS}>
-                      Mốc 3 &amp; Mốc 4 (Ca chiều)
+                      Các mốc Ca chiều (&ge; 12:00)
                     </th>
                     <th scope="col" className={DATA_TABLE_TH_CLASS}>
                       Audit cấu hình
@@ -700,57 +767,63 @@ function AttendanceSlotPolicySummaryCard({
                   </tr>
                 </thead>
                 <tbody>
-                  {policiesData.versions.map((p) => (
-                    <tr key={p.version} className={DATA_TABLE_ROW_CLASS}>
-                      <td data-label="Phiên bản & Hiệu lực" className={DATA_TABLE_TD_CLASS}>
-                        <div className="space-y-0.5 text-xs">
-                          <p className="font-mono font-semibold text-foreground">
-                            Phiên bản v{p.version}
-                          </p>
-                          <p className="font-mono text-muted">
-                            Từ: {p.effective_from_date}
-                            {p.effective_to_date ? ` → ${p.effective_to_date}` : " → Nay"}
-                          </p>
-                        </div>
-                      </td>
-                      <td data-label="Mốc 1 & Mốc 2 (Ca sáng)" className={DATA_TABLE_TD_CLASS}>
-                        <div className="space-y-0.5 font-mono text-xs">
-                          <p>
-                            Mốc 1: <strong>{p.slots[0].target_time}</strong> (-
-                            {p.slots[0].grace_before_minutes}p / +
-                            {p.slots[0].grace_after_minutes}p)
-                          </p>
-                          <p>
-                            Mốc 2: <strong>{p.slots[1].target_time}</strong> (-
-                            {p.slots[1].grace_before_minutes}p / +
-                            {p.slots[1].grace_after_minutes}p)
-                          </p>
-                        </div>
-                      </td>
-                      <td data-label="Mốc 3 & Mốc 4 (Ca chiều)" className={DATA_TABLE_TD_CLASS}>
-                        <div className="space-y-0.5 font-mono text-xs">
-                          <p>
-                            Mốc 3: <strong>{p.slots[2].target_time}</strong> (-
-                            {p.slots[2].grace_before_minutes}p / +
-                            {p.slots[2].grace_after_minutes}p)
-                          </p>
-                          <p>
-                            Mốc 4: <strong>{p.slots[3].target_time}</strong> (-
-                            {p.slots[3].grace_before_minutes}p / +
-                            {p.slots[3].grace_after_minutes}p)
-                          </p>
-                        </div>
-                      </td>
-                      <td data-label="Audit cấu hình" className={DATA_TABLE_TD_CLASS}>
-                        <div className="space-y-0.5 text-xs">
-                          <p className="font-medium text-foreground">
-                            {p.configured_by_display_name}
-                          </p>
-                          <p className="font-mono text-muted">{p.configured_at_local}</p>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                  {policiesData.versions.map((p) => {
+                    const amSlots = p.slots.filter((s) => s.session_code === "AM");
+                    const pmSlots = p.slots.filter((s) => s.session_code === "PM");
+                    return (
+                      <tr key={p.version} className={DATA_TABLE_ROW_CLASS}>
+                        <td data-label="Phiên bản & Hiệu lực" className={DATA_TABLE_TD_CLASS}>
+                          <div className="space-y-0.5 text-xs">
+                            <p className="font-mono font-semibold text-foreground">
+                              Phiên bản v{p.version} ({p.slots.length} mốc)
+                            </p>
+                            <p className="font-mono text-muted">
+                              Từ: {p.effective_from_date}
+                              {p.effective_to_date ? ` → ${p.effective_to_date}` : " → Nay"}
+                            </p>
+                          </div>
+                        </td>
+                        <td data-label="Các mốc Ca sáng (< 12:00)" className={DATA_TABLE_TD_CLASS}>
+                          <div className="space-y-0.5 font-mono text-xs">
+                            {amSlots.length > 0 ? (
+                              amSlots.map((slot) => (
+                                <p key={slot.slot_code}>
+                                  {slot.slot_label || `Time ${slot.slot_index}`}:{" "}
+                                  <strong>{slot.target_time}</strong> (-
+                                  {slot.grace_before_minutes}p / +{slot.grace_after_minutes}p)
+                                </p>
+                              ))
+                            ) : (
+                              <p className="text-muted">—</p>
+                            )}
+                          </div>
+                        </td>
+                        <td data-label="Các mốc Ca chiều (>= 12:00)" className={DATA_TABLE_TD_CLASS}>
+                          <div className="space-y-0.5 font-mono text-xs">
+                            {pmSlots.length > 0 ? (
+                              pmSlots.map((slot) => (
+                                <p key={slot.slot_code}>
+                                  {slot.slot_label || `Time ${slot.slot_index}`}:{" "}
+                                  <strong>{slot.target_time}</strong> (-
+                                  {slot.grace_before_minutes}p / +{slot.grace_after_minutes}p)
+                                </p>
+                              ))
+                            ) : (
+                              <p className="text-muted">—</p>
+                            )}
+                          </div>
+                        </td>
+                        <td data-label="Audit cấu hình" className={DATA_TABLE_TD_CLASS}>
+                          <div className="space-y-0.5 text-xs">
+                            <p className="font-medium text-foreground">
+                              {p.configured_by_display_name}
+                            </p>
+                            <p className="font-mono text-muted">{p.configured_at_local}</p>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </DataTableContainer>
@@ -811,244 +884,183 @@ function AttendanceSlotPolicySummaryCard({
           </div>
 
           <div className="space-y-3 rounded-xl border border-border bg-surface-muted/35 p-3">
-            <p className="text-xs font-semibold uppercase tracking-wide text-muted">
-              4 mốc thời gian &amp; ngưỡng sớm/muộn cho phép (0–240 phút)
-            </p>
-
-            {/* Slot 1 */}
-            <div className="grid gap-2 sm:grid-cols-3">
-              <div>
-                <label
-                  htmlFor="slot-1-time"
-                  className="mb-1 block text-xs font-medium text-muted"
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+                Danh sách mốc chấm công ({slotsInput.length}/{ATTENDANCE_SLOT_MAX_COUNT} mốc) &amp; ngưỡng dung sai (0–240 phút)
+              </p>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={mutationBusy || slotsInput.length <= 1}
+                  onClick={handleSortSlotsByTime}
                 >
-                  Mốc 1 — Vào ca sáng (HH:MM)
-                </label>
-                <input
-                  id="slot-1-time"
-                  type="time"
-                  required
-                  value={slot1TimeInput}
+                  Sắp xếp theo giờ chuẩn
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
                   disabled={mutationBusy}
-                  onChange={(event) => setSlot1TimeInput(event.target.value)}
-                  className={INPUT_CLASS}
-                />
-              </div>
-              <div>
-                <label
-                  htmlFor="slot-1-before"
-                  className="mb-1 block text-xs font-medium text-muted"
+                  onClick={handleResetDefaultFiveSlots}
                 >
-                  Ngưỡng trước Mốc 1 (phút)
-                </label>
-                <input
-                  id="slot-1-before"
-                  type="number"
-                  min={0}
-                  max={240}
-                  required
-                  value={slot1BeforeInput}
-                  disabled={mutationBusy}
-                  onChange={(event) => setSlot1BeforeInput(event.target.value)}
-                  className={INPUT_CLASS}
-                />
-              </div>
-              <div>
-                <label
-                  htmlFor="slot-1-after"
-                  className="mb-1 block text-xs font-medium text-muted"
+                  Khôi phục 5 mốc mặc định
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  disabled={
+                    mutationBusy || slotsInput.length >= ATTENDANCE_SLOT_MAX_COUNT
+                  }
+                  onClick={handleAddSlotDraft}
                 >
-                  Ngưỡng sau Mốc 1 (phút)
-                </label>
-                <input
-                  id="slot-1-after"
-                  type="number"
-                  min={0}
-                  max={240}
-                  required
-                  value={slot1AfterInput}
-                  disabled={mutationBusy}
-                  onChange={(event) => setSlot1AfterInput(event.target.value)}
-                  className={INPUT_CLASS}
-                />
+                  + Thêm mốc
+                </Button>
               </div>
             </div>
 
-            {/* Slot 2 */}
-            <div className="grid gap-2 sm:grid-cols-3">
-              <div>
-                <label
-                  htmlFor="slot-2-time"
-                  className="mb-1 block text-xs font-medium text-muted"
+            <div className="space-y-2.5">
+              {slotsInput.map((slotDraft, idx) => (
+                <div
+                  key={slotDraft.id}
+                  className="rounded-lg border border-border bg-surface p-2.5"
                 >
-                  Mốc 2 — Ra ca sáng (HH:MM)
-                </label>
-                <input
-                  id="slot-2-time"
-                  type="time"
-                  required
-                  value={slot2TimeInput}
-                  disabled={mutationBusy}
-                  onChange={(event) => setSlot2TimeInput(event.target.value)}
-                  className={INPUT_CLASS}
-                />
-              </div>
-              <div>
-                <label
-                  htmlFor="slot-2-before"
-                  className="mb-1 block text-xs font-medium text-muted"
-                >
-                  Ngưỡng trước Mốc 2 (phút)
-                </label>
-                <input
-                  id="slot-2-before"
-                  type="number"
-                  min={0}
-                  max={240}
-                  required
-                  value={slot2BeforeInput}
-                  disabled={mutationBusy}
-                  onChange={(event) => setSlot2BeforeInput(event.target.value)}
-                  className={INPUT_CLASS}
-                />
-              </div>
-              <div>
-                <label
-                  htmlFor="slot-2-after"
-                  className="mb-1 block text-xs font-medium text-muted"
-                >
-                  Ngưỡng sau Mốc 2 (phút)
-                </label>
-                <input
-                  id="slot-2-after"
-                  type="number"
-                  min={0}
-                  max={240}
-                  required
-                  value={slot2AfterInput}
-                  disabled={mutationBusy}
-                  onChange={(event) => setSlot2AfterInput(event.target.value)}
-                  className={INPUT_CLASS}
-                />
-              </div>
-            </div>
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <span className="font-mono text-xs font-semibold text-foreground">
+                      Mốc #{idx + 1} (SLOT_{idx + 1})
+                    </span>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        disabled={mutationBusy || idx === 0}
+                        onClick={() => handleMoveSlotDraft(idx, -1)}
+                        aria-label={`Di chuyển mốc ${idx + 1} lên`}
+                      >
+                        Lên
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        disabled={mutationBusy || idx === slotsInput.length - 1}
+                        onClick={() => handleMoveSlotDraft(idx, 1)}
+                        aria-label={`Di chuyển mốc ${idx + 1} xuống`}
+                      >
+                        Xuống
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        disabled={
+                          mutationBusy ||
+                          slotsInput.length <= ATTENDANCE_SLOT_MIN_COUNT
+                        }
+                        onClick={() => handleRemoveSlotDraft(idx)}
+                        aria-label={`Xóa mốc ${idx + 1}`}
+                      >
+                        Xóa mốc
+                      </Button>
+                    </div>
+                  </div>
 
-            {/* Slot 3 */}
-            <div className="grid gap-2 sm:grid-cols-3">
-              <div>
-                <label
-                  htmlFor="slot-3-time"
-                  className="mb-1 block text-xs font-medium text-muted"
-                >
-                  Mốc 3 — Vào ca chiều (HH:MM)
-                </label>
-                <input
-                  id="slot-3-time"
-                  type="time"
-                  required
-                  value={slot3TimeInput}
-                  disabled={mutationBusy}
-                  onChange={(event) => setSlot3TimeInput(event.target.value)}
-                  className={INPUT_CLASS}
-                />
-              </div>
-              <div>
-                <label
-                  htmlFor="slot-3-before"
-                  className="mb-1 block text-xs font-medium text-muted"
-                >
-                  Ngưỡng trước Mốc 3 (phút)
-                </label>
-                <input
-                  id="slot-3-before"
-                  type="number"
-                  min={0}
-                  max={240}
-                  required
-                  value={slot3BeforeInput}
-                  disabled={mutationBusy}
-                  onChange={(event) => setSlot3BeforeInput(event.target.value)}
-                  className={INPUT_CLASS}
-                />
-              </div>
-              <div>
-                <label
-                  htmlFor="slot-3-after"
-                  className="mb-1 block text-xs font-medium text-muted"
-                >
-                  Ngưỡng sau Mốc 3 (phút)
-                </label>
-                <input
-                  id="slot-3-after"
-                  type="number"
-                  min={0}
-                  max={240}
-                  required
-                  value={slot3AfterInput}
-                  disabled={mutationBusy}
-                  onChange={(event) => setSlot3AfterInput(event.target.value)}
-                  className={INPUT_CLASS}
-                />
-              </div>
-            </div>
-
-            {/* Slot 4 */}
-            <div className="grid gap-2 sm:grid-cols-3">
-              <div>
-                <label
-                  htmlFor="slot-4-time"
-                  className="mb-1 block text-xs font-medium text-muted"
-                >
-                  Mốc 4 — Ra ca chiều (HH:MM)
-                </label>
-                <input
-                  id="slot-4-time"
-                  type="time"
-                  required
-                  value={slot4TimeInput}
-                  disabled={mutationBusy}
-                  onChange={(event) => setSlot4TimeInput(event.target.value)}
-                  className={INPUT_CLASS}
-                />
-              </div>
-              <div>
-                <label
-                  htmlFor="slot-4-before"
-                  className="mb-1 block text-xs font-medium text-muted"
-                >
-                  Ngưỡng trước Mốc 4 (phút)
-                </label>
-                <input
-                  id="slot-4-before"
-                  type="number"
-                  min={0}
-                  max={240}
-                  required
-                  value={slot4BeforeInput}
-                  disabled={mutationBusy}
-                  onChange={(event) => setSlot4BeforeInput(event.target.value)}
-                  className={INPUT_CLASS}
-                />
-              </div>
-              <div>
-                <label
-                  htmlFor="slot-4-after"
-                  className="mb-1 block text-xs font-medium text-muted"
-                >
-                  Ngưỡng sau Mốc 4 (phút)
-                </label>
-                <input
-                  id="slot-4-after"
-                  type="number"
-                  min={0}
-                  max={240}
-                  required
-                  value={slot4AfterInput}
-                  disabled={mutationBusy}
-                  onChange={(event) => setSlot4AfterInput(event.target.value)}
-                  className={INPUT_CLASS}
-                />
-              </div>
+                  <div className="grid gap-2 sm:grid-cols-4">
+                    <div>
+                      <label
+                        htmlFor={`slot-${idx + 1}-label`}
+                        className="mb-1 block text-xs font-medium text-muted"
+                      >
+                        Tên mốc
+                      </label>
+                      <input
+                        id={`slot-${idx + 1}-label`}
+                        type="text"
+                        maxLength={64}
+                        required
+                        value={slotDraft.slotLabel}
+                        disabled={mutationBusy}
+                        onChange={(event) =>
+                          handleUpdateSlotDraft(idx, {
+                            slotLabel: event.target.value,
+                          })
+                        }
+                        className={INPUT_CLASS}
+                      />
+                    </div>
+                    <div>
+                      <label
+                        htmlFor={`slot-${idx + 1}-time`}
+                        className="mb-1 block text-xs font-medium text-muted"
+                      >
+                        Giờ chuẩn (HH:MM)
+                      </label>
+                      <input
+                        id={`slot-${idx + 1}-time`}
+                        type="time"
+                        required
+                        value={slotDraft.targetTime}
+                        disabled={mutationBusy}
+                        onChange={(event) =>
+                          handleUpdateSlotDraft(idx, {
+                            targetTime: event.target.value,
+                          })
+                        }
+                        className={INPUT_CLASS}
+                      />
+                    </div>
+                    <div>
+                      <label
+                        htmlFor={`slot-${idx + 1}-before`}
+                        className="mb-1 block text-xs font-medium text-muted"
+                      >
+                        Lệch trước (phút)
+                      </label>
+                      <input
+                        id={`slot-${idx + 1}-before`}
+                        type="number"
+                        min={0}
+                        max={240}
+                        required
+                        value={slotDraft.graceBeforeInput}
+                        disabled={mutationBusy}
+                        onChange={(event) =>
+                          handleUpdateSlotDraft(idx, {
+                            graceBeforeInput: event.target.value,
+                          })
+                        }
+                        className={INPUT_CLASS}
+                      />
+                    </div>
+                    <div>
+                      <label
+                        htmlFor={`slot-${idx + 1}-after`}
+                        className="mb-1 block text-xs font-medium text-muted"
+                      >
+                        Lệch sau (phút)
+                      </label>
+                      <input
+                        id={`slot-${idx + 1}-after`}
+                        type="number"
+                        min={0}
+                        max={240}
+                        required
+                        value={slotDraft.graceAfterInput}
+                        disabled={mutationBusy}
+                        onChange={(event) =>
+                          handleUpdateSlotDraft(idx, {
+                            graceAfterInput: event.target.value,
+                          })
+                        }
+                        className={INPUT_CLASS}
+                      />
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
 
@@ -1624,13 +1636,13 @@ export function AttendanceMonthlyMatrixSection() {
         <div className="space-y-3">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
             <CardHeader
-              title={`Bảng ma trận chấm công 4 mốc tháng ${activeReport?.filters.year_month ?? appliedFilters.yearMonth}`}
-              description="Mỗi ô ngày hiển thị đầy đủ 4 mốc giờ mục tiêu. Toàn bộ lượt check-in trong ngày được gán vào mốc có giờ mục tiêu gần nhất (nếu cách đều 2 mốc liền kề thì ưu tiên mốc sớm hơn) và sắp xếp tăng dần theo thời gian."
+              title={`Bảng ma trận chấm công tháng ${activeReport?.filters.year_month ?? appliedFilters.yearMonth}`}
+              description="Mỗi ô ngày hiển thị đầy đủ các mốc giờ chuẩn theo phiên bản cấu hình đang có hiệu lực tại ngày đó. Toàn bộ lượt check-in trong ngày được gán vào mốc có giờ chuẩn gần nhất (nếu cách đều 2 mốc liền kề thì ưu tiên mốc sớm hơn) và sắp xếp tăng dần theo thời gian."
             />
           </div>
 
           <div
-            aria-label="Chú giải màu sắc và quy tắc 4 khung giờ"
+            aria-label="Chú giải màu sắc và quy tắc khung giờ"
             className="rounded-xl border border-border bg-surface-muted/40 p-3 text-xs"
           >
             <p className="mb-2 font-semibold text-foreground">
@@ -1670,7 +1682,7 @@ export function AttendanceMonthlyMatrixSection() {
               })}
             </div>
             <p className="mt-2 text-[11px] text-muted">
-              <strong>Lưu ý nghiệp vụ:</strong> Hệ thống áp dụng thống nhất bộ 4 mốc cho mọi nhân viên và không tự suy luận nhân viên bắt buộc chấm 2 hay 4 lượt. Nhãn{" "}
+              <strong>Lưu ý nghiệp vụ:</strong> Hệ thống áp dụng thống nhất bộ mốc giờ chuẩn theo cấu hình đang có hiệu lực cho mọi nhân viên và không tự suy luận nghĩa vụ số lượt chấm của từng nhân sự. Nhãn{" "}
               <strong className="text-foreground">“Chưa có lượt chấm”</strong> và cảnh báo{" "}
               <strong className="text-foreground">Sớm/Muộn Xp</strong> là tín hiệu để HR HRP kiểm tra và đối chiếu theo quy định từng bộ phận.
             </p>

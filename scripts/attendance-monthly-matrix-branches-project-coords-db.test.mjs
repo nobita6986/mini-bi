@@ -32,6 +32,8 @@ import {
 } from "../src/lib/direct-entry/project-admin-contract.ts";
 import { projectHrpSyncCatalog } from "../src/lib/integrations/hrp/catalog-contract.ts";
 import {
+  ATTENDANCE_FLEXIBLE_SLOT_POLICY_MIGRATION_NAME,
+  ATTENDANCE_FLEXIBLE_SLOT_POLICY_RPC_SIGNATURES,
   ATTENDANCE_MONTHLY_MATRIX_BRANCHES_PROJECT_COORDS_MIGRATION_NAME,
   ATTENDANCE_MONTHLY_MATRIX_BRANCHES_PROJECT_COORDS_RPC_SIGNATURES,
   migrationChecksum,
@@ -348,6 +350,60 @@ test("Migration 20261102120000 rolls back atomically on error and exposes only s
       const { rows } = await db.query("select to_regprocedure($1)::text as oid_name", [sig]);
       assert.ok(rows[0].oid_name, `RPC ${sig} must exist after commit`);
     }
+  } finally {
+    await db.close();
+  }
+});
+
+test("Migration 20261103120000 upgrades untouched Stage 1 default to 5 slots and never overwrites Admin-customized policies", async () => {
+  const { db, targetMigration } = await createDatabase({
+    stopBeforeTarget: true,
+    targetMigrationName: ATTENDANCE_FLEXIBLE_SLOT_POLICY_MIGRATION_NAME,
+  });
+  try {
+    await seedActorsAndCatalog(db);
+    // Simulate an Admin having created a custom Stage 1 policy v2 before 20261103120000 runs
+    await callAsServiceRole(
+      db,
+      `select public.attendance_create_slot_policy_admin(
+        $1::uuid, $2::uuid, '2026-12-01'::date,
+        '07:45', 10, 10, '11:45', 10, 10, '13:15', 10, 10, '17:15', 10, 10,
+        1, $3::uuid, $4::text
+      ) as data`,
+      [ACTORS.FULL_ADMIN.auth, ACTORS.FULL_ADMIN.app, nextUuid(), "e".repeat(64)],
+    );
+
+    // Apply Stage 1.5 migration
+    await db.exec("begin;");
+    await db.exec(migrationSqlForTransaction(targetMigration.sql));
+    await db.exec("commit;");
+
+    for (const sig of ATTENDANCE_FLEXIBLE_SLOT_POLICY_RPC_SIGNATURES) {
+      const { rows } = await db.query("select to_regprocedure($1)::text as oid_name", [sig]);
+      assert.ok(rows[0].oid_name, `RPC ${sig} must exist after Stage 1.5 commit`);
+    }
+
+    const policiesRaw = await callAsServiceRole(
+      db,
+      "select public.attendance_get_slot_policies_admin($1::uuid, $2::uuid) as data",
+      [ACTORS.FULL_ADMIN.auth, ACTORS.FULL_ADMIN.app],
+    );
+    const policies = projectAttendanceSlotPoliciesAdminList(policiesRaw);
+    assert.ok(policies, "Admin-customized policies project cleanly after Stage 1.5 upgrade");
+    assert.equal(policies.versions.length, 2);
+
+    const v2 = policies.versions.find((v) => v.version === 2);
+    const v1 = policies.versions.find((v) => v.version === 1);
+    assert.ok(v1 && v2);
+    // Neither v1 nor Admin-created v2 was overwritten with 5 slots because Admin had already configured v2!
+    assert.deepEqual(
+      v1.slots.map((s) => s.target_time),
+      ["08:00", "11:00", "13:00", "17:00"],
+    );
+    assert.deepEqual(
+      v2.slots.map((s) => s.target_time),
+      ["07:45", "11:45", "13:15", "17:15"],
+    );
   } finally {
     await db.close();
   }
@@ -1045,9 +1101,9 @@ test("HRP Branches, Branch Check-In Distance Snapshot Immutability, Project Coor
     assert.equal(clearedLoc.location, null);
 
     // -------------------------------------------------------------------------
-    // 7. 4-Slot Monthly Attendance Matrix & Date-Effective Slot Policy Configuration
+    // 7. Flexible Slot Monthly Attendance Matrix & Date-Effective Slot Policy Configuration
     // -------------------------------------------------------------------------
-    // 7a. Default seeded slot policy version 1 (08:00, 11:00, 13:00, 17:00, ±15m)
+    // 7a. Default seeded slot policy version 1 (5 slots: 07:30, 10:00, 13:00, 15:00, 16:30, ±15m)
     const slotPoliciesRaw1 = await callAsServiceRole(
       db,
       "select public.attendance_get_slot_policies_admin($1::uuid, $2::uuid) as data",
@@ -1060,7 +1116,11 @@ test("HRP Branches, Branch Check-In Distance Snapshot Immutability, Project Coor
     assert.equal(slotPolicies1.current_policy.effective_from_date, "2000-01-01");
     assert.deepEqual(
       slotPolicies1.current_policy.slots.map((s) => s.target_time),
-      ["08:00", "11:00", "13:00", "17:00"],
+      ["07:30", "10:00", "13:00", "15:00", "16:30"],
+    );
+    assert.deepEqual(
+      slotPolicies1.current_policy.slots.map((s) => s.slot_label),
+      ["Time 1", "Time 2", "Time 3", "Time 4", "Time 5"],
     );
 
     // 7b. BoD cannot create a slot policy version
@@ -1093,7 +1153,7 @@ test("HRP Branches, Branch Check-In Distance Snapshot Immutability, Project Coor
       (err) => /ATTENDANCE_SLOT_POLICY_EFFECTIVE_DATE_PAST/.test(err.message),
     );
 
-    // 7d. Create date-effective winter schedule v2 starting 2026-12-15 (08:30, 12:00, 13:30, 17:30, ±15m)
+    // 7d. Create date-effective winter schedule v2 starting 2026-12-15 (4 slots: 08:30, 12:00, 13:30, 17:30, ±15m)
     const createPolicyKey = nextUuid();
     const createPolicyInput = {
       effective_from_date: "2026-12-15",
@@ -1130,16 +1190,55 @@ test("HRP Branches, Branch Check-In Distance Snapshot Immutability, Project Coor
     assert.equal(createdPolicy.replayed, false);
     assert.equal(createdPolicy.policy.version, 2);
     assert.equal(createdPolicy.policy.effective_from_date, "2026-12-15");
+    assert.equal(createdPolicy.policy.slots.length, 4);
 
-    // 7e. Overlapping/earlier effective_from_date (<= 2026-12-15) and stale expected_version are rejected
+    // 7d-bis. Create flexible 6-slot schedule v3 starting 2026-12-22 via 7-arg JSONB RPC
+    const createPolicyV3Key = nextUuid();
+    const v3Slots = [
+      { slot_label: "Time 1", target_time: "07:00", grace_before_minutes: 15, grace_after_minutes: 15 },
+      { slot_label: "Time 2", target_time: "09:30", grace_before_minutes: 15, grace_after_minutes: 15 },
+      { slot_label: "Time 3", target_time: "11:30", grace_before_minutes: 15, grace_after_minutes: 15 },
+      { slot_label: "Time 4", target_time: "13:30", grace_before_minutes: 15, grace_after_minutes: 15 },
+      { slot_label: "Time 5", target_time: "15:30", grace_before_minutes: 15, grace_after_minutes: 15 },
+      { slot_label: "Time 6", target_time: "17:30", grace_before_minutes: 15, grace_after_minutes: 15 },
+    ];
+    const createPolicyV3Fp = computeSlotPolicyCreateRequestFingerprint({
+      app_user_id: ACTORS.FULL_ADMIN.app,
+      effective_from_date: "2026-12-22",
+      slots: v3Slots,
+      expected_version: 2,
+    });
+    const createdPolicyV3Raw = await callAsServiceRole(
+      db,
+      `select public.attendance_create_slot_policy_admin(
+        $1::uuid, $2::uuid, '2026-12-22'::date, $3::jsonb, 2, $4::uuid, $5::text
+      ) as data`,
+      [
+        ACTORS.FULL_ADMIN.auth,
+        ACTORS.FULL_ADMIN.app,
+        JSON.stringify(v3Slots),
+        createPolicyV3Key,
+        createPolicyV3Fp,
+      ],
+    );
+    const createdPolicyV3 = projectCreateSlotPolicyResult(createdPolicyV3Raw);
+    assert.ok(createdPolicyV3, "6-slot policy v3 strict projection passes");
+    assert.equal(createdPolicyV3.policy.version, 3);
+    assert.equal(createdPolicyV3.policy.slots.length, 6);
+    assert.deepEqual(
+      createdPolicyV3.policy.slots.map((s) => s.target_time),
+      ["07:00", "09:30", "11:30", "13:30", "15:30", "17:30"],
+    );
+
+    // 7e. Overlapping/earlier effective_from_date (<= 2026-12-22) and stale expected_version are rejected
     await assert.rejects(
       () =>
         callAsServiceRole(
           db,
           `select public.attendance_create_slot_policy_admin(
-            $1::uuid, $2::uuid, '2026-12-15'::date,
+            $1::uuid, $2::uuid, '2026-12-22'::date,
             '08:00', 15, 15, '11:00', 15, 15, '13:00', 15, 15, '17:00', 15, 15,
-            2, $3::uuid, $4::text
+            3, $3::uuid, $4::text
           ) as data`,
           [ACTORS.FULL_ADMIN.auth, ACTORS.FULL_ADMIN.app, nextUuid(), "c".repeat(64)],
         ),
@@ -1150,7 +1249,7 @@ test("HRP Branches, Branch Check-In Distance Snapshot Immutability, Project Coor
         callAsServiceRole(
           db,
           `select public.attendance_create_slot_policy_admin(
-            $1::uuid, $2::uuid, '2026-12-20'::date,
+            $1::uuid, $2::uuid, '2026-12-28'::date,
             '08:00', 15, 15, '11:00', 15, 15, '13:00', 15, 15, '17:00', 15, 15,
             1, $3::uuid, $4::text
           ) as data`,
@@ -1168,19 +1267,19 @@ test("HRP Branches, Branch Check-In Distance Snapshot Immutability, Project Coor
       (err) => /ATTENDANCE_CHECKINS_IMMUTABLE/.test(err.message),
     );
 
-    // 7g. Record December 2026 check-ins for STAFF_B across both v1 (before 2026-12-15) and v2 (from 2026-12-15):
-    // On 2026-12-10 (uses v1: 08:00, 11:00, 13:00, 17:00 ±15m):
-    // - 07:45 VN (00:45 UTC): exact boundary (-15m) -> SLOT_1, ON_TIME
-    // - 08:15 VN (01:15 UTC): exact boundary (+15m) -> SLOT_1, ON_TIME (2nd check-in in SLOT_1!)
-    // - 09:30 VN (02:30 UTC): equidistant tie-break between 08:00 and 11:00 -> SLOT_1, LATE (+90m)
-    // - 12:00 VN (05:00 UTC): equidistant tie-break between 11:00 and 13:00 -> SLOT_2, LATE (+60m)
-    // - 15:00 VN (08:00 UTC): equidistant tie-break between 13:00 and 17:00 -> SLOT_3, LATE (+120m)
+    // 7g. Record December 2026 check-ins for STAFF_B across v1 (5 slots), v2 (4 slots), and v3 (6 slots):
+    // On 2026-12-10 (uses v1 5-slot: 07:30, 10:00, 13:00, 15:00, 16:30 ±15m):
+    // - 07:15 VN (00:15 UTC): exact boundary (-15m from 07:30) -> SLOT_1, ON_TIME
+    // - 07:45 VN (00:45 UTC): exact boundary (+15m from 07:30) -> SLOT_1, ON_TIME (2nd check-in in SLOT_1!)
+    // - 08:45 VN (01:45 UTC): equidistant tie-break between 07:30 (450m) and 10:00 (600m) -> SLOT_1, LATE (+75m)
+    // - 11:30 VN (04:30 UTC): equidistant tie-break between 10:00 (600m) and 13:00 (780m) -> SLOT_2, LATE (+90m)
+    // - 14:00 VN (07:00 UTC): equidistant tie-break between 13:00 (780m) and 15:00 (900m) -> SLOT_3, LATE (+60m)
     for (const utcTime of [
+      "2026-12-10T00:15:00.000Z",
       "2026-12-10T00:45:00.000Z",
-      "2026-12-10T01:15:00.000Z",
-      "2026-12-10T02:30:00.000Z",
-      "2026-12-10T05:00:00.000Z",
-      "2026-12-10T08:00:00.000Z",
+      "2026-12-10T01:45:00.000Z",
+      "2026-12-10T04:30:00.000Z",
+      "2026-12-10T07:00:00.000Z",
     ]) {
       await recordCheckInAsServiceRole(db, {
         actor: ACTORS.STAFF_B,
@@ -1190,13 +1289,22 @@ test("HRP Branches, Branch Check-In Distance Snapshot Immutability, Project Coor
       });
     }
 
-    // On 2026-12-16 (uses v2: 08:30, 12:00, 13:30, 17:30 ±15m):
-    // - 08:30 VN (01:30 UTC): under v2, 08:30 is exact ON_TIME for SLOT_1 (whereas under v1 it would be LATE +30m!)
+    // On 2026-12-16 (uses v2 4-slot: 08:30, 12:00, 13:30, 17:30 ±15m):
+    // - 08:30 VN (01:30 UTC): under v2, 08:30 is exact ON_TIME for SLOT_1
     await recordCheckInAsServiceRole(db, {
       actor: ACTORS.STAFF_B,
       latitude: HQ_HANOI.latitude,
       longitude: HQ_HANOI.longitude,
       captured_at: "2026-12-16T01:30:00.000Z",
+    });
+
+    // On 2026-12-24 (uses v3 6-slot: 07:00, 09:30, 11:30, 13:30, 15:30, 17:30 ±15m):
+    // - 17:30 VN (10:30 UTC): assigned to SLOT_6 (17:30), ON_TIME
+    await recordCheckInAsServiceRole(db, {
+      actor: ACTORS.STAFF_B,
+      latitude: HQ_HANOI.latitude,
+      longitude: HQ_HANOI.longitude,
+      captured_at: "2026-12-24T10:30:00.000Z",
     });
 
     const decMatrixRaw = await callAsServiceRole(
@@ -1210,8 +1318,12 @@ test("HRP Branches, Branch Check-In Distance Snapshot Immutability, Project Coor
     assert.ok(decMatrix, "December matrix strict projection passes");
     assert.deepEqual(
       decMatrix.slot_policy.month_policies.map((p) => p.version),
-      [1, 2],
-      "December 2026 report must report both v1 and v2 in month_policies",
+      [1, 2, 3],
+      "December 2026 report must report v1 (5 slots), v2 (4 slots), and v3 (6 slots) in month_policies",
+    );
+    assert.deepEqual(
+      decMatrix.slot_policy.month_policies.map((p) => p.slots.length),
+      [5, 4, 6],
     );
 
     const staffBDecRow = decMatrix.items[0];
@@ -1220,32 +1332,44 @@ test("HRP Branches, Branch Check-In Distance Snapshot Immutability, Project Coor
     const dec10Cell = staffBDecRow.days.find((d) => d.business_date === "2026-12-10");
     assert.ok(dec10Cell);
     assert.equal(dec10Cell.policy_version_used, 1);
-    assert.equal(dec10Cell.slots[0].target_time, "08:00");
+    assert.equal(dec10Cell.slots.length, 5);
+    assert.equal(dec10Cell.slots[0].target_time, "07:30");
     assert.deepEqual(
       dec10Cell.slots[0].checkins.map((c) => c.time_local),
-      ["07:45", "08:15", "09:30"],
+      ["07:15", "07:45", "08:45"],
     );
     assert.equal(dec10Cell.slots[0].checkins[0].deviation_status, "ON_TIME");
     assert.equal(dec10Cell.slots[0].checkins[1].deviation_status, "ON_TIME");
     assert.equal(dec10Cell.slots[0].checkins[2].deviation_status, "LATE");
     assert.deepEqual(
       dec10Cell.slots[1].checkins.map((c) => c.time_local),
-      ["12:00"],
+      ["11:30"],
     );
     assert.deepEqual(
       dec10Cell.slots[2].checkins.map((c) => c.time_local),
-      ["15:00"],
+      ["14:00"],
     );
     assert.equal(dec10Cell.slots[3].slot_status, "MISSING");
+    assert.equal(dec10Cell.slots[4].slot_status, "MISSING");
 
     const dec16Cell = staffBDecRow.days.find((d) => d.business_date === "2026-12-16");
     assert.ok(dec16Cell);
     assert.equal(dec16Cell.policy_version_used, 2);
+    assert.equal(dec16Cell.slots.length, 4);
     assert.equal(dec16Cell.slots[0].target_time, "08:30");
     assert.equal(dec16Cell.slots[0].slot_status, "ON_TIME");
     assert.equal(dec16Cell.slots[0].checkins[0].time_local, "08:30");
     assert.equal(dec16Cell.slots[0].checkins[0].deviation_status, "ON_TIME");
     assert.equal(dec16Cell.slots[0].checkins[0].delta_minutes, 0);
+
+    const dec24Cell = staffBDecRow.days.find((d) => d.business_date === "2026-12-24");
+    assert.ok(dec24Cell);
+    assert.equal(dec24Cell.policy_version_used, 3);
+    assert.equal(dec24Cell.slots.length, 6);
+    assert.equal(dec24Cell.slots[5].slot_code, "SLOT_6");
+    assert.equal(dec24Cell.slots[5].target_time, "17:30");
+    assert.equal(dec24Cell.slots[5].slot_status, "ON_TIME");
+    assert.equal(dec24Cell.slots[5].checkins[0].time_local, "17:30");
   } finally {
     await db.close();
   }

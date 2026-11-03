@@ -961,6 +961,39 @@ test("Attendance Slot Policy Admin contract and handlers enforce Full Admin on P
 
   const parsed = parseCreateSlotPolicyBody(validBody);
   assert.equal(parsed.ok, true);
+  if (parsed.ok) {
+    assert.equal(parsed.value.slots.length, 4);
+  }
+
+  // Flexible 6-slot payload accepted
+  const parsedSixSlots = parseCreateSlotPolicyBody({
+    effective_from_date: "2026-11-05",
+    slots: [
+      { slot_label: "Time 1", target_time: "07:30", grace_before_minutes: 15, grace_after_minutes: 15 },
+      { slot_label: "Time 2", target_time: "09:30", grace_before_minutes: 15, grace_after_minutes: 15 },
+      { slot_label: "Time 3", target_time: "11:30", grace_before_minutes: 15, grace_after_minutes: 15 },
+      { slot_label: "Time 4", target_time: "13:00", grace_before_minutes: 15, grace_after_minutes: 15 },
+      { slot_label: "Time 5", target_time: "15:00", grace_before_minutes: 15, grace_after_minutes: 15 },
+      { slot_label: "Time 6", target_time: "17:00", grace_before_minutes: 15, grace_after_minutes: 15 },
+    ],
+    expected_version: 1,
+    idempotency_key: IDEMPOTENCY_KEY,
+  });
+  assert.equal(parsedSixSlots.ok, true);
+  if (parsedSixSlots.ok) {
+    assert.equal(parsedSixSlots.value.slots.length, 6);
+    assert.equal(parsedSixSlots.value.slots[5].slot_code, "SLOT_6");
+    assert.equal(parsedSixSlots.value.slots[5].slot_label, "Time 6");
+  }
+
+  // Empty slots array rejected
+  const emptySlots = parseCreateSlotPolicyBody({
+    effective_from_date: "2026-11-05",
+    slots: [],
+    expected_version: 1,
+    idempotency_key: IDEMPOTENCY_KEY,
+  });
+  assert.equal(emptySlots.ok, false);
 
   // Non-monotonic slot times rejected with ATTENDANCE_SLOT_POLICY_INVALID
   const badOrder = parseCreateSlotPolicyBody({
@@ -1001,7 +1034,11 @@ test("Attendance Slot Policy Admin contract and handlers enforce Full Admin on P
   const getJson = await getRes.json();
   assert.equal(getJson.ok, true);
   assert.equal(getJson.current_policy.version, 1);
-  assert.equal(getJson.current_policy.slots.length, 4);
+  assert.equal(getJson.current_policy.slots.length, 5);
+  assert.deepEqual(
+    getJson.current_policy.slots.map((s) => s.target_time),
+    ["07:30", "10:00", "13:00", "15:00", "16:30"],
+  );
 
   // POST denied for BoD reader
   const bodDeniedRes = await postAttendanceSlotPolicyAdmin(

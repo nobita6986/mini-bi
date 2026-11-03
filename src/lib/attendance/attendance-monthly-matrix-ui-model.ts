@@ -8,7 +8,9 @@ import {
 import {
   ATTENDANCE_MONTHLY_MATRIX_EXPORT_ROW_LIMIT,
   ATTENDANCE_SLOT_CODES,
+  ATTENDANCE_SLOT_MAX_COUNT,
   ATTENDANCE_SLOT_MAX_GRACE_MINUTES,
+  ATTENDANCE_SLOT_MIN_COUNT,
   evaluateAttendanceDaySlots,
   isValidYearMonth,
   type AttendanceBranchAssignmentAdminItemProjection,
@@ -65,10 +67,18 @@ export const MATRIX_LEAVE_SESSION_LABELS: Readonly<
 };
 
 export const MATRIX_SLOT_SHORT_LABELS: Readonly<Record<AttendanceSlotCode, string>> = {
-  SLOT_1: "Mốc 1",
-  SLOT_2: "Mốc 2",
-  SLOT_3: "Mốc 3",
-  SLOT_4: "Mốc 4",
+  SLOT_1: "Time 1",
+  SLOT_2: "Time 2",
+  SLOT_3: "Time 3",
+  SLOT_4: "Time 4",
+  SLOT_5: "Time 5",
+  SLOT_6: "Time 6",
+  SLOT_7: "Time 7",
+  SLOT_8: "Time 8",
+  SLOT_9: "Time 9",
+  SLOT_10: "Time 10",
+  SLOT_11: "Time 11",
+  SLOT_12: "Time 12",
 };
 
 export const MATRIX_DAY_STATUS_LABELS: Readonly<Record<AttendanceMonthlyMatrixDayStatus, string>> =
@@ -107,8 +117,9 @@ export type MatrixSlotCheckinPresentation = {
 
 export type MatrixSlotPresentation = {
   slotCode: AttendanceSlotCode;
-  slotIndex: 1 | 2 | 3 | 4;
+  slotIndex: number;
   sessionCode: AttendanceSlotSessionCode;
+  slotLabel: string;
   slotShortLabel: string;
   slotTitle: string;
   targetTime: string;
@@ -175,7 +186,7 @@ export const MATRIX_LEGEND_ITEMS: readonly MatrixLegendItem[] = [
     badgeText: "Nghỉ phép đã duyệt",
     title: "Mốc thuộc buổi/ngày có đơn nghỉ phép đã duyệt",
     description:
-      "Đơn nghỉ phép Cả ngày bao phủ Mốc 1–4; nghỉ buổi Sáng bao phủ Mốc 1–2; nghỉ buổi Chiều bao phủ Mốc 3–4 (không đánh dấu thiếu lượt chấm).",
+      "Đơn nghỉ phép Cả ngày bao phủ toàn bộ các mốc trong ngày; nghỉ buổi Sáng bao phủ các mốc buổi sáng (< 12:00); nghỉ buổi Chiều bao phủ các mốc buổi chiều (>= 12:00) (không đánh dấu thiếu lượt chấm).",
   },
   {
     key: "missing-slot",
@@ -183,7 +194,7 @@ export const MATRIX_LEGEND_ITEMS: readonly MatrixLegendItem[] = [
     badgeText: MATRIX_MISSING_SLOT_LABEL,
     title: "Mốc chưa có lượt chấm & không có phép duyệt",
     description:
-      "Tô nổi bật để HR HRP đối chiếu nghĩa vụ chấm công thực tế (2 lượt hoặc 4 lượt) của từng nhân sự; đây là tín hiệu rà soát, không tự động kết luận vắng không phép.",
+      "Tô nổi bật để HR HRP đối chiếu nghĩa vụ chấm công thực tế của từng nhân sự; đây là tín hiệu rà soát, không tự động kết luận vắng không phép.",
   },
 ] as const;
 
@@ -418,7 +429,11 @@ function resolveRawDaySlots(
   lateOrEarlyCheckinCount: number;
   slots: AttendanceMonthlyMatrixDaySlotProjection[];
 } {
-  if (Array.isArray(cell.slots) && cell.slots.length === 4) {
+  if (
+    Array.isArray(cell.slots) &&
+    cell.slots.length >= ATTENDANCE_SLOT_MIN_COUNT &&
+    cell.slots.length <= ATTENDANCE_SLOT_MAX_COUNT
+  ) {
     return {
       policyVersionUsed:
         typeof cell.policy_version_used === "number" && cell.policy_version_used >= 1
@@ -527,7 +542,11 @@ export function describeMatrixDayCell(
   const resolvedSlots = resolveRawDaySlots(cell);
 
   const slots: MatrixSlotPresentation[] = resolvedSlots.slots.map((slot) => {
-    const slotShortLabel = MATRIX_SLOT_SHORT_LABELS[slot.slot_code] ?? slot.slot_code;
+    const rawSlotLabel = typeof slot.slot_label === "string" ? slot.slot_label.trim() : "";
+    const slotShortLabel =
+      rawSlotLabel.length > 0
+        ? rawSlotLabel
+        : (MATRIX_SLOT_SHORT_LABELS[slot.slot_code] ?? `Time ${slot.slot_index}`);
     const slotTitle = `${slotShortLabel} (${slot.target_time})`;
 
     const checkins: MatrixSlotCheckinPresentation[] = slot.checkins.map((item) => {
@@ -577,6 +596,7 @@ export function describeMatrixDayCell(
       slotCode: slot.slot_code,
       slotIndex: slot.slot_index,
       sessionCode: slot.session_code,
+      slotLabel: slotShortLabel,
       slotShortLabel,
       slotTitle,
       targetTime: slot.target_time,
@@ -737,6 +757,7 @@ export function buildCreateSlotPolicyPayload(input: {
   effectiveFromDate: string;
   slots?: readonly {
     slotCode?: AttendanceSlotCode;
+    slotLabel?: string;
     targetTime: string;
     graceBeforeInput: string | number;
     graceAfterInput: string | number;
@@ -772,7 +793,7 @@ export function buildCreateSlotPolicyPayload(input: {
   }
 
   const rawSlots =
-    Array.isArray(input.slots) && input.slots.length === 4
+    Array.isArray(input.slots)
       ? input.slots
       : input.slot1Time !== undefined &&
           input.slot2Time !== undefined &&
@@ -780,21 +801,25 @@ export function buildCreateSlotPolicyPayload(input: {
           input.slot4Time !== undefined
         ? [
             {
+              slotLabel: "Time 1",
               targetTime: input.slot1Time,
               graceBeforeInput: input.slot1GraceBeforeInput ?? "",
               graceAfterInput: input.slot1GraceAfterInput ?? "",
             },
             {
+              slotLabel: "Time 2",
               targetTime: input.slot2Time,
               graceBeforeInput: input.slot2GraceBeforeInput ?? "",
               graceAfterInput: input.slot2GraceAfterInput ?? "",
             },
             {
+              slotLabel: "Time 3",
               targetTime: input.slot3Time,
               graceBeforeInput: input.slot3GraceBeforeInput ?? "",
               graceAfterInput: input.slot3GraceAfterInput ?? "",
             },
             {
+              slotLabel: "Time 4",
               targetTime: input.slot4Time,
               graceBeforeInput: input.slot4GraceBeforeInput ?? "",
               graceAfterInput: input.slot4GraceAfterInput ?? "",
@@ -802,30 +827,45 @@ export function buildCreateSlotPolicyPayload(input: {
           ]
         : null;
 
-  if (!rawSlots || rawSlots.length !== 4) {
+  if (
+    !rawSlots ||
+    rawSlots.length < ATTENDANCE_SLOT_MIN_COUNT ||
+    rawSlots.length > ATTENDANCE_SLOT_MAX_COUNT
+  ) {
     return {
       ok: false,
-      message: "Cấu hình khung giờ bắt buộc đủ 4 mốc chấm công trong ngày.",
+      message: `Cấu hình khung giờ cần có từ ${ATTENDANCE_SLOT_MIN_COUNT} đến ${ATTENDANCE_SLOT_MAX_COUNT} mốc chấm công trong ngày.`,
     };
   }
 
   const normalizedSlots: {
     slot_code: AttendanceSlotCode;
+    slot_index: number;
+    slot_label: string;
     target_time: string;
     grace_before_minutes: number;
     grace_after_minutes: number;
   }[] = [];
 
-  for (let i = 0; i < 4; i += 1) {
+  for (let i = 0; i < rawSlots.length; i += 1) {
     const raw = rawSlots[i]!;
+    const slotIndex = i + 1;
     const slotCode = ATTENDANCE_SLOT_CODES[i]!;
-    const slotLabel = MATRIX_SLOT_SHORT_LABELS[slotCode];
+    const rawLabel = typeof raw.slotLabel === "string" ? raw.slotLabel.trim() : "";
+    const slotLabel = rawLabel.length > 0 ? rawLabel : `Time ${slotIndex}`;
+    if (slotLabel.length > 64 || CONTROL_CHAR_PATTERN.test(slotLabel)) {
+      return {
+        ok: false,
+        message: `Tên mốc thứ ${slotIndex} tối đa 64 ký tự và không chứa ký tự điều khiển.`,
+      };
+    }
+
     const targetTime = raw.targetTime.trim();
 
     if (!HH_MM_PATTERN.test(targetTime)) {
       return {
         ok: false,
-        message: `Giờ mục tiêu của ${slotLabel} phải đúng định dạng 24h HH:MM (ví dụ 08:00, 17:30).`,
+        message: `Giờ chuẩn của ${slotLabel} phải đúng định dạng 24h HH:MM (ví dụ 07:30, 16:30).`,
       };
     }
 
@@ -856,24 +896,21 @@ export function buildCreateSlotPolicyPayload(input: {
 
     normalizedSlots.push({
       slot_code: slotCode,
+      slot_index: slotIndex,
+      slot_label: slotLabel,
       target_time: targetTime,
       grace_before_minutes: graceBefore,
       grace_after_minutes: graceAfter,
     });
   }
 
-  if (
-    !(
-      normalizedSlots[0]!.target_time < normalizedSlots[1]!.target_time &&
-      normalizedSlots[1]!.target_time < normalizedSlots[2]!.target_time &&
-      normalizedSlots[2]!.target_time < normalizedSlots[3]!.target_time
-    )
-  ) {
-    return {
-      ok: false,
-      message:
-        "Giờ mục tiêu của 4 mốc chấm công phải tăng dần theo thứ tự thời gian trong ngày (Mốc 1 < Mốc 2 < Mốc 3 < Mốc 4).",
-    };
+  for (let i = 1; i < normalizedSlots.length; i += 1) {
+    if (!(normalizedSlots[i - 1]!.target_time < normalizedSlots[i]!.target_time)) {
+      return {
+        ok: false,
+        message: `Giờ chuẩn của các mốc chấm công phải tăng dần theo thứ tự thời gian trong ngày (${normalizedSlots[i - 1]!.slot_label} (${normalizedSlots[i - 1]!.target_time}) phải sớm hơn ${normalizedSlots[i]!.slot_label} (${normalizedSlots[i]!.target_time})).`,
+      };
+    }
   }
 
   if (
@@ -932,7 +969,7 @@ export function mapSlotPolicyMutationError(
     return {
       isConflict: false,
       message:
-        "Thông số khung giờ hoặc dung sai không hợp lệ. Vui lòng kiểm tra thứ tự Mốc 1 < Mốc 2 < Mốc 3 < Mốc 4 và dung sai 0–240 phút.",
+        "Thông số khung giờ hoặc dung sai không hợp lệ. Vui lòng kiểm tra thứ tự giờ chuẩn tăng dần và dung sai 0–240 phút.",
     };
   }
   if (code === "IDEMPOTENCY_CONFLICT") {
