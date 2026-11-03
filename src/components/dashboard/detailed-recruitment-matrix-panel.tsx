@@ -1032,7 +1032,6 @@ export function DetailedRecruitmentMatrixPanel({
               <FloatingTableNav
                 containerRef={tableScrollRef}
                 tableLabel="Báo cáo chi tiết"
-                position="bottom-left"
               />
             </div>
           )}

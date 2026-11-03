@@ -1077,7 +1077,7 @@ test("Wave 2 attendance explanation payload builders and error mapper", () => {
   assert.match(explanationWorkspaceSource, /\/api\/attendance\/explanations\/approvals/);
 });
 
-test("Hotfix 1 & 2: FloatingTableNav viewport portal & placement (bottom-left on Detailed Report, bottom-right elsewhere), arrow-only accessible controls, 70% horizontal scroll step, and unchanged vertical scroll step", () => {
+test("Hotfix 1 & 2: FloatingTableNav viewport portal & bottom-right placement, arrow-only accessible controls, 70% horizontal scroll step, and unchanged vertical scroll step", () => {
   assert.deepEqual(computeTableScrollAvailability(null), {
     hasHorizontalOverflow: false,
     hasVerticalOverflow: false,
@@ -1108,7 +1108,7 @@ test("Hotfix 1 & 2: FloatingTableNav viewport portal & placement (bottom-left on
     },
   );
 
-  // 1. FloatingTableNav supports bottom-right (default) and bottom-left (for Báo cáo chi tiết),
+  // 1. FloatingTableNav defaults to bottom-right,
   // portals to document.body so it is fixed to viewport (never trapped by transformed/overflow ancestors),
   // and keeps the compact UI without the "Điều hướng bảng" text label
   assert.equal(resolveFloatingTableNavPositionClass(), "fixed bottom-4 right-4 z-40");
@@ -1124,11 +1124,12 @@ test("Hotfix 1 & 2: FloatingTableNav viewport portal & placement (bottom-left on
   assert.match(floatingTableNavSource, /resolveFloatingTableNavPositionClass\(position\)/);
   assert.doesNotMatch(floatingTableNavSource, /<span[^>]*>\s*Điều hướng bảng\s*<\/span>/);
 
-  // Detailed Report ("Báo cáo chi tiết") uses position="bottom-left"; other pages keep default bottom-right
+  // Detailed Report ("Báo cáo chi tiết") and other pages use the default bottom-right position
   assert.match(
     detailedMatrixPanelSource,
-    /<FloatingTableNav[\s\S]*?tableLabel="Báo cáo chi tiết"[\s\S]*?position="bottom-left"/,
+    /<FloatingTableNav[\s\S]*?tableLabel="Báo cáo chi tiết"/,
   );
+  assert.doesNotMatch(detailedMatrixPanelSource, /position="bottom-left"/);
   assert.doesNotMatch(matrixPanelSource, /position="bottom-left"/);
   assert.doesNotMatch(managerSource, /position="bottom-left"/);
 
