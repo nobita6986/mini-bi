@@ -68,6 +68,21 @@ test("repository sanitizes conflict, authorization, validation, and infrastructu
       [{ code: "22023", message: "idempotency key reused with different input" }, { ok: false, kind: "conflict" }],
       [{ code: "42501", message: "permission denied with sensitive details" }, { ok: false, kind: "denied" }],
       [{ code: "22023", message: "BANK_NOT_ACTIVE" }, { ok: false, kind: "invalid", code: "BANK_NOT_ACTIVE" }],
+      [{ code: "23514", message: "team membership missing or ambiguous" }, {
+        ok: false, kind: "invalid", code: "RECRUITER_MEMBERSHIP_INVALID",
+      }],
+      [{ code: "23514", message: "provider membership missing, ambiguous, or mismatched" }, {
+        ok: false, kind: "invalid", code: "RECRUITER_MEMBERSHIP_INVALID",
+      }],
+      [{ code: "23514", message: "team is not active" }, {
+        ok: false, kind: "invalid", code: "RECRUITER_MEMBERSHIP_INVALID",
+      }],
+      [{ code: "23514", message: "recruiter is not active" }, {
+        ok: false, kind: "invalid", code: "RECRUITER_NOT_ACTIVE",
+      }],
+      [{ code: "23514", message: "project is not active" }, {
+        ok: false, kind: "invalid", code: "PROJECT_NOT_ACTIVE",
+      }],
       [{ code: "23505", message: "national-id value leaked" }, {
         ok: false, kind: "invalid", code: "BATCH_INVALID",
       }],

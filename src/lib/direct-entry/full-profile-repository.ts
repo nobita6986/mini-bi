@@ -49,6 +49,11 @@ function serviceRoleRpc(): Rpc {
 const SAFE_ERROR_ALIASES: Record<string, string> = {
   worker_active_episode_exists: "WORKER_ACTIVE_EPISODE_EXISTS",
   worker_episode_reopen_forbidden: "WORKER_EPISODE_REOPEN_FORBIDDEN",
+  "team membership missing or ambiguous": "RECRUITER_MEMBERSHIP_INVALID",
+  "provider membership missing, ambiguous, or mismatched": "RECRUITER_MEMBERSHIP_INVALID",
+  "team is not active": "RECRUITER_MEMBERSHIP_INVALID",
+  "recruiter is not active": "RECRUITER_NOT_ACTIVE",
+  "project is not active": "PROJECT_NOT_ACTIVE",
 };
 
 const SAFE_DENIAL_CATEGORIES: Readonly<Record<string, string>> = Object.freeze({

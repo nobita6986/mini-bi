@@ -1113,3 +1113,595 @@ test("W01A, W01B and W01C-A contracts keep their semantics", async () => {
     + " join public.teams t on t.team_id = g.team_id where t.code = $1", [RESERVED_CODE])).rows[0].n,
   0);
 });
+
+test("HRP profile creation, catalog, and current membership list align on [valid_from, valid_to) across scheduled moves, boundary dates, and cancelled schedules", async () => {
+  await db.exec("begin");
+  try {
+    const authDate = (await db.query(
+      "select public.direct_entry_authorization_date()::text as today"
+    )).rows[0].today;
+    const creator = {
+      auth: "10000000-0000-4000-8000-0000000000e1",
+      app: "20000000-0000-4000-8000-0000000000e1",
+    };
+    await addActor(db, {
+      ...creator,
+      display_name: "Synthetic Profile Creator",
+      capabilities: ["entry_admin", "entry_create", "entry_own", "submission_create"],
+      scopes: ["own", "all"],
+    });
+    const projectId = "hrp_membership_interval_proj";
+    await db.query(
+      "insert into public.direct_entry_projects (project_id, display_name, active)"
+      + " values ($1, 'Synthetic Interval Project', true)"
+      + " on conflict (project_id) do update set active = true",
+      [projectId],
+    );
+
+    const recBeforeMove = "93000000-0000-4000-8000-0000000000f1";
+    const recOnBoundary = "93000000-0000-4000-8000-0000000000f2";
+    const recAfterMove = "93000000-0000-4000-8000-0000000000f3";
+    const recExpiredCancelled = "93000000-0000-4000-8000-0000000000f4";
+    for (const [id, name, code] of [
+      [recBeforeMove, "Synthetic Before Move", "before.td"],
+      [recOnBoundary, "Synthetic On Boundary", "boundary.td"],
+      [recAfterMove, "Synthetic After Move", "after.td"],
+      [recExpiredCancelled, "Synthetic Expired Cancelled", "expired.td"],
+    ]) {
+      await db.query(
+        "insert into public.recruiters (recruiter_id, display_name, personnel_code, active, version)"
+        + " values ($1::uuid, $2, $3, true, 1)",
+        [id, name, code],
+      );
+      await db.query(
+        "insert into public.recruiter_provider_memberships"
+        + " (recruiter_id, provider_type, valid_from, valid_to, vendor_id, is_current)"
+        + " values ($1::uuid, 'hrp', '2020-01-01', null, null, true)",
+        [id],
+      );
+    }
+
+    const createProfileV2 = async (recruiterId, keySuffix, workDate = authDate) => {
+      const { rows } = await db.query(
+        "select public.direct_entry_create_full_profile_batch_v2("
+        + " $1::uuid, $2::uuid, 'worker-profile/1.1', $3::jsonb, $4::text) as result",
+        [
+          creator.auth,
+          creator.app,
+          JSON.stringify([{
+            project_id: projectId,
+            first_work_date: workDate,
+            recruiter_id: recruiterId,
+            provider_type: "hrp",
+            labor_type: "TEMPORARY",
+            display_name: "Synthetic Worker " + keySuffix,
+            worker_details: {
+              gender: { state: "omitted" },
+              date_of_birth: { state: "omitted" },
+              national_id: { state: "omitted" },
+              national_id_issued_at: { state: "omitted" },
+              national_id_issued_place: { state: "omitted" },
+              address: { state: "omitted" },
+              phone: { state: "omitted" },
+            },
+            general_note: { state: "omitted" },
+            payment: null,
+            employment: null,
+          }]),
+          KEY(keySuffix),
+        ],
+      );
+      return rows[0].result;
+    };
+
+    const getCatalog = async (effectiveDate = authDate) => {
+      const { rows } = await db.query(
+        "select public.direct_entry_input_catalog($1::uuid, $2::uuid, $3::date) as catalog",
+        [creator.auth, creator.app, effectiveDate],
+      );
+      return rows[0].catalog;
+    };
+
+    // 1. Before scheduled move date (`valid_from = FUTURE`): old team (TEAM_A) is used.
+    await db.query(
+      "insert into public.recruiter_team_memberships"
+      + " (recruiter_id, team_id, valid_from, valid_to, is_current) values"
+      + " ($1::uuid, $2::uuid, $4::date, $5::date, true),"
+      + " ($1::uuid, $3::uuid, $5::date, null, false)",
+      [recBeforeMove, TEAM_A, TEAM_B, PAST, FUTURE],
+    );
+    const catalogToday = await getCatalog(authDate);
+    const catalogRecBefore = catalogToday.recruiters.find((r) => r.recruiter_id === recBeforeMove);
+    assert.ok(catalogRecBefore, "recruiter before move date appears in catalog");
+    assert.equal(catalogRecBefore.team_id, TEAM_A, "before move date catalog resolves old team");
+    const currentBefore = await readMemberships(db, "current", { p_recruiter_id: recBeforeMove });
+    assert.equal(currentBefore.total, 1);
+    assert.equal(currentBefore.memberships[0].team_id, TEAM_A);
+    assert.equal(currentBefore.memberships[0].state, "CURRENT");
+    const createdBefore = await createProfileV2(recBeforeMove, "71");
+    const entryBefore = (await db.query(
+      "select team_id from public.direct_entries where entry_id = $1::uuid",
+      [createdBefore.entry_ids[0]],
+    )).rows[0];
+    assert.equal(entryBefore.team_id, TEAM_A, "profile created before move date uses old team");
+
+    // 2 & 3. On the exact move boundary date (`old.valid_to = next.valid_from = authDate`):
+    // Even if legacy `is_current` was still true on the outgoing row and false on the incoming row,
+    // half-open `[valid_from, valid_to)` resolves exactly the new team (TEAM_B) with no gap/overlap.
+    await db.query(
+      "insert into public.recruiter_team_memberships"
+      + " (recruiter_id, team_id, valid_from, valid_to, is_current) values"
+      + " ($1::uuid, $2::uuid, $4::date, $5::date, true),"
+      + " ($1::uuid, $3::uuid, $5::date, null, false)",
+      [recOnBoundary, TEAM_A, TEAM_B, PAST, authDate],
+    );
+    const catalogBoundary = (await getCatalog(authDate)).recruiters.find(
+      (r) => r.recruiter_id === recOnBoundary,
+    );
+    assert.ok(catalogBoundary, "recruiter on move boundary date appears in catalog");
+    assert.equal(catalogBoundary.team_id, TEAM_B, "on move date (valid_from) catalog resolves new team");
+    const currentBoundary = await readMemberships(db, "current", { p_recruiter_id: recOnBoundary });
+    assert.equal(currentBoundary.total, 1, "boundary date never yields 0 or 2 current rows");
+    assert.equal(currentBoundary.memberships[0].team_id, TEAM_B);
+    assert.equal(currentBoundary.memberships[0].state, "CURRENT");
+    const createdOnBoundary = await createProfileV2(recOnBoundary, "72");
+    const entryOnBoundary = (await db.query(
+      "select team_id from public.direct_entries where entry_id = $1::uuid",
+      [createdOnBoundary.entry_ids[0]],
+    )).rows[0];
+    assert.equal(entryOnBoundary.team_id, TEAM_B, "profile created on move date uses new team");
+
+    // 3b. After move date (`old.valid_to = next.valid_from = LATER < authDate`) + cancelled marker
+    // (`valid_to = valid_from`) on the same recruiter: cancelled marker is inert, new team is used.
+    await db.exec("select set_config('direct_entry.membership_cancel_marker', 'on', true)");
+    await db.query(
+      "insert into public.recruiter_team_memberships"
+      + " (recruiter_id, team_id, valid_from, valid_to, is_current) values"
+      + " ($1::uuid, $2::uuid, $4::date, $5::date, true),"
+      + " ($1::uuid, $2::uuid, '2026-01-15'::date, '2026-01-15'::date, false),"
+      + " ($1::uuid, $3::uuid, $5::date, null, false)",
+      [recAfterMove, TEAM_A, TEAM_B, PAST, LATER],
+    );
+    const catalogAfter = (await getCatalog(authDate)).recruiters.find(
+      (r) => r.recruiter_id === recAfterMove,
+    );
+    assert.ok(catalogAfter, "recruiter after move date appears in catalog");
+    assert.equal(catalogAfter.team_id, TEAM_B, "after move date catalog resolves new team");
+    const currentAfter = await readMemberships(db, "current", { p_recruiter_id: recAfterMove });
+    assert.equal(currentAfter.total, 1);
+    assert.equal(currentAfter.memberships[0].team_id, TEAM_B);
+    assert.equal(currentAfter.memberships[0].state, "CURRENT");
+    const createdAfter = await createProfileV2(recAfterMove, "73");
+    const entryAfter = (await db.query(
+      "select team_id from public.direct_entries where entry_id = $1::uuid",
+      [createdAfter.entry_ids[0]],
+    )).rows[0];
+    assert.equal(entryAfter.team_id, TEAM_B, "profile created after move date uses new team");
+
+    // 4 & 5. Expired membership (`valid_to <= authDate` with stale `is_current = true`) + cancelled
+    // schedule (`valid_to = valid_from`) and no active successor:
+    // - excluded from input catalog;
+    // - `direct_entry_list_team_membership_current` returns `total: 0` (never a HISTORY row);
+    // - profile creation fails closed with `22023: RECRUITER_MEMBERSHIP_INVALID`;
+    // - raw/trigger validation fails closed with `23514: team membership missing or ambiguous`.
+    await db.exec("select set_config('direct_entry.membership_cancel_marker', 'on', true)");
+    await db.query(
+      "insert into public.recruiter_team_memberships"
+      + " (recruiter_id, team_id, valid_from, valid_to, is_current) values"
+      + " ($1::uuid, $2::uuid, '2026-07-10'::date, '2026-10-31'::date, true),"
+      + " ($1::uuid, $2::uuid, '2026-10-05'::date, '2026-10-05'::date, false)",
+      [recExpiredCancelled, TEAM_A],
+    );
+    const catalogExpired = (await getCatalog(authDate)).recruiters.find(
+      (r) => r.recruiter_id === recExpiredCancelled,
+    );
+    assert.equal(catalogExpired, undefined, "expired + cancelled schedule recruiter is excluded from catalog");
+    const currentExpired = await readMemberships(db, "current", { p_recruiter_id: recExpiredCancelled });
+    assert.equal(currentExpired.total, 0, "current list never returns an expired HISTORY row");
+    assert.deepEqual(currentExpired.memberships, []);
+
+    await expectMutationError(
+      () => createProfileV2(recExpiredCancelled, "74"),
+      "22023",
+    );
+    await db.exec("savepoint check_invalid_message");
+    try {
+      await assert.rejects(
+        () => createProfileV2(recExpiredCancelled, "75"),
+        (error) => error.code === "22023" && error.message === "RECRUITER_MEMBERSHIP_INVALID",
+      );
+    } finally {
+      await db.exec("rollback to savepoint check_invalid_message; release savepoint check_invalid_message");
+    }
+
+    await db.exec("savepoint check_trigger_23514");
+    try {
+      await assert.rejects(
+        () => db.query(
+          "insert into public.direct_entries ("
+          + " submission_id, candidate_id, created_by_user_id, project_id, first_work_date,"
+          + " employee_code, worker_details, recruiter_id, team_id, provider_type, labor_type"
+          + ") values ("
+          + " $1::uuid, $2::uuid, $3::uuid, $4, $5::date, 'hrp-2026-999991',"
+          + " '{\"display_name\":\"Trigger Test\"}'::jsonb, $6::uuid, $7::uuid, 'hrp', 'TEMPORARY'"
+          + ")",
+          [SUBMISSION_ID, CANDIDATE_ID, FULL_ADMIN.app, PROJECT_ID, authDate, recExpiredCancelled, TEAM_A],
+        ),
+        (error) => error.code === "23514" && error.message === "team membership missing or ambiguous",
+      );
+    } finally {
+      await db.exec("rollback to savepoint check_trigger_23514; release savepoint check_trigger_23514");
+    }
+
+    // 6. Verify the migration's legacy `is_current` reconciliation rule deterministically promotes
+    // rolled-over moves (`recOnBoundary`, `recAfterMove`) and clears expired/cancelled markers
+    // (`recExpiredCancelled`).
+    const alignMigration = await readFile(
+      path.join(MIGRATION_DIR, "20261103180000_hf_hrp_membership_effective_interval_alignment.sql"),
+      "utf8",
+    );
+    const reconcileEnd = alignMigration.indexOf("$reconcile_legacy_memberships$;")
+      + "$reconcile_legacy_memberships$;".length;
+    await db.exec(alignMigration.slice(0, reconcileEnd));
+
+    assert.deepEqual(
+      (await db.query(
+        "select team_id, is_current from public.recruiter_team_memberships"
+        + " where recruiter_id = $1::uuid order by valid_from",
+        [recOnBoundary],
+      )).rows,
+      [
+        { team_id: TEAM_A, is_current: false },
+        { team_id: TEAM_B, is_current: true },
+      ],
+      "reconciliation promotes incoming boundary row and clears expired outgoing row",
+    );
+    assert.deepEqual(
+      (await db.query(
+        "select team_id, valid_from::text as valid_from, valid_to::text as valid_to, is_current"
+        + " from public.recruiter_team_memberships"
+        + " where recruiter_id = $1::uuid order by valid_from, valid_to nulls last",
+        [recAfterMove],
+      )).rows,
+      [
+        { team_id: TEAM_A, valid_from: PAST, valid_to: LATER, is_current: false },
+        { team_id: TEAM_A, valid_from: "2026-01-15", valid_to: "2026-01-15", is_current: false },
+        { team_id: TEAM_B, valid_from: LATER, valid_to: null, is_current: true },
+      ],
+      "reconciliation promotes rolled-over move and keeps cancellation marker false",
+    );
+    assert.deepEqual(
+      (await db.query(
+        "select is_current from public.recruiter_team_memberships"
+        + " where recruiter_id = $1::uuid order by valid_from",
+        [recExpiredCancelled],
+      )).rows,
+      [{ is_current: false }, { is_current: false }],
+      "reconciliation clears expired marker when no active successor exists",
+    );
+  } finally {
+    await db.exec("rollback");
+  }
+});
+
+test("Team Leader scheduled succession, cancellation restoration, rollover, conflict guard, leave routing, and idempotent historical reconciliation", async () => {
+  await db.exec("begin");
+  try {
+    const { rows: dateRows } = await db.query(
+      "select public.direct_entry_authorization_date()::text as today,"
+      + " (public.direct_entry_authorization_date() + 7)::text as future_date,"
+      + " (public.direct_entry_authorization_date() - 3)::text as past_rollover",
+    );
+    const today = dateRows[0].today;
+    const futureDate = dateRows[0].future_date;
+    const pastRollover = dateRows[0].past_rollover;
+
+    const teamLeaderTest = "94000000-0000-4000-8000-0000000000e1";
+    const teamOther = "94000000-0000-4000-8000-0000000000e2";
+    await db.query(
+      "insert into public.teams (team_id, code, display_name, active, version) values"
+      + " ($1::uuid, 'TL_TEST_1', 'Synthetic Team Leader 1', true, 1),"
+      + " ($2::uuid, 'TL_TEST_2', 'Synthetic Team Leader 2', true, 1)",
+      [teamLeaderTest, teamOther],
+    );
+
+    const leader1 = {
+      auth: "10000000-0000-4000-8000-0000000000f1",
+      app: "20000000-0000-4000-8000-0000000000f1",
+      recruiter: "93000000-0000-4000-8000-0000000000e1",
+    };
+    const leader2 = {
+      auth: "10000000-0000-4000-8000-0000000000f2",
+      app: "20000000-0000-4000-8000-0000000000f2",
+      recruiter: "93000000-0000-4000-8000-0000000000e2",
+    };
+    const teamMember = {
+      auth: "10000000-0000-4000-8000-0000000000f3",
+      app: "20000000-0000-4000-8000-0000000000f3",
+      recruiter: "93000000-0000-4000-8000-0000000000e3",
+    };
+
+    for (const [person, name, code] of [
+      [leader1, "Nguyen The Vinh Synthetic", "vinhnt.synthetic"],
+      [leader2, "Do Duc Thuan Synthetic", "thuandd.synthetic"],
+      [teamMember, "Team Member Synthetic", "member.synthetic"],
+    ]) {
+      await addActor(db, {
+        auth: person.auth,
+        app: person.app,
+        display_name: name,
+        capabilities: ["entry_own"],
+        scopes: ["own"],
+      });
+      await db.query(
+        "insert into public.recruiters (recruiter_id, display_name, personnel_code, active, version)"
+        + " values ($1::uuid, $2, $3, true, 1)",
+        [person.recruiter, name, code],
+      );
+      await db.query(
+        "insert into public.recruiter_provider_memberships"
+        + " (recruiter_id, provider_type, valid_from, valid_to, vendor_id, is_current)"
+        + " values ($1::uuid, 'hrp', $2::date, null, null, true)",
+        [person.recruiter, PAST],
+      );
+      await db.query(
+        "insert into public.recruiter_team_memberships"
+        + " (recruiter_id, team_id, valid_from, valid_to, is_current)"
+        + " values ($1::uuid, $2::uuid, $3::date, null, true)",
+        [person.recruiter, teamLeaderTest, PAST],
+      );
+      await db.query(
+        "insert into public.direct_entry_app_user_recruiter_links"
+        + " (app_user_id, recruiter_id, verified, valid_from, valid_to, is_current)"
+        + " values ($1::uuid, $2::uuid, true, $3::date, null, true)",
+        [person.app, person.recruiter, PAST],
+      );
+      await db.query(
+        "insert into public.leave_employee_profiles"
+        + " (app_user_id, unit_kind, employment_status, work_start_date, official_effective_date, is_shared_non_employee)"
+        + " values ($1::uuid, 'RECRUITMENT', 'OFFICIAL', $2::date, $2::date, false)",
+        [person.app, PAST],
+      );
+    }
+
+    const designateLeader = async (teamId, targetAppUserId, effectiveDate, expectedVersion, keySuffix) => {
+      const { rows } = await db.query(
+        "select public.direct_entry_designate_team_leader("
+        + " $1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::date, $6::int, $7::text, $8::text) as result",
+        [CATALOG.auth, CATALOG.app, teamId, targetAppUserId, effectiveDate, expectedVersion, REASON, KEY(keySuffix)],
+      );
+      return rows[0].result;
+    };
+
+    const revokeLeader = async (teamId, effectiveDate, expectedVersion, keySuffix) => {
+      const { rows } = await db.query(
+        "select public.direct_entry_revoke_team_leader("
+        + " $1::uuid, $2::uuid, $3::uuid, $4::date, $5::int, $6::text, $7::text) as result",
+        [CATALOG.auth, CATALOG.app, teamId, effectiveDate, expectedVersion, REASON, KEY(keySuffix)],
+      );
+      return rows[0].result;
+    };
+
+    const listCurrentLeaders = async (teamId) => {
+      const { rows } = await db.query(
+        "select public.direct_entry_list_team_leaders_current($1::uuid, $2::uuid, $3::uuid, null, 1, 25) as result",
+        [CATALOG.auth, CATALOG.app, teamId],
+      );
+      return rows[0].result;
+    };
+
+    const expectSavepointReject = async (fn, code, message) => {
+      await db.exec("savepoint tl_expect_reject");
+      try {
+        await assert.rejects(fn, (err) => err.code === code, message);
+      } finally {
+        await db.exec("rollback to savepoint tl_expect_reject; release savepoint tl_expect_reject");
+      }
+    };
+
+    // 1. Designate leader1 today and schedule leader2 as future successor (`valid_from = futureDate`).
+    const des1 = await designateLeader(teamLeaderTest, leader1.app, PAST, 1, "81");
+    assert.equal(des1.change, "designate");
+    const rep1 = await designateLeader(teamLeaderTest, leader2.app, futureDate, 2, "82");
+    assert.equal(rep1.change, "replace");
+
+    // While future successor schedule is active (`today < futureDate`), predecessor `leader1` remains in effect:
+    const currentDuringSchedule = await listCurrentLeaders(teamLeaderTest);
+    assert.equal(currentDuringSchedule.total, 1);
+    assert.equal(currentDuringSchedule.leaders[0].leader_app_user_id, leader1.app);
+    assert.equal(currentDuringSchedule.leaders[0].valid_to, futureDate);
+
+    assert.equal(
+      (await db.query(
+        "select public.direct_entry_assert_team_leader_current_team($1::uuid, $2::uuid, $3::uuid)::text as team_id",
+        [leader1.auth, leader1.app, teamLeaderTest],
+      )).rows[0].team_id,
+      teamLeaderTest,
+      "predecessor retains current team authority before scheduled replacement date",
+    );
+    await expectSavepointReject(
+      () => db.query(
+        "select public.direct_entry_assert_team_leader_current_team($1::uuid, $2::uuid, $3::uuid)",
+        [leader2.auth, leader2.app, teamLeaderTest],
+      ),
+      "42501",
+      "future successor does not have current team authority before valid_from",
+    );
+
+    const ctxLeader1Before = (await db.query(
+      "select public.direct_entry_resolve_actor_context($1::uuid) as ctx",
+      [leader1.auth],
+    )).rows[0].ctx;
+    assert.ok(ctxLeader1Before.capabilities.includes("team_manager_assign"));
+    assert.ok(ctxLeader1Before.capabilities.includes("report_review"));
+    assert.deepEqual(
+      ctxLeader1Before.teams.map((t) => t.team_id),
+      [teamLeaderTest],
+    );
+    assert.deepEqual(
+      ctxLeader1Before.effective_report_review_scopes.map((s) => ({ kind: s.kind, team_id: s.team_id })),
+      [{ kind: "team", team_id: teamLeaderTest }],
+    );
+
+    const leaveAuth1Before = (await db.query(
+      "select public.leave_management__internal_resolve_authority($1::uuid, $2::uuid) as auth",
+      [leader1.auth, leader1.app],
+    )).rows[0].auth;
+    const leaveAuth2Before = (await db.query(
+      "select public.leave_management__internal_resolve_authority($1::uuid, $2::uuid) as auth",
+      [leader2.auth, leader2.app],
+    )).rows[0].auth;
+    assert.equal(leaveAuth1Before.is_team_leader, true);
+    assert.equal(leaveAuth2Before.is_team_leader, false);
+
+    const routingToday = (await db.query(
+      "select public.leave_management__internal_resolve_routing($1::uuid, $2::date) as route",
+      [teamMember.app, today],
+    )).rows[0].route;
+    assert.equal(routingToday.route_kind, "TEAM_LEADER");
+    assert.equal(routingToday.primary_approver_app_user_id, leader1.app);
+
+    const routingAtFutureDate = (await db.query(
+      "select public.leave_management__internal_resolve_routing($1::uuid, $2::date) as route",
+      [teamMember.app, futureDate],
+    )).rows[0].route;
+    assert.equal(routingAtFutureDate.route_kind, "TEAM_LEADER");
+    assert.equal(routingAtFutureDate.primary_approver_app_user_id, leader2.app);
+
+    // 2. Cancel the scheduled replacement (`revoke` at `futureDate`): predecessor `leader1` is restored (`valid_to = null`).
+    const rev1 = await revokeLeader(teamLeaderTest, futureDate, 3, "83");
+    assert.equal(rev1.change, "revoke");
+    assert.equal(rev1.valid_from, futureDate);
+    assert.equal(rev1.valid_to, futureDate);
+
+    const currentAfterCancel = await listCurrentLeaders(teamLeaderTest);
+    assert.equal(currentAfterCancel.total, 1);
+    assert.equal(currentAfterCancel.leaders[0].leader_app_user_id, leader1.app);
+    assert.equal(currentAfterCancel.leaders[0].valid_to, null, "predecessor valid_to is restored to null");
+
+    const leader1GrantsAfterCancel = (await db.query(
+      "select capability, valid_to, is_current from public.direct_entry_capability_grants"
+      + " where app_user_id = $1::uuid and capability in ('team_manager_assign', 'report_view', 'report_analytics_view', 'report_assign', 'report_review')"
+      + " order by capability",
+      [leader1.app],
+    )).rows;
+    assert.equal(leader1GrantsAfterCancel.length, 5);
+    for (const grant of leader1GrantsAfterCancel) {
+      assert.equal(grant.valid_to, null, `${grant.capability} valid_to restored to null`);
+      assert.equal(grant.is_current, true, `${grant.capability} is_current stays true`);
+    }
+
+    const routingAfterCancelAtFutureDate = (await db.query(
+      "select public.leave_management__internal_resolve_routing($1::uuid, $2::date) as route",
+      [teamMember.app, futureDate],
+    )).rows[0].route;
+    assert.equal(routingAfterCancelAtFutureDate.route_kind, "TEAM_LEADER");
+    assert.equal(routingAfterCancelAtFutureDate.primary_approver_app_user_id, leader1.app);
+
+    // 3. When a scheduled replacement reaches its start date (`pastRollover <= today`), authority transitions to `leader2`
+    // even before any mutation flips the stored `is_current` flags.
+    const rep2 = await designateLeader(teamLeaderTest, leader2.app, pastRollover, 4, "84");
+    assert.equal(rep2.change, "replace");
+
+    await db.query(
+      "update public.direct_entry_team_leader_assignments"
+      + " set is_current = (leader_app_user_id = $2::uuid)"
+      + " where team_id = $1::uuid and (valid_to is null or valid_to > valid_from)",
+      [teamLeaderTest, leader1.app],
+    );
+    await db.query(
+      "update public.direct_entry_scope_grants"
+      + " set is_current = (app_user_id = $2::uuid)"
+      + " where team_id = $1::uuid and scope_kind = 'team' and (valid_to is null or valid_to > valid_from)",
+      [teamLeaderTest, leader1.app],
+    );
+    await db.query(
+      "update public.direct_entry_capability_grants"
+      + " set is_current = (app_user_id = $1::uuid)"
+      + " where app_user_id in ($1::uuid, $2::uuid)"
+      + "   and capability in ('team_manager_assign', 'report_view', 'report_analytics_view', 'report_assign', 'report_review')"
+      + "   and (valid_to is null or valid_to > valid_from)",
+      [leader1.app, leader2.app],
+    );
+
+    const currentAfterRollover = await listCurrentLeaders(teamLeaderTest);
+    assert.equal(currentAfterRollover.total, 1);
+    assert.equal(currentAfterRollover.leaders[0].leader_app_user_id, leader2.app, "rolled-over successor is now current leader");
+
+    assert.equal(
+      (await db.query(
+        "select public.direct_entry_assert_team_leader_current_team($1::uuid, $2::uuid, $3::uuid)::text as team_id",
+        [leader2.auth, leader2.app, teamLeaderTest],
+      )).rows[0].team_id,
+      teamLeaderTest,
+      "successor has current team authority once valid_from <= today",
+    );
+    await expectSavepointReject(
+      () => db.query(
+        "select public.direct_entry_assert_team_leader_current_team($1::uuid, $2::uuid, $3::uuid)",
+        [leader1.auth, leader1.app, teamLeaderTest],
+      ),
+      "42501",
+      "outgoing predecessor no longer has current team authority once valid_to <= today",
+    );
+
+    const routingAfterRollover = (await db.query(
+      "select public.leave_management__internal_resolve_routing($1::uuid, $2::date) as route",
+      [teamMember.app, today],
+    )).rows[0].route;
+    assert.equal(routingAfterRollover.route_kind, "TEAM_LEADER");
+    assert.equal(routingAfterRollover.primary_approver_app_user_id, leader2.app);
+
+    // 4. Do NOT restore predecessor if predecessor has a conflicting assignment on another team (`teamOther`).
+    // First schedule `leader1` to replace `leader2` at `futureDate`, then give `leader2` a conflicting team scope on `teamOther`,
+    // then cancel `leader1` at `futureDate`: `leader2` must NOT be reopened to `valid_to = null`.
+    const rep3 = await designateLeader(teamLeaderTest, leader1.app, futureDate, 5, "85");
+    assert.equal(rep3.change, "replace");
+    await db.query(
+      "insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from, valid_to, is_current)"
+      + " values ($1::uuid, 'team', $2::uuid, $3::date, null, false)",
+      [leader2.app, teamOther, futureDate],
+    );
+    const revConflict = await revokeLeader(teamLeaderTest, futureDate, 6, "86");
+    assert.equal(revConflict.change, "revoke");
+    const leader2ClosedRow = (await db.query(
+      "select valid_to::text as valid_to from public.direct_entry_team_leader_assignments"
+      + " where team_id = $1::uuid and leader_app_user_id = $2::uuid and valid_from = $3::date",
+      [teamLeaderTest, leader2.app, pastRollover],
+    )).rows[0];
+    assert.equal(
+      leader2ClosedRow.valid_to,
+      futureDate,
+      "predecessor is NOT reopened when a conflicting future scope/assignment exists",
+    );
+    await db.query(
+      "delete from public.direct_entry_scope_grants where app_user_id = $1::uuid and team_id = $2::uuid",
+      [leader2.app, teamOther],
+    );
+
+    // 5. Historical reconciliation (`direct_entry__internal_reconcile_cancelled_team_leaders`):
+    // Simulate the pre-fix state where `revoke` at `pastRollover` left `previous_leader_recruiter_id = null`
+    // and left the predecessor (`leader2`) closed at `futureDate`.
+    const reconcileFirst = (await db.query(
+      "select public.direct_entry__internal_reconcile_cancelled_team_leaders($1::date) as res",
+      [today],
+    )).rows[0].res;
+    assert.equal(reconcileFirst.restored_count, 1, "historical cancelled replacement is reconciled once");
+
+    const leader2RestoredRow = (await db.query(
+      "select valid_to, is_current from public.direct_entry_team_leader_assignments"
+      + " where team_id = $1::uuid and leader_app_user_id = $2::uuid and valid_from = $3::date",
+      [teamLeaderTest, leader2.app, pastRollover],
+    )).rows[0];
+    assert.deepEqual(leader2RestoredRow, { valid_to: null, is_current: true });
+
+    const reconcileSecond = (await db.query(
+      "select public.direct_entry__internal_reconcile_cancelled_team_leaders($1::date) as res",
+      [today],
+    )).rows[0].res;
+    assert.equal(reconcileSecond.restored_count, 0, "reconciliation is idempotent on repeated runs");
+  } finally {
+    await db.exec("rollback");
+  }
+});
+
