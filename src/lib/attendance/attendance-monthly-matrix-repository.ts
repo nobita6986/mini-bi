@@ -607,8 +607,8 @@ export function createServiceAttendanceMonthlyMatrixRepository(
       try {
         resolvedRpc ??= serviceRoleRpc();
         const result = await resolvedRpc("attendance_get_my_explanations_overview", {
-          p_auth_subject: input.auth_subject,
-          p_app_user_id: input.app_user_id,
+          p_actor_auth_subject: input.auth_subject,
+          p_actor_app_user_id: input.app_user_id,
           p_business_date: input.business_date,
         });
 
@@ -635,8 +635,8 @@ export function createServiceAttendanceMonthlyMatrixRepository(
       try {
         resolvedRpc ??= serviceRoleRpc();
         const result = await resolvedRpc("attendance_submit_explanation", {
-          p_auth_subject: input.auth_subject,
-          p_app_user_id: input.app_user_id,
+          p_actor_auth_subject: input.auth_subject,
+          p_actor_app_user_id: input.app_user_id,
           p_business_date: input.business_date,
           p_slot_code: input.slot_code,
           p_reason: input.reason,
@@ -667,8 +667,8 @@ export function createServiceAttendanceMonthlyMatrixRepository(
       try {
         resolvedRpc ??= serviceRoleRpc();
         const result = await resolvedRpc("attendance_list_explanation_approval_inbox", {
-          p_auth_subject: input.auth_subject,
-          p_app_user_id: input.app_user_id,
+          p_actor_auth_subject: input.auth_subject,
+          p_actor_app_user_id: input.app_user_id,
           p_status_filter: input.status_filter,
         });
 
@@ -697,8 +697,8 @@ export function createServiceAttendanceMonthlyMatrixRepository(
       try {
         resolvedRpc ??= serviceRoleRpc();
         const result = await resolvedRpc("attendance_decide_explanation", {
-          p_auth_subject: input.auth_subject,
-          p_app_user_id: input.app_user_id,
+          p_actor_auth_subject: input.auth_subject,
+          p_actor_app_user_id: input.app_user_id,
           p_explanation_id: input.explanation_id,
           p_decision: input.decision,
           p_expected_row_version: input.expected_row_version,
