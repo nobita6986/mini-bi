@@ -482,8 +482,9 @@ test("Detailed Matrix (4): Dashboard UI places 'Báo cáo chi tiết' at 'Báo c
   assert.ok(panelSrc.includes("/api/reporting/detailed-matrix"));
   assert.match(
     panelSrc,
-    /<FloatingTableNav[\s\S]*?containerRef=\{tableScrollRef\}[\s\S]*?tableLabel="Báo cáo chi tiết"[\s\S]*?position="bottom-left"/,
+    /<FloatingTableNav[\s\S]*?containerRef=\{tableScrollRef\}[\s\S]*?tableLabel="Báo cáo chi tiết"/,
   );
+  assert.doesNotMatch(panelSrc, /position="bottom-left"/);
 
   // 4. Zoom +/- affects ONLY time bucket columns and Total column; STT and Họ tên remain fixed size/font/sticky
   const zoomLevels = [70, 80, 90, 100, 110, 120, 130];
