@@ -34,6 +34,9 @@ import {
   ATTENDANCE_REPORT_MAX_PAGE_SIZE,
 } from "./attendance-report-contract.ts";
 import {
+  createServiceAttendanceMonthlyMatrixRepository,
+} from "./attendance-monthly-matrix-repository.ts";
+import {
   projectAdminUpdateLocationRequest,
   updateProjectLocationAdmin,
 } from "../direct-entry/project-admin-api.ts";
@@ -1477,4 +1480,232 @@ test("Wave 2 Attendance Explanation contracts, fingerprints, and API handlers en
   assert.equal(decideJson.ok, true);
   assert.equal(decideJson.explanation.status, "APPROVED");
   assert.equal(decideJson.explanation.effective_slot_status, "EXPLAINED_APPROVED");
+
+  // 6. Regression test: createServiceAttendanceMonthlyMatrixRepository + API handlers
+  // must call exact Wave 2 RPC names and exact DB parameter names (p_actor_auth_subject, p_actor_app_user_id)
+  const rpcCalls = [];
+  const rpcBackedRepository = createServiceAttendanceMonthlyMatrixRepository(async (name, args) => {
+    rpcCalls.push({ name, args });
+
+    if (name === "attendance_get_my_explanations_overview") {
+      return {
+        data: {
+          viewer: {
+            app_user_id: APP_USER_ID,
+            can_submit_explanation: true,
+            can_approve_explanations: true,
+            is_shared_non_employee: false,
+            is_full_admin: true,
+            is_bod: false,
+          },
+          routing: {
+            route_kind: "TEAM_LEADER",
+            unit_kind: "RECRUITMENT",
+            primary_approver: sampleExplanationItem.primary_approver,
+            team_id: BRANCH_ID,
+            team_code: "TEAM-01",
+            team_name: "Team Bắc Ninh",
+            fallback_reason: null,
+            profile_configured: true,
+          },
+          today_local: "2026-10-08",
+          selected_date: "2026-10-07",
+          day_evaluation: {
+            business_date: "2026-10-07",
+            policy_version_used: 1,
+            slots: [
+              {
+                slot_code: "SLOT_1",
+                slot_index: 1,
+                slot_label: "Time 1",
+                session_code: "AM",
+                target_time: "07:30",
+                grace_before_minutes: 15,
+                grace_after_minutes: 15,
+                is_leave_covered: false,
+                original_slot_status: "MISSING",
+                slot_status: "MISSING",
+                eligible_for_explanation: true,
+                checkins: [],
+                explanation: null,
+              },
+            ],
+          },
+          pagination: {
+            limit: 50,
+            offset: 0,
+            total_rows: 1,
+          },
+          items: [sampleExplanationItem],
+        },
+        error: null,
+      };
+    }
+
+    if (name === "attendance_submit_explanation") {
+      return {
+        data: {
+          replayed: false,
+          explanation: sampleExplanationItem,
+        },
+        error: null,
+      };
+    }
+
+    if (name === "attendance_list_explanation_approval_inbox") {
+      return {
+        data: {
+          viewer: {
+            app_user_id: APP_USER_ID,
+            can_approve_explanations: true,
+            is_full_admin: true,
+            is_bod: false,
+          },
+          pagination: {
+            limit: 50,
+            offset: 0,
+            total_rows: 1,
+            pending_count: 1,
+          },
+          items: [{ ...sampleExplanationItem, can_decide: true }],
+        },
+        error: null,
+      };
+    }
+
+    if (name === "attendance_decide_explanation") {
+      return {
+        data: {
+          replayed: false,
+          explanation: {
+            ...sampleExplanationItem,
+            status: "APPROVED",
+            effective_slot_status: "EXPLAINED_APPROVED",
+            decided_at: "2026-10-08T01:00:00.000Z",
+            decided_at_local: "2026-10-08 08:00:00",
+            decided_by: sampleExplanationItem.primary_approver,
+            decision_note: "Đồng ý giải trình",
+            row_version: 2,
+          },
+        },
+        error: null,
+      };
+    }
+
+    return {
+      data: null,
+      error: { code: "42883", message: `unexpected RPC ${name}` },
+    };
+  });
+
+  const overviewViaRepoRes = await getMyAttendanceExplanations(
+    new Request("https://bi.example.com/api/attendance/explanations?business_date=2026-10-07"),
+    {
+      resolveSession: async () => makeSessionOk(STAFF_CAPS, ALL_SCOPE),
+      repository: rpcBackedRepository,
+    },
+  );
+  assert.equal(overviewViaRepoRes.status, 200);
+
+  const expectedSubmitFp = computeExplanationSubmitRequestFingerprint({
+    app_user_id: APP_USER_ID,
+    business_date: "2026-10-07",
+    slot_code: "SLOT_1",
+    reason: "Đi khảo sát dự án sáng sớm",
+  });
+  const submitViaRepoRes = await postSubmitAttendanceExplanation(
+    makeJsonRequest("https://bi.example.com/api/attendance/explanations", "POST", {
+      business_date: "2026-10-07",
+      slot_code: "SLOT_1",
+      reason: "Đi khảo sát dự án sáng sớm",
+      idempotency_key: IDEMPOTENCY_KEY,
+    }),
+    {
+      resolveSession: async () => makeSessionOk(STAFF_CAPS, ALL_SCOPE),
+      repository: rpcBackedRepository,
+    },
+  );
+  assert.equal(submitViaRepoRes.status, 201);
+
+  const inboxViaRepoRes = await getAttendanceExplanationApprovalInbox(
+    new Request("https://bi.example.com/api/attendance/explanations/approvals?status=PENDING"),
+    {
+      resolveSession: async () => makeSessionOk(FULL_ADMIN_CAPS, ALL_SCOPE),
+      repository: rpcBackedRepository,
+    },
+  );
+  assert.equal(inboxViaRepoRes.status, 200);
+
+  const expectedDecideFp = computeExplanationDecideRequestFingerprint({
+    app_user_id: APP_USER_ID,
+    explanation_id: EXPLANATION_ID,
+    decision: "APPROVE",
+    expected_row_version: 1,
+    decision_note: "Đồng ý giải trình",
+  });
+  const decideViaRepoRes = await postDecideAttendanceExplanation(
+    makeJsonRequest(
+      `https://bi.example.com/api/attendance/explanations/approvals/${EXPLANATION_ID}/decision`,
+      "POST",
+      {
+        decision: "APPROVE",
+        expected_row_version: 1,
+        decision_note: "Đồng ý giải trình",
+        idempotency_key: IDEMPOTENCY_KEY,
+      },
+    ),
+    EXPLANATION_ID,
+    {
+      resolveSession: async () => makeSessionOk(FULL_ADMIN_CAPS, ALL_SCOPE),
+      repository: rpcBackedRepository,
+    },
+  );
+  assert.equal(decideViaRepoRes.status, 200);
+
+  assert.equal(rpcCalls.length, 4);
+
+  assert.equal(rpcCalls[0].name, "attendance_get_my_explanations_overview");
+  assert.deepEqual(rpcCalls[0].args, {
+    p_actor_auth_subject: AUTH_SUBJECT,
+    p_actor_app_user_id: APP_USER_ID,
+    p_business_date: "2026-10-07",
+  });
+  assert.equal("p_auth_subject" in rpcCalls[0].args, false);
+  assert.equal("p_app_user_id" in rpcCalls[0].args, false);
+
+  assert.equal(rpcCalls[1].name, "attendance_submit_explanation");
+  assert.deepEqual(rpcCalls[1].args, {
+    p_actor_auth_subject: AUTH_SUBJECT,
+    p_actor_app_user_id: APP_USER_ID,
+    p_business_date: "2026-10-07",
+    p_slot_code: "SLOT_1",
+    p_reason: "Đi khảo sát dự án sáng sớm",
+    p_idempotency_key: IDEMPOTENCY_KEY,
+    p_request_fingerprint: expectedSubmitFp,
+  });
+  assert.equal("p_auth_subject" in rpcCalls[1].args, false);
+  assert.equal("p_app_user_id" in rpcCalls[1].args, false);
+
+  assert.equal(rpcCalls[2].name, "attendance_list_explanation_approval_inbox");
+  assert.deepEqual(rpcCalls[2].args, {
+    p_actor_auth_subject: AUTH_SUBJECT,
+    p_actor_app_user_id: APP_USER_ID,
+    p_status_filter: "PENDING",
+  });
+  assert.equal("p_auth_subject" in rpcCalls[2].args, false);
+  assert.equal("p_app_user_id" in rpcCalls[2].args, false);
+
+  assert.equal(rpcCalls[3].name, "attendance_decide_explanation");
+  assert.deepEqual(rpcCalls[3].args, {
+    p_actor_auth_subject: AUTH_SUBJECT,
+    p_actor_app_user_id: APP_USER_ID,
+    p_explanation_id: EXPLANATION_ID,
+    p_decision: "APPROVE",
+    p_expected_row_version: 1,
+    p_decision_note: "Đồng ý giải trình",
+    p_idempotency_key: IDEMPOTENCY_KEY,
+    p_request_fingerprint: expectedDecideFp,
+  });
+  assert.equal("p_auth_subject" in rpcCalls[3].args, false);
+  assert.equal("p_app_user_id" in rpcCalls[3].args, false);
 });
