@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
 
+import { AttendanceExplanationWorkspace } from "@/components/attendance/attendance-explanation-workspace";
 import { EmptyState } from "@/components/reporting/empty-state";
 import { ErrorState } from "@/components/reporting/error-state";
 import { StatusBadge } from "@/components/ui/badge";
@@ -217,7 +218,7 @@ export function LeaveManagementWorkspace({
   const reasonTextareaId = useId();
 
   const [leaveYear, setLeaveYear] = useState<number>(() => currentVietnamLeaveYear());
-  const [activeTab, setActiveTab] = useState<LeaveWorkspaceTab>(
+  const [activeTab, setActiveTab] = useState<LeaveWorkspaceTab | "explanations">(
     viewMode === "admin" ? initialAdminTab : "personal",
   );
 
@@ -497,13 +498,29 @@ export function LeaveManagementWorkspace({
   ]);
 
   const visibleTabs = useMemo(() => {
-    const tabs = resolveVisibleLeaveTabs(
+    const tabs: ReadonlyArray<{
+      readonly id: LeaveWorkspaceTab | "explanations";
+      readonly label: string;
+      readonly badgeCount?: number;
+    }> = resolveVisibleLeaveTabs(
       authority,
       inboxStatusFilter === "PENDING" ? inboxData?.total : undefined,
     );
-    return viewMode === "admin"
-      ? tabs.filter((tab) => tab.id === "admin" || tab.id === "reports")
-      : tabs.filter((tab) => tab.id === "personal" || tab.id === "approvals");
+    if (viewMode === "admin") {
+      return tabs.filter((tab) => tab.id === "admin" || tab.id === "reports");
+    }
+    const personalTabs: Array<{
+      readonly id: LeaveWorkspaceTab | "explanations";
+      readonly label: string;
+      readonly badgeCount?: number;
+    }> = tabs.filter((tab) => tab.id === "personal" || tab.id === "approvals");
+    if (!authority?.is_shared_non_employee) {
+      personalTabs.push({
+        id: "explanations",
+        label: "Giải trình chấm công",
+      });
+    }
+    return personalTabs;
   }, [authority, inboxStatusFilter, inboxData?.total, viewMode]);
 
   const draftEvaluation = useMemo(
@@ -2225,6 +2242,15 @@ export function LeaveManagementWorkspace({
               </table>
             </DataTableContainer>
           )}
+        </div>
+      ) : null}
+
+      {/* =====================================================================
+          TAB 2B: ATTENDANCE EXPLANATION WORKSPACE (GIẢI TRÌNH CHẤM CÔNG)
+         ===================================================================== */}
+      {activeTab === "explanations" ? (
+        <div className="space-y-4" data-testid="leave-tab-explanations">
+          <AttendanceExplanationWorkspace loginRedirectPath="/leave" />
         </div>
       ) : null}
 

@@ -12,14 +12,20 @@ import {
   computeBranchAssignRequestFingerprint,
   computeBranchUnassignRequestFingerprint,
   computeBranchUpsertRequestFingerprint,
+  computeExplanationDecideRequestFingerprint,
+  computeExplanationSubmitRequestFingerprint,
   computeSlotPolicyCreateRequestFingerprint,
 } from "../src/lib/attendance/attendance-monthly-matrix-api.ts";
 import {
   projectAssignBranchResult,
   projectAttendanceBranchesAdminList,
+  projectAttendanceExplanationApprovalInbox,
   projectAttendanceMonthlyMatrixReport,
   projectAttendanceSlotPoliciesAdminList,
   projectCreateSlotPolicyResult,
+  projectDecideAttendanceExplanationResult,
+  projectMyAttendanceExplanationsOverview,
+  projectSubmitAttendanceExplanationResult,
   projectUnassignBranchResult,
   projectUpsertBranchResult,
 } from "../src/lib/attendance/attendance-monthly-matrix-contract.ts";
@@ -32,6 +38,8 @@ import {
 } from "../src/lib/direct-entry/project-admin-contract.ts";
 import { projectHrpSyncCatalog } from "../src/lib/integrations/hrp/catalog-contract.ts";
 import {
+  ATTENDANCE_EXPLANATIONS_WAVE2_MIGRATION_NAME,
+  ATTENDANCE_EXPLANATIONS_WAVE2_RPC_SIGNATURES,
   ATTENDANCE_FLEXIBLE_SLOT_POLICY_MIGRATION_NAME,
   ATTENDANCE_FLEXIBLE_SLOT_POLICY_RPC_SIGNATURES,
   ATTENDANCE_MONTHLY_MATRIX_BRANCHES_PROJECT_COORDS_MIGRATION_NAME,
@@ -886,11 +894,33 @@ test("HRP Branches, Branch Check-In Distance Snapshot Immutability, Project Coor
     assert.equal(staffARow.summary.approved_leave_day_count, 2); // Nov 5 (PM) and Nov 6 (FULL); Nov 7 SUBMITTED is excluded
     assert.equal(staffARow.summary.approved_leave_units, 1.5); // 3 half-day units = 1.5 days
     assert.equal(staffARow.summary.checkin_and_leave_day_count, 1); // Nov 5 has both check-in and PM leave
-    assert.equal(staffARow.summary.no_checkin_day_count, 28); // 30 - 2 check-in days
+    const { rows: businessDateRows } = await db.query(
+      "select to_char(clock_timestamp() at time zone 'Asia/Ho_Chi_Minh', 'YYYY-MM-DD') as today_vn",
+    );
+    const [todayYear, todayMonth, todayDay] = businessDateRows[0].today_vn
+      .split("-")
+      .map(Number);
+    const todayMonthKey = todayYear * 12 + todayMonth;
+    const reportMonthKey = 2026 * 12 + 11;
+    const completedDayCount = Math.min(
+      30,
+      Math.max(
+        0,
+        todayMonthKey > reportMonthKey
+          ? 30
+          : todayMonthKey === reportMonthKey
+            ? todayDay - 1
+            : 0,
+      ),
+    );
+    const elapsedCheckinDays = [5, 17].filter((day) => day <= completedDayCount).length;
+    const elapsedLeaveDays = [5, 6].filter((day) => day <= completedDayCount).length;
+    const elapsedOverlapDays = [5].filter((day) => day <= completedDayCount).length;
+    assert.equal(staffARow.summary.no_checkin_day_count, completedDayCount - elapsedCheckinDays);
     assert.equal(
       staffARow.summary.no_checkin_without_leave_day_count,
-      27,
-      "30 days - 2 check-in days - 1 leave-only day (Nov 6) = 27 NO_CHECKIN days",
+      completedDayCount - elapsedCheckinDays - (elapsedLeaveDays - elapsedOverlapDays),
+      "Only completed calendar days contribute to missing-attendance totals",
     );
 
     const nov05Cell = staffARow.days.find((d) => d.business_date === "2026-11-05");
@@ -920,8 +950,12 @@ test("HRP Branches, Branch Check-In Distance Snapshot Immutability, Project Coor
 
     const nov07Cell = staffARow.days.find((d) => d.business_date === "2026-11-07");
     assert.ok(nov07Cell);
-    assert.equal(nov07Cell.day_status, "NO_CHECKIN", "unapproved leave must remain NO_CHECKIN");
+    assert.ok(
+      ["UPCOMING", "NO_CHECKIN"].includes(nov07Cell.day_status),
+      "unapproved leave does not cover attendance; the day is upcoming until slots are due",
+    );
     assert.equal(nov07Cell.has_approved_leave, false);
+    assert.ok(nov07Cell.slots.every((slot) => slot.slot_status !== "LEAVE_COVERED"));
 
     const nov17Cell = staffARow.days.find((d) => d.business_date === "2026-11-17");
     assert.ok(nov17Cell);
@@ -1349,8 +1383,10 @@ test("HRP Branches, Branch Check-In Distance Snapshot Immutability, Project Coor
       dec10Cell.slots[2].checkins.map((c) => c.time_local),
       ["14:00"],
     );
-    assert.equal(dec10Cell.slots[3].slot_status, "MISSING");
-    assert.equal(dec10Cell.slots[4].slot_status, "MISSING");
+    assert.equal(dec10Cell.slots[3].slot_status, "UPCOMING");
+    assert.equal(dec10Cell.slots[4].slot_status, "UPCOMING");
+    assert.equal(dec10Cell.day_status, "CHECKED_IN");
+    assert.equal(dec10Cell.missing_slot_count, 0);
 
     const dec16Cell = staffBDecRow.days.find((d) => d.business_date === "2026-12-16");
     assert.ok(dec16Cell);
@@ -1370,6 +1406,330 @@ test("HRP Branches, Branch Check-In Distance Snapshot Immutability, Project Coor
     assert.equal(dec24Cell.slots[5].target_time, "17:30");
     assert.equal(dec24Cell.slots[5].slot_status, "ON_TIME");
     assert.equal(dec24Cell.slots[5].checkins[0].time_local, "17:30");
+
+    // -------------------------------------------------------------------------
+    // 8. Wave 2: Attendance Explanations (Employee Submit, Leave-Aligned Approver Routing, Approve/Reject & Report Projection)
+    // -------------------------------------------------------------------------
+    // Configure TEAM_LEADER as active leader of TEAM_ALPHA so Leave & Attendance Explanation routing resolves TEAM_LEADER
+    const teamLeaderRecruiterId = "39100000-0000-4000-8000-000000000004";
+    await db.query(
+      `insert into public.recruiters (recruiter_id, display_name, personnel_code, personnel_position, active)
+       values ($1::uuid, $2, 'NV_TL_01', 'TEAM_LEADER', true)
+       on conflict do nothing`,
+      [teamLeaderRecruiterId, ACTORS.TEAM_LEADER.name],
+    );
+    await db.query(
+      `insert into public.direct_entry_app_user_recruiter_links
+         (app_user_id, recruiter_id, verified, valid_from, is_current)
+       values ($1::uuid, $2::uuid, true, '2026-01-01', true)
+       on conflict do nothing`,
+      [ACTORS.TEAM_LEADER.app, teamLeaderRecruiterId],
+    );
+    await db.query(
+      `insert into public.direct_entry_team_leader_assignments
+         (team_id, leader_app_user_id, leader_recruiter_id, valid_from, is_current)
+       values ($1::uuid, $2::uuid, $3::uuid, '2026-01-01'::date, true)
+       on conflict do nothing`,
+      [TEAM_ALPHA, ACTORS.TEAM_LEADER.app, teamLeaderRecruiterId],
+    );
+
+    // Seed past check-ins on 2026-10-10 (which is <= today in Asia/Ho_Chi_Minh):
+    // - 00:30 UTC -> 07:30 local -> SLOT_1 (07:30) ON_TIME
+    // - 04:30 UTC -> 11:30 local -> SLOT_2 (10:00) OUT_OF_GRACE (+90p)
+    // - SLOT_4 (15:00) -> MISSING
+    await recordCheckInAsServiceRole(db, {
+      actor: ACTORS.STAFF_B,
+      latitude: HQ_HANOI.latitude,
+      longitude: HQ_HANOI.longitude,
+      captured_at: "2026-10-10T00:30:00.000Z",
+    });
+    await recordCheckInAsServiceRole(db, {
+      actor: ACTORS.STAFF_B,
+      latitude: HQ_HANOI.latitude,
+      longitude: HQ_HANOI.longitude,
+      captured_at: "2026-10-10T04:30:00.000Z",
+    });
+
+    const { rows: checkinCountBeforeRows } = await db.query(
+      `select count(*)::int as cnt
+         from public.attendance_checkins
+        where app_user_id = $1::uuid
+          and business_date = '2026-10-10'::date`,
+      [ACTORS.STAFF_B.app],
+    );
+    assert.equal(checkinCountBeforeRows[0].cnt, 2);
+
+    // 8a. STAFF_B loads personal explanation overview for 2026-10-10
+    const overviewRaw = await callAsServiceRole(
+      db,
+      "select public.attendance_get_my_explanations_overview($1::uuid, $2::uuid, '2026-10-10'::date) as data",
+      [ACTORS.STAFF_B.auth, ACTORS.STAFF_B.app],
+    );
+    const overview = projectMyAttendanceExplanationsOverview(overviewRaw);
+    assert.ok(overview, "attendance_get_my_explanations_overview strict projection passes");
+    assert.equal(overview.viewer.can_submit_explanation, true);
+    assert.equal(overview.routing.route_kind, "TEAM_LEADER");
+    assert.equal(overview.routing.primary_approver?.app_user_id, ACTORS.TEAM_LEADER.app);
+
+    // 8b. Submitting an explanation for a future date is rejected as ATTENDANCE_EXPLANATION_FUTURE_DATE_NOT_ALLOWED
+    await assert.rejects(
+      () =>
+        callAsServiceRole(
+          db,
+          `select public.attendance_submit_explanation(
+            $1::uuid, $2::uuid, '2026-12-16'::date, 'SLOT_1', 'Ngày tương lai', $3::text, $4::text
+          ) as data`,
+          [ACTORS.STAFF_B.auth, ACTORS.STAFF_B.app, nextUuid(), "0".repeat(64)],
+        ),
+      (err) => /ATTENDANCE_EXPLANATION_FUTURE_DATE_NOT_ALLOWED/.test(err.message),
+    );
+
+    // On 2026-10-10, SLOT_1 is ON_TIME (07:30 vs 07:30) -> must be rejected as ATTENDANCE_EXPLANATION_SLOT_NOT_ELIGIBLE!
+    await assert.rejects(
+      () =>
+        callAsServiceRole(
+          db,
+          `select public.attendance_submit_explanation(
+            $1::uuid, $2::uuid, '2026-10-10'::date, 'SLOT_1', 'Khung giờ đã đúng giờ', $3::text, $4::text
+          ) as data`,
+          [ACTORS.STAFF_B.auth, ACTORS.STAFF_B.app, nextUuid(), "1".repeat(64)],
+        ),
+      (err) => /ATTENDANCE_EXPLANATION_SLOT_NOT_ELIGIBLE/.test(err.message),
+    );
+
+    // Submit explanation for 2026-10-10 SLOT_2 (OUT_OF_GRACE, check-in at 11:30 vs 10:00)
+    const expSlot2Key = nextUuid();
+    const expSlot2Body = {
+      app_user_id: ACTORS.STAFF_B.app,
+      business_date: "2026-10-10",
+      slot_code: "SLOT_2",
+      reason: "Kẹt xe khi di chuyển giữa hai điểm phỏng vấn",
+    };
+    const expSlot2Fp = computeExplanationSubmitRequestFingerprint(expSlot2Body);
+    const expSlot2Raw = await callAsServiceRole(
+      db,
+      `select public.attendance_submit_explanation(
+        $1::uuid, $2::uuid, '2026-10-10'::date, 'SLOT_2', $3::text, $4::text, $5::text
+      ) as data`,
+      [
+        ACTORS.STAFF_B.auth,
+        ACTORS.STAFF_B.app,
+        expSlot2Body.reason,
+        expSlot2Key,
+        expSlot2Fp,
+      ],
+    );
+    const expSlot2 = projectSubmitAttendanceExplanationResult(expSlot2Raw);
+    assert.ok(expSlot2, "submit explanation SLOT_2 projection passes");
+    assert.equal(expSlot2.replayed, false);
+    assert.equal(expSlot2.explanation.status, "PENDING");
+    assert.equal(expSlot2.explanation.original_slot_status, "OUT_OF_GRACE");
+    assert.equal(expSlot2.explanation.route_kind, "TEAM_LEADER");
+    assert.equal(expSlot2.explanation.primary_approver?.app_user_id, ACTORS.TEAM_LEADER.app);
+    assert.equal(expSlot2.explanation.related_checkins.length, 1);
+    assert.equal(expSlot2.explanation.related_checkins[0].time_local, "11:30");
+
+    // Submit explanation for 2026-10-10 SLOT_4 (MISSING, target 15:00)
+    const expSlot4Key = nextUuid();
+    const expSlot4Body = {
+      app_user_id: ACTORS.STAFF_B.app,
+      business_date: "2026-10-10",
+      slot_code: "SLOT_4",
+      reason: "Đi gặp ứng viên tại khu công nghiệp không có sóng",
+    };
+    const expSlot4Fp = computeExplanationSubmitRequestFingerprint(expSlot4Body);
+    const expSlot4Raw = await callAsServiceRole(
+      db,
+      `select public.attendance_submit_explanation(
+        $1::uuid, $2::uuid, '2026-10-10'::date, 'SLOT_4', $3::text, $4::text, $5::text
+      ) as data`,
+      [
+        ACTORS.STAFF_B.auth,
+        ACTORS.STAFF_B.app,
+        expSlot4Body.reason,
+        expSlot4Key,
+        expSlot4Fp,
+      ],
+    );
+    const expSlot4 = projectSubmitAttendanceExplanationResult(expSlot4Raw);
+    assert.ok(expSlot4, "submit explanation SLOT_4 projection passes");
+    assert.equal(expSlot4.explanation.original_slot_status, "MISSING");
+    assert.equal(expSlot4.explanation.related_checkins.length, 0);
+
+    // Future slots must not be submittable before their configured time window.
+    const futureExplanationBody = {
+      app_user_id: ACTORS.STAFF_B.app,
+      business_date: "2099-12-31",
+      slot_code: "SLOT_1",
+      reason: "Không thể chấm công ở thời điểm tương lai",
+    };
+    await assert.rejects(
+      () =>
+        callAsServiceRole(
+          db,
+          `select public.attendance_submit_explanation(
+            $1::uuid, $2::uuid, '2099-12-31'::date, 'SLOT_1', $3::text, $4::text, $5::text
+          ) as data`,
+          [
+            ACTORS.STAFF_B.auth,
+            ACTORS.STAFF_B.app,
+            futureExplanationBody.reason,
+            nextUuid(),
+            computeExplanationSubmitRequestFingerprint(futureExplanationBody),
+          ],
+        ),
+      (err) => /ATTENDANCE_EXPLANATION_FUTURE_DATE_NOT_ALLOWED/.test(err.message),
+    );
+
+    // Duplicate explanation for same employee + date + slot with new idempotency key is rejected
+    await assert.rejects(
+      () =>
+        callAsServiceRole(
+          db,
+          `select public.attendance_submit_explanation(
+            $1::uuid, $2::uuid, '2026-10-10'::date, 'SLOT_4', 'Gửi trùng lần 2', $3::text, $4::text
+          ) as data`,
+          [ACTORS.STAFF_B.auth, ACTORS.STAFF_B.app, nextUuid(), "2".repeat(64)],
+        ),
+      (err) => /ATTENDANCE_EXPLANATION_ALREADY_EXISTS/.test(err.message),
+    );
+
+    // Self-approval by STAFF_B is denied
+    await assert.rejects(
+      () =>
+        callAsServiceRole(
+          db,
+          `select public.attendance_decide_explanation(
+            $1::uuid, $2::uuid, $3::uuid, 'APPROVE', 1, 'Tự duyệt', $4::text, $5::text
+          ) as data`,
+          [
+            ACTORS.STAFF_B.auth,
+            ACTORS.STAFF_B.app,
+            expSlot4.explanation.explanation_id,
+            nextUuid(),
+            "3".repeat(64),
+          ],
+        ),
+      (err) =>
+        /ATTENDANCE_EXPLANATION_DECIDE_DENIED|ATTENDANCE_EXPLANATION_SELF_APPROVAL_FORBIDDEN/.test(
+          err.message,
+        ),
+    );
+
+    // 8c. TEAM_LEADER lists explanation approval inbox and sees both PENDING items
+    const inboxRaw = await callAsServiceRole(
+      db,
+      "select public.attendance_list_explanation_approval_inbox($1::uuid, $2::uuid, 'PENDING', 20, 0) as data",
+      [ACTORS.TEAM_LEADER.auth, ACTORS.TEAM_LEADER.app],
+    );
+    const inbox = projectAttendanceExplanationApprovalInbox(inboxRaw);
+    assert.ok(inbox, "attendance_list_explanation_approval_inbox strict projection passes");
+    assert.equal(inbox.pagination.total_rows, 2);
+    assert.equal(inbox.pagination.pending_count, 2);
+
+    // 8d. TEAM_LEADER approves SLOT_4 (MISSING -> EXPLAINED_APPROVED) and rejects SLOT_2 (OUT_OF_GRACE -> keeps OUT_OF_GRACE + REJECTED)
+    const approveKey = nextUuid();
+    const approveBody = {
+      app_user_id: ACTORS.TEAM_LEADER.app,
+      explanation_id: expSlot4.explanation.explanation_id,
+      decision: "APPROVE",
+      expected_row_version: 1,
+      decision_note: "Xác nhận lịch đi tuyển dụng thực tế",
+    };
+    const approveFp = computeExplanationDecideRequestFingerprint(approveBody);
+    const approvedRaw = await callAsServiceRole(
+      db,
+      `select public.attendance_decide_explanation(
+        $1::uuid, $2::uuid, $3::uuid, 'APPROVE', 1, $4::text, $5::text, $6::text
+      ) as data`,
+      [
+        ACTORS.TEAM_LEADER.auth,
+        ACTORS.TEAM_LEADER.app,
+        expSlot4.explanation.explanation_id,
+        approveBody.decision_note,
+        approveKey,
+        approveFp,
+      ],
+    );
+    const approvedRes = projectDecideAttendanceExplanationResult(approvedRaw);
+    assert.ok(approvedRes);
+    assert.equal(approvedRes.explanation.status, "APPROVED");
+    assert.equal(approvedRes.explanation.effective_slot_status, "EXPLAINED_APPROVED");
+
+    const rejectKey = nextUuid();
+    const rejectBody = {
+      app_user_id: ACTORS.TEAM_LEADER.app,
+      explanation_id: expSlot2.explanation.explanation_id,
+      decision: "REJECT",
+      expected_row_version: 1,
+      decision_note: "Không báo trước cho trưởng nhóm",
+    };
+    const rejectFp = computeExplanationDecideRequestFingerprint(rejectBody);
+    const rejectedRaw = await callAsServiceRole(
+      db,
+      `select public.attendance_decide_explanation(
+        $1::uuid, $2::uuid, $3::uuid, 'REJECT', 1, $4::text, $5::text, $6::text
+      ) as data`,
+      [
+        ACTORS.TEAM_LEADER.auth,
+        ACTORS.TEAM_LEADER.app,
+        expSlot2.explanation.explanation_id,
+        rejectBody.decision_note,
+        rejectKey,
+        rejectFp,
+      ],
+    );
+    const rejectedRes = projectDecideAttendanceExplanationResult(rejectedRaw);
+    assert.ok(rejectedRes);
+    assert.equal(rejectedRes.explanation.status, "REJECTED");
+    assert.equal(rejectedRes.explanation.effective_slot_status, "OUT_OF_GRACE");
+
+    // 8e. Verify original attendance_checkins are completely untouched (no synthetic check-ins created)
+    const { rows: checkinCountAfterRows } = await db.query(
+      `select count(*)::int as cnt
+         from public.attendance_checkins
+        where app_user_id = $1::uuid
+          and business_date = '2026-10-10'::date`,
+      [ACTORS.STAFF_B.app],
+    );
+    assert.equal(
+      checkinCountAfterRows[0].cnt,
+      2,
+      "Approving/rejecting explanations must never create or mutate attendance_checkins rows",
+    );
+
+    // 8f. Verify Monthly Report reflects EXPLAINED_APPROVED on SLOT_4 and REJECTED on SLOT_2
+    const octMatrixAfterExp = projectAttendanceMonthlyMatrixReport(
+      await callAsServiceRole(
+        db,
+        `select public.attendance_monthly_matrix_report(
+          $1::uuid, $2::uuid, '2026-10', null, $3::uuid, null, 1, 25
+        ) as data`,
+        [ACTORS.FULL_ADMIN.auth, ACTORS.FULL_ADMIN.app, ACTORS.STAFF_B.app],
+      ),
+    );
+    assert.ok(octMatrixAfterExp);
+    const oct10After = octMatrixAfterExp.items[0].days.find(
+      (d) => d.business_date === "2026-10-10",
+    );
+    assert.ok(oct10After);
+    // SLOT_4 (index 3) is now EXPLAINED_APPROVED and no longer counted as MISSING!
+    assert.equal(oct10After.slots[3].slot_code, "SLOT_4");
+    assert.equal(oct10After.slots[3].slot_status, "EXPLAINED_APPROVED");
+    assert.equal(oct10After.slots[3].explanation?.status, "APPROVED");
+    assert.equal(oct10After.slots[3].checkins.length, 0);
+    // SLOT_2 (index 1) retains OUT_OF_GRACE and carries explanation.status === "REJECTED"
+    assert.equal(oct10After.slots[1].slot_code, "SLOT_2");
+    assert.equal(oct10After.slots[1].slot_status, "OUT_OF_GRACE");
+    assert.equal(oct10After.slots[1].explanation?.status, "REJECTED");
+    // Only SLOT_3 and SLOT_5 (2 slots) remain MISSING -> missing_slot_count decreased from 3 to 2
+    assert.equal(oct10After.missing_slot_count, 2);
+
+    for (const sig of ATTENDANCE_EXPLANATIONS_WAVE2_RPC_SIGNATURES) {
+      const { rows } = await db.query("select to_regprocedure($1)::text as oid_name", [sig]);
+      assert.ok(rows[0].oid_name, `RPC ${sig} must exist`);
+    }
+    assert.ok(ATTENDANCE_EXPLANATIONS_WAVE2_MIGRATION_NAME.endsWith(".sql"));
   } finally {
     await db.close();
   }

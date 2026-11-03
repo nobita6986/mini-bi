@@ -37,6 +37,20 @@ export function formatMatrixLeaveSummary(
     .join("; ");
 }
 
+export function formatMatrixExplanationSummary(
+  cell: AttendanceMonthlyMatrixDayCellProjection,
+): string {
+  const presentation = describeMatrixDayCell(cell);
+  const parts: string[] = [];
+  for (const slot of presentation.slots) {
+    if (slot.explanationStatusLabel) {
+      const reasonSuffix = slot.explanation?.reason ? ` (${slot.explanation.reason})` : "";
+      parts.push(`${slot.slotShortLabel}: ${slot.explanationStatusLabel}${reasonSuffix}`);
+    }
+  }
+  return parts.join("; ");
+}
+
 export function formatMatrixDayCellText(cell: AttendanceMonthlyMatrixDayCellProjection): string {
   const presentation = describeMatrixDayCell(cell);
   const slotParts = presentation.slots.map(
@@ -239,6 +253,7 @@ export async function buildAttendanceMonthlyMatrixXlsx(input: {
     "Khoảng cách (m)",
     "Nghỉ phép đã duyệt",
     "Số công phép",
+    "Giải trình chấm công",
   ];
   detailSheet.addRow(detailHeaders);
   detailSheet.views = [{ state: "frozen", ySplit: 1 }];
@@ -289,6 +304,7 @@ export async function buildAttendanceMonthlyMatrixXlsx(input: {
         day.distance_meters !== null ? day.distance_meters : "",
         sanitizeSpreadsheetText(formatMatrixLeaveSummary(day)),
         day.approved_leave_units > 0 ? day.approved_leave_units : "",
+        sanitizeSpreadsheetText(formatMatrixExplanationSummary(day)),
       ]);
     }
   }

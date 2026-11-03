@@ -3,18 +3,29 @@ import "server-only";
 import {
   projectAssignBranchResult,
   projectAttendanceBranchesAdminList,
+  projectAttendanceExplanationApprovalInbox,
   projectAttendanceMonthlyMatrixReport,
+  projectAttendanceMyExplanationsOverview,
   projectAttendanceSlotPoliciesAdminList,
   projectCreateSlotPolicyResult,
+  projectDecideAttendanceExplanationResult,
+  projectSubmitAttendanceExplanationResult,
   projectUnassignBranchResult,
   projectUpsertBranchResult,
   type AssignAttendanceBranchResultProjection,
   type AttendanceBranchesAdminListProjection,
+  type AttendanceExplanationApprovalInboxProjection,
+  type AttendanceExplanationDecision,
+  type AttendanceExplanationStatus,
   type AttendanceMonthlyMatrixErrorCode,
   type AttendanceMonthlyMatrixReportProjection,
+  type AttendanceMyExplanationsOverviewProjection,
+  type AttendanceSlotCode,
   type AttendanceSlotConfigItemProjection,
   type AttendanceSlotPoliciesAdminListProjection,
   type CreateAttendanceSlotPolicyResultProjection,
+  type DecideAttendanceExplanationResultProjection,
+  type SubmitAttendanceExplanationResultProjection,
   type UnassignAttendanceBranchResultProjection,
   type UpsertAttendanceBranchResultProjection,
 } from "./attendance-monthly-matrix-contract.ts";
@@ -128,6 +139,55 @@ export type CreateAttendanceSlotPolicyAdminResult =
   | { ok: true; result: CreateAttendanceSlotPolicyResultProjection }
   | { ok: false; code: AttendanceMonthlyMatrixErrorCode };
 
+export type GetMyAttendanceExplanationsOverviewInput = {
+  auth_subject: string;
+  app_user_id: string;
+  business_date: string | null;
+};
+
+export type GetMyAttendanceExplanationsOverviewResult =
+  | { ok: true; data: AttendanceMyExplanationsOverviewProjection }
+  | { ok: false; code: AttendanceMonthlyMatrixErrorCode };
+
+export type SubmitAttendanceExplanationInput = {
+  auth_subject: string;
+  app_user_id: string;
+  business_date: string;
+  slot_code: AttendanceSlotCode;
+  reason: string;
+  idempotency_key: string;
+  request_fingerprint: string;
+};
+
+export type SubmitAttendanceExplanationResult =
+  | { ok: true; result: SubmitAttendanceExplanationResultProjection }
+  | { ok: false; code: AttendanceMonthlyMatrixErrorCode };
+
+export type ListAttendanceExplanationApprovalInboxInput = {
+  auth_subject: string;
+  app_user_id: string;
+  status_filter: AttendanceExplanationStatus | "ALL";
+};
+
+export type ListAttendanceExplanationApprovalInboxResult =
+  | { ok: true; data: AttendanceExplanationApprovalInboxProjection }
+  | { ok: false; code: AttendanceMonthlyMatrixErrorCode };
+
+export type DecideAttendanceExplanationInput = {
+  auth_subject: string;
+  app_user_id: string;
+  explanation_id: string;
+  decision: AttendanceExplanationDecision;
+  expected_row_version: number;
+  decision_note: string | null;
+  idempotency_key: string;
+  request_fingerprint: string;
+};
+
+export type DecideAttendanceExplanationResult =
+  | { ok: true; result: DecideAttendanceExplanationResultProjection }
+  | { ok: false; code: AttendanceMonthlyMatrixErrorCode };
+
 export type AttendanceMonthlyMatrixRepository = {
   getMonthlyMatrixReport(
     input: GetAttendanceMonthlyMatrixReportInput,
@@ -150,10 +210,23 @@ export type AttendanceMonthlyMatrixRepository = {
   createSlotPolicyAdmin?(
     input: CreateAttendanceSlotPolicyAdminInput,
   ): Promise<CreateAttendanceSlotPolicyAdminResult>;
+  getMyExplanationsOverview?(
+    input: GetMyAttendanceExplanationsOverviewInput,
+  ): Promise<GetMyAttendanceExplanationsOverviewResult>;
+  submitExplanation?(
+    input: SubmitAttendanceExplanationInput,
+  ): Promise<SubmitAttendanceExplanationResult>;
+  listExplanationApprovalInbox?(
+    input: ListAttendanceExplanationApprovalInboxInput,
+  ): Promise<ListAttendanceExplanationApprovalInboxResult>;
+  decideExplanation?(
+    input: DecideAttendanceExplanationInput,
+  ): Promise<DecideAttendanceExplanationResult>;
 };
 
 const KNOWN_MATRIX_RPC_TOKENS: ReadonlyMap<string, AttendanceMonthlyMatrixErrorCode> = new Map([
   ["ATTENDANCE_ACTOR_DENIED", "ACTOR_NOT_AVAILABLE"],
+  ["LEAVE_ACTOR_DENIED", "ACTOR_NOT_AVAILABLE"],
   ["ATTENDANCE_REPORT_ACCESS_DENIED", "ATTENDANCE_REPORT_ACCESS_DENIED"],
   ["ATTENDANCE_BRANCH_WRITE_DENIED", "ATTENDANCE_BRANCH_WRITE_DENIED"],
   ["ATTENDANCE_SLOT_POLICY_WRITE_DENIED", "ATTENDANCE_SLOT_POLICY_WRITE_DENIED"],
@@ -183,6 +256,36 @@ const KNOWN_MATRIX_RPC_TOKENS: ReadonlyMap<string, AttendanceMonthlyMatrixErrorC
   ],
   ["ATTENDANCE_SLOT_POLICY_OVERLAP", "ATTENDANCE_SLOT_POLICY_OVERLAP"],
   ["ATTENDANCE_SLOT_POLICY_VERSION_CONFLICT", "ATTENDANCE_SLOT_POLICY_VERSION_CONFLICT"],
+  ["ATTENDANCE_EXPLANATION_ACCESS_DENIED", "ATTENDANCE_EXPLANATION_ACCESS_DENIED"],
+  ["ATTENDANCE_EXPLANATION_SUBMIT_DENIED", "ATTENDANCE_EXPLANATION_SUBMIT_DENIED"],
+  ["ATTENDANCE_EXPLANATION_APPROVAL_ACCESS_DENIED", "ATTENDANCE_EXPLANATION_APPROVAL_ACCESS_DENIED"],
+  ["ATTENDANCE_EXPLANATION_DECIDE_DENIED", "ATTENDANCE_EXPLANATION_DECIDE_DENIED"],
+  ["ATTENDANCE_EXPLANATION_DECISION_DENIED", "ATTENDANCE_EXPLANATION_DECISION_DENIED"],
+  ["ATTENDANCE_EXPLANATION_SELF_APPROVAL_FORBIDDEN", "ATTENDANCE_EXPLANATION_SELF_APPROVAL_FORBIDDEN"],
+  ["ATTENDANCE_EXPLANATION_INVALID", "ATTENDANCE_EXPLANATION_INVALID"],
+  ["ATTENDANCE_EXPLANATION_DATE_INVALID", "ATTENDANCE_EXPLANATION_DATE_INVALID"],
+  ["ATTENDANCE_EXPLANATION_DECISION_INVALID", "ATTENDANCE_EXPLANATION_DECISION_INVALID"],
+  ["ATTENDANCE_EXPLANATION_NOTE_INVALID", "ATTENDANCE_EXPLANATION_NOTE_INVALID"],
+  ["ATTENDANCE_EXPLANATION_FILTER_INVALID", "ATTENDANCE_EXPLANATION_FILTER_INVALID"],
+  ["ATTENDANCE_EXPLANATION_PAGINATION_INVALID", "ATTENDANCE_EXPLANATION_PAGINATION_INVALID"],
+  ["ATTENDANCE_EXPLANATION_REASON_INVALID", "ATTENDANCE_EXPLANATION_REASON_INVALID"],
+  ["ATTENDANCE_EXPLANATION_SLOT_INVALID", "ATTENDANCE_EXPLANATION_SLOT_INVALID"],
+  ["ATTENDANCE_EXPLANATION_SLOT_NOT_ELIGIBLE", "ATTENDANCE_EXPLANATION_SLOT_NOT_ELIGIBLE"],
+  ["ATTENDANCE_EXPLANATION_DATE_FUTURE", "ATTENDANCE_EXPLANATION_DATE_FUTURE"],
+  [
+    "ATTENDANCE_EXPLANATION_FUTURE_DATE_NOT_ALLOWED",
+    "ATTENDANCE_EXPLANATION_FUTURE_DATE_NOT_ALLOWED",
+  ],
+  [
+    "ATTENDANCE_EXPLANATION_APPROVER_UNCONFIGURED",
+    "ATTENDANCE_EXPLANATION_APPROVER_UNCONFIGURED",
+  ],
+  ["ATTENDANCE_EXPLANATION_ALREADY_EXISTS", "ATTENDANCE_EXPLANATION_ALREADY_EXISTS"],
+  ["ATTENDANCE_EXPLANATION_ALREADY_SUBMITTED", "ATTENDANCE_EXPLANATION_ALREADY_SUBMITTED"],
+  ["ATTENDANCE_EXPLANATION_ALREADY_DECIDED", "ATTENDANCE_EXPLANATION_ALREADY_DECIDED"],
+  ["ATTENDANCE_EXPLANATION_NOT_FOUND", "ATTENDANCE_EXPLANATION_NOT_FOUND"],
+  ["ATTENDANCE_EXPLANATION_VERSION_CONFLICT", "ATTENDANCE_EXPLANATION_VERSION_CONFLICT"],
+  ["ATTENDANCE_EXPLANATION_STATE_INVALID", "ATTENDANCE_EXPLANATION_STATE_INVALID"],
   ["ATTENDANCE_IDEMPOTENCY_INVALID", "IDEMPOTENCY_KEY_INVALID"],
   ["IDEMPOTENCY_CONFLICT", "IDEMPOTENCY_CONFLICT"],
 ]);
@@ -196,7 +299,14 @@ function serviceRoleRpc(): AttendanceRpcCaller {
 
 function classifyMatrixRpcError(
   error: { code?: string; message?: string },
-  mode: "report" | "branch_write" | "assignment_write" | "slot_policy_write",
+  mode:
+    | "report"
+    | "branch_write"
+    | "assignment_write"
+    | "slot_policy_write"
+    | "explanation_read"
+    | "explanation_write"
+    | "explanation_decide",
 ): AttendanceMonthlyMatrixErrorCode {
   const trimmed = typeof error.message === "string" ? error.message.trim() : "";
   const exact = KNOWN_MATRIX_RPC_TOKENS.get(trimmed);
@@ -213,9 +323,16 @@ function classifyMatrixRpcError(
   if (error.code === "42501") {
     if (mode === "report") return "ATTENDANCE_REPORT_ACCESS_DENIED";
     if (mode === "slot_policy_write") return "ATTENDANCE_SLOT_POLICY_WRITE_DENIED";
+    if (mode === "explanation_decide") return "ATTENDANCE_EXPLANATION_DECISION_DENIED";
+    if (mode === "explanation_read" || mode === "explanation_write") {
+      return "ATTENDANCE_EXPLANATION_ACCESS_DENIED";
+    }
     return "ATTENDANCE_BRANCH_WRITE_DENIED";
   }
   if (error.code === "P0002") {
+    if (mode === "explanation_read" || mode === "explanation_write" || mode === "explanation_decide") {
+      return "ATTENDANCE_EXPLANATION_NOT_FOUND";
+    }
     return mode === "assignment_write"
       ? "ATTENDANCE_BRANCH_ASSIGNMENT_NOT_FOUND"
       : "ATTENDANCE_BRANCH_NOT_FOUND";
@@ -223,6 +340,9 @@ function classifyMatrixRpcError(
   if (error.code === "PT409" || error.code === "40001") {
     if (mode === "assignment_write") return "ATTENDANCE_BRANCH_ASSIGNMENT_VERSION_CONFLICT";
     if (mode === "slot_policy_write") return "ATTENDANCE_SLOT_POLICY_VERSION_CONFLICT";
+    if (mode === "explanation_write" || mode === "explanation_decide") {
+      return "ATTENDANCE_EXPLANATION_VERSION_CONFLICT";
+    }
     return "ATTENDANCE_BRANCH_VERSION_CONFLICT";
   }
   if (error.code === "23505") {
@@ -235,12 +355,22 @@ function classifyMatrixRpcError(
     if (trimmed.includes("attendance_slot_policy_versions_effective_from_date_key")) {
       return "ATTENDANCE_SLOT_POLICY_OVERLAP";
     }
+    if (trimmed.includes("attendance_explanations_employee_date_slot_uq")) {
+      return "ATTENDANCE_EXPLANATION_ALREADY_SUBMITTED";
+    }
     return "IDEMPOTENCY_CONFLICT";
   }
   if (error.code === "22023" || error.code === "23514") {
     if (mode === "branch_write") return "ATTENDANCE_BRANCH_INVALID";
     if (mode === "assignment_write") return "ATTENDANCE_BRANCH_ASSIGNMENT_INVALID";
     if (mode === "slot_policy_write") return "ATTENDANCE_SLOT_POLICY_INVALID";
+    if (
+      mode === "explanation_read" ||
+      mode === "explanation_write" ||
+      mode === "explanation_decide"
+    ) {
+      return "ATTENDANCE_EXPLANATION_INVALID";
+    }
     return "ATTENDANCE_REPORT_QUERY_INVALID";
   }
 
@@ -469,6 +599,129 @@ export function createServiceAttendanceMonthlyMatrixRepository(
         return { ok: true, result: projected };
       } catch {
         console.error("[attendance-monthly-matrix] create slot policy RPC call failed");
+        return { ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" };
+      }
+    },
+
+    async getMyExplanationsOverview(input) {
+      try {
+        resolvedRpc ??= serviceRoleRpc();
+        const result = await resolvedRpc("attendance_get_my_explanations_overview", {
+          p_auth_subject: input.auth_subject,
+          p_app_user_id: input.app_user_id,
+          p_business_date: input.business_date,
+        });
+
+        if (result.error) {
+          return { ok: false, code: classifyMatrixRpcError(result.error, "explanation_read") };
+        }
+
+        const projected = projectAttendanceMyExplanationsOverview(result.data);
+        if (!projected) {
+          console.error(
+            "[attendance-monthly-matrix] get my explanations overview RPC returned non-canonical projection",
+          );
+          return { ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" };
+        }
+
+        return { ok: true, data: projected };
+      } catch {
+        console.error("[attendance-monthly-matrix] get my explanations overview RPC call failed");
+        return { ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" };
+      }
+    },
+
+    async submitExplanation(input) {
+      try {
+        resolvedRpc ??= serviceRoleRpc();
+        const result = await resolvedRpc("attendance_submit_explanation", {
+          p_auth_subject: input.auth_subject,
+          p_app_user_id: input.app_user_id,
+          p_business_date: input.business_date,
+          p_slot_code: input.slot_code,
+          p_reason: input.reason,
+          p_idempotency_key: input.idempotency_key,
+          p_request_fingerprint: input.request_fingerprint,
+        });
+
+        if (result.error) {
+          return { ok: false, code: classifyMatrixRpcError(result.error, "explanation_write") };
+        }
+
+        const projected = projectSubmitAttendanceExplanationResult(result.data);
+        if (!projected) {
+          console.error(
+            "[attendance-monthly-matrix] submit explanation RPC returned non-canonical projection",
+          );
+          return { ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" };
+        }
+
+        return { ok: true, result: projected };
+      } catch {
+        console.error("[attendance-monthly-matrix] submit explanation RPC call failed");
+        return { ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" };
+      }
+    },
+
+    async listExplanationApprovalInbox(input) {
+      try {
+        resolvedRpc ??= serviceRoleRpc();
+        const result = await resolvedRpc("attendance_list_explanation_approval_inbox", {
+          p_auth_subject: input.auth_subject,
+          p_app_user_id: input.app_user_id,
+          p_status_filter: input.status_filter,
+        });
+
+        if (result.error) {
+          return { ok: false, code: classifyMatrixRpcError(result.error, "explanation_read") };
+        }
+
+        const projected = projectAttendanceExplanationApprovalInbox(result.data);
+        if (!projected) {
+          console.error(
+            "[attendance-monthly-matrix] list explanation approval inbox RPC returned non-canonical projection",
+          );
+          return { ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" };
+        }
+
+        return { ok: true, data: projected };
+      } catch {
+        console.error(
+          "[attendance-monthly-matrix] list explanation approval inbox RPC call failed",
+        );
+        return { ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" };
+      }
+    },
+
+    async decideExplanation(input) {
+      try {
+        resolvedRpc ??= serviceRoleRpc();
+        const result = await resolvedRpc("attendance_decide_explanation", {
+          p_auth_subject: input.auth_subject,
+          p_app_user_id: input.app_user_id,
+          p_explanation_id: input.explanation_id,
+          p_decision: input.decision,
+          p_expected_row_version: input.expected_row_version,
+          p_decision_note: input.decision_note,
+          p_idempotency_key: input.idempotency_key,
+          p_request_fingerprint: input.request_fingerprint,
+        });
+
+        if (result.error) {
+          return { ok: false, code: classifyMatrixRpcError(result.error, "explanation_decide") };
+        }
+
+        const projected = projectDecideAttendanceExplanationResult(result.data);
+        if (!projected) {
+          console.error(
+            "[attendance-monthly-matrix] decide explanation RPC returned non-canonical projection",
+          );
+          return { ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" };
+        }
+
+        return { ok: true, result: projected };
+      } catch {
+        console.error("[attendance-monthly-matrix] decide explanation RPC call failed");
         return { ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" };
       }
     },

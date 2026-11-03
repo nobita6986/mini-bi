@@ -2,21 +2,31 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  computeExplanationDecideRequestFingerprint,
+  computeExplanationSubmitRequestFingerprint,
   exportAttendanceMonthlyMatrixXlsx,
   getAttendanceBranchesAdmin,
+  getAttendanceExplanationApprovalInbox,
   getAttendanceMonthlyMatrixReport,
   getAttendanceSlotPoliciesAdmin,
+  getMyAttendanceExplanations,
   postAttendanceBranchAssignmentAdmin,
   postAttendanceBranchUnassignAdmin,
   postAttendanceSlotPolicyAdmin,
+  postDecideAttendanceExplanation,
   postOrPutAttendanceBranchAdmin,
+  postSubmitAttendanceExplanation,
 } from "./attendance-monthly-matrix-api.ts";
 import {
   ATTENDANCE_MONTHLY_MATRIX_EXPORT_ROW_LIMIT,
   DEFAULT_ATTENDANCE_SLOT_POLICY,
   parseAssignBranchBody,
+  parseAttendanceExplanationApprovalInboxQuery,
+  parseAttendanceExplanationsQuery,
   parseAttendanceMonthlyMatrixQuery,
   parseCreateSlotPolicyBody,
+  parseDecideAttendanceExplanationBody,
+  parseSubmitAttendanceExplanationBody,
   parseUnassignBranchBody,
   parseUpsertBranchBody,
 } from "./attendance-monthly-matrix-contract.ts";
@@ -1136,4 +1146,335 @@ test("Attendance Slot Policy Admin contract and handlers enforce Full Admin on P
   assert.equal(okJson.ok, true);
   assert.equal(okJson.policy.version, 2);
   assert.equal(okJson.policy.effective_from_date, "2026-11-01");
+});
+
+test("Wave 2 Attendance Explanation contracts, fingerprints, and API handlers enforce same-origin, validation, idempotency, and approver routing", async () => {
+  const EXPLANATION_ID = "69000000-0000-4000-8000-0000000000e9";
+
+  // 1. Query and body parsers
+  const parsedOverviewQuery = parseAttendanceExplanationsQuery(
+    new URL("https://bi.example.com/api/attendance/explanations?business_date=2026-10-07&limit=20&offset=0"),
+  );
+  assert.equal(parsedOverviewQuery.ok, true);
+  if (parsedOverviewQuery.ok) {
+    assert.equal(parsedOverviewQuery.value.business_date, "2026-10-07");
+    assert.equal(parsedOverviewQuery.value.limit, 20);
+  }
+
+  const parsedSubmitBody = parseSubmitAttendanceExplanationBody({
+    business_date: "2026-10-07",
+    slot_code: "SLOT_2",
+    reason: "  Đi gặp đối tác tuyển dụng  ",
+    idempotency_key: IDEMPOTENCY_KEY,
+  });
+  assert.equal(parsedSubmitBody.ok, true);
+  if (parsedSubmitBody.ok) {
+    assert.equal(parsedSubmitBody.value.slot_code, "SLOT_2");
+    assert.equal(parsedSubmitBody.value.reason, "Đi gặp đối tác tuyển dụng");
+  }
+
+  assert.equal(
+    parseSubmitAttendanceExplanationBody({
+      business_date: "2026-10-07",
+      slot_code: "SLOT_99",
+      reason: "Invalid slot",
+      idempotency_key: IDEMPOTENCY_KEY,
+    }).ok,
+    false,
+  );
+
+  const parsedInboxQuery = parseAttendanceExplanationApprovalInboxQuery(
+    new URL("https://bi.example.com/api/attendance/explanations/approvals?status=PENDING&limit=20&offset=0"),
+  );
+  assert.equal(parsedInboxQuery.ok, true);
+  if (parsedInboxQuery.ok) {
+    assert.equal(parsedInboxQuery.value.status, "PENDING");
+    assert.equal(parsedInboxQuery.value.limit, 20);
+  }
+
+  const parsedDecideBody = parseDecideAttendanceExplanationBody({
+    decision: "APPROVE",
+    expected_row_version: 1,
+    decision_note: "  Xác nhận hợp lệ ",
+    idempotency_key: IDEMPOTENCY_KEY,
+  });
+  assert.equal(parsedDecideBody.ok, true);
+  if (parsedDecideBody.ok) {
+    assert.equal(parsedDecideBody.value.decision, "APPROVE");
+    assert.equal(parsedDecideBody.value.decision_note, "Xác nhận hợp lệ");
+  }
+
+  // 2. Request fingerprints are deterministic and sensitive to field changes
+  const fp1 = computeExplanationSubmitRequestFingerprint({
+    app_user_id: STAFF_USER_ID,
+    business_date: "2026-10-07",
+    slot_code: "SLOT_1",
+    reason: "Lý do A",
+  });
+  const fp2 = computeExplanationSubmitRequestFingerprint({
+    app_user_id: STAFF_USER_ID,
+    business_date: "2026-10-07",
+    slot_code: "SLOT_2",
+    reason: "Lý do A",
+  });
+  assert.notEqual(fp1, fp2);
+
+  const dfp1 = computeExplanationDecideRequestFingerprint({
+    app_user_id: APP_USER_ID,
+    explanation_id: EXPLANATION_ID,
+    decision: "APPROVE",
+    expected_row_version: 1,
+    decision_note: "",
+  });
+  const dfp2 = computeExplanationDecideRequestFingerprint({
+    app_user_id: APP_USER_ID,
+    explanation_id: EXPLANATION_ID,
+    decision: "REJECT",
+    expected_row_version: 1,
+    decision_note: "",
+  });
+  assert.notEqual(dfp1, dfp2);
+
+  const sampleExplanationItem = {
+    explanation_id: EXPLANATION_ID,
+    app_user_id: STAFF_USER_ID,
+    requester: {
+      app_user_id: STAFF_USER_ID,
+      display_name: "Nguyễn Văn A",
+      login_id: "nva",
+      personnel_code: "NV001",
+      recruiter_id: null,
+      account_enabled: true,
+    },
+    business_date: "2026-10-07",
+    slot_code: "SLOT_1",
+    slot_index: 1,
+    slot_label: "Time 1",
+    session_code: "AM",
+    target_time: "07:30",
+    grace_before_minutes: 15,
+    grace_after_minutes: 15,
+    policy_version_used: 1,
+    original_slot_status: "MISSING",
+    effective_slot_status: "MISSING",
+    related_checkins: [],
+    reason: "Đi khảo sát dự án sáng sớm",
+    status: "PENDING",
+    route_kind: "TEAM_LEADER",
+    unit_kind_snapshot: "RECRUITMENT",
+    primary_approver: {
+      app_user_id: APP_USER_ID,
+      display_name: "Admin Test",
+      login_id: "admin",
+      personnel_code: "AD001",
+      recruiter_id: null,
+      account_enabled: true,
+    },
+    routed_team: {
+      team_id: BRANCH_ID,
+      team_code: "TEAM-01",
+      team_name: "Team Bắc Ninh",
+    },
+    fallback_reason: null,
+    submitted_at: "2026-10-07T02:00:00.000Z",
+    submitted_at_local: "2026-10-07 09:00:00",
+    decided_at: null,
+    decided_at_local: null,
+    decided_by: null,
+    decision_note: "",
+    row_version: 1,
+    updated_at: "2026-10-07T02:00:00.000Z",
+    audit_events: [],
+  };
+
+  // 3. GET /api/attendance/explanations
+  const getOverviewRes = await getMyAttendanceExplanations(
+    new Request("https://bi.example.com/api/attendance/explanations?business_date=2026-10-07"),
+    {
+      resolveSession: async () => makeSessionOk(STAFF_CAPS, ALL_SCOPE),
+      repository: {
+        getMonthlyMatrixReport: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        listBranchesAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        upsertBranchAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        assignEmployeeBranchAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        unassignEmployeeBranchAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        getMyExplanationsOverview: async () => ({
+          ok: true,
+          data: {
+            viewer: {
+              app_user_id: STAFF_USER_ID,
+              can_submit_explanation: true,
+              can_approve_explanations: false,
+              is_shared_non_employee: false,
+              is_full_admin: false,
+              is_bod: false,
+            },
+            routing: {
+              route_kind: "TEAM_LEADER",
+              unit_kind: "RECRUITMENT",
+              primary_approver: sampleExplanationItem.primary_approver,
+              team_id: BRANCH_ID,
+              team_code: "TEAM-01",
+              team_name: "Team Bắc Ninh",
+              fallback_reason: null,
+              profile_configured: true,
+            },
+            today_local: "2026-10-08",
+            selected_date: "2026-10-07",
+            day_evaluation: {
+              business_date: "2026-10-07",
+              policy_version_used: 1,
+              slots: [],
+            },
+            pagination: {
+              limit: 50,
+              offset: 0,
+              total_rows: 1,
+            },
+            items: [sampleExplanationItem],
+          },
+        }),
+      },
+    },
+  );
+  assert.equal(getOverviewRes.status, 200);
+  const overviewJson = await getOverviewRes.json();
+  assert.equal(overviewJson.ok, true);
+  assert.equal(overviewJson.items.length, 1);
+  assert.equal(overviewJson.items[0].explanation_id, EXPLANATION_ID);
+
+  // 4. POST /api/attendance/explanations returns 201 on fresh submit and 409 on ineligible slot
+  const submitCreatedRes = await postSubmitAttendanceExplanation(
+    makeJsonRequest("https://bi.example.com/api/attendance/explanations", "POST", {
+      business_date: "2026-10-07",
+      slot_code: "SLOT_1",
+      reason: "Đi khảo sát dự án sáng sớm",
+      idempotency_key: IDEMPOTENCY_KEY,
+    }),
+    {
+      resolveSession: async () => makeSessionOk(STAFF_CAPS, ALL_SCOPE),
+      repository: {
+        getMonthlyMatrixReport: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        listBranchesAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        upsertBranchAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        assignEmployeeBranchAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        unassignEmployeeBranchAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        submitExplanation: async () => ({
+          ok: true,
+          result: {
+            replayed: false,
+            explanation: sampleExplanationItem,
+          },
+        }),
+      },
+    },
+  );
+  assert.equal(submitCreatedRes.status, 201);
+
+  const submitIneligibleRes = await postSubmitAttendanceExplanation(
+    makeJsonRequest("https://bi.example.com/api/attendance/explanations", "POST", {
+      business_date: "2026-10-07",
+      slot_code: "SLOT_1",
+      reason: "Khung giờ đã đúng giờ",
+      idempotency_key: IDEMPOTENCY_KEY,
+    }),
+    {
+      resolveSession: async () => makeSessionOk(STAFF_CAPS, ALL_SCOPE),
+      repository: {
+        getMonthlyMatrixReport: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        listBranchesAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        upsertBranchAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        assignEmployeeBranchAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        unassignEmployeeBranchAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        submitExplanation: async () => ({
+          ok: false,
+          code: "ATTENDANCE_EXPLANATION_SLOT_NOT_ELIGIBLE",
+        }),
+      },
+    },
+  );
+  assert.equal(submitIneligibleRes.status, 409);
+  assert.equal(
+    (await submitIneligibleRes.json()).code,
+    "ATTENDANCE_EXPLANATION_SLOT_NOT_ELIGIBLE",
+  );
+
+  // 5. GET /api/attendance/explanations/approvals & POST decision
+  const getInboxRes = await getAttendanceExplanationApprovalInbox(
+    new Request("https://bi.example.com/api/attendance/explanations/approvals?status=PENDING"),
+    {
+      resolveSession: async () => makeSessionOk(FULL_ADMIN_CAPS, ALL_SCOPE),
+      repository: {
+        getMonthlyMatrixReport: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        listBranchesAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        upsertBranchAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        assignEmployeeBranchAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        unassignEmployeeBranchAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        listExplanationApprovalInbox: async () => ({
+          ok: true,
+          data: {
+            viewer: {
+              app_user_id: APP_USER_ID,
+              can_approve_explanations: true,
+              is_full_admin: true,
+              is_bod: false,
+            },
+            pagination: {
+              limit: 20,
+              offset: 0,
+              total_rows: 1,
+              pending_count: 1,
+            },
+            items: [{ ...sampleExplanationItem, can_decide: true }],
+          },
+        }),
+      },
+    },
+  );
+  assert.equal(getInboxRes.status, 200);
+
+  const decideOkRes = await postDecideAttendanceExplanation(
+    makeJsonRequest(
+      `https://bi.example.com/api/attendance/explanations/approvals/${EXPLANATION_ID}/decision`,
+      "POST",
+      {
+        decision: "APPROVE",
+        expected_row_version: 1,
+        decision_note: "Đồng ý giải trình",
+        idempotency_key: IDEMPOTENCY_KEY,
+      },
+    ),
+    EXPLANATION_ID,
+    {
+      resolveSession: async () => makeSessionOk(FULL_ADMIN_CAPS, ALL_SCOPE),
+      repository: {
+        getMonthlyMatrixReport: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        listBranchesAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        upsertBranchAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        assignEmployeeBranchAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        unassignEmployeeBranchAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        decideExplanation: async () => ({
+          ok: true,
+          result: {
+            replayed: false,
+            explanation: {
+              ...sampleExplanationItem,
+              status: "APPROVED",
+              effective_slot_status: "EXPLAINED_APPROVED",
+              decided_at: "2026-10-08T01:00:00.000Z",
+              decided_at_local: "2026-10-08 08:00:00",
+              decided_by: sampleExplanationItem.primary_approver,
+              decision_note: "Đồng ý giải trình",
+              row_version: 2,
+            },
+          },
+        }),
+      },
+    },
+  );
+  assert.equal(decideOkRes.status, 200);
+  const decideJson = await decideOkRes.json();
+  assert.equal(decideJson.ok, true);
+  assert.equal(decideJson.explanation.status, "APPROVED");
+  assert.equal(decideJson.explanation.effective_slot_status, "EXPLAINED_APPROVED");
 });

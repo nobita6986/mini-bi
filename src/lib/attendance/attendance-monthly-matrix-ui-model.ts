@@ -6,6 +6,10 @@ import {
   type AttendanceDistanceStatus,
 } from "./attendance-report-contract.ts";
 import {
+  ATTENDANCE_EXPLANATION_DECISIONS,
+  ATTENDANCE_EXPLANATION_MAX_DECISION_NOTE_LENGTH,
+  ATTENDANCE_EXPLANATION_MAX_REASON_LENGTH,
+  ATTENDANCE_EXPLANATION_MIN_REASON_LENGTH,
   ATTENDANCE_MONTHLY_MATRIX_EXPORT_ROW_LIMIT,
   ATTENDANCE_SLOT_CODES,
   ATTENDANCE_SLOT_MAX_COUNT,
@@ -16,11 +20,14 @@ import {
   type AttendanceBranchAssignmentAdminItemProjection,
   type AttendanceCheckinDeviationStatus,
   type AttendanceDistanceTargetKind,
+  type AttendanceExplanationDecision,
+  type AttendanceExplanationStatus,
   type AttendanceMatrixLeaveSessionCode,
   type AttendanceMatrixLeaveType,
   type AttendanceMonthlyMatrixDayCellProjection,
   type AttendanceMonthlyMatrixDaySlotProjection,
   type AttendanceMonthlyMatrixDayStatus,
+  type AttendanceMonthlyMatrixSlotExplanationProjection,
   type AttendanceSlotCode,
   type AttendanceSlotSessionCode,
   type AttendanceSlotStatus,
@@ -33,11 +40,38 @@ const CONTROL_CHAR_PATTERN = /[\x00-\x1f\x7f]/;
 const ADDRESS_CONTROL_CHAR_PATTERN = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/;
 const HH_MM_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
 
-export type AttendanceAdminWorkspaceTab = "checkins" | "monthly-matrix" | "branches";
+export type AttendanceAdminWorkspaceTab =
+  | "checkins"
+  | "monthly-matrix"
+  | "explanations"
+  | "branches";
 
 export type MatrixEmployeeFilterMode = "employee" | "search";
 
 export const MATRIX_MISSING_SLOT_LABEL = "Chưa có lượt chấm";
+export const MATRIX_EXPLAINED_APPROVED_LABEL = "Giải trình được duyệt";
+export const MATRIX_EXPLANATION_REJECTED_LABEL = "Giải trình bị từ chối";
+export const MATRIX_EXPLANATION_PENDING_LABEL = "Chờ duyệt giải trình";
+
+export const EXPLANATION_STATUS_LABELS: Readonly<
+  Record<AttendanceExplanationStatus, string>
+> = {
+  PENDING: MATRIX_EXPLANATION_PENDING_LABEL,
+  APPROVED: MATRIX_EXPLAINED_APPROVED_LABEL,
+  REJECTED: MATRIX_EXPLANATION_REJECTED_LABEL,
+};
+
+export const EXPLANATION_APPROVER_SOURCE_LABELS: Readonly<Record<string, string>> = {
+  TEAM_LEADER: "Trưởng nhóm trực tiếp",
+  DEPARTMENT_HEAD: "Trưởng bộ phận / Phòng ban",
+  ADMIN_BOD_DIRECT: "Ban Giám đốc / Admin",
+  ADMIN_BOD_FALLBACK: "Admin / Ban Giám đốc (dự phòng)",
+  TEAM_APPROVER: "Người duyệt theo nhóm/tuyến cấu hình",
+  DEPARTMENT_APPROVER: "Người duyệt theo phòng ban",
+  DIRECT_REPORT: "Quản lý trực tiếp",
+  FALLBACK_ADMIN: "Admin nhân sự (dự phòng)",
+  UNCONFIGURED: "Chưa cấu hình người duyệt",
+};
 
 export const MATRIX_WEEKDAY_LABELS: Readonly<Record<number, string>> = {
   1: "T2",
@@ -87,6 +121,7 @@ export const MATRIX_DAY_STATUS_LABELS: Readonly<Record<AttendanceMonthlyMatrixDa
     APPROVED_LEAVE: "Nghỉ phép đã duyệt",
     CHECKED_IN_AND_LEAVE: "Có check-in & Nghỉ phép",
     NO_CHECKIN: MATRIX_MISSING_SLOT_LABEL,
+    UPCOMING: "Chưa đến giờ chấm",
   };
 
 export type MatrixDayCellTone = "emerald" | "red" | "amber" | "sky";
@@ -132,6 +167,9 @@ export type MatrixSlotPresentation = {
   isMissingHighlight: boolean;
   isOutOfGraceHighlight: boolean;
   checkins: MatrixSlotCheckinPresentation[];
+  explanation: AttendanceMonthlyMatrixSlotExplanationProjection | null;
+  explanationStatusLabel: string | null;
+  explanationBadgeTone: "emerald" | "amber" | "red" | null;
   summaryText: string;
 };
 
@@ -187,6 +225,22 @@ export const MATRIX_LEGEND_ITEMS: readonly MatrixLegendItem[] = [
     title: "Mốc thuộc buổi/ngày có đơn nghỉ phép đã duyệt",
     description:
       "Đơn nghỉ phép Cả ngày bao phủ toàn bộ các mốc trong ngày; nghỉ buổi Sáng bao phủ các mốc buổi sáng (< 12:00); nghỉ buổi Chiều bao phủ các mốc buổi chiều (>= 12:00) (không đánh dấu thiếu lượt chấm).",
+  },
+  {
+    key: "explained-approved",
+    tone: "emerald",
+    badgeText: MATRIX_EXPLAINED_APPROVED_LABEL,
+    title: "Mốc có giải trình chấm công đã được duyệt",
+    description:
+      "Nhân viên đã gửi giải trình cho mốc thiếu chấm công hoặc lệch dung sai và được cấp có thẩm quyền phê duyệt (không tạo lượt check-in giả, không sửa dữ liệu gốc).",
+  },
+  {
+    key: "explanation-rejected",
+    tone: "red",
+    badgeText: MATRIX_EXPLANATION_REJECTED_LABEL,
+    title: "Mốc có giải trình bị từ chối",
+    description:
+      "Mốc giữ nguyên trạng thái thiếu chấm công hoặc lệch khung giờ ban đầu và hiển thị rõ nhãn Giải trình bị từ chối.",
   },
   {
     key: "missing-slot",
@@ -573,8 +627,20 @@ export function describeMatrixDayCell(
     let tone: MatrixSlotTone;
     let slotStatusLabel: string;
     let summaryText: string;
+    const explanation = slot.explanation ?? null;
+    let explanationStatusLabel: string | null = null;
+    let explanationBadgeTone: "emerald" | "amber" | "red" | null = null;
 
-    if (slot.slot_status === "ON_TIME") {
+    if (slot.slot_status === "EXPLAINED_APPROVED") {
+      tone = "emerald";
+      slotStatusLabel = MATRIX_EXPLAINED_APPROVED_LABEL;
+      explanationStatusLabel = MATRIX_EXPLAINED_APPROVED_LABEL;
+      explanationBadgeTone = "emerald";
+      summaryText =
+        checkins.length > 0
+          ? `${checkins.map((c) => c.displayText).join(", ")} · ${MATRIX_EXPLAINED_APPROVED_LABEL}`
+          : MATRIX_EXPLAINED_APPROVED_LABEL;
+    } else if (slot.slot_status === "ON_TIME") {
       tone = "emerald";
       slotStatusLabel = "Đúng khung giờ";
       summaryText = checkins.map((c) => c.displayText).join(", ");
@@ -586,10 +652,30 @@ export function describeMatrixDayCell(
       tone = "sky";
       slotStatusLabel = resolveSessionLeaveCoverageLabel(slot.session_code, leaveBadges);
       summaryText = slotStatusLabel;
+    } else if (slot.slot_status === "UPCOMING") {
+      tone = "sky";
+      slotStatusLabel = "Chưa đến giờ chấm";
+      summaryText = slotStatusLabel;
     } else {
       tone = "red";
       slotStatusLabel = MATRIX_MISSING_SLOT_LABEL;
       summaryText = MATRIX_MISSING_SLOT_LABEL;
+    }
+
+    if (slot.slot_status !== "EXPLAINED_APPROVED" && explanation) {
+      if (explanation.status === "REJECTED") {
+        explanationStatusLabel = MATRIX_EXPLANATION_REJECTED_LABEL;
+        explanationBadgeTone = "red";
+        summaryText = `${summaryText} · ${MATRIX_EXPLANATION_REJECTED_LABEL}`;
+      } else if (explanation.status === "PENDING") {
+        explanationStatusLabel = MATRIX_EXPLANATION_PENDING_LABEL;
+        explanationBadgeTone = "amber";
+        summaryText = `${summaryText} · ${MATRIX_EXPLANATION_PENDING_LABEL}`;
+      } else if (explanation.status === "APPROVED") {
+        explanationStatusLabel = MATRIX_EXPLAINED_APPROVED_LABEL;
+        explanationBadgeTone = "emerald";
+        summaryText = `${summaryText} · ${MATRIX_EXPLAINED_APPROVED_LABEL}`;
+      }
     }
 
     return {
@@ -609,6 +695,9 @@ export function describeMatrixDayCell(
       isMissingHighlight: slot.slot_status === "MISSING",
       isOutOfGraceHighlight: slot.slot_status === "OUT_OF_GRACE",
       checkins,
+      explanation,
+      explanationStatusLabel,
+      explanationBadgeTone,
       summaryText,
     };
   });
@@ -618,6 +707,8 @@ export function describeMatrixDayCell(
     tone = "red";
   } else if (cell.day_status === "CHECKED_IN_AND_LEAVE") {
     tone = "amber";
+  } else if (cell.day_status === "UPCOMING") {
+    tone = "sky";
   } else {
     tone = "emerald";
   }
@@ -1300,5 +1391,271 @@ export function describeBranchAssignmentStatus(
     rangeLabel: `Từ ${assignment.valid_from}`,
     canUnassign: true,
     tone: "amber",
+  };
+}
+
+export function buildSubmitAttendanceExplanationPayload(input: {
+  businessDate: string;
+  slotCode: string;
+  reason: string;
+  idempotencyKey: string;
+  todayVn?: string;
+}): BranchMutationPayloadResult {
+  const businessDate = input.businessDate.trim();
+  if (!isValidIsoCalendarDate(businessDate)) {
+    return {
+      ok: false,
+      message: "Ngày giải trình chấm công phải đúng định dạng YYYY-MM-DD.",
+    };
+  }
+  if (input.todayVn && businessDate > input.todayVn) {
+    return {
+      ok: false,
+      message: "Không thể gửi giải trình chấm công cho ngày trong tương lai.",
+    };
+  }
+
+  const slotCode = input.slotCode.trim().toUpperCase();
+  if (!(ATTENDANCE_SLOT_CODES as readonly string[]).includes(slotCode)) {
+    return {
+      ok: false,
+      message: "Mốc chấm công cần giải trình không hợp lệ.",
+    };
+  }
+
+  const reason = input.reason.trim();
+  if (
+    reason.length < ATTENDANCE_EXPLANATION_MIN_REASON_LENGTH ||
+    reason.length > ATTENDANCE_EXPLANATION_MAX_REASON_LENGTH ||
+    ADDRESS_CONTROL_CHAR_PATTERN.test(reason)
+  ) {
+    return {
+      ok: false,
+      message: `Lý do giải trình phải từ ${ATTENDANCE_EXPLANATION_MIN_REASON_LENGTH} đến ${ATTENDANCE_EXPLANATION_MAX_REASON_LENGTH} ký tự và không chứa ký tự điều khiển.`,
+    };
+  }
+
+  const key = input.idempotencyKey.trim().toLowerCase();
+  if (!UUID_PATTERN.test(key)) {
+    return { ok: false, message: "Khóa chống gửi trùng (idempotency_key) không hợp lệ." };
+  }
+
+  return {
+    ok: true,
+    body: {
+      business_date: businessDate,
+      slot_code: slotCode as AttendanceSlotCode,
+      reason,
+      idempotency_key: key,
+    },
+  };
+}
+
+export function buildDecideAttendanceExplanationPayload(input: {
+  decision: string;
+  expectedRowVersion: number;
+  decisionNote: string;
+  idempotencyKey: string;
+}): BranchMutationPayloadResult {
+  const decision = input.decision.trim().toUpperCase();
+  if (!(ATTENDANCE_EXPLANATION_DECISIONS as readonly string[]).includes(decision)) {
+    return {
+      ok: false,
+      message: "Quyết định phê duyệt giải trình không hợp lệ (APPROVE hoặc REJECT).",
+    };
+  }
+
+  if (
+    typeof input.expectedRowVersion !== "number" ||
+    !Number.isSafeInteger(input.expectedRowVersion) ||
+    input.expectedRowVersion < 1
+  ) {
+    return {
+      ok: false,
+      message: "Phiên bản bản ghi giải trình không hợp lệ. Vui lòng tải lại.",
+    };
+  }
+
+  const trimmedNote = input.decisionNote.trim();
+  if (
+    trimmedNote.length > ATTENDANCE_EXPLANATION_MAX_DECISION_NOTE_LENGTH ||
+    ADDRESS_CONTROL_CHAR_PATTERN.test(trimmedNote)
+  ) {
+    return {
+      ok: false,
+      message: `Ghi chú quyết định tối đa ${ATTENDANCE_EXPLANATION_MAX_DECISION_NOTE_LENGTH} ký tự và không chứa ký tự điều khiển.`,
+    };
+  }
+
+  const key = input.idempotencyKey.trim().toLowerCase();
+  if (!UUID_PATTERN.test(key)) {
+    return { ok: false, message: "Khóa chống gửi trùng (idempotency_key) không hợp lệ." };
+  }
+
+  return {
+    ok: true,
+    body: {
+      decision: decision as AttendanceExplanationDecision,
+      expected_row_version: input.expectedRowVersion,
+      decision_note: trimmedNote.length > 0 ? trimmedNote : null,
+      idempotency_key: key,
+    },
+  };
+}
+
+export function mapAttendanceExplanationMutationError(
+  status: number,
+  code: string | null,
+): { isConflict: boolean; message: string } {
+  if (code === "ATTENDANCE_EXPLANATION_ALREADY_SUBMITTED") {
+    return {
+      isConflict: true,
+      message:
+        "Mốc chấm công này đã được gửi giải trình trước đó. Mỗi mốc trong một ngày chỉ tạo tối đa 1 giải trình.",
+    };
+  }
+  if (code === "ATTENDANCE_EXPLANATION_SLOT_NOT_ELIGIBLE") {
+    return {
+      isConflict: false,
+      message:
+        "Chỉ được gửi giải trình cho mốc chưa có lượt chấm hoặc có lượt chấm lệch ngoài khoảng dung sai.",
+    };
+  }
+  if (code === "ATTENDANCE_EXPLANATION_SLOT_INVALID") {
+    return {
+      isConflict: false,
+      message:
+        "Mốc chấm công không tồn tại trong phiên bản khung giờ áp dụng cho ngày này.",
+    };
+  }
+  if (code === "ATTENDANCE_EXPLANATION_DATE_FUTURE") {
+    return {
+      isConflict: false,
+      message: "Không thể gửi giải trình chấm công cho ngày trong tương lai.",
+    };
+  }
+  if (code === "ATTENDANCE_EXPLANATION_APPROVER_UNCONFIGURED") {
+    return {
+      isConflict: false,
+      message:
+        "Tài khoản hiện tại chưa được cấu hình người duyệt phép/giải trình. Vui lòng liên hệ HR/Admin.",
+    };
+  }
+  if (code === "ATTENDANCE_EXPLANATION_REASON_INVALID") {
+    return {
+      isConflict: false,
+      message: "Lý do giải trình phải từ 3 đến 1000 ký tự hợp lệ.",
+    };
+  }
+  if (code === "ATTENDANCE_EXPLANATION_VERSION_CONFLICT") {
+    return {
+      isConflict: true,
+      message:
+        "Giải trình vừa được cập nhật ở phiên khác (xung đột phiên bản). Vui lòng tải lại danh sách.",
+    };
+  }
+  if (
+    code === "ATTENDANCE_EXPLANATION_STATE_INVALID" ||
+    code === "ATTENDANCE_EXPLANATION_ALREADY_DECIDED"
+  ) {
+    return {
+      isConflict: true,
+      message: "Giải trình này đã được xử lý trước đó, không còn ở trạng thái chờ duyệt.",
+    };
+  }
+  if (code === "ATTENDANCE_EXPLANATION_DECISION_DENIED" || status === 403) {
+    return {
+      isConflict: false,
+      message:
+        "Tài khoản hiện tại không có thẩm quyền duyệt giải trình này (hoặc không được tự duyệt giải trình của chính mình).",
+    };
+  }
+  if (code === "ATTENDANCE_EXPLANATION_NOT_FOUND" || status === 404) {
+    return {
+      isConflict: true,
+      message: "Không tìm thấy bản ghi giải trình chấm công. Vui lòng tải lại.",
+    };
+  }
+  if (code === "IDEMPOTENCY_CONFLICT") {
+    return {
+      isConflict: true,
+      message: "Thao tác bị trùng khóa xử lý (Idempotency). Vui lòng tải lại dữ liệu.",
+    };
+  }
+  if (status === 401 || code === "UNAUTHENTICATED") {
+    return {
+      isConflict: false,
+      message: "Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.",
+    };
+  }
+  return {
+    isConflict: status === 409,
+    message: "Không thể xử lý giải trình chấm công lúc này. Vui lòng thử lại.",
+  };
+}
+
+export type TableScrollMetrics = {
+  scrollLeft: number;
+  scrollTop: number;
+  scrollWidth: number;
+  scrollHeight: number;
+  clientWidth: number;
+  clientHeight: number;
+};
+
+export type TableScrollAvailability = {
+  hasHorizontalOverflow: boolean;
+  hasVerticalOverflow: boolean;
+  hasOverflow: boolean;
+  canScrollLeft: boolean;
+  canScrollRight: boolean;
+  canScrollUp: boolean;
+  canScrollDown: boolean;
+};
+
+const TABLE_SCROLL_EPSILON_PX = 2;
+
+export function computeTableScrollAvailability(
+  metrics: TableScrollMetrics | null | undefined,
+): TableScrollAvailability {
+  if (!metrics) {
+    return {
+      hasHorizontalOverflow: false,
+      hasVerticalOverflow: false,
+      hasOverflow: false,
+      canScrollLeft: false,
+      canScrollRight: false,
+      canScrollUp: false,
+      canScrollDown: false,
+    };
+  }
+
+  const hasHorizontalOverflow =
+    metrics.scrollWidth - metrics.clientWidth > TABLE_SCROLL_EPSILON_PX;
+  const hasVerticalOverflow =
+    metrics.scrollHeight - metrics.clientHeight > TABLE_SCROLL_EPSILON_PX;
+  const hasOverflow = hasHorizontalOverflow || hasVerticalOverflow;
+
+  const canScrollLeft =
+    hasHorizontalOverflow && metrics.scrollLeft > TABLE_SCROLL_EPSILON_PX;
+  const canScrollRight =
+    hasHorizontalOverflow &&
+    metrics.scrollLeft + metrics.clientWidth <
+      metrics.scrollWidth - TABLE_SCROLL_EPSILON_PX;
+  const canScrollUp =
+    hasVerticalOverflow && metrics.scrollTop > TABLE_SCROLL_EPSILON_PX;
+  const canScrollDown =
+    hasVerticalOverflow &&
+    metrics.scrollTop + metrics.clientHeight <
+      metrics.scrollHeight - TABLE_SCROLL_EPSILON_PX;
+
+  return {
+    hasHorizontalOverflow,
+    hasVerticalOverflow,
+    hasOverflow,
+    canScrollLeft,
+    canScrollRight,
+    canScrollUp,
+    canScrollDown,
   };
 }

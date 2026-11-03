@@ -323,6 +323,14 @@ export const ATTENDANCE_FLEXIBLE_SLOT_POLICY_MIGRATION_NAME =
 export const ATTENDANCE_FLEXIBLE_SLOT_POLICY_RPC_SIGNATURES = Object.freeze([
   "public.attendance_create_slot_policy_admin(uuid, uuid, date, jsonb, integer, uuid, text)",
 ]);
+export const ATTENDANCE_EXPLANATIONS_WAVE2_MIGRATION_NAME =
+  "20261103150000_attendance_explanations_wave2.sql";
+export const ATTENDANCE_EXPLANATIONS_WAVE2_RPC_SIGNATURES = Object.freeze([
+  "public.attendance_get_my_explanations_overview(uuid, uuid, date, integer, integer)",
+  "public.attendance_submit_explanation(uuid, uuid, date, text, text, text, text)",
+  "public.attendance_list_explanation_approval_inbox(uuid, uuid, text, integer, integer)",
+  "public.attendance_decide_explanation(uuid, uuid, uuid, text, integer, text, text, text)",
+]);
 export const F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES = Object.freeze([
   "public.work_report_list_templates(uuid, uuid)",
   "public.work_report_get_template(uuid, uuid, uuid)",
@@ -567,7 +575,8 @@ export async function verifyS0T1CHistoricalCompatibility(
     workerEditHistoryAdminApplied = false,
     attendanceMonthlyMatrixBranchesProjectCoordsApplied = false,
     attendanceSlotPolicyAndFourSlotMatrixApplied = false,
-    attendanceFlexibleSlotPolicyApplied = false } = {},
+    attendanceFlexibleSlotPolicyApplied = false,
+    attendanceExplanationsWave2Applied = false } = {},
 ) {
   const baseAllowlist = extractS0T1CAllowlistSignatures(migrationSql);
   if (baseAllowlist.length === 0) {
@@ -659,6 +668,9 @@ export async function verifyS0T1CHistoricalCompatibility(
       : []),
     ...(attendanceFlexibleSlotPolicyApplied
       ? ATTENDANCE_FLEXIBLE_SLOT_POLICY_RPC_SIGNATURES
+      : []),
+    ...(attendanceExplanationsWave2Applied
+      ? ATTENDANCE_EXPLANATIONS_WAVE2_RPC_SIGNATURES
       : []),
   ];
 
@@ -920,6 +932,8 @@ export async function verifyAppliedMigrationChecksum(
           appliedMap.has(ATTENDANCE_SLOT_POLICY_AND_FOUR_SLOT_MATRIX_MIGRATION_NAME),
         attendanceFlexibleSlotPolicyApplied:
           appliedMap.has(ATTENDANCE_FLEXIBLE_SLOT_POLICY_MIGRATION_NAME),
+        attendanceExplanationsWave2Applied:
+          appliedMap.has(ATTENDANCE_EXPLANATIONS_WAVE2_MIGRATION_NAME),
       },
     );
     if (postconditions.ok) {

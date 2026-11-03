@@ -15,13 +15,19 @@ import {
   attendanceMonthlyMatrixHttpStatusForError,
   parseAssignBranchBody,
   parseAttendanceBranchesAdminQuery,
+  parseAttendanceExplanationApprovalInboxQuery,
   parseAttendanceMonthlyMatrixExportQuery,
   parseAttendanceMonthlyMatrixQuery,
   parseCreateSlotPolicyBody,
+  parseDecideAttendanceExplanationBody,
+  parseMyAttendanceExplanationsQuery,
+  parseSubmitAttendanceExplanationBody,
   parseUnassignBranchBody,
   parseUpsertBranchBody,
+  type AttendanceExplanationDecision,
   type AttendanceMonthlyMatrixEmployeeRowProjection,
   type AttendanceMonthlyMatrixErrorCode,
+  type AttendanceSlotCode,
 } from "./attendance-monthly-matrix-contract.ts";
 import type { AttendanceMonthlyMatrixRepository } from "./attendance-monthly-matrix-repository.ts";
 import {
@@ -317,6 +323,42 @@ export function computeSlotPolicyCreateRequestFingerprint(input: {
     effective_from_date: input.effective_from_date,
     slots: normalizedSlots,
     expected_version: input.expected_version,
+  });
+  return createHash("sha256").update(canonicalPayload, "utf8").digest("hex");
+}
+
+export function computeExplanationSubmitRequestFingerprint(input: {
+  app_user_id: string;
+  business_date: string;
+  slot_code: AttendanceSlotCode;
+  reason: string;
+}): string {
+  const canonicalPayload = JSON.stringify({
+    v: 1,
+    op: "attendance_explanation_submit",
+    app_user_id: input.app_user_id.toLowerCase(),
+    business_date: input.business_date,
+    slot_code: input.slot_code,
+    reason: input.reason.trim(),
+  });
+  return createHash("sha256").update(canonicalPayload, "utf8").digest("hex");
+}
+
+export function computeExplanationDecideRequestFingerprint(input: {
+  app_user_id: string;
+  explanation_id: string;
+  decision: AttendanceExplanationDecision;
+  expected_row_version: number;
+  decision_note: string | null;
+}): string {
+  const canonicalPayload = JSON.stringify({
+    v: 1,
+    op: "attendance_explanation_decide",
+    app_user_id: input.app_user_id.toLowerCase(),
+    explanation_id: input.explanation_id.toLowerCase(),
+    decision: input.decision,
+    expected_row_version: input.expected_row_version,
+    decision_note: input.decision_note ? input.decision_note.trim() : null,
   });
   return createHash("sha256").update(canonicalPayload, "utf8").digest("hex");
 }
@@ -969,5 +1011,267 @@ export async function postAttendanceSlotPolicyAdmin(
       policy: saved.result.policy,
     },
     saved.result.replayed ? 200 : 201,
+  );
+}
+
+export async function getMyAttendanceExplanations(
+  request: Request,
+  dependencies: AttendanceMonthlyMatrixApiDependencies,
+): Promise<Response> {
+  if (hasDisallowedAuthorityHeaders(request)) {
+    return matrixError("ATTENDANCE_EXPLANATION_INVALID");
+  }
+
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(request.url);
+  } catch {
+    return matrixError("ATTENDANCE_EXPLANATION_INVALID");
+  }
+
+  const actorResult = await resolveVerifiedActor(dependencies.resolveSession);
+  if (!actorResult.ok) {
+    return actorResult.response;
+  }
+
+  const parsedQuery = parseMyAttendanceExplanationsQuery(parsedUrl);
+  if (!parsedQuery.ok) {
+    return matrixError(parsedQuery.code);
+  }
+
+  if (!dependencies.repository.getMyExplanationsOverview) {
+    return matrixError("ATTENDANCE_REPORT_UNAVAILABLE");
+  }
+
+  const result = await dependencies.repository.getMyExplanationsOverview({
+    auth_subject: actorResult.auth_subject,
+    app_user_id: actorResult.app_user_id,
+    business_date: parsedQuery.value.business_date,
+  });
+
+  if (!result.ok) {
+    return matrixError(result.code);
+  }
+
+  return noStoreJson(
+    {
+      ok: true,
+      ...result.data,
+    },
+    200,
+  );
+}
+
+export async function postSubmitAttendanceExplanation(
+  request: Request,
+  dependencies: AttendanceMonthlyMatrixApiDependencies,
+): Promise<Response> {
+  if (!isSameOriginAuthRequest(request)) {
+    return matrixError("CSRF_REJECTED");
+  }
+
+  if (hasDisallowedAuthorityHeaders(request)) {
+    return matrixError("ATTENDANCE_EXPLANATION_INVALID");
+  }
+
+  try {
+    const parsedUrl = new URL(request.url);
+    if (parsedUrl.search.length > 0) {
+      return matrixError("ATTENDANCE_EXPLANATION_INVALID");
+    }
+  } catch {
+    return matrixError("ATTENDANCE_EXPLANATION_INVALID");
+  }
+
+  const contentType = request.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase();
+  if (contentType !== "application/json") {
+    return matrixError("CONTENT_TYPE_INVALID");
+  }
+
+  const actorResult = await resolveVerifiedActor(dependencies.resolveSession);
+  if (!actorResult.ok) {
+    return actorResult.response;
+  }
+
+  const boundedBody = await readBoundedJsonBody(request, MAX_BRANCH_JSON_BODY_BYTES);
+  if (!boundedBody.ok) {
+    return boundedBody.kind === "too-large"
+      ? matrixError("BODY_TOO_LARGE")
+      : matrixError("ATTENDANCE_EXPLANATION_INVALID");
+  }
+
+  const parsedBody = parseSubmitAttendanceExplanationBody(
+    boundedBody.value,
+    request.headers.get("idempotency-key"),
+  );
+  if (!parsedBody.ok) {
+    return matrixError(parsedBody.code);
+  }
+
+  if (!dependencies.repository.submitExplanation) {
+    return matrixError("ATTENDANCE_REPORT_UNAVAILABLE");
+  }
+
+  const requestFingerprint = computeExplanationSubmitRequestFingerprint({
+    app_user_id: actorResult.app_user_id,
+    business_date: parsedBody.value.business_date,
+    slot_code: parsedBody.value.slot_code,
+    reason: parsedBody.value.reason,
+  });
+
+  const saved = await dependencies.repository.submitExplanation({
+    auth_subject: actorResult.auth_subject,
+    app_user_id: actorResult.app_user_id,
+    business_date: parsedBody.value.business_date,
+    slot_code: parsedBody.value.slot_code,
+    reason: parsedBody.value.reason,
+    idempotency_key: parsedBody.value.idempotency_key,
+    request_fingerprint: requestFingerprint,
+  });
+
+  if (!saved.ok) {
+    return matrixError(saved.code);
+  }
+
+  return noStoreJson(
+    {
+      ok: true,
+      replayed: saved.result.replayed,
+      explanation: saved.result.explanation,
+    },
+    saved.result.replayed ? 200 : 201,
+  );
+}
+
+export async function getAttendanceExplanationApprovalInbox(
+  request: Request,
+  dependencies: AttendanceMonthlyMatrixApiDependencies,
+): Promise<Response> {
+  if (hasDisallowedAuthorityHeaders(request)) {
+    return matrixError("ATTENDANCE_EXPLANATION_INVALID");
+  }
+
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(request.url);
+  } catch {
+    return matrixError("ATTENDANCE_EXPLANATION_INVALID");
+  }
+
+  const actorResult = await resolveVerifiedActor(dependencies.resolveSession);
+  if (!actorResult.ok) {
+    return actorResult.response;
+  }
+
+  const parsedQuery = parseAttendanceExplanationApprovalInboxQuery(parsedUrl);
+  if (!parsedQuery.ok) {
+    return matrixError(parsedQuery.code);
+  }
+
+  if (!dependencies.repository.listExplanationApprovalInbox) {
+    return matrixError("ATTENDANCE_REPORT_UNAVAILABLE");
+  }
+
+  const result = await dependencies.repository.listExplanationApprovalInbox({
+    auth_subject: actorResult.auth_subject,
+    app_user_id: actorResult.app_user_id,
+    status_filter: parsedQuery.value.status_filter ?? "PENDING",
+  });
+
+  if (!result.ok) {
+    return matrixError(result.code);
+  }
+
+  return noStoreJson(
+    {
+      ok: true,
+      ...result.data,
+    },
+    200,
+  );
+}
+
+export async function postDecideAttendanceExplanation(
+  request: Request,
+  explanationId: string,
+  dependencies: AttendanceMonthlyMatrixApiDependencies,
+): Promise<Response> {
+  if (!isSameOriginAuthRequest(request)) {
+    return matrixError("CSRF_REJECTED");
+  }
+
+  if (hasDisallowedAuthorityHeaders(request)) {
+    return matrixError("ATTENDANCE_EXPLANATION_INVALID");
+  }
+
+  try {
+    const parsedUrl = new URL(request.url);
+    if (parsedUrl.search.length > 0 || !isUuid(explanationId)) {
+      return matrixError("ATTENDANCE_EXPLANATION_INVALID");
+    }
+  } catch {
+    return matrixError("ATTENDANCE_EXPLANATION_INVALID");
+  }
+
+  const contentType = request.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase();
+  if (contentType !== "application/json") {
+    return matrixError("CONTENT_TYPE_INVALID");
+  }
+
+  const actorResult = await resolveVerifiedActor(dependencies.resolveSession);
+  if (!actorResult.ok) {
+    return actorResult.response;
+  }
+
+  const boundedBody = await readBoundedJsonBody(request, MAX_BRANCH_JSON_BODY_BYTES);
+  if (!boundedBody.ok) {
+    return boundedBody.kind === "too-large"
+      ? matrixError("BODY_TOO_LARGE")
+      : matrixError("ATTENDANCE_EXPLANATION_INVALID");
+  }
+
+  const parsedBody = parseDecideAttendanceExplanationBody(
+    boundedBody.value,
+    request.headers.get("idempotency-key"),
+  );
+  if (!parsedBody.ok) {
+    return matrixError(parsedBody.code);
+  }
+
+  if (!dependencies.repository.decideExplanation) {
+    return matrixError("ATTENDANCE_REPORT_UNAVAILABLE");
+  }
+
+  const normalizedExplanationId = explanationId.toLowerCase();
+  const requestFingerprint = computeExplanationDecideRequestFingerprint({
+    app_user_id: actorResult.app_user_id,
+    explanation_id: normalizedExplanationId,
+    decision: parsedBody.value.decision,
+    expected_row_version: parsedBody.value.expected_row_version,
+    decision_note: parsedBody.value.decision_note,
+  });
+
+  const saved = await dependencies.repository.decideExplanation({
+    auth_subject: actorResult.auth_subject,
+    app_user_id: actorResult.app_user_id,
+    explanation_id: normalizedExplanationId,
+    decision: parsedBody.value.decision,
+    expected_row_version: parsedBody.value.expected_row_version,
+    decision_note: parsedBody.value.decision_note,
+    idempotency_key: parsedBody.value.idempotency_key,
+    request_fingerprint: requestFingerprint,
+  });
+
+  if (!saved.ok) {
+    return matrixError(saved.code);
+  }
+
+  return noStoreJson(
+    {
+      ok: true,
+      replayed: saved.result.replayed,
+      explanation: saved.result.explanation,
+    },
+    200,
   );
 }
