@@ -12,6 +12,7 @@ import {
   type AttendanceBranchesAdminListProjection,
   type AttendanceMonthlyMatrixErrorCode,
   type AttendanceMonthlyMatrixReportProjection,
+  type AttendanceSlotConfigItemProjection,
   type AttendanceSlotPoliciesAdminListProjection,
   type CreateAttendanceSlotPolicyResultProjection,
   type UnassignAttendanceBranchResultProjection,
@@ -105,18 +106,19 @@ export type CreateAttendanceSlotPolicyAdminInput = {
   auth_subject: string;
   app_user_id: string;
   effective_from_date: string;
-  slot_1_time: string;
-  slot_1_grace_before_minutes: number;
-  slot_1_grace_after_minutes: number;
-  slot_2_time: string;
-  slot_2_grace_before_minutes: number;
-  slot_2_grace_after_minutes: number;
-  slot_3_time: string;
-  slot_3_grace_before_minutes: number;
-  slot_3_grace_after_minutes: number;
-  slot_4_time: string;
-  slot_4_grace_before_minutes: number;
-  slot_4_grace_after_minutes: number;
+  slots: readonly AttendanceSlotConfigItemProjection[];
+  slot_1_time?: string;
+  slot_1_grace_before_minutes?: number;
+  slot_1_grace_after_minutes?: number;
+  slot_2_time?: string;
+  slot_2_grace_before_minutes?: number;
+  slot_2_grace_after_minutes?: number;
+  slot_3_time?: string;
+  slot_3_grace_before_minutes?: number;
+  slot_3_grace_after_minutes?: number;
+  slot_4_time?: string;
+  slot_4_grace_before_minutes?: number;
+  slot_4_grace_after_minutes?: number;
   expected_version: number;
   idempotency_key: string;
   request_fingerprint: string;
@@ -446,18 +448,7 @@ export function createServiceAttendanceMonthlyMatrixRepository(
           p_auth_subject: input.auth_subject,
           p_app_user_id: input.app_user_id,
           p_effective_from_date: input.effective_from_date,
-          p_slot_1_time: input.slot_1_time,
-          p_slot_1_grace_before_minutes: input.slot_1_grace_before_minutes,
-          p_slot_1_grace_after_minutes: input.slot_1_grace_after_minutes,
-          p_slot_2_time: input.slot_2_time,
-          p_slot_2_grace_before_minutes: input.slot_2_grace_before_minutes,
-          p_slot_2_grace_after_minutes: input.slot_2_grace_after_minutes,
-          p_slot_3_time: input.slot_3_time,
-          p_slot_3_grace_before_minutes: input.slot_3_grace_before_minutes,
-          p_slot_3_grace_after_minutes: input.slot_3_grace_after_minutes,
-          p_slot_4_time: input.slot_4_time,
-          p_slot_4_grace_before_minutes: input.slot_4_grace_before_minutes,
-          p_slot_4_grace_after_minutes: input.slot_4_grace_after_minutes,
+          p_slots: input.slots,
           p_expected_version: input.expected_version,
           p_idempotency_key: input.idempotency_key,
           p_request_fingerprint: input.request_fingerprint,

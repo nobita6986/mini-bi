@@ -245,37 +245,77 @@ export function computeBranchUnassignRequestFingerprint(input: {
 export function computeSlotPolicyCreateRequestFingerprint(input: {
   app_user_id: string;
   effective_from_date: string;
-  slot_1_time: string;
-  slot_1_grace_before_minutes: number;
-  slot_1_grace_after_minutes: number;
-  slot_2_time: string;
-  slot_2_grace_before_minutes: number;
-  slot_2_grace_after_minutes: number;
-  slot_3_time: string;
-  slot_3_grace_before_minutes: number;
-  slot_3_grace_after_minutes: number;
-  slot_4_time: string;
-  slot_4_grace_before_minutes: number;
-  slot_4_grace_after_minutes: number;
+  slots?: readonly {
+    slot_code?: string;
+    slot_index?: number;
+    slot_label?: string;
+    target_time: string;
+    grace_before_minutes: number;
+    grace_after_minutes: number;
+  }[];
+  slot_1_time?: string;
+  slot_1_grace_before_minutes?: number;
+  slot_1_grace_after_minutes?: number;
+  slot_2_time?: string;
+  slot_2_grace_before_minutes?: number;
+  slot_2_grace_after_minutes?: number;
+  slot_3_time?: string;
+  slot_3_grace_before_minutes?: number;
+  slot_3_grace_after_minutes?: number;
+  slot_4_time?: string;
+  slot_4_grace_before_minutes?: number;
+  slot_4_grace_after_minutes?: number;
   expected_version: number;
 }): string {
+  const rawSlots =
+    Array.isArray(input.slots) && input.slots.length > 0
+      ? input.slots
+      : [
+          {
+            slot_label: "Time 1",
+            target_time: input.slot_1_time ?? "",
+            grace_before_minutes: input.slot_1_grace_before_minutes ?? 0,
+            grace_after_minutes: input.slot_1_grace_after_minutes ?? 0,
+          },
+          {
+            slot_label: "Time 2",
+            target_time: input.slot_2_time ?? "",
+            grace_before_minutes: input.slot_2_grace_before_minutes ?? 0,
+            grace_after_minutes: input.slot_2_grace_after_minutes ?? 0,
+          },
+          {
+            slot_label: "Time 3",
+            target_time: input.slot_3_time ?? "",
+            grace_before_minutes: input.slot_3_grace_before_minutes ?? 0,
+            grace_after_minutes: input.slot_3_grace_after_minutes ?? 0,
+          },
+          {
+            slot_label: "Time 4",
+            target_time: input.slot_4_time ?? "",
+            grace_before_minutes: input.slot_4_grace_before_minutes ?? 0,
+            grace_after_minutes: input.slot_4_grace_after_minutes ?? 0,
+          },
+        ];
+
+  const normalizedSlots = rawSlots.map((slot, index) => {
+    const slotIndex = index + 1;
+    const rawLabel = typeof slot.slot_label === "string" ? slot.slot_label.trim() : "";
+    return {
+      slot_index: slotIndex,
+      slot_code: `SLOT_${slotIndex}`,
+      slot_label: rawLabel.length > 0 ? rawLabel : `Time ${slotIndex}`,
+      target_time: slot.target_time,
+      grace_before_minutes: slot.grace_before_minutes,
+      grace_after_minutes: slot.grace_after_minutes,
+    };
+  });
+
   const canonicalPayload = JSON.stringify({
-    v: 1,
+    v: 2,
     op: "slot_policy_create",
     app_user_id: input.app_user_id.toLowerCase(),
     effective_from_date: input.effective_from_date,
-    slot_1_time: input.slot_1_time,
-    slot_1_grace_before_minutes: input.slot_1_grace_before_minutes,
-    slot_1_grace_after_minutes: input.slot_1_grace_after_minutes,
-    slot_2_time: input.slot_2_time,
-    slot_2_grace_before_minutes: input.slot_2_grace_before_minutes,
-    slot_2_grace_after_minutes: input.slot_2_grace_after_minutes,
-    slot_3_time: input.slot_3_time,
-    slot_3_grace_before_minutes: input.slot_3_grace_before_minutes,
-    slot_3_grace_after_minutes: input.slot_3_grace_after_minutes,
-    slot_4_time: input.slot_4_time,
-    slot_4_grace_before_minutes: input.slot_4_grace_before_minutes,
-    slot_4_grace_after_minutes: input.slot_4_grace_after_minutes,
+    slots: normalizedSlots,
     expected_version: input.expected_version,
   });
   return createHash("sha256").update(canonicalPayload, "utf8").digest("hex");
@@ -904,18 +944,7 @@ export async function postAttendanceSlotPolicyAdmin(
   const requestFingerprint = computeSlotPolicyCreateRequestFingerprint({
     app_user_id: actorResult.app_user_id,
     effective_from_date: parsedBody.value.effective_from_date,
-    slot_1_time: parsedBody.value.slot_1_time,
-    slot_1_grace_before_minutes: parsedBody.value.slot_1_grace_before_minutes,
-    slot_1_grace_after_minutes: parsedBody.value.slot_1_grace_after_minutes,
-    slot_2_time: parsedBody.value.slot_2_time,
-    slot_2_grace_before_minutes: parsedBody.value.slot_2_grace_before_minutes,
-    slot_2_grace_after_minutes: parsedBody.value.slot_2_grace_after_minutes,
-    slot_3_time: parsedBody.value.slot_3_time,
-    slot_3_grace_before_minutes: parsedBody.value.slot_3_grace_before_minutes,
-    slot_3_grace_after_minutes: parsedBody.value.slot_3_grace_after_minutes,
-    slot_4_time: parsedBody.value.slot_4_time,
-    slot_4_grace_before_minutes: parsedBody.value.slot_4_grace_before_minutes,
-    slot_4_grace_after_minutes: parsedBody.value.slot_4_grace_after_minutes,
+    slots: parsedBody.value.slots,
     expected_version: parsedBody.value.expected_version,
   });
 
@@ -923,18 +952,7 @@ export async function postAttendanceSlotPolicyAdmin(
     auth_subject: actorResult.auth_subject,
     app_user_id: actorResult.app_user_id,
     effective_from_date: parsedBody.value.effective_from_date,
-    slot_1_time: parsedBody.value.slot_1_time,
-    slot_1_grace_before_minutes: parsedBody.value.slot_1_grace_before_minutes,
-    slot_1_grace_after_minutes: parsedBody.value.slot_1_grace_after_minutes,
-    slot_2_time: parsedBody.value.slot_2_time,
-    slot_2_grace_before_minutes: parsedBody.value.slot_2_grace_before_minutes,
-    slot_2_grace_after_minutes: parsedBody.value.slot_2_grace_after_minutes,
-    slot_3_time: parsedBody.value.slot_3_time,
-    slot_3_grace_before_minutes: parsedBody.value.slot_3_grace_before_minutes,
-    slot_3_grace_after_minutes: parsedBody.value.slot_3_grace_after_minutes,
-    slot_4_time: parsedBody.value.slot_4_time,
-    slot_4_grace_before_minutes: parsedBody.value.slot_4_grace_before_minutes,
-    slot_4_grace_after_minutes: parsedBody.value.slot_4_grace_after_minutes,
+    slots: parsedBody.value.slots,
     expected_version: parsedBody.value.expected_version,
     idempotency_key: parsedBody.value.idempotency_key,
     request_fingerprint: requestFingerprint,

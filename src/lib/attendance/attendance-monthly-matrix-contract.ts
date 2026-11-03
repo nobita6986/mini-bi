@@ -50,7 +50,23 @@ export const ATTENDANCE_MATRIX_LEAVE_TYPES = [
 ] as const;
 export type AttendanceMatrixLeaveType = (typeof ATTENDANCE_MATRIX_LEAVE_TYPES)[number];
 
-export const ATTENDANCE_SLOT_CODES = ["SLOT_1", "SLOT_2", "SLOT_3", "SLOT_4"] as const;
+export const ATTENDANCE_SLOT_MIN_COUNT = 1;
+export const ATTENDANCE_SLOT_MAX_COUNT = 12;
+
+export const ATTENDANCE_SLOT_CODES = [
+  "SLOT_1",
+  "SLOT_2",
+  "SLOT_3",
+  "SLOT_4",
+  "SLOT_5",
+  "SLOT_6",
+  "SLOT_7",
+  "SLOT_8",
+  "SLOT_9",
+  "SLOT_10",
+  "SLOT_11",
+  "SLOT_12",
+] as const;
 export type AttendanceSlotCode = (typeof ATTENDANCE_SLOT_CODES)[number];
 
 export const ATTENDANCE_SLOT_SESSION_CODES = ["AM", "PM"] as const;
@@ -260,7 +276,8 @@ export type AttendanceMonthlyMatrixApprovedLeaveItemProjection = {
 
 export type AttendanceSlotConfigItemProjection = {
   slot_code: AttendanceSlotCode;
-  slot_index: 1 | 2 | 3 | 4;
+  slot_index: number;
+  slot_label: string;
   session_code: AttendanceSlotSessionCode;
   target_time: string;
   grace_before_minutes: number;
@@ -274,12 +291,7 @@ export type AttendanceSlotPolicyProjection = {
   configured_at: string;
   configured_at_local: string;
   configured_by_display_name: string;
-  slots: [
-    AttendanceSlotConfigItemProjection,
-    AttendanceSlotConfigItemProjection,
-    AttendanceSlotConfigItemProjection,
-    AttendanceSlotConfigItemProjection,
-  ];
+  slots: AttendanceSlotConfigItemProjection[];
 };
 
 export type AttendanceMonthlyMatrixSlotPolicySummaryProjection = {
@@ -306,7 +318,8 @@ export type AttendanceSlotCheckinItemProjection = {
 
 export type AttendanceMonthlyMatrixDaySlotProjection = {
   slot_code: AttendanceSlotCode;
-  slot_index: 1 | 2 | 3 | 4;
+  slot_index: number;
+  slot_label: string;
   session_code: AttendanceSlotSessionCode;
   target_time: string;
   grace_before_minutes: number;
@@ -327,22 +340,25 @@ export const DEFAULT_ATTENDANCE_SLOT_POLICY: AttendanceSlotPolicyProjection = {
     {
       slot_code: "SLOT_1",
       slot_index: 1,
+      slot_label: "Time 1",
       session_code: "AM",
-      target_time: "08:00",
+      target_time: "07:30",
       grace_before_minutes: 15,
       grace_after_minutes: 15,
     },
     {
       slot_code: "SLOT_2",
       slot_index: 2,
+      slot_label: "Time 2",
       session_code: "AM",
-      target_time: "11:00",
+      target_time: "10:00",
       grace_before_minutes: 15,
       grace_after_minutes: 15,
     },
     {
       slot_code: "SLOT_3",
       slot_index: 3,
+      slot_label: "Time 3",
       session_code: "PM",
       target_time: "13:00",
       grace_before_minutes: 15,
@@ -351,8 +367,18 @@ export const DEFAULT_ATTENDANCE_SLOT_POLICY: AttendanceSlotPolicyProjection = {
     {
       slot_code: "SLOT_4",
       slot_index: 4,
+      slot_label: "Time 4",
       session_code: "PM",
-      target_time: "17:00",
+      target_time: "15:00",
+      grace_before_minutes: 15,
+      grace_after_minutes: 15,
+    },
+    {
+      slot_code: "SLOT_5",
+      slot_index: 5,
+      slot_label: "Time 5",
+      session_code: "PM",
+      target_time: "16:30",
       grace_before_minutes: 15,
       grace_after_minutes: 15,
     },
@@ -447,18 +473,7 @@ export type CreateAttendanceSlotPolicyResultProjection = {
 
 export type ParsedCreateSlotPolicyRequest = {
   effective_from_date: string;
-  slot_1_time: string;
-  slot_1_grace_before_minutes: number;
-  slot_1_grace_after_minutes: number;
-  slot_2_time: string;
-  slot_2_grace_before_minutes: number;
-  slot_2_grace_after_minutes: number;
-  slot_3_time: string;
-  slot_3_grace_before_minutes: number;
-  slot_3_grace_after_minutes: number;
-  slot_4_time: string;
-  slot_4_grace_before_minutes: number;
-  slot_4_grace_after_minutes: number;
+  slots: AttendanceSlotConfigItemProjection[];
   expected_version: number;
   idempotency_key: string;
 };
@@ -743,6 +758,7 @@ export function evaluateAttendanceDaySlots(input: {
     return {
       slot_code: slot.slot_code,
       slot_index: slot.slot_index,
+      slot_label: slot.slot_label || `Time ${slot.slot_index}`,
       session_code: slot.session_code,
       target_time: slot.target_time,
       grace_before_minutes: slot.grace_before_minutes,
@@ -989,25 +1005,28 @@ export function parseCreateSlotPolicyBody(
       ? [body.slot_1, body.slot_2, body.slot_3, body.slot_4]
       : null;
 
-  if (!rawSlotsList || rawSlotsList.length !== 4) {
+  if (
+    !rawSlotsList ||
+    rawSlotsList.length < ATTENDANCE_SLOT_MIN_COUNT ||
+    rawSlotsList.length > ATTENDANCE_SLOT_MAX_COUNT
+  ) {
     return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
   }
 
-  const parsedSlots: {
-    slot_code: AttendanceSlotCode;
-    target_time: string;
-    grace_before_minutes: number;
-    grace_after_minutes: number;
-  }[] = [];
+  const parsedSlots: AttendanceSlotConfigItemProjection[] = [];
 
-  for (let i = 0; i < 4; i += 1) {
+  for (let i = 0; i < rawSlotsList.length; i += 1) {
     const rawSlot = rawSlotsList[i];
+    const slotIndex = i + 1;
     const expectedCode = ATTENDANCE_SLOT_CODES[i]!;
     if (!isRecord(rawSlot)) {
       return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
     }
     const slotAllowedKeys = new Set([
       "slot_code",
+      "slot_index",
+      "slot_label",
+      "session_code",
       "target_time",
       "grace_before_minutes",
       "grace_after_minutes",
@@ -1018,11 +1037,28 @@ export function parseCreateSlotPolicyBody(
       }
     }
 
-    if (
-      rawSlot.slot_code !== undefined &&
-      rawSlot.slot_code !== expectedCode
-    ) {
+    if (rawSlot.slot_code !== undefined && rawSlot.slot_code !== expectedCode) {
       return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+    }
+    if (rawSlot.slot_index !== undefined && rawSlot.slot_index !== slotIndex) {
+      return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+    }
+
+    let slotLabel = `Time ${slotIndex}`;
+    if (rawSlot.slot_label !== undefined && rawSlot.slot_label !== null) {
+      if (typeof rawSlot.slot_label !== "string") {
+        return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+      }
+      const trimmedLabel = rawSlot.slot_label.trim();
+      if (
+        trimmedLabel.length > 64 ||
+        CONTROL_CHAR_PATTERN.test(trimmedLabel)
+      ) {
+        return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+      }
+      if (trimmedLabel.length > 0) {
+        slotLabel = trimmedLabel;
+      }
     }
 
     const targetTime =
@@ -1044,22 +1080,28 @@ export function parseCreateSlotPolicyBody(
       return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
     }
 
+    const expectedSession: AttendanceSlotSessionCode =
+      targetTime < "12:00" ? "AM" : "PM";
+    if (
+      rawSlot.session_code !== undefined &&
+      rawSlot.session_code !== expectedSession
+    ) {
+      return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+    }
+
+    if (i > 0 && parsedSlots[i - 1]!.target_time >= targetTime) {
+      return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+    }
+
     parsedSlots.push({
       slot_code: expectedCode,
+      slot_index: slotIndex,
+      slot_label: slotLabel,
+      session_code: expectedSession,
       target_time: targetTime,
       grace_before_minutes: graceBefore,
       grace_after_minutes: graceAfter,
     });
-  }
-
-  if (
-    !(
-      parsedSlots[0]!.target_time < parsedSlots[1]!.target_time &&
-      parsedSlots[1]!.target_time < parsedSlots[2]!.target_time &&
-      parsedSlots[2]!.target_time < parsedSlots[3]!.target_time
-    )
-  ) {
-    return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
   }
 
   const expectedVersion = body.expected_version;
@@ -1080,18 +1122,7 @@ export function parseCreateSlotPolicyBody(
     ok: true,
     value: {
       effective_from_date: effectiveFromDate,
-      slot_1_time: parsedSlots[0]!.target_time,
-      slot_1_grace_before_minutes: parsedSlots[0]!.grace_before_minutes,
-      slot_1_grace_after_minutes: parsedSlots[0]!.grace_after_minutes,
-      slot_2_time: parsedSlots[1]!.target_time,
-      slot_2_grace_before_minutes: parsedSlots[1]!.grace_before_minutes,
-      slot_2_grace_after_minutes: parsedSlots[1]!.grace_after_minutes,
-      slot_3_time: parsedSlots[2]!.target_time,
-      slot_3_grace_before_minutes: parsedSlots[2]!.grace_before_minutes,
-      slot_3_grace_after_minutes: parsedSlots[2]!.grace_after_minutes,
-      slot_4_time: parsedSlots[3]!.target_time,
-      slot_4_grace_before_minutes: parsedSlots[3]!.grace_before_minutes,
-      slot_4_grace_after_minutes: parsedSlots[3]!.grace_after_minutes,
+      slots: parsedSlots,
       expected_version: expectedVersion,
       idempotency_key: idempotencyKey,
     },
@@ -1314,27 +1345,32 @@ export function parseUnassignBranchBody(
 
 function projectSlotConfigItem(
   value: unknown,
-  expectedIndex: 1 | 2 | 3 | 4,
+  expectedIndex: number,
 ): AttendanceSlotConfigItemProjection | null {
-  const expectedCode = ATTENDANCE_SLOT_CODES[expectedIndex - 1]!;
-  const expectedSession: AttendanceSlotSessionCode = expectedIndex <= 2 ? "AM" : "PM";
-  if (
-    !isRecord(value) ||
-    !hasExactKeys(value, [
-      "slot_code",
-      "slot_index",
-      "session_code",
-      "target_time",
-      "grace_before_minutes",
-      "grace_after_minutes",
-    ])
-  ) {
+  const expectedCode = ATTENDANCE_SLOT_CODES[expectedIndex - 1];
+  if (!expectedCode || !isRecord(value)) {
+    return null;
+  }
+  const baseKeys = [
+    "slot_code",
+    "slot_index",
+    "session_code",
+    "target_time",
+    "grace_before_minutes",
+    "grace_after_minutes",
+  ] as const;
+  const withLabelKeys = [...baseKeys, "slot_label"] as const;
+  const hasLabelKey = hasExactKeys(value, withLabelKeys);
+  const hasLegacyKeys = !hasLabelKey && hasExactKeys(value, baseKeys);
+  if (!hasLabelKey && !hasLegacyKeys) {
     return null;
   }
   if (
     value.slot_code !== expectedCode ||
     value.slot_index !== expectedIndex ||
-    value.session_code !== expectedSession ||
+    !ATTENDANCE_SLOT_SESSION_CODES.includes(
+      value.session_code as AttendanceSlotSessionCode,
+    ) ||
     typeof value.target_time !== "string" ||
     !HH_MM_PATTERN.test(value.target_time) ||
     typeof value.grace_before_minutes !== "number" ||
@@ -1349,10 +1385,24 @@ function projectSlotConfigItem(
     return null;
   }
 
+  let slotLabel = `Time ${expectedIndex}`;
+  if (hasLabelKey) {
+    if (
+      typeof value.slot_label !== "string" ||
+      value.slot_label.trim().length === 0 ||
+      value.slot_label.trim().length > 64 ||
+      CONTROL_CHAR_PATTERN.test(value.slot_label.trim())
+    ) {
+      return null;
+    }
+    slotLabel = value.slot_label.trim();
+  }
+
   return {
     slot_code: expectedCode,
     slot_index: expectedIndex,
-    session_code: expectedSession,
+    slot_label: slotLabel,
+    session_code: value.session_code as AttendanceSlotSessionCode,
     target_time: value.target_time,
     grace_before_minutes: value.grace_before_minutes,
     grace_after_minutes: value.grace_after_minutes,
@@ -1390,26 +1440,20 @@ export function projectAttendanceSlotPolicy(
     typeof value.configured_by_display_name !== "string" ||
     value.configured_by_display_name.trim().length === 0 ||
     !Array.isArray(value.slots) ||
-    value.slots.length !== 4
+    value.slots.length < ATTENDANCE_SLOT_MIN_COUNT ||
+    value.slots.length > ATTENDANCE_SLOT_MAX_COUNT
   ) {
     return null;
   }
 
-  const slot1 = projectSlotConfigItem(value.slots[0], 1);
-  const slot2 = projectSlotConfigItem(value.slots[1], 2);
-  const slot3 = projectSlotConfigItem(value.slots[2], 3);
-  const slot4 = projectSlotConfigItem(value.slots[3], 4);
-  if (!slot1 || !slot2 || !slot3 || !slot4) {
-    return null;
-  }
-  if (
-    !(
-      slot1.target_time < slot2.target_time &&
-      slot2.target_time < slot3.target_time &&
-      slot3.target_time < slot4.target_time
-    )
-  ) {
-    return null;
+  const slots: AttendanceSlotConfigItemProjection[] = [];
+  for (let i = 0; i < value.slots.length; i += 1) {
+    const projectedSlot = projectSlotConfigItem(value.slots[i], i + 1);
+    if (!projectedSlot) return null;
+    if (i > 0 && slots[i - 1]!.target_time >= projectedSlot.target_time) {
+      return null;
+    }
+    slots.push(projectedSlot);
   }
 
   return {
@@ -1419,7 +1463,7 @@ export function projectAttendanceSlotPolicy(
     configured_at: value.configured_at,
     configured_at_local: value.configured_at_local,
     configured_by_display_name: value.configured_by_display_name,
-    slots: [slot1, slot2, slot3, slot4],
+    slots,
   };
 }
 
@@ -1526,31 +1570,36 @@ function projectSlotCheckinItem(
 
 function projectDaySlot(
   value: unknown,
-  expectedIndex: 1 | 2 | 3 | 4,
+  expectedIndex: number,
 ): AttendanceMonthlyMatrixDaySlotProjection | null {
-  const expectedCode = ATTENDANCE_SLOT_CODES[expectedIndex - 1]!;
-  const expectedSession: AttendanceSlotSessionCode = expectedIndex <= 2 ? "AM" : "PM";
-  if (
-    !isRecord(value) ||
-    !hasExactKeys(value, [
-      "slot_code",
-      "slot_index",
-      "session_code",
-      "target_time",
-      "grace_before_minutes",
-      "grace_after_minutes",
-      "is_leave_covered",
-      "slot_status",
-      "checkins",
-    ])
-  ) {
+  const expectedCode = ATTENDANCE_SLOT_CODES[expectedIndex - 1];
+  if (!expectedCode || !isRecord(value)) {
+    return null;
+  }
+  const baseKeys = [
+    "slot_code",
+    "slot_index",
+    "session_code",
+    "target_time",
+    "grace_before_minutes",
+    "grace_after_minutes",
+    "is_leave_covered",
+    "slot_status",
+    "checkins",
+  ] as const;
+  const withLabelKeys = [...baseKeys, "slot_label"] as const;
+  const hasLabelKey = hasExactKeys(value, withLabelKeys);
+  const hasLegacyKeys = !hasLabelKey && hasExactKeys(value, baseKeys);
+  if (!hasLabelKey && !hasLegacyKeys) {
     return null;
   }
 
   if (
     value.slot_code !== expectedCode ||
     value.slot_index !== expectedIndex ||
-    value.session_code !== expectedSession ||
+    !ATTENDANCE_SLOT_SESSION_CODES.includes(
+      value.session_code as AttendanceSlotSessionCode,
+    ) ||
     typeof value.target_time !== "string" ||
     !HH_MM_PATTERN.test(value.target_time) ||
     typeof value.grace_before_minutes !== "number" ||
@@ -1568,6 +1617,19 @@ function projectDaySlot(
     return null;
   }
 
+  let slotLabel = `Time ${expectedIndex}`;
+  if (hasLabelKey) {
+    if (
+      typeof value.slot_label !== "string" ||
+      value.slot_label.trim().length === 0 ||
+      value.slot_label.trim().length > 64 ||
+      CONTROL_CHAR_PATTERN.test(value.slot_label.trim())
+    ) {
+      return null;
+    }
+    slotLabel = value.slot_label.trim();
+  }
+
   const checkins: AttendanceSlotCheckinItemProjection[] = [];
   for (const rawCheckin of value.checkins) {
     const projectedCheckin = projectSlotCheckinItem(rawCheckin, expectedCode);
@@ -1578,7 +1640,8 @@ function projectDaySlot(
   return {
     slot_code: expectedCode,
     slot_index: expectedIndex,
-    session_code: expectedSession,
+    slot_label: slotLabel,
+    session_code: value.session_code as AttendanceSlotSessionCode,
     target_time: value.target_time,
     grace_before_minutes: value.grace_before_minutes,
     grace_after_minutes: value.grace_after_minutes,
@@ -2141,28 +2204,31 @@ function projectDayCell(value: unknown): AttendanceMonthlyMatrixDayCellProjectio
       typeof value.missing_slot_count !== "number" ||
       !Number.isSafeInteger(value.missing_slot_count) ||
       value.missing_slot_count < 0 ||
-      value.missing_slot_count > 4 ||
       typeof value.late_or_early_checkin_count !== "number" ||
       !Number.isSafeInteger(value.late_or_early_checkin_count) ||
       value.late_or_early_checkin_count < 0 ||
       !Array.isArray(value.slots) ||
-      value.slots.length !== 4
+      value.slots.length < ATTENDANCE_SLOT_MIN_COUNT ||
+      value.slots.length > ATTENDANCE_SLOT_MAX_COUNT ||
+      value.missing_slot_count > value.slots.length
     ) {
       return null;
     }
 
-    const s1 = projectDaySlot(value.slots[0], 1);
-    const s2 = projectDaySlot(value.slots[1], 2);
-    const s3 = projectDaySlot(value.slots[2], 3);
-    const s4 = projectDaySlot(value.slots[3], 4);
-    if (!s1 || !s2 || !s3 || !s4) {
-      return null;
+    const projectedSlots: AttendanceMonthlyMatrixDaySlotProjection[] = [];
+    for (let i = 0; i < value.slots.length; i += 1) {
+      const projectedSlot = projectDaySlot(value.slots[i], i + 1);
+      if (!projectedSlot) return null;
+      if (i > 0 && projectedSlots[i - 1]!.target_time >= projectedSlot.target_time) {
+        return null;
+      }
+      projectedSlots.push(projectedSlot);
     }
 
     policyVersionUsed = value.policy_version_used;
     missingSlotCount = value.missing_slot_count;
     lateOrEarlyCheckinCount = value.late_or_early_checkin_count;
-    slots = [s1, s2, s3, s4];
+    slots = projectedSlots;
   } else {
     const synthesizedCheckins: {
       checkin_id: string;

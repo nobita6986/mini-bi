@@ -142,12 +142,16 @@ test("monthly matrix day cell presentation: renders CHECKED_IN, APPROVED_LEAVE, 
     day_status: "NO_CHECKIN",
   };
 
-  // 1. NO_CHECKIN -> "Chưa có lượt chấm", red tone, never "vắng không phép"
+  // 1. NO_CHECKIN -> "Chưa có lượt chấm", red tone, never "vắng không phép", 5 default slots
   const noCheckin = describeMatrixDayCell(baseCell);
   assert.equal(noCheckin.statusLabel, "Chưa có lượt chấm");
   assert.equal(noCheckin.tone, "red");
   assert.equal(noCheckin.isRedHighlight, true);
-  assert.equal(noCheckin.slots.length, 4);
+  assert.equal(noCheckin.slots.length, 5);
+  assert.deepEqual(
+    noCheckin.slots.map((s) => `${s.slotShortLabel}:${s.targetTime}`),
+    ["Time 1:07:30", "Time 2:10:00", "Time 3:13:00", "Time 4:15:00", "Time 5:16:30"],
+  );
   for (const slot of noCheckin.slots) {
     assert.equal(slot.slotStatus, "MISSING");
     assert.equal(slot.statusLabel, "Chưa có lượt chấm");
@@ -439,14 +443,75 @@ test("Google Maps coordinate link helper and detailed attendance GpsDetailCell w
   assert.equal(/vắng không phép/i.test(matrixPanelSource), false);
 });
 
-test("4-slot assignment: preserves multiple check-ins in same slot, applies earlier-slot tie-break on equidistant times, and enforces exact tolerance boundaries", () => {
+test("Flexible slot assignment (5-slot default & custom 4-slot): preserves multiple check-ins in same slot, applies earlier-slot tie-break on equidistant times, and enforces exact tolerance boundaries", () => {
+  // Verify 5-slot default seed (Time 1: 07:30, Time 2: 10:00, Time 3: 13:00, Time 4: 15:00, Time 5: 16:30, ±15m)
+  assert.equal(DEFAULT_ATTENDANCE_SLOT_POLICY.slots.length, 5);
+  assert.deepEqual(
+    DEFAULT_ATTENDANCE_SLOT_POLICY.slots.map((s) => ({
+      label: s.slot_label,
+      time: s.target_time,
+      before: s.grace_before_minutes,
+      after: s.grace_after_minutes,
+    })),
+    [
+      { label: "Time 1", time: "07:30", before: 15, after: 15 },
+      { label: "Time 2", time: "10:00", before: 15, after: 15 },
+      { label: "Time 3", time: "13:00", before: 15, after: 15 },
+      { label: "Time 4", time: "15:00", before: 15, after: 15 },
+      { label: "Time 5", time: "16:30", before: 15, after: 15 },
+    ],
+  );
+
+  // Evaluate against a 4-slot policy (08:00, 11:00, 13:00, 17:00, ±15m) to verify custom slot count + tie-breaks:
+  const customFourSlotPolicy = {
+    version: 2,
+    slots: [
+      {
+        slot_code: "SLOT_1",
+        slot_index: 1,
+        slot_label: "Time 1",
+        session_code: "AM",
+        target_time: "08:00",
+        grace_before_minutes: 15,
+        grace_after_minutes: 15,
+      },
+      {
+        slot_code: "SLOT_2",
+        slot_index: 2,
+        slot_label: "Time 2",
+        session_code: "AM",
+        target_time: "11:00",
+        grace_before_minutes: 15,
+        grace_after_minutes: 15,
+      },
+      {
+        slot_code: "SLOT_3",
+        slot_index: 3,
+        slot_label: "Time 3",
+        session_code: "PM",
+        target_time: "13:00",
+        grace_before_minutes: 15,
+        grace_after_minutes: 15,
+      },
+      {
+        slot_code: "SLOT_4",
+        slot_index: 4,
+        slot_label: "Time 4",
+        session_code: "PM",
+        target_time: "17:00",
+        grace_before_minutes: 15,
+        grace_after_minutes: 15,
+      },
+    ],
+  };
+
   // 1. Multiple check-ins in SLOT_1 (07:45 exact boundary, 07:40 early by 20m -> Sớm 20p, 08:15 exact boundary, 08:25 late by 25m -> Muộn 25p)
   // Plus equidistant tie-breakers:
   // - 09:30 (570m) equidistant between SLOT_1 (08:00=480m, diff 90m) and SLOT_2 (11:00=660m, diff 90m) -> assigned to SLOT_1
   // - 12:00 (720m) equidistant between SLOT_2 (11:00=660m, diff 60m) and SLOT_3 (13:00=780m, diff 60m) -> assigned to SLOT_2
   // - 15:00 (900m) equidistant between SLOT_3 (13:00=780m, diff 120m) and SLOT_4 (17:00=1020m, diff 120m) -> assigned to SLOT_3
   const evaluated = evaluateAttendanceDaySlots({
-    policy: DEFAULT_ATTENDANCE_SLOT_POLICY,
+    policy: customFourSlotPolicy,
     checkins: [
       {
         checkin_id: "c-0825",
@@ -582,7 +647,7 @@ test("4-slot assignment: preserves multiple check-ins in same slot, applies earl
   const cellProjection = {
     business_date: "2026-10-05",
     day_of_month: 5,
-    policy_version_used: 1,
+    policy_version_used: 2,
     has_checkin: true,
     checkin_count: 7,
     first_checkin_id: "c-0740",
@@ -622,12 +687,12 @@ test("4-slot assignment: preserves multiple check-ins in same slot, applies earl
   assert.equal(presentation.slots[3].statusLabel, "Chưa có lượt chấm");
 
   const excelText = formatMatrixDayCellText(cellProjection);
-  assert.match(excelText, /Mốc 1 \(08:00\): 07:40 \(Sớm 20p\), 07:45, 08:15, 08:25 \(Muộn 25p\), 09:30 \(Muộn 90p\)/);
-  assert.match(excelText, /Mốc 4 \(17:00\): Chưa có lượt chấm/);
+  assert.match(excelText, /Time 1 \(08:00\): 07:40 \(Sớm 20p\), 07:45, 08:15, 08:25 \(Muộn 25p\), 09:30 \(Muộn 90p\)/);
+  assert.match(excelText, /Time 4 \(17:00\): Chưa có lượt chấm/);
   assert.equal(/vắng không phép/i.test(excelText), false);
 });
 
-test("4-slot leave coverage: FULL covers all 4 slots, AM covers SLOT_1..2, PM covers SLOT_3..4", () => {
+test("5-slot default leave coverage: FULL covers all 5 slots, AM covers Time 1..2 (< 12:00), PM covers Time 3..5 (>= 12:00)", () => {
   const amEval = evaluateAttendanceDaySlots({
     policy: DEFAULT_ATTENDANCE_SLOT_POLICY,
     checkins: [],
@@ -641,11 +706,13 @@ test("4-slot leave coverage: FULL covers all 4 slots, AM covers SLOT_1..2, PM co
       },
     ],
   });
+  assert.equal(amEval.slots.length, 5);
   assert.equal(amEval.slots[0].slot_status, "LEAVE_COVERED");
   assert.equal(amEval.slots[1].slot_status, "LEAVE_COVERED");
   assert.equal(amEval.slots[2].slot_status, "MISSING");
   assert.equal(amEval.slots[3].slot_status, "MISSING");
-  assert.equal(amEval.missing_slot_count, 2);
+  assert.equal(amEval.slots[4].slot_status, "MISSING");
+  assert.equal(amEval.missing_slot_count, 3);
 
   const pmEval = evaluateAttendanceDaySlots({
     policy: DEFAULT_ATTENDANCE_SLOT_POLICY,
@@ -664,6 +731,7 @@ test("4-slot leave coverage: FULL covers all 4 slots, AM covers SLOT_1..2, PM co
   assert.equal(pmEval.slots[1].slot_status, "MISSING");
   assert.equal(pmEval.slots[2].slot_status, "LEAVE_COVERED");
   assert.equal(pmEval.slots[3].slot_status, "LEAVE_COVERED");
+  assert.equal(pmEval.slots[4].slot_status, "LEAVE_COVERED");
   assert.equal(pmEval.missing_slot_count, 2);
 
   const fullEval = evaluateAttendanceDaySlots({

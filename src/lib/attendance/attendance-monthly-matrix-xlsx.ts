@@ -182,6 +182,44 @@ export async function buildAttendanceMonthlyMatrixXlsx(input: {
     });
   });
 
+  const monthPolicies =
+    input.slot_policy?.month_policies && input.slot_policy.month_policies.length > 0
+      ? input.slot_policy.month_policies
+      : input.slot_policy?.current_policy
+        ? [input.slot_policy.current_policy]
+        : [DEFAULT_ATTENDANCE_SLOT_POLICY];
+  const primaryPolicy =
+    input.slot_policy?.current_policy ??
+    monthPolicies[monthPolicies.length - 1] ??
+    DEFAULT_ATTENDANCE_SLOT_POLICY;
+
+  let detailSlotCount = Math.max(
+    1,
+    primaryPolicy.slots.length,
+    ...monthPolicies.map((pol) => pol.slots.length),
+  );
+  for (const emp of input.items) {
+    for (const day of emp.days) {
+      if (Array.isArray(day.slots) && day.slots.length > detailSlotCount) {
+        detailSlotCount = day.slots.length;
+      }
+    }
+  }
+
+  const detailSlotHeaders = Array.from({ length: detailSlotCount }, (_, idx) => {
+    const fromPrimary = primaryPolicy.slots[idx];
+    if (fromPrimary) {
+      return `${fromPrimary.slot_label || `Time ${idx + 1}`} (${fromPrimary.target_time})`;
+    }
+    for (let pIdx = monthPolicies.length - 1; pIdx >= 0; pIdx -= 1) {
+      const candidate = monthPolicies[pIdx]?.slots[idx];
+      if (candidate) {
+        return `${candidate.slot_label || `Time ${idx + 1}`} (${candidate.target_time})`;
+      }
+    }
+    return `Time ${idx + 1}`;
+  });
+
   const detailSheet = workbook.addWorksheet("Chi tiết theo ngày");
   const detailHeaders = [
     "Ngày",
@@ -190,10 +228,7 @@ export async function buildAttendanceMonthlyMatrixXlsx(input: {
     "Chi nhánh hiện tại",
     "Trạng thái ngày",
     "Phiên bản khung giờ",
-    "Mốc 1 (Sáng)",
-    "Mốc 2 (Trưa)",
-    "Mốc 3 (Đầu chiều)",
-    "Mốc 4 (Cuối chiều)",
+    ...detailSlotHeaders,
     "Số mốc chưa có lượt chấm",
     "Số lượt lệch khung giờ",
     "Giờ check-in đầu",
@@ -209,7 +244,8 @@ export async function buildAttendanceMonthlyMatrixXlsx(input: {
   detailSheet.views = [{ state: "frozen", ySplit: 1 }];
   detailSheet.getRow(1).font = { bold: true };
   for (let col = 1; col <= detailHeaders.length; col += 1) {
-    detailSheet.getColumn(col).width = col >= 7 && col <= 10 ? 26 : 20;
+    detailSheet.getColumn(col).width =
+      col >= 7 && col < 7 + detailSlotCount ? 26 : 20;
   }
   detailSheet.getColumn(2).numFmt = "@";
   detailSheet.getColumn(3).numFmt = "@";
@@ -227,6 +263,14 @@ export async function buildAttendanceMonthlyMatrixXlsx(input: {
             ? "HQ"
             : "";
 
+      const dynamicSlotCells = Array.from({ length: detailSlotCount }, (_, idx) => {
+        const slotPres = presentation.slots[idx];
+        if (!slotPres) {
+          return "";
+        }
+        return sanitizeSpreadsheetText(`${slotPres.targetTime}: ${slotPres.summaryText}`);
+      });
+
       detailSheet.addRow([
         day.business_date,
         sanitizeSpreadsheetText(emp.employee_display_name),
@@ -234,18 +278,7 @@ export async function buildAttendanceMonthlyMatrixXlsx(input: {
         sanitizeSpreadsheetText(emp.branch?.display_name ?? "Mặc định (HQ)"),
         MATRIX_DAY_STATUS_LABELS[day.day_status],
         `v${presentation.policyVersionUsed}`,
-        sanitizeSpreadsheetText(
-          `${presentation.slots[0]?.targetTime ?? "08:00"}: ${presentation.slots[0]?.summaryText ?? ""}`,
-        ),
-        sanitizeSpreadsheetText(
-          `${presentation.slots[1]?.targetTime ?? "11:00"}: ${presentation.slots[1]?.summaryText ?? ""}`,
-        ),
-        sanitizeSpreadsheetText(
-          `${presentation.slots[2]?.targetTime ?? "13:00"}: ${presentation.slots[2]?.summaryText ?? ""}`,
-        ),
-        sanitizeSpreadsheetText(
-          `${presentation.slots[3]?.targetTime ?? "17:00"}: ${presentation.slots[3]?.summaryText ?? ""}`,
-        ),
+        ...dynamicSlotCells,
         presentation.missingSlotCount,
         presentation.lateOrEarlyCheckinCount,
         day.first_time_local ?? "",
@@ -272,48 +305,48 @@ export async function buildAttendanceMonthlyMatrixXlsx(input: {
   legendSheet.addRow([
     "Quy tắc gán mốc & tie-break",
     "Gán mọi lượt chấm về mốc gần nhất theo khoảng cách phút",
-    "Không bỏ lượt chấm dư: nhiều lượt cùng gần 1 mốc sẽ hiển thị đầy đủ theo thứ tự tăng dần. Khi khoảng cách phút bằng nhau giữa 2 mốc liền kề (ví dụ 09:30 giữa 08:00 và 11:00, hoặc 12:00 giữa 11:00 và 13:00), hệ thống cố định gán về mốc sớm hơn (Mốc 1 -> Mốc 4).",
+    "Không bỏ lượt chấm dư: nhiều lượt cùng gần 1 mốc sẽ hiển thị đầy đủ theo thứ tự tăng dần. Khi khoảng cách phút bằng nhau giữa 2 mốc liền kề, hệ thống cố định gán về mốc sớm hơn theo thứ tự cấu hình.",
   ]);
 
   legendSheet.addRow([]);
   legendSheet.addRow(["CẤU HÌNH KHUNG GIỜ ÁP DỤNG TRONG THÁNG BÁO CÁO"]);
   const policyHeaderRowIdx = legendSheet.rowCount;
   legendSheet.getRow(policyHeaderRowIdx).font = { bold: true };
+
+  const policySlotHeaders = Array.from({ length: detailSlotCount }, (_, idx) => {
+    const fromPrimary = primaryPolicy.slots[idx];
+    return fromPrimary?.slot_label || `Time ${idx + 1}`;
+  });
+
   legendSheet.addRow([
     "Phiên bản",
     "Hiệu lực từ ngày",
     "Hiệu lực đến ngày",
-    "Mốc 1 (Sáng)",
-    "Mốc 2 (Trưa)",
-    "Mốc 3 (Đầu chiều)",
-    "Mốc 4 (Cuối chiều)",
+    "Số mốc",
+    ...policySlotHeaders,
     "Người cấu hình",
   ]);
   legendSheet.getRow(legendSheet.rowCount).font = { bold: true };
 
-  const monthPolicies =
-    input.slot_policy?.month_policies && input.slot_policy.month_policies.length > 0
-      ? input.slot_policy.month_policies
-      : [DEFAULT_ATTENDANCE_SLOT_POLICY];
-
   for (const pol of monthPolicies) {
-    const formatSlotConfig = (idx: 0 | 1 | 2 | 3) => {
-      const s = pol.slots[idx]!;
-      return `${s.target_time} (-${s.grace_before_minutes}p / +${s.grace_after_minutes}p)`;
-    };
+    const slotConfigCells = Array.from({ length: detailSlotCount }, (_, idx) => {
+      const s = pol.slots[idx];
+      if (!s) return "—";
+      const labelPrefix = s.slot_label ? `${s.slot_label}: ` : "";
+      return `${labelPrefix}${s.target_time} (-${s.grace_before_minutes}p / +${s.grace_after_minutes}p)`;
+    });
     legendSheet.addRow([
       `v${pol.version}`,
       pol.effective_from_date,
       pol.effective_to_date ?? "Đang mở",
-      formatSlotConfig(0),
-      formatSlotConfig(1),
-      formatSlotConfig(2),
-      formatSlotConfig(3),
+      pol.slots.length,
+      ...slotConfigCells,
       sanitizeSpreadsheetText(pol.configured_by_display_name),
     ]);
   }
 
-  for (let col = 1; col <= 8; col += 1) {
+  const totalLegendCols = 5 + detailSlotCount;
+  for (let col = 1; col <= totalLegendCols; col += 1) {
     legendSheet.getColumn(col).width = col === 3 ? 65 : 26;
   }
 
