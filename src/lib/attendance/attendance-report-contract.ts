@@ -1018,9 +1018,6 @@ export function isAttendanceLoginOrCodeLike(
     if (trimmed.includes("@")) {
       return true;
     }
-    if (/^[a-z0-9][a-z0-9._-]{0,63}$/.test(trimmed)) {
-      return true;
-    }
     if (/^[a-z0-9]+(?:[._:-][a-z0-9]+)+$/i.test(trimmed)) {
       return true;
     }

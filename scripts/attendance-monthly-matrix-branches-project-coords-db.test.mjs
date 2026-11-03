@@ -1731,21 +1731,26 @@ test("HRP Branches, Branch Check-In Distance Snapshot Immutability, Project Coor
     const loginStaffMatchedRecruiter = "39100000-0000-4000-8000-000000000021";
     const loginStaffUnmatchedAuth = "19100000-0000-4000-8000-000000000022";
     const loginStaffUnmatchedApp = "29100000-0000-4000-8000-000000000022";
+    const singleWordNameStaffAuth = "19100000-0000-4000-8000-000000000023";
+    const singleWordNameStaffApp = "29100000-0000-4000-8000-000000000023";
 
-    await db.query("insert into auth.users (id) values ($1::uuid), ($2::uuid)", [
-      loginStaffMatchedAuth,
-      loginStaffUnmatchedAuth,
-    ]);
+    await db.query(
+      "insert into auth.users (id) values ($1::uuid), ($2::uuid), ($3::uuid)",
+      [loginStaffMatchedAuth, loginStaffUnmatchedAuth, singleWordNameStaffAuth],
+    );
     await db.query(
       `insert into public.direct_entry_app_users (app_user_id, auth_subject, display_name, enabled)
        values
          ($1::uuid, $2::uuid, 'anhhn.td', true),
-         ($3::uuid, $4::uuid, 'loginonly.td', true)`,
+         ($3::uuid, $4::uuid, 'loginonly.td', true),
+         ($5::uuid, $6::uuid, 'nam', true)`,
       [
         loginStaffMatchedApp,
         loginStaffMatchedAuth,
         loginStaffUnmatchedApp,
         loginStaffUnmatchedAuth,
+        singleWordNameStaffApp,
+        singleWordNameStaffAuth,
       ],
     );
     // Unambiguous active recruiter matching code 'anhhn.td' -> full name 'Nguyễn Thị Huệ' (even without verified link row)
@@ -1777,6 +1782,13 @@ test("HRP Branches, Branch Check-In Distance Snapshot Immutability, Project Coor
     assert.equal(unmatchedOpt.display_name, "Chưa cập nhật họ tên");
     assert.equal(unmatchedOpt.personnel_code, "loginonly.td");
 
+    const singleWordOpt = branchesWithIdentity.employee_options.find(
+      (opt) => opt.app_user_id === singleWordNameStaffApp,
+    );
+    assert.ok(singleWordOpt);
+    assert.equal(singleWordOpt.display_name, "nam");
+    assert.equal(singleWordOpt.personnel_code, null);
+
     const matrixMatched = projectAttendanceMonthlyMatrixReport(
       await callAsServiceRole(
         db,
@@ -1802,6 +1814,62 @@ test("HRP Branches, Branch Check-In Distance Snapshot Immutability, Project Coor
     assert.ok(matrixUnmatched);
     assert.equal(matrixUnmatched.items[0].employee_display_name, "Chưa cập nhật họ tên");
     assert.equal(matrixUnmatched.items[0].personnel_code, "loginonly.td");
+
+    const matrixSingleWord = projectAttendanceMonthlyMatrixReport(
+      await callAsServiceRole(
+        db,
+        `select public.attendance_monthly_matrix_report(
+          $1::uuid, $2::uuid, '2026-10', null, $3::uuid, null, 1, 25
+        ) as data`,
+        [ACTORS.FULL_ADMIN.auth, ACTORS.FULL_ADMIN.app, singleWordNameStaffApp],
+      ),
+    );
+    assert.ok(matrixSingleWord);
+    assert.equal(matrixSingleWord.items[0].employee_display_name, "nam");
+    assert.equal(matrixSingleWord.items[0].personnel_code, null);
+
+    await recordCheckInAsServiceRole(db, {
+      actor: { auth: loginStaffMatchedAuth, app: loginStaffMatchedApp },
+      latitude: HQ_HANOI.latitude,
+      longitude: HQ_HANOI.longitude,
+      captured_at: "2026-10-15T01:00:00.000Z",
+    });
+    await recordCheckInAsServiceRole(db, {
+      actor: { auth: singleWordNameStaffAuth, app: singleWordNameStaffApp },
+      latitude: HQ_HANOI.latitude,
+      longitude: HQ_HANOI.longitude,
+      captured_at: "2026-10-15T01:05:00.000Z",
+    });
+    const adminReportIdentity = projectAttendanceAdminReport(
+      await callAsServiceRole(
+        db,
+        `select public.attendance_admin_report(
+          $1::uuid, $2::uuid, '2026-10-15'::date, '2026-10-15'::date, 1, 25, null, null
+        ) as data`,
+        [ACTORS.FULL_ADMIN.auth, ACTORS.FULL_ADMIN.app],
+      ),
+    );
+    assert.ok(adminReportIdentity);
+    const matchedDetailRow = adminReportIdentity.items.find(
+      (item) => item.employee_display_name === "Nguyễn Thị Huệ",
+    );
+    assert.ok(matchedDetailRow);
+    assert.equal(matchedDetailRow.personnel_code, "anhhn.td");
+    const singleWordDetailRow = adminReportIdentity.items.find(
+      (item) => item.employee_display_name === "nam",
+    );
+    assert.ok(singleWordDetailRow);
+    assert.equal(singleWordDetailRow.personnel_code, null);
+    assert.ok(
+      adminReportIdentity.employee_options.some(
+        (opt) => opt.app_user_id === loginStaffMatchedApp && opt.display_name === "Nguyễn Thị Huệ",
+      ),
+    );
+    assert.ok(
+      adminReportIdentity.employee_options.some(
+        (opt) => opt.app_user_id === singleWordNameStaffApp && opt.display_name === "nam",
+      ),
+    );
 
     for (const sig of ATTENDANCE_EXPLANATIONS_WAVE2_RPC_SIGNATURES) {
       const { rows } = await db.query("select to_regprocedure($1)::text as oid_name", [sig]);

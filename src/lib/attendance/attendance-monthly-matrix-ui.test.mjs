@@ -1284,8 +1284,30 @@ test("Hotfix 3: describeAttendanceCheckinDistanceTarget distinguishes branch vs 
 });
 
 test("Hotfix 4: resolveAttendanceEmployeeDisplayIdentity normalizes employee full names and prevents login_id from appearing as primary name", async () => {
-  // Real full name is preserved
+  // Real full name is preserved (including single-word names stored in lowercase or title case)
   assert.equal(isAttendanceLoginOrCodeLike("Nguyễn Thị Huệ", "NV001", "huent.td"), false);
+  assert.equal(isAttendanceLoginOrCodeLike("an", null, null), false);
+  assert.equal(isAttendanceLoginOrCodeLike("nam", "NV099", "namnv.td"), false);
+  assert.equal(isAttendanceLoginOrCodeLike("An", null, null), false);
+  assert.equal(isAttendanceLoginOrCodeLike("Huệ", null, null), false);
+
+  // If a single-word value exactly matches loginId or personnelCode, it is recognized as a login/code
+  assert.equal(isAttendanceLoginOrCodeLike("nam", null, "nam"), true);
+  assert.equal(isAttendanceLoginOrCodeLike("nam", "nam", null), true);
+
+  assert.deepEqual(
+    resolveAttendanceEmployeeDisplayIdentity({
+      displayName: "nam",
+      personnelCode: "NV099",
+      loginId: "namnv.td",
+    }),
+    {
+      displayName: "nam",
+      personnelCode: "NV099",
+      isMissingFullName: false,
+    },
+  );
+
   assert.deepEqual(
     resolveAttendanceEmployeeDisplayIdentity({
       displayName: "Nguyễn Thị Huệ",

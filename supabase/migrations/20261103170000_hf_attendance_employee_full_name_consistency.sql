@@ -50,9 +50,6 @@ begin
     if pg_catalog.strpos(v_trimmed, '@') > 0 then
       return true;
     end if;
-    if v_trimmed ~ '^[a-z0-9][a-z0-9._-]{0,63}$' then
-      return true;
-    end if;
     if v_trimmed ~* '^[a-z0-9]+([._:-][a-z0-9]+)+$' then
       return true;
     end if;
@@ -251,38 +248,6 @@ begin
       ) || '%';
   end if;
 
-  select coalesce(
-           jsonb_agg(
-             jsonb_build_object(
-               'app_user_id', eo.app_user_id,
-               'display_name', eo.display_name,
-               'personnel_code', eo.personnel_code
-             )
-             order by pg_catalog.lower(eo.display_name) asc,
-                      eo.display_name asc,
-                      coalesce(eo.personnel_code, '') asc,
-                      eo.app_user_id asc
-           ),
-           '[]'::jsonb
-         )
-    into v_employee_options
-    from (
-      select
-        distinct_users.app_user_id,
-        ident.employee_display_name as display_name,
-        ident.personnel_code
-      from (
-        select distinct c.app_user_id
-        from public.attendance_checkins c
-        join public.direct_entry_app_users u
-          on u.app_user_id = c.app_user_id
-        where c.business_date between v_from_date and v_to_date
-      ) distinct_users
-      cross join lateral public.attendance__internal_resolve_employee_identity(
-        distinct_users.app_user_id
-      ) ident
-    ) eo;
-
   select jsonb_build_object(
            'version', h.version,
            'latitude', h.latitude,
@@ -299,12 +264,62 @@ begin
    order by h.effective_from desc, h.version desc
    limit 1;
 
-  with filtered_base as (
+  with scoped_employee_identities as materialized (
+    select
+      du.app_user_id,
+      du.raw_display_name,
+      ident.employee_display_name,
+      ident.personnel_code
+    from (
+      select distinct
+        c.app_user_id,
+        u.display_name as raw_display_name
+      from public.attendance_checkins c
+      join public.direct_entry_app_users u
+        on u.app_user_id = c.app_user_id
+      where c.business_date between v_from_date and v_to_date
+    ) du
+    cross join lateral public.attendance__internal_resolve_employee_identity(
+      du.app_user_id
+    ) ident
+  ),
+  employee_options_agg as (
+    select coalesce(
+      jsonb_agg(
+        jsonb_build_object(
+          'app_user_id', sei.app_user_id,
+          'display_name', sei.employee_display_name,
+          'personnel_code', sei.personnel_code
+        )
+        order by pg_catalog.lower(sei.employee_display_name) asc,
+                 sei.employee_display_name asc,
+                 coalesce(sei.personnel_code, '') asc,
+                 sei.app_user_id asc
+      ),
+      '[]'::jsonb
+    ) as employee_options
+    from scoped_employee_identities sei
+  ),
+  filtered_employees as materialized (
+    select
+      sei.app_user_id,
+      sei.employee_display_name,
+      sei.personnel_code
+    from scoped_employee_identities sei
+    where (p_employee_id is null or sei.app_user_id = p_employee_id)
+      and (
+        v_search_pattern is null
+        or sei.employee_display_name ilike v_search_pattern escape '\'
+        or sei.raw_display_name ilike v_search_pattern escape '\'
+        or coalesce(sei.personnel_code, '') ilike v_search_pattern escape '\'
+      )
+  ),
+  filtered_base as (
     select
       c.checkin_id,
       c.app_user_id,
-      ident.employee_display_name,
-      ident.personnel_code,
+      fe.employee_display_name,
+      fe.personnel_code,
       c.business_date,
       c.sequence_in_day,
       c.captured_at,
@@ -340,9 +355,8 @@ begin
       hq.latitude as hq_latitude,
       hq.longitude as hq_longitude
     from public.attendance_checkins c
-    join public.direct_entry_app_users u
-      on u.app_user_id = c.app_user_id
-    cross join lateral public.attendance__internal_resolve_employee_identity(u.app_user_id) ident
+    join filtered_employees fe
+      on fe.app_user_id = c.app_user_id
     left join lateral (
       select h.version, h.latitude, h.longitude
         from public.attendance_hq_location_revisions h
@@ -354,13 +368,6 @@ begin
        limit 1
     ) hq on true
     where c.business_date between v_from_date and v_to_date
-      and (p_employee_id is null or c.app_user_id = p_employee_id)
-      and (
-        v_search_pattern is null
-        or ident.employee_display_name ilike v_search_pattern escape '\'
-        or u.display_name ilike v_search_pattern escape '\'
-        or coalesce(ident.personnel_code, '') ilike v_search_pattern escape '\'
-      )
   ),
   computed as (
     select
@@ -485,6 +492,7 @@ begin
     limit v_page_size
   )
   select
+    eoa.employee_options,
     jsonb_build_object(
       'total_checkins', a.total_checkins,
       'unique_employees', a.unique_employees,
@@ -530,8 +538,9 @@ begin
       ),
       '[]'::jsonb
     )
-    into v_overview, v_total_rows, v_items
-    from agg a;
+    into v_employee_options, v_overview, v_total_rows, v_items
+    from agg a
+    cross join employee_options_agg eoa;
 
   v_total_pages := greatest(
     1,
@@ -902,22 +911,37 @@ begin
     into v_branch_options
   from public.attendance_branches b;
 
-  with month_candidate_users as (
+  with month_candidate_users as materialized (
     select
       u.app_user_id,
-      ident.employee_display_name as display_name,
+      u.display_name as raw_display_name,
+      ident.employee_display_name,
       u.enabled,
       ident.personnel_code,
       br.branch_id,
       br.branch_code,
-      br.display_name as branch_name
+      br.display_name as branch_display_name,
+      br.address as branch_address,
+      br.latitude as branch_latitude,
+      br.longitude as branch_longitude,
+      br.active as branch_active,
+      br.version as branch_version,
+      br.valid_from as branch_valid_from,
+      br.valid_to as branch_valid_to
     from public.direct_entry_app_users u
     cross join lateral public.attendance__internal_resolve_employee_identity(u.app_user_id) ident
     left join lateral (
       select
         b.branch_id,
         b.branch_code,
-        b.display_name
+        b.display_name,
+        b.address,
+        b.latitude,
+        b.longitude,
+        b.active,
+        b.version,
+        a.valid_from,
+        a.valid_to
       from public.attendance_branch_assignments a
       join public.attendance_branches b
         on b.branch_id = a.branch_id
@@ -949,25 +973,25 @@ begin
          where ae.app_user_id = u.app_user_id
            and ae.business_date between v_month_start and v_month_end
        )
-  )
-  select coalesce(
-    jsonb_agg(
-      jsonb_build_object(
-        'app_user_id', m.app_user_id,
-        'display_name', m.display_name,
-        'personnel_code', m.personnel_code,
-        'branch_id', m.branch_id,
-        'branch_code', m.branch_code,
-        'branch_name', m.branch_name
-      )
-      order by lower(m.display_name) asc, m.app_user_id asc
-    ),
-    '[]'::jsonb
-  )
-    into v_employee_options
-  from month_candidate_users m;
-
-  with month_day_policies as (
+  ),
+  employee_options_agg as (
+    select coalesce(
+      jsonb_agg(
+        jsonb_build_object(
+          'app_user_id', m.app_user_id,
+          'display_name', m.employee_display_name,
+          'personnel_code', m.personnel_code,
+          'branch_id', m.branch_id,
+          'branch_code', m.branch_code,
+          'branch_name', m.branch_display_name
+        )
+        order by lower(m.employee_display_name) asc, m.app_user_id asc
+      ),
+      '[]'::jsonb
+    ) as employee_options
+    from month_candidate_users m
+  ),
+  month_day_policies as (
     select
       cal.d::date as business_date,
       extract(day from cal.d)::integer as day_of_month,
@@ -1013,89 +1037,43 @@ begin
     from month_day_policies mdp
     cross join lateral jsonb_array_elements(mdp.policy_slots) as slot_elem
   ),
-  candidate_employees as (
+  candidate_employees as materialized (
     select
-      u.app_user_id,
-      ident.employee_display_name,
-      u.enabled,
-      ident.personnel_code,
-      br.branch_id,
-      br.branch_code,
-      br.display_name as branch_display_name,
-      br.address as branch_address,
-      br.latitude as branch_latitude,
-      br.longitude as branch_longitude,
-      br.active as branch_active,
-      br.version as branch_version,
-      br.valid_from as branch_valid_from,
-      br.valid_to as branch_valid_to
-    from public.direct_entry_app_users u
-    cross join lateral public.attendance__internal_resolve_employee_identity(u.app_user_id) ident
-    left join lateral (
-      select
-        b.branch_id,
-        b.branch_code,
-        b.display_name,
-        b.address,
-        b.latitude,
-        b.longitude,
-        b.active,
-        b.version,
-        a.valid_from,
-        a.valid_to
-      from public.attendance_branch_assignments a
-      join public.attendance_branches b
-        on b.branch_id = a.branch_id
-      where a.app_user_id = u.app_user_id
-        and a.valid_from <= v_month_end
-        and (a.valid_to is null or a.valid_to >= v_month_start)
-      order by a.valid_from desc
-      limit 1
-    ) br on true
-    where (
-      u.enabled = true
-      or exists (
-        select 1
-        from public.attendance_checkins c
-        where c.app_user_id = u.app_user_id
-          and c.business_date between v_month_start and v_month_end
+      m.app_user_id,
+      m.employee_display_name,
+      m.enabled,
+      m.personnel_code,
+      m.branch_id,
+      m.branch_code,
+      m.branch_display_name,
+      m.branch_address,
+      m.branch_latitude,
+      m.branch_longitude,
+      m.branch_active,
+      m.branch_version,
+      m.branch_valid_from,
+      m.branch_valid_to
+    from month_candidate_users m
+    where (p_employee_id is null or m.app_user_id = p_employee_id)
+      and (
+        p_branch_id is null
+        or m.branch_id = p_branch_id
+        or exists (
+          select 1
+          from public.attendance_checkins c
+          where c.app_user_id = m.app_user_id
+            and c.business_date between v_month_start and v_month_end
+            and c.branch_id_used = p_branch_id
+        )
       )
-      or exists (
-        select 1
-        from public.leave_request_days ld
-        join public.leave_requests lr
-          on lr.request_id = ld.request_id
-        where ld.app_user_id = u.app_user_id
-          and lr.status = 'APPROVED'
-          and ld.leave_date between v_month_start and v_month_end
+      and (
+        v_escaped_search is null
+        or lower(m.employee_display_name) like '%' || v_escaped_search || '%' escape '\'
+        or lower(m.raw_display_name) like '%' || v_escaped_search || '%' escape '\'
+        or lower(coalesce(m.personnel_code, '')) like '%' || v_escaped_search || '%' escape '\'
+        or lower(coalesce(m.branch_code, '')) like '%' || v_escaped_search || '%' escape '\'
+        or lower(coalesce(m.branch_display_name, '')) like '%' || v_escaped_search || '%' escape '\'
       )
-      or exists (
-        select 1
-        from public.attendance_explanations ae
-        where ae.app_user_id = u.app_user_id
-          and ae.business_date between v_month_start and v_month_end
-      )
-    )
-    and (p_employee_id is null or u.app_user_id = p_employee_id)
-    and (
-      p_branch_id is null
-      or br.branch_id = p_branch_id
-      or exists (
-        select 1
-        from public.attendance_checkins c
-        where c.app_user_id = u.app_user_id
-          and c.business_date between v_month_start and v_month_end
-          and c.branch_id_used = p_branch_id
-      )
-    )
-    and (
-      v_escaped_search is null
-      or lower(ident.employee_display_name) like '%' || v_escaped_search || '%' escape '\'
-      or lower(u.display_name) like '%' || v_escaped_search || '%' escape '\'
-      or lower(coalesce(ident.personnel_code, '')) like '%' || v_escaped_search || '%' escape '\'
-      or lower(coalesce(br.branch_code, '')) like '%' || v_escaped_search || '%' escape '\'
-      or lower(coalesce(br.display_name, '')) like '%' || v_escaped_search || '%' escape '\'
-    )
   ),
   month_checkins_raw as (
     select
@@ -1749,6 +1727,7 @@ begin
     from paged_employees pe
   )
   select
+    eoa.employee_options,
     a.total_employees,
     a.snapshot_token,
     jsonb_build_object(
@@ -1810,8 +1789,9 @@ begin
       ),
       '[]'::jsonb
     )
-  into v_total_rows, v_snapshot_token, v_overview, v_items
-  from agg a;
+  into v_employee_options, v_total_rows, v_snapshot_token, v_overview, v_items
+  from agg a
+  cross join employee_options_agg eoa;
 
   v_total_pages := case
     when v_total_rows = 0 then 0
