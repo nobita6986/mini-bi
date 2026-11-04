@@ -1486,7 +1486,19 @@ test("Multi-Profile Slot Policies UI payload builders, assignment immediate effe
   assert.equal(assignImmediate.ok, true);
   if (assignImmediate.ok) {
     assert.equal(assignImmediate.body.valid_from, "2026-10-25");
-    assert.equal(assignImmediate.body.expected_version, 2);
+    assert.equal(assignImmediate.body.expected_version, 0);
+  }
+
+  const assignSwitchExisting = buildAssignEmployeeToSlotPolicyPayload({
+    appUserId: EMPLOYEE_ID,
+    profile: sampleProfile,
+    expectedVersion: 1,
+    todayVn: "2026-10-25",
+    idempotencyKey: INTENT_KEY,
+  });
+  assert.equal(assignSwitchExisting.ok, true);
+  if (assignSwitchExisting.ok) {
+    assert.equal(assignSwitchExisting.body.expected_version, 1);
   }
 
   // Future date (> todayVn) is rejected

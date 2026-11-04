@@ -114,6 +114,20 @@ update public.attendance_slot_policy_versions
    set profile_id = '00000000-0000-4000-8000-000000000001'::uuid
  where profile_id is null;
 
+update public.attendance_slot_policy_profiles pr
+   set version = greatest(
+     pr.version,
+     coalesce(
+       (
+         select max(p.version)
+         from public.attendance_slot_policy_versions p
+         where p.profile_id = pr.profile_id
+       ),
+       1
+     )
+   )
+ where pr.profile_id = '00000000-0000-4000-8000-000000000001'::uuid;
+
 alter table public.attendance_slot_policy_versions
   alter column profile_id set default '00000000-0000-4000-8000-000000000001'::uuid,
   alter column profile_id set not null;
@@ -691,6 +705,7 @@ create or replace function public.attendance_upsert_slot_policy_profile_admin(
   p_effective_from_date date,
   p_slots jsonb,
   p_expected_version integer,
+  p_expected_profile_version integer,
   p_idempotency_key uuid,
   p_request_fingerprint text
 )
@@ -743,7 +758,50 @@ begin
   from public.attendance_slot_policy_versions p
   where p.idempotency_key = p_idempotency_key;
 
-  if found then
+  if not found then
+    select *
+      into v_profile
+    from public.attendance_slot_policy_profiles pr
+    where pr.last_idempotency_key = p_idempotency_key;
+
+    if found then
+      if v_profile.last_request_fingerprint is distinct from p_request_fingerprint then
+        raise exception 'IDEMPOTENCY_CONFLICT'
+          using errcode = 'PT409';
+      end if;
+
+      select *
+        into v_existing
+      from public.attendance_slot_policy_versions p
+      where p.profile_id = v_profile.profile_id
+      order by p.version desc
+      limit 1;
+
+      select coalesce(ident.employee_display_name, u.display_name)
+        into v_actor_display_name
+      from public.direct_entry_app_users u
+      left join lateral public.attendance__internal_resolve_employee_identity(u.app_user_id) ident on true
+      where u.app_user_id = v_existing.configured_by_user_id;
+
+      return jsonb_build_object(
+        'replayed', true,
+        'policy', public.attendance__internal_format_slot_policy(
+          v_existing,
+          null,
+          v_actor_display_name
+        ),
+        'profile', jsonb_build_object(
+          'profile_id', v_profile.profile_id,
+          'profile_code', v_profile.profile_code,
+          'display_name', v_profile.display_name,
+          'description', v_profile.description,
+          'is_default', v_profile.is_default,
+          'active', v_profile.active,
+          'version', v_profile.version
+        )
+      );
+    end if;
+  else
     if v_existing.request_fingerprint <> p_request_fingerprint then
       raise exception 'IDEMPOTENCY_CONFLICT'
         using errcode = 'PT409';
@@ -820,7 +878,8 @@ begin
         using errcode = '22023';
     end if;
 
-    if p_expected_version is not null and p_expected_version <> 0 then
+    if (p_expected_version is not null and p_expected_version <> 0)
+       or (p_expected_profile_version is not null and p_expected_profile_version <> 0) then
       raise exception 'ATTENDANCE_SLOT_POLICY_VERSION_CONFLICT'
         using errcode = 'PT409';
     end if;
@@ -909,7 +968,10 @@ begin
     )
     returning * into v_saved;
   else
-    if p_expected_version is null or p_expected_version < 1 then
+    if p_expected_profile_version is null
+       or p_expected_profile_version < 1
+       or (p_slots is not null and (p_expected_version is null or p_expected_version < 1))
+       or (p_expected_version is not null and p_expected_version < 1) then
       raise exception 'ATTENDANCE_SLOT_POLICY_INVALID'
         using errcode = '22023';
     end if;
@@ -933,7 +995,12 @@ begin
     limit 1
     for update;
 
-    if not found or (v_latest.version <> p_expected_version and v_profile.version <> p_expected_version) then
+    if v_profile.version <> p_expected_profile_version then
+      raise exception 'ATTENDANCE_SLOT_POLICY_VERSION_CONFLICT'
+        using errcode = 'PT409';
+    end if;
+
+    if not found or (p_expected_version is not null and v_latest.version <> p_expected_version) then
       raise exception 'ATTENDANCE_SLOT_POLICY_VERSION_CONFLICT'
         using errcode = 'PT409';
     end if;
@@ -1130,11 +1197,17 @@ set search_path = pg_catalog, public
 as $$
 declare
   v_default_profile_id constant uuid := '00000000-0000-4000-8000-000000000001'::uuid;
+  v_default_profile_version integer;
 begin
   if p_effective_from_date is null then
     raise exception 'ATTENDANCE_SLOT_POLICY_INVALID'
       using errcode = '22023';
   end if;
+
+  select pr.version
+    into v_default_profile_version
+  from public.attendance_slot_policy_profiles pr
+  where pr.profile_id = v_default_profile_id;
 
   return public.attendance_upsert_slot_policy_profile_admin(
     p_auth_subject => p_auth_subject,
@@ -1147,6 +1220,7 @@ begin
     p_effective_from_date => p_effective_from_date,
     p_slots => p_slots,
     p_expected_version => p_expected_version,
+    p_expected_profile_version => coalesce(v_default_profile_version, 1),
     p_idempotency_key => p_idempotency_key,
     p_request_fingerprint => p_request_fingerprint
   );
@@ -1314,12 +1388,15 @@ begin
   limit 1
   for update;
 
-  if p_expected_version is not null then
-    if (v_open.assignment_id is null and p_expected_version <> 0 and p_expected_version <> v_profile.version)
-       or (v_open.assignment_id is not null and v_open.version <> p_expected_version and v_profile.version <> p_expected_version) then
-      raise exception 'ATTENDANCE_SLOT_POLICY_ASSIGNMENT_VERSION_CONFLICT'
-        using errcode = 'PT409';
-    end if;
+  if p_expected_version is null or p_expected_version < 0 then
+    raise exception 'ATTENDANCE_SLOT_POLICY_ASSIGNMENT_INVALID'
+      using errcode = '22023';
+  end if;
+
+  if (v_open.assignment_id is null and p_expected_version <> 0)
+     or (v_open.assignment_id is not null and v_open.version <> p_expected_version) then
+    raise exception 'ATTENDANCE_SLOT_POLICY_ASSIGNMENT_VERSION_CONFLICT'
+      using errcode = 'PT409';
   end if;
 
   if v_open.assignment_id is not null then
@@ -3765,7 +3842,7 @@ begin
        'public.attendance__internal_format_slot_policy(public.attendance_slot_policy_versions,date,text)'::pg_catalog.regprocedure,
        'public.attendance__internal_resolve_employee_slot_policy(uuid,date)'::pg_catalog.regprocedure,
        'public.attendance_get_slot_policies_admin(uuid,uuid)'::pg_catalog.regprocedure,
-       'public.attendance_upsert_slot_policy_profile_admin(uuid,uuid,uuid,text,text,text,boolean,date,jsonb,integer,uuid,text)'::pg_catalog.regprocedure,
+       'public.attendance_upsert_slot_policy_profile_admin(uuid,uuid,uuid,text,text,text,boolean,date,jsonb,integer,integer,uuid,text)'::pg_catalog.regprocedure,
        'public.attendance_create_slot_policy_admin(uuid,uuid,date,jsonb,integer,uuid,text)'::pg_catalog.regprocedure,
        'public.attendance_assign_employee_slot_policy_admin(uuid,uuid,uuid,uuid,date,integer,uuid,text)'::pg_catalog.regprocedure,
        'public.attendance_unassign_employee_slot_policy_admin(uuid,uuid,uuid,date,integer,uuid,text)'::pg_catalog.regprocedure,
@@ -3800,9 +3877,9 @@ revoke all on function public.attendance_get_slot_policies_admin(uuid, uuid)
 grant execute on function public.attendance_get_slot_policies_admin(uuid, uuid)
   to service_role;
 
-revoke all on function public.attendance_upsert_slot_policy_profile_admin(uuid, uuid, uuid, text, text, text, boolean, date, jsonb, integer, uuid, text)
+revoke all on function public.attendance_upsert_slot_policy_profile_admin(uuid, uuid, uuid, text, text, text, boolean, date, jsonb, integer, integer, uuid, text)
   from public, anon, authenticated, service_role;
-grant execute on function public.attendance_upsert_slot_policy_profile_admin(uuid, uuid, uuid, text, text, text, boolean, date, jsonb, integer, uuid, text)
+grant execute on function public.attendance_upsert_slot_policy_profile_admin(uuid, uuid, uuid, text, text, text, boolean, date, jsonb, integer, integer, uuid, text)
   to service_role;
 
 revoke all on function public.attendance_create_slot_policy_admin(uuid, uuid, date, jsonb, integer, uuid, text)
@@ -3843,7 +3920,7 @@ begin
        'public.attendance__internal_format_slot_policy(public.attendance_slot_policy_versions,date,text)'::pg_catalog.regprocedure,
        'public.attendance__internal_resolve_employee_slot_policy(uuid,date)'::pg_catalog.regprocedure,
        'public.attendance_get_slot_policies_admin(uuid,uuid)'::pg_catalog.regprocedure,
-       'public.attendance_upsert_slot_policy_profile_admin(uuid,uuid,uuid,text,text,text,boolean,date,jsonb,integer,uuid,text)'::pg_catalog.regprocedure,
+       'public.attendance_upsert_slot_policy_profile_admin(uuid,uuid,uuid,text,text,text,boolean,date,jsonb,integer,integer,uuid,text)'::pg_catalog.regprocedure,
        'public.attendance_create_slot_policy_admin(uuid,uuid,date,jsonb,integer,uuid,text)'::pg_catalog.regprocedure,
        'public.attendance_assign_employee_slot_policy_admin(uuid,uuid,uuid,uuid,date,integer,uuid,text)'::pg_catalog.regprocedure,
        'public.attendance_unassign_employee_slot_policy_admin(uuid,uuid,uuid,date,integer,uuid,text)'::pg_catalog.regprocedure,

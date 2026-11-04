@@ -334,7 +334,7 @@ export const ATTENDANCE_EXPLANATIONS_WAVE2_RPC_SIGNATURES = Object.freeze([
 export const ATTENDANCE_MULTI_SLOT_POLICY_PROFILES_MIGRATION_NAME =
   "20261104120000_attendance_multi_slot_policy_profiles.sql";
 export const ATTENDANCE_MULTI_SLOT_POLICY_PROFILES_RPC_SIGNATURES = Object.freeze([
-  "public.attendance_upsert_slot_policy_profile_admin(uuid, uuid, uuid, text, text, text, boolean, date, jsonb, integer, uuid, text)",
+  "public.attendance_upsert_slot_policy_profile_admin(uuid, uuid, uuid, text, text, text, boolean, date, jsonb, integer, integer, uuid, text)",
   "public.attendance_assign_employee_slot_policy_admin(uuid, uuid, uuid, uuid, date, integer, uuid, text)",
   "public.attendance_unassign_employee_slot_policy_admin(uuid, uuid, uuid, date, integer, uuid, text)",
 ]);

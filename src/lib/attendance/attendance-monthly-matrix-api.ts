@@ -366,7 +366,7 @@ export function computeSlotPolicyProfileUpsertRequestFingerprint(input: {
   display_name: string | null;
   description: string | null;
   active: boolean;
-  expected_profile_version: number;
+  expected_profile_version?: number | null;
   effective_from_date: string | null;
   slots: readonly {
     slot_code?: string;
@@ -376,7 +376,7 @@ export function computeSlotPolicyProfileUpsertRequestFingerprint(input: {
     grace_before_minutes: number;
     grace_after_minutes: number;
   }[] | null;
-  expected_version: number;
+  expected_version: number | null;
 }): string {
   const normalizedSlots = Array.isArray(input.slots)
     ? input.slots.map((slot, index) => {

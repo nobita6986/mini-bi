@@ -709,16 +709,18 @@ function AttendanceSlotPolicySummaryCard({
         expectedVersion: 0,
         idempotencyKey,
       });
-    } else if (
-      selectedProfile &&
-      selectedProfile.profile_id !== DEFAULT_ATTENDANCE_SLOT_POLICY_PROFILE_ID
-    ) {
+    } else if (selectedProfile) {
       built = buildUpsertSlotPolicyProfilePayload({
         profileId: selectedProfile.profile_id,
         profileCode: selectedProfile.profile_code,
-        displayName: profileNameInput || selectedProfile.display_name,
-        description: profileDescInput,
-        active: profileActiveInput,
+        displayName:
+          selectedProfile.is_default
+            ? selectedProfile.display_name
+            : profileNameInput || selectedProfile.display_name,
+        description: selectedProfile.is_default
+          ? (selectedProfile.description ?? "")
+          : profileDescInput,
+        active: selectedProfile.is_default ? true : profileActiveInput,
         expectedProfileVersion: selectedProfile.version,
         effectiveFromDate: effectiveFromInput,
         slots: mappedSlots,
@@ -727,7 +729,6 @@ function AttendanceSlotPolicySummaryCard({
       });
     } else {
       const latestVersion =
-        selectedProfile?.latest_policy.version ??
         policiesData?.latest_policy.version ??
         activeReport?.slot_policy.current_policy.version ??
         1;
@@ -820,10 +821,24 @@ function AttendanceSlotPolicySummaryCard({
 
     const targetProf =
       availableProfiles.find((p) => p.profile_id === assignProfileIdInput) ?? null;
+    const targetEmpOption =
+      (policiesData?.employee_options ?? []).find(
+        (e) => e.app_user_id === assignEmployeeIdInput,
+      ) ?? null;
+    const openAssignment =
+      (policiesData?.assignments ?? []).find(
+        (a) =>
+          a.app_user_id === assignEmployeeIdInput &&
+          a.valid_to === null &&
+          !a.superseded_same_day,
+      ) ?? null;
+    const expectedAssignmentVersion =
+      targetEmpOption?.current_assignment_version ?? openAssignment?.version ?? 0;
     const idempotencyKey = newAttendanceHqIntentKey();
     const built = buildAssignEmployeeToSlotPolicyPayload({
       appUserId: assignEmployeeIdInput,
       profile: targetProf,
+      expectedVersion: expectedAssignmentVersion,
       idempotencyKey,
       todayVn: policiesData?.business_date,
     });

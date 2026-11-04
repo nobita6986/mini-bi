@@ -161,7 +161,7 @@ export type UpsertAttendanceSlotPolicyProfileAdminInput = {
   active: boolean;
   effective_from_date: string | null;
   slots: readonly AttendanceSlotConfigItemProjection[] | null;
-  expected_version: number;
+  expected_version: number | null;
   expected_profile_version: number;
   idempotency_key: string;
   request_fingerprint: string;
@@ -755,6 +755,8 @@ export function createServiceAttendanceMonthlyMatrixRepository(
               p_effective_from_date: input.effective_from_date,
               p_slots: input.slots,
               p_expected_version: input.expected_version,
+              p_expected_profile_version:
+                input.expected_profile_version ?? (input.profile_id ? null : 0),
               p_idempotency_key: input.idempotency_key,
               p_request_fingerprint: input.request_fingerprint,
             })
@@ -801,6 +803,7 @@ export function createServiceAttendanceMonthlyMatrixRepository(
           p_effective_from_date: input.effective_from_date,
           p_slots: input.slots,
           p_expected_version: input.expected_version,
+          p_expected_profile_version: input.expected_profile_version,
           p_idempotency_key: input.idempotency_key,
           p_request_fingerprint: input.request_fingerprint,
         });

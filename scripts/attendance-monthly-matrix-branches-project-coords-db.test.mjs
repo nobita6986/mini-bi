@@ -1910,15 +1910,16 @@ test("HRP Branches, Branch Check-In Distance Snapshot Immutability, Project Coor
       display_name: "Hành chính",
       description: "Khung giờ 2 mốc hành chính",
       active: true,
+      expected_profile_version: 0,
       effective_from_date: "2026-10-01",
       slots: hanhChinhSlotsV1,
-      expected_version: null,
+      expected_version: 0,
     });
     const hcCreatedRaw = await callAsServiceRole(
       db,
       `select public.attendance_upsert_slot_policy_profile_admin(
         $1::uuid, $2::uuid, null, 'HANH_CHINH', 'Hành chính', 'Khung giờ 2 mốc hành chính',
-        true, '2026-10-01'::date, $3::jsonb, null, $4::uuid, $5::text
+        true, '2026-10-01'::date, $3::jsonb, 0, 0, $4::uuid, $5::text
       ) as data`,
       [
         ACTORS.FULL_ADMIN.auth,
@@ -1951,16 +1952,17 @@ test("HRP Branches, Branch Check-In Distance Snapshot Immutability, Project Coor
       display_name: "Tuyển dụng cơ động",
       description: "Khung giờ 3 mốc tuyển dụng",
       active: true,
+      expected_profile_version: 0,
       effective_from_date: "2026-10-01",
       slots: tuyenDungSlotsV1,
-      expected_version: null,
+      expected_version: 0,
     });
     const tdCreated = projectUpsertSlotPolicyProfileResult(
       await callAsServiceRole(
         db,
         `select public.attendance_upsert_slot_policy_profile_admin(
           $1::uuid, $2::uuid, null, 'TUYEN_DUNG_3', 'Tuyển dụng cơ động', 'Khung giờ 3 mốc tuyển dụng',
-          true, '2026-10-01'::date, $3::jsonb, null, $4::uuid, $5::text
+          true, '2026-10-01'::date, $3::jsonb, 0, 0, $4::uuid, $5::text
         ) as data`,
         [
           ACTORS.FULL_ADMIN.auth,
@@ -1987,6 +1989,7 @@ test("HRP Branches, Branch Check-In Distance Snapshot Immutability, Project Coor
       display_name: "Hành chính",
       description: "Khung giờ 2 mốc hành chính",
       active: true,
+      expected_profile_version: 1,
       effective_from_date: "2026-12-08",
       slots: hanhChinhSlotsV2,
       expected_version: 1,
@@ -1996,7 +1999,7 @@ test("HRP Branches, Branch Check-In Distance Snapshot Immutability, Project Coor
         db,
         `select public.attendance_upsert_slot_policy_profile_admin(
           $1::uuid, $2::uuid, $3::uuid, 'HANH_CHINH', 'Hành chính', 'Khung giờ 2 mốc hành chính',
-          true, '2026-12-08'::date, $4::jsonb, 1, $5::uuid, $6::text
+          true, '2026-12-08'::date, $4::jsonb, 1, 1, $5::uuid, $6::text
         ) as data`,
         [
           ACTORS.FULL_ADMIN.auth,
@@ -2011,12 +2014,134 @@ test("HRP Branches, Branch Check-In Distance Snapshot Immutability, Project Coor
     assert.ok(hcV2Created);
     assert.equal(hcV2Created.policy.profile_id, hcProfileId);
     assert.equal(hcV2Created.policy.version, 2);
+    assert.equal(hcV2Created.profile.version, 2);
     assert.deepEqual(
       hcV2Created.policy.slots.map((s) => s.target_time),
       ["08:15", "17:15"],
     );
 
-    // 9c. Reject future assignment dates (> today_vn), past assignment dates (< today_vn), and Default profile assignment
+    // 9b-divergent. Regression test for divergent profile.version vs latest_policy.version:
+    // Simulate a profile at profile.version = 1 while its latest slot policy (v2 starting 2026-12-08) is at version = 3.
+    // After two new saves, profile.version = 3 and latest_policy.version = 5.
+    // A delayed/stale save request carrying expected_version = 3 (matching profile.version = 3, but stale vs latest_policy.version = 5)
+    // and an effective_from_date after the latest policy MUST be rejected with ATTENDANCE_SLOT_POLICY_VERSION_CONFLICT (PT409).
+    await db.query(
+      "update public.attendance_slot_policy_profiles set version = 1 where profile_id = $1::uuid",
+      [hcProfileId],
+    );
+    await db.query(
+      "alter table public.attendance_slot_policy_versions disable trigger attendance_slot_policy_versions_immutable_tg",
+    );
+    await db.query(
+      "update public.attendance_slot_policy_versions set version = 3 where profile_id = $1::uuid and version = 2",
+      [hcProfileId],
+    );
+    await db.query(
+      "alter table public.attendance_slot_policy_versions enable trigger attendance_slot_policy_versions_immutable_tg",
+    );
+
+    // Save 1 on divergent HC profile: expected_profile_version = 1, expected_version = 3 -> profile.version becomes 2, policy.version becomes 4
+    const hcSave1Key = nextUuid();
+    const hcSave1Fp = computeSlotPolicyProfileUpsertRequestFingerprint({
+      app_user_id: ACTORS.FULL_ADMIN.app,
+      profile_id: hcProfileId,
+      profile_code: "HANH_CHINH",
+      display_name: "Hành chính",
+      description: "Khung giờ 2 mốc hành chính",
+      active: true,
+      expected_profile_version: 1,
+      effective_from_date: "2026-12-10",
+      slots: hanhChinhSlotsV2,
+      expected_version: 3,
+    });
+    const hcSave1 = projectUpsertSlotPolicyProfileResult(
+      await callAsServiceRole(
+        db,
+        `select public.attendance_upsert_slot_policy_profile_admin(
+          $1::uuid, $2::uuid, $3::uuid, 'HANH_CHINH', 'Hành chính', 'Khung giờ 2 mốc hành chính',
+          true, '2026-12-10'::date, $4::jsonb, 3, 1, $5::uuid, $6::text
+        ) as data`,
+        [
+          ACTORS.FULL_ADMIN.auth,
+          ACTORS.FULL_ADMIN.app,
+          hcProfileId,
+          JSON.stringify(hanhChinhSlotsV2),
+          hcSave1Key,
+          hcSave1Fp,
+        ],
+      ),
+    );
+    assert.ok(hcSave1);
+    assert.equal(hcSave1.profile.version, 2);
+    assert.equal(hcSave1.policy.version, 4);
+
+    // Save 2 on divergent HC profile: expected_profile_version = 2, expected_version = 4 -> profile.version becomes 3, policy.version becomes 5
+    const hcSave2Key = nextUuid();
+    const hcSave2Fp = computeSlotPolicyProfileUpsertRequestFingerprint({
+      app_user_id: ACTORS.FULL_ADMIN.app,
+      profile_id: hcProfileId,
+      profile_code: "HANH_CHINH",
+      display_name: "Hành chính",
+      description: "Khung giờ 2 mốc hành chính",
+      active: true,
+      expected_profile_version: 2,
+      effective_from_date: "2026-12-15",
+      slots: hanhChinhSlotsV2,
+      expected_version: 4,
+    });
+    const hcSave2 = projectUpsertSlotPolicyProfileResult(
+      await callAsServiceRole(
+        db,
+        `select public.attendance_upsert_slot_policy_profile_admin(
+          $1::uuid, $2::uuid, $3::uuid, 'HANH_CHINH', 'Hành chính', 'Khung giờ 2 mốc hành chính',
+          true, '2026-12-15'::date, $4::jsonb, 4, 2, $5::uuid, $6::text
+        ) as data`,
+        [
+          ACTORS.FULL_ADMIN.auth,
+          ACTORS.FULL_ADMIN.app,
+          hcProfileId,
+          JSON.stringify(hanhChinhSlotsV2),
+          hcSave2Key,
+          hcSave2Fp,
+        ],
+      ),
+    );
+    assert.ok(hcSave2);
+    assert.equal(hcSave2.profile.version, 3);
+    assert.equal(hcSave2.policy.version, 5);
+
+    // Delayed/stale save request with expected_version = 3 (matches current profile.version = 3, but stale vs policy.version = 5)
+    // and effective_from_date = 2026-12-20 (after latest policy 2026-12-15) MUST be rejected!
+    for (const [stalePolicyVer, staleProfVer] of [
+      [3, 1],
+      [3, 3],
+      [5, 1],
+      [4, 3],
+    ]) {
+      await assert.rejects(
+        () =>
+          callAsServiceRole(
+            db,
+            `select public.attendance_upsert_slot_policy_profile_admin(
+              $1::uuid, $2::uuid, $3::uuid, 'HANH_CHINH', 'Hành chính', 'Khung giờ 2 mốc hành chính',
+              true, '2026-12-20'::date, $4::jsonb, $5::integer, $6::integer, $7::uuid, $8::text
+            ) as data`,
+            [
+              ACTORS.FULL_ADMIN.auth,
+              ACTORS.FULL_ADMIN.app,
+              hcProfileId,
+              JSON.stringify(hanhChinhSlotsV2),
+              stalePolicyVer,
+              staleProfVer,
+              nextUuid(),
+              "c".repeat(64),
+            ],
+          ),
+        (err) => /ATTENDANCE_SLOT_POLICY_VERSION_CONFLICT/.test(err.message),
+      );
+    }
+
+    // 9c. Reject future assignment dates (> today_vn), past assignment dates (< today_vn), Default profile assignment, and wrong assignment expected_version
     const { rows: todayVnRows } = await db.query(
       "select pg_catalog.to_char((clock_timestamp() at time zone 'Asia/Ho_Chi_Minh')::date, 'YYYY-MM-DD') as today_vn",
     );
@@ -2027,7 +2152,7 @@ test("HRP Branches, Branch Check-In Distance Snapshot Immutability, Project Coor
         callAsServiceRole(
           db,
           `select public.attendance_assign_employee_slot_policy_admin(
-            $1::uuid, $2::uuid, $3::uuid, $4::uuid, '2099-01-01'::date, 1, $5::uuid, $6::text
+            $1::uuid, $2::uuid, $3::uuid, $4::uuid, '2099-01-01'::date, 0, $5::uuid, $6::text
           ) as data`,
           [
             ACTORS.FULL_ADMIN.auth,
@@ -2045,7 +2170,7 @@ test("HRP Branches, Branch Check-In Distance Snapshot Immutability, Project Coor
         callAsServiceRole(
           db,
           `select public.attendance_assign_employee_slot_policy_admin(
-            $1::uuid, $2::uuid, $3::uuid, $4::uuid, '2026-10-05'::date, 1, $5::uuid, $6::text
+            $1::uuid, $2::uuid, $3::uuid, $4::uuid, '2026-10-05'::date, 0, $5::uuid, $6::text
           ) as data`,
           [
             ACTORS.FULL_ADMIN.auth,
@@ -2063,7 +2188,7 @@ test("HRP Branches, Branch Check-In Distance Snapshot Immutability, Project Coor
         callAsServiceRole(
           db,
           `select public.attendance_assign_employee_slot_policy_admin(
-            $1::uuid, $2::uuid, $3::uuid, $4::uuid, null, 1, $5::uuid, $6::text
+            $1::uuid, $2::uuid, $3::uuid, $4::uuid, null, 0, $5::uuid, $6::text
           ) as data`,
           [
             ACTORS.FULL_ADMIN.auth,
@@ -2077,20 +2202,40 @@ test("HRP Branches, Branch Check-In Distance Snapshot Immutability, Project Coor
       (err) => /ATTENDANCE_SLOT_POLICY_DEFAULT_ASSIGNMENT_REDUNDANT/.test(err.message),
     );
 
-    // 9d. Live immediate-effect assign (todayVn / null), switch on same day, and unassign on todayVn
+    // Reject assignment when employee has no open assignment (expected_version must be 0, NOT profile.version = 2)
+    await assert.rejects(
+      () =>
+        callAsServiceRole(
+          db,
+          `select public.attendance_assign_employee_slot_policy_admin(
+            $1::uuid, $2::uuid, $3::uuid, $4::uuid, null, 2, $5::uuid, $6::text
+          ) as data`,
+          [
+            ACTORS.FULL_ADMIN.auth,
+            ACTORS.FULL_ADMIN.app,
+            ACTORS.STAFF_A.app,
+            hcProfileId,
+            nextUuid(),
+            "3".repeat(64),
+          ],
+        ),
+      (err) => /ATTENDANCE_SLOT_POLICY_ASSIGNMENT_VERSION_CONFLICT/.test(err.message),
+    );
+
+    // 9d. Live immediate-effect assign (todayVn / null, expected_version = 0 since unassigned), switch on same day, and unassign on todayVn
     const assignHcKey = nextUuid();
     const assignHcFp = computeSlotPolicyAssignRequestFingerprint({
       app_user_id: ACTORS.FULL_ADMIN.app,
       target_app_user_id: ACTORS.STAFF_A.app,
       profile_id: hcProfileId,
       valid_from: null,
-      expected_version: 2,
+      expected_version: 0,
     });
     const assignHcRes = projectAssignSlotPolicyResult(
       await callAsServiceRole(
         db,
         `select public.attendance_assign_employee_slot_policy_admin(
-          $1::uuid, $2::uuid, $3::uuid, $4::uuid, null, 2, $5::uuid, $6::text
+          $1::uuid, $2::uuid, $3::uuid, $4::uuid, null, 0, $5::uuid, $6::text
         ) as data`,
         [
           ACTORS.FULL_ADMIN.auth,
@@ -2106,6 +2251,28 @@ test("HRP Branches, Branch Check-In Distance Snapshot Immutability, Project Coor
     assert.equal(assignHcRes.assignment.profile_code, "HANH_CHINH");
     assert.equal(assignHcRes.assignment.valid_from, todayVn);
     assert.equal(assignHcRes.assignment.valid_to, null);
+    assert.equal(assignHcRes.assignment.version, 1);
+
+    // Reject switching STAFF_A to TUYEN_DUNG_3 when passing target profile.version (3) instead of open assignment.version (1)
+    await assert.rejects(
+      () =>
+        callAsServiceRole(
+          db,
+          `select public.attendance_assign_employee_slot_policy_admin(
+            $1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::date, 3, $6::uuid, $7::text
+          ) as data`,
+          [
+            ACTORS.FULL_ADMIN.auth,
+            ACTORS.FULL_ADMIN.app,
+            ACTORS.STAFF_A.app,
+            tdProfileId,
+            todayVn,
+            nextUuid(),
+            "2".repeat(64),
+          ],
+        ),
+      (err) => /ATTENDANCE_SLOT_POLICY_ASSIGNMENT_VERSION_CONFLICT/.test(err.message),
+    );
 
     // Reject unassign with past or future date
     await assert.rejects(
@@ -2145,20 +2312,20 @@ test("HRP Branches, Branch Check-In Distance Snapshot Immutability, Project Coor
       (err) => /ATTENDANCE_SLOT_POLICY_ASSIGNMENT_FUTURE_DATE/.test(err.message),
     );
 
-    // Switch STAFF_A to TUYEN_DUNG_3 today (marks HANH_CHINH assignment as superseded_same_day = true)
+    // Switch STAFF_A to TUYEN_DUNG_3 today with open assignment.version = 1 (marks HANH_CHINH assignment as superseded_same_day = true)
     const assignTdKey = nextUuid();
     const assignTdFp = computeSlotPolicyAssignRequestFingerprint({
       app_user_id: ACTORS.FULL_ADMIN.app,
       target_app_user_id: ACTORS.STAFF_A.app,
       profile_id: tdProfileId,
       valid_from: todayVn,
-      expected_version: 1,
+      expected_version: assignHcRes.assignment.version,
     });
     const assignTdRes = projectAssignSlotPolicyResult(
       await callAsServiceRole(
         db,
         `select public.attendance_assign_employee_slot_policy_admin(
-          $1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::date, 1, $6::uuid, $7::text
+          $1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::date, $6::integer, $7::uuid, $8::text
         ) as data`,
         [
           ACTORS.FULL_ADMIN.auth,
@@ -2166,6 +2333,7 @@ test("HRP Branches, Branch Check-In Distance Snapshot Immutability, Project Coor
           ACTORS.STAFF_A.app,
           tdProfileId,
           todayVn,
+          assignHcRes.assignment.version,
           assignTdKey,
           assignTdFp,
         ],

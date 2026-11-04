@@ -1252,6 +1252,7 @@ export function buildUpsertSlotPolicyProfilePayload(input: {
 export function buildAssignEmployeeToSlotPolicyPayload(input: {
   appUserId: string;
   profile: { profile_id: string; active: boolean; version: number; is_default?: boolean } | null;
+  expectedVersion?: number | null;
   validFrom?: string;
   idempotencyKey: string;
   todayVn?: string;
@@ -1284,6 +1285,21 @@ export function buildAssignEmployeeToSlotPolicyPayload(input: {
     input.profile.version < 1
   ) {
     return { ok: false, message: "Phiên bản cấu hình khung giờ không hợp lệ. Vui lòng tải lại." };
+  }
+
+  const expectedVersion =
+    input.expectedVersion === undefined || input.expectedVersion === null
+      ? 0
+      : input.expectedVersion;
+  if (
+    typeof expectedVersion !== "number" ||
+    !Number.isSafeInteger(expectedVersion) ||
+    expectedVersion < 0
+  ) {
+    return {
+      ok: false,
+      message: "Phiên bản phân công hiện tại không hợp lệ. Vui lòng tải lại.",
+    };
   }
 
   const trimmedValidFrom = typeof input.validFrom === "string" ? input.validFrom.trim() : "";
@@ -1322,7 +1338,7 @@ export function buildAssignEmployeeToSlotPolicyPayload(input: {
       app_user_id: userId,
       profile_id: input.profile.profile_id.toLowerCase(),
       valid_from: validFrom,
-      expected_version: input.profile.version,
+      expected_version: expectedVersion,
       idempotency_key: key,
     },
   };

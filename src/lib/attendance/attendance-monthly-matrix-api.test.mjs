@@ -1755,6 +1755,46 @@ test("Multi-Profile Slot Policy Admin contracts, API handlers, and repository RP
     false,
   );
 
+  // Updating an existing profile requires explicit expected_profile_version (>= 1) and never falls back to expected_version
+  assert.equal(
+    parseUpsertSlotPolicyProfileBody(
+      {
+        profile_id: PROFILE_ID,
+        profile_code: "HANH_CHINH",
+        display_name: "Hành chính",
+        active: true,
+        effective_from_date: "2026-11-01",
+        slots: twoSlots,
+        expected_version: 5,
+        idempotency_key: IDEMPOTENCY_KEY,
+      },
+      null,
+      PROFILE_ID,
+    ).ok,
+    false,
+  );
+
+  const parsedDivergentUpdate = parseUpsertSlotPolicyProfileBody(
+    {
+      profile_id: PROFILE_ID,
+      profile_code: "HANH_CHINH",
+      display_name: "Hành chính",
+      active: true,
+      effective_from_date: "2026-11-01",
+      slots: twoSlots,
+      expected_profile_version: 3,
+      expected_version: 5,
+      idempotency_key: IDEMPOTENCY_KEY,
+    },
+    null,
+    PROFILE_ID,
+  );
+  assert.equal(parsedDivergentUpdate.ok, true);
+  if (parsedDivergentUpdate.ok) {
+    assert.equal(parsedDivergentUpdate.value.expected_profile_version, 3);
+    assert.equal(parsedDivergentUpdate.value.expected_version, 5);
+  }
+
   // Assigning to Default profile is rejected at parser level
   const parsedAssignDefault = parseAssignSlotPolicyBody({
     app_user_id: STAFF_USER_ID,
@@ -2085,6 +2125,7 @@ test("Multi-Profile Slot Policy Admin contracts, API handlers, and repository RP
     p_effective_from_date: "2026-10-01",
     p_slots: samplePolicy2Slots.slots,
     p_expected_version: 0,
+    p_expected_profile_version: 0,
     p_idempotency_key: IDEMPOTENCY_KEY,
     p_request_fingerprint: computeSlotPolicyProfileUpsertRequestFingerprint({
       app_user_id: APP_USER_ID,
@@ -2097,6 +2138,59 @@ test("Multi-Profile Slot Policy Admin contracts, API handlers, and repository RP
       effective_from_date: "2026-10-01",
       slots: samplePolicy2Slots.slots,
       expected_version: 0,
+    }),
+  });
+
+  // Update existing profile with divergent expected_profile_version (3) vs expected_version (5)
+  const updateDivergentProfileRes = await postOrPutAttendanceSlotPolicyProfileAdmin(
+    makeJsonRequest(
+      `https://bi.example.com/api/admin/attendance/slot-policies/${PROFILE_ID}`,
+      "PUT",
+      {
+        profile_id: PROFILE_ID,
+        profile_code: "HANH_CHINH",
+        display_name: "Hành chính",
+        description: "Khung giờ 2 mốc",
+        active: true,
+        effective_from_date: "2026-11-01",
+        slots: twoSlots,
+        expected_profile_version: 3,
+        expected_version: 5,
+        idempotency_key: IDEMPOTENCY_KEY,
+      },
+    ),
+    PROFILE_ID,
+    {
+      resolveSession: async () => makeSessionOk(FULL_ADMIN_CAPS, ALL_SCOPE),
+      repository: repo,
+    },
+  );
+  assert.equal(updateDivergentProfileRes.status, 200);
+  assert.equal(rpcCalls[6].name, "attendance_upsert_slot_policy_profile_admin");
+  assert.deepEqual(rpcCalls[6].args, {
+    p_auth_subject: AUTH_SUBJECT,
+    p_app_user_id: APP_USER_ID,
+    p_profile_id: PROFILE_ID,
+    p_profile_code: "HANH_CHINH",
+    p_display_name: "Hành chính",
+    p_description: "Khung giờ 2 mốc",
+    p_active: true,
+    p_effective_from_date: "2026-11-01",
+    p_slots: samplePolicy2Slots.slots,
+    p_expected_version: 5,
+    p_expected_profile_version: 3,
+    p_idempotency_key: IDEMPOTENCY_KEY,
+    p_request_fingerprint: computeSlotPolicyProfileUpsertRequestFingerprint({
+      app_user_id: APP_USER_ID,
+      profile_id: PROFILE_ID,
+      profile_code: "HANH_CHINH",
+      display_name: "Hành chính",
+      description: "Khung giờ 2 mốc",
+      active: true,
+      expected_profile_version: 3,
+      effective_from_date: "2026-11-01",
+      slots: samplePolicy2Slots.slots,
+      expected_version: 5,
     }),
   });
 

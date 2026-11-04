@@ -963,7 +963,7 @@ export type ParsedUpsertSlotPolicyProfileRequest = {
   active: boolean;
   effective_from_date: string | null;
   slots: AttendanceSlotConfigItemProjection[] | null;
-  expected_version: number;
+  expected_version: number | null;
   expected_profile_version: number;
   idempotency_key: string;
 };
@@ -1717,7 +1717,31 @@ export function parseCreateSlotPolicyBody(
     return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
   }
 
+  const hasProfileFields =
+    profileId !== undefined ||
+    profileCode !== undefined ||
+    displayName !== undefined ||
+    description !== undefined ||
+    active !== undefined ||
+    body.expected_profile_version !== undefined;
   const isCreatingNewNamedProfile = !profileId && profileCode !== undefined;
+
+  if (isCreatingNewNamedProfile) {
+    if (expectedProfileVersion === undefined) {
+      expectedProfileVersion = 0;
+    } else if (expectedProfileVersion !== 0) {
+      return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+    }
+  } else if (hasProfileFields) {
+    if (
+      typeof profileId !== "string" ||
+      typeof expectedProfileVersion !== "number" ||
+      expectedProfileVersion < 1
+    ) {
+      return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+    }
+  }
+
   const expectedVersion =
     body.expected_version === undefined && isCreatingNewNamedProfile
       ? 0
@@ -1726,7 +1750,8 @@ export function parseCreateSlotPolicyBody(
   if (
     typeof expectedVersion !== "number" ||
     !Number.isSafeInteger(expectedVersion) ||
-    expectedVersion < minExpectedVersion
+    expectedVersion < minExpectedVersion ||
+    (isCreatingNewNamedProfile && expectedVersion !== 0)
   ) {
     return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
   }
@@ -1878,24 +1903,61 @@ export function parseUpsertSlotPolicyProfileBody(
     return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
   }
 
-  const rawExpectedVersion =
-    body.expected_version === undefined && profileId === null ? 0 : body.expected_version;
-  const rawExpectedProfileVersion =
-    body.expected_profile_version === undefined
-      ? profileId === null
-        ? 0
-        : rawExpectedVersion
-      : body.expected_profile_version;
+  let parsedExpectedVersion: number | null = null;
+  let parsedExpectedProfileVersion: number = 0;
 
-  if (
-    typeof rawExpectedVersion !== "number" ||
-    !Number.isSafeInteger(rawExpectedVersion) ||
-    rawExpectedVersion < (profileId === null ? 0 : 1) ||
-    typeof rawExpectedProfileVersion !== "number" ||
-    !Number.isSafeInteger(rawExpectedProfileVersion) ||
-    rawExpectedProfileVersion < (profileId === null ? 0 : 1)
-  ) {
-    return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+  if (profileId === null) {
+    const rawExpectedVersion =
+      body.expected_version === undefined || body.expected_version === null
+        ? 0
+        : body.expected_version;
+    const rawExpectedProfileVersion =
+      body.expected_profile_version === undefined || body.expected_profile_version === null
+        ? 0
+        : body.expected_profile_version;
+    if (
+      typeof rawExpectedVersion !== "number" ||
+      !Number.isSafeInteger(rawExpectedVersion) ||
+      rawExpectedVersion !== 0 ||
+      typeof rawExpectedProfileVersion !== "number" ||
+      !Number.isSafeInteger(rawExpectedProfileVersion) ||
+      rawExpectedProfileVersion !== 0
+    ) {
+      return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+    }
+    parsedExpectedVersion = 0;
+    parsedExpectedProfileVersion = 0;
+  } else {
+    if (
+      typeof body.expected_profile_version !== "number" ||
+      !Number.isSafeInteger(body.expected_profile_version) ||
+      body.expected_profile_version < 1
+    ) {
+      return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+    }
+    parsedExpectedProfileVersion = body.expected_profile_version;
+
+    if (parsedSlots !== null) {
+      if (
+        typeof body.expected_version !== "number" ||
+        !Number.isSafeInteger(body.expected_version) ||
+        body.expected_version < 1
+      ) {
+        return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+      }
+      parsedExpectedVersion = body.expected_version;
+    } else if (body.expected_version !== undefined && body.expected_version !== null) {
+      if (
+        typeof body.expected_version !== "number" ||
+        !Number.isSafeInteger(body.expected_version) ||
+        body.expected_version < 1
+      ) {
+        return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+      }
+      parsedExpectedVersion = body.expected_version;
+    } else {
+      parsedExpectedVersion = null;
+    }
   }
 
   const idempotencyKey = resolveIdempotencyKey(body.idempotency_key, headerIdempotencyKey);
@@ -1913,8 +1975,8 @@ export function parseUpsertSlotPolicyProfileBody(
       active,
       effective_from_date: effectiveFromDate,
       slots: parsedSlots,
-      expected_version: rawExpectedVersion,
-      expected_profile_version: rawExpectedProfileVersion,
+      expected_version: parsedExpectedVersion,
+      expected_profile_version: parsedExpectedProfileVersion,
       idempotency_key: idempotencyKey,
     },
   };
