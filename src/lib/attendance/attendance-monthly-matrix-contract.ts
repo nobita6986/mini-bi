@@ -1111,6 +1111,27 @@ function hasExactKeys(value: Record<string, unknown>, expected: readonly string[
   return actual.every((key) => set.has(key));
 }
 
+function unwrapOptionalOkEnvelope(
+  value: unknown,
+): Record<string, unknown> | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  if (!("ok" in value)) {
+    return value;
+  }
+  if (value.ok !== true) {
+    return null;
+  }
+  const rest: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (key !== "ok") {
+      rest[key] = item;
+    }
+  }
+  return rest;
+}
+
 function isUuidString(value: unknown): value is string {
   return typeof value === "string" && UUID_PATTERN.test(value);
 }
@@ -3850,9 +3871,10 @@ export function projectAttendanceMonthlyMatrixReport(
 }
 
 export function projectAttendanceSlotPoliciesAdminList(
-  value: unknown,
+  rawValue: unknown,
 ): AttendanceSlotPoliciesAdminListProjection | null {
-  if (!isRecord(value)) {
+  const value = unwrapOptionalOkEnvelope(rawValue);
+  if (!value) {
     return null;
   }
   const baseKeys = [
@@ -4122,9 +4144,10 @@ export function projectAttendanceSlotPoliciesAdminList(
 }
 
 export function projectCreateSlotPolicyResult(
-  value: unknown,
+  rawValue: unknown,
 ): CreateAttendanceSlotPolicyResultProjection | null {
-  if (!isRecord(value) || typeof value.replayed !== "boolean") {
+  const value = unwrapOptionalOkEnvelope(rawValue);
+  if (!value || typeof value.replayed !== "boolean") {
     return null;
   }
   const hasProfileKey = hasExactKeys(value, ["replayed", "policy", "profile"]);
@@ -4184,10 +4207,11 @@ export function projectCreateSlotPolicyResult(
 export const projectUpsertSlotPolicyProfileResult = projectCreateSlotPolicyResult;
 
 export function projectAssignSlotPolicyResult(
-  value: unknown,
+  rawValue: unknown,
 ): AssignAttendanceSlotPolicyResultProjection | null {
+  const value = unwrapOptionalOkEnvelope(rawValue);
   if (
-    !isRecord(value) ||
+    !value ||
     !hasExactKeys(value, ["replayed", "assignment"]) ||
     typeof value.replayed !== "boolean" ||
     !isRecord(value.assignment)
@@ -4283,10 +4307,11 @@ export function projectAssignSlotPolicyResult(
 export const projectUnassignSlotPolicyResult = projectAssignSlotPolicyResult;
 
 export function projectAttendanceBranchesAdminList(
-  value: unknown,
+  rawValue: unknown,
 ): AttendanceBranchesAdminListProjection | null {
+  const value = unwrapOptionalOkEnvelope(rawValue);
   if (
-    !isRecord(value) ||
+    !value ||
     !hasExactKeys(value, [
       "viewer",
       "business_date",
@@ -4467,9 +4492,10 @@ export function projectAttendanceBranchesAdminList(
 }
 
 export function projectUpsertBranchResult(
-  value: unknown,
+  rawValue: unknown,
 ): UpsertAttendanceBranchResultProjection | null {
-  if (!isRecord(value) || !hasExactKeys(value, ["replayed", "branch"])) {
+  const value = unwrapOptionalOkEnvelope(rawValue);
+  if (!value || !hasExactKeys(value, ["replayed", "branch"])) {
     return null;
   }
   if (typeof value.replayed !== "boolean" || !isRecord(value.branch)) {
@@ -4535,9 +4561,10 @@ export function projectUpsertBranchResult(
 }
 
 export function projectAssignBranchResult(
-  value: unknown,
+  rawValue: unknown,
 ): AssignAttendanceBranchResultProjection | null {
-  if (!isRecord(value) || !hasExactKeys(value, ["replayed", "assignment"])) {
+  const value = unwrapOptionalOkEnvelope(rawValue);
+  if (!value || !hasExactKeys(value, ["replayed", "assignment"])) {
     return null;
   }
   if (typeof value.replayed !== "boolean" || !isRecord(value.assignment)) {
@@ -4586,9 +4613,10 @@ export function projectAssignBranchResult(
 }
 
 export function projectUnassignBranchResult(
-  value: unknown,
+  rawValue: unknown,
 ): UnassignAttendanceBranchResultProjection | null {
-  if (!isRecord(value) || !hasExactKeys(value, ["replayed", "assignment"])) {
+  const value = unwrapOptionalOkEnvelope(rawValue);
+  if (!value || !hasExactKeys(value, ["replayed", "assignment"])) {
     return null;
   }
   if (typeof value.replayed !== "boolean" || !isRecord(value.assignment)) {
@@ -5263,10 +5291,11 @@ function projectExplanationDaySlotEvaluation(
 }
 
 export function projectAttendanceMyExplanationsOverview(
-  value: unknown,
+  rawValue: unknown,
 ): AttendanceMyExplanationsOverviewProjection | null {
+  const value = unwrapOptionalOkEnvelope(rawValue);
   if (
-    !isRecord(value) ||
+    !value ||
     !hasExactKeys(value, [
       "viewer",
       "routing",
@@ -5466,10 +5495,11 @@ export function projectAttendanceMyExplanationsOverview(
 }
 
 export function projectSubmitAttendanceExplanationResult(
-  value: unknown,
+  rawValue: unknown,
 ): SubmitAttendanceExplanationResultProjection | null {
+  const value = unwrapOptionalOkEnvelope(rawValue);
   if (
-    !isRecord(value) ||
+    !value ||
     !hasExactKeys(value, ["replayed", "explanation"]) ||
     typeof value.replayed !== "boolean"
   ) {
@@ -5485,10 +5515,11 @@ export function projectSubmitAttendanceExplanationResult(
 }
 
 export function projectAttendanceExplanationApprovalInbox(
-  value: unknown,
+  rawValue: unknown,
 ): AttendanceExplanationApprovalInboxProjection | null {
+  const value = unwrapOptionalOkEnvelope(rawValue);
   if (
-    !isRecord(value) ||
+    !value ||
     !hasExactKeys(value, ["viewer", "pagination", "items"])
   ) {
     return null;

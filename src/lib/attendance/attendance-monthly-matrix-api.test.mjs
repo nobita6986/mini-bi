@@ -39,6 +39,10 @@ import {
   parseUnassignSlotPolicyBody,
   parseUpsertBranchBody,
   parseUpsertSlotPolicyProfileBody,
+  projectAssignSlotPolicyResult,
+  projectAttendanceSlotPoliciesAdminList,
+  projectUnassignSlotPolicyResult,
+  projectUpsertSlotPolicyProfileResult,
 } from "./attendance-monthly-matrix-contract.ts";
 import {
   ATTENDANCE_REPORT_MAX_PAGE_SIZE,
@@ -2009,6 +2013,14 @@ test("Multi-Profile Slot Policy Admin contracts, API handlers, and repository RP
   assert.equal(createProfileJson.ok, true);
   assert.equal(createProfileJson.profile.profile_code, "HANH_CHINH");
   assert.equal(createProfileJson.policy.slots.length, 2);
+  const projectedProfileSave = projectUpsertSlotPolicyProfileResult(createProfileJson);
+  assert.ok(projectedProfileSave);
+  assert.equal(projectedProfileSave.profile?.profile_code, "HANH_CHINH");
+  assert.equal(projectedProfileSave.policy.slots.length, 2);
+  assert.equal(
+    projectUpsertSlotPolicyProfileResult({ ...createProfileJson, ok: false }),
+    null,
+  );
 
   // Future date returns 422 ATTENDANCE_SLOT_POLICY_ASSIGNMENT_FUTURE_DATE
   const futureAssignRes = await postAttendanceSlotPolicyAssignmentAdmin(
@@ -2067,6 +2079,13 @@ test("Multi-Profile Slot Policy Admin contracts, API handlers, and repository RP
   assert.equal(assignOkRes.status, 201);
   const assignOkJson = await assignOkRes.json();
   assert.equal(assignOkJson.assignment.profile_code, "HANH_CHINH");
+  const projectedAssignOk = projectAssignSlotPolicyResult(assignOkJson);
+  assert.ok(projectedAssignOk);
+  assert.equal(projectedAssignOk.assignment.profile_code, "HANH_CHINH");
+  assert.equal(
+    projectAssignSlotPolicyResult({ ...assignOkJson, ok: false }),
+    null,
+  );
 
   // Past date on unassign returns 422 ATTENDANCE_SLOT_POLICY_ASSIGNMENT_PAST_DATE
   const pastUnassignRes = await postAttendanceSlotPolicyUnassignAdmin(
@@ -2111,6 +2130,88 @@ test("Multi-Profile Slot Policy Admin contracts, API handlers, and repository RP
   assert.equal(unassignOkRes.status, 200);
   const unassignOkJson = await unassignOkRes.json();
   assert.equal(unassignOkJson.assignment.valid_to, "2026-10-25");
+  const projectedUnassignOk = projectUnassignSlotPolicyResult(unassignOkJson);
+  assert.ok(projectedUnassignOk);
+  assert.equal(projectedUnassignOk.assignment.valid_to, "2026-10-25");
+  assert.equal(
+    projectUnassignSlotPolicyResult({ ...unassignOkJson, ok: false }),
+    null,
+  );
+
+  // Verify GET /api/admin/attendance/slot-policies HTTP { ok: true, ... } payload projects cleanly on the client
+  const listWithProfilesPayload = {
+    ok: true,
+    viewer: { can_manage_slot_policy: true },
+    business_date: "2026-10-25",
+    current_policy: DEFAULT_ATTENDANCE_SLOT_POLICY,
+    latest_policy: DEFAULT_ATTENDANCE_SLOT_POLICY,
+    versions: [DEFAULT_ATTENDANCE_SLOT_POLICY],
+    profiles: [
+      {
+        profile_id: DEFAULT_ATTENDANCE_SLOT_POLICY_PROFILE_ID,
+        profile_code: "DEFAULT",
+        display_name: "Mặc định",
+        description: null,
+        is_default: true,
+        active: true,
+        version: 1,
+        active_assignment_count: 0,
+        current_policy: DEFAULT_ATTENDANCE_SLOT_POLICY,
+        latest_policy: DEFAULT_ATTENDANCE_SLOT_POLICY,
+        versions: [DEFAULT_ATTENDANCE_SLOT_POLICY],
+      },
+      {
+        profile_id: PROFILE_ID,
+        profile_code: "HANH_CHINH",
+        display_name: "Hành chính",
+        description: "Khung giờ 2 mốc",
+        is_default: false,
+        active: true,
+        version: 1,
+        active_assignment_count: 1,
+        current_policy: samplePolicy2Slots,
+        latest_policy: samplePolicy2Slots,
+        versions: [samplePolicy2Slots],
+      },
+    ],
+    assignments: [
+      {
+        ...sampleAssignment,
+        created_at: "2026-10-25T01:00:00.000Z",
+        updated_at: "2026-10-25T01:00:00.000Z",
+      },
+    ],
+    employee_options: [
+      {
+        app_user_id: STAFF_USER_ID,
+        display_name: "Nguyễn Văn A",
+        employee_display_name: "Nguyễn Văn A",
+        personnel_code: "NV001",
+        enabled: true,
+        current_profile_id: PROFILE_ID,
+        current_profile_code: "HANH_CHINH",
+        current_profile_name: "Hành chính",
+        current_profile_is_default: false,
+        current_assignment_id: ASSIGNMENT_ID,
+        current_assignment_version: 1,
+        current_assignment_valid_from: "2026-10-25",
+      },
+    ],
+  };
+  const projectedList = projectAttendanceSlotPoliciesAdminList(listWithProfilesPayload);
+  assert.ok(projectedList);
+  assert.equal(projectedList.profiles?.length, 2);
+  assert.equal(projectedList.profiles?.[1]?.profile_code, "HANH_CHINH");
+  assert.equal(projectedList.assignments?.length, 1);
+  assert.equal(projectedList.employee_options?.length, 1);
+  assert.equal(
+    projectAttendanceSlotPoliciesAdminList({ ...listWithProfilesPayload, ok: false }),
+    null,
+  );
+  assert.equal(
+    projectAttendanceSlotPoliciesAdminList({ ...listWithProfilesPayload, extra: 1 }),
+    null,
+  );
 
   assert.equal(rpcCalls.length, 6);
   assert.equal(rpcCalls[0].name, "attendance_upsert_slot_policy_profile_admin");
