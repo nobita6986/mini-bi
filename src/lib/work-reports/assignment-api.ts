@@ -93,8 +93,8 @@ function mapOutcome<T>(result: WorkReportRpcOutcome<T>): Response {
     const codes = { conflict: ["WORK_REPORT_VERSION_CONFLICT", 409], denied: ["WORK_REPORT_ACCESS_DENIED", 403],
       invalid: ["WORK_REPORT_REQUEST_INVALID", 400], "not-found": ["WORK_REPORT_NOT_FOUND", 404],
       unavailable: ["WORK_REPORT_UNAVAILABLE", 503] } as const;
-    const [code, status] = codes[result.kind];
-    return fail(code, status);
+    const [defaultCode, status] = codes[result.kind];
+    return fail(result.code ?? defaultCode, status);
   }
   return response({ ok: true, ...(Array.isArray(result.data) ? { items: result.data } : result.data) }, 200);
 }
