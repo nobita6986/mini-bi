@@ -1912,7 +1912,54 @@ test("Android sync: auto-materialize on create/reactivate, 7-day per-actor backf
   );
 });
 
-test("Custom group assignment succeeds when a historical member was later deactivated, and still rejects when all members are ineligible", async () => {
+test("Custom group assignment succeeds when a historical member was later deactivated, and resolves canonical full names over login IDs", async () => {
+  const LOGIN_ID_ACTIVE_USER = {
+    auth: "10000000-0000-4000-8000-00000000f198",
+    app: "20000000-0000-4000-8000-00000000f198",
+    recruiter: "30000000-0000-4000-8000-00000000f198",
+    loginCode: "anh3dt.td",
+    fullName: "Đỗ Tuấn Anh 3",
+  };
+  const LATER_DISABLED_USER = {
+    auth: "10000000-0000-4000-8000-00000000f199",
+    app: "20000000-0000-4000-8000-00000000f199",
+    recruiter: "30000000-0000-4000-8000-00000000f199",
+    loginCode: "hungdv.td",
+    fullName: "Dương Văn Hùng",
+  };
+
+  for (const [person, teamId] of [
+    [LOGIN_ID_ACTIVE_USER, TEAM_A],
+    [LATER_DISABLED_USER, TEAM_B],
+  ]) {
+    await db.query("insert into auth.users (id) values ($1::uuid)", [person.auth]);
+    await db.query(
+      `insert into public.direct_entry_app_users (app_user_id, auth_subject, display_name, enabled)
+       values ($1::uuid, $2::uuid, $3, true)`,
+      [person.app, person.auth, person.loginCode],
+    );
+    await db.query(
+      `insert into public.recruiters (recruiter_id, display_name, personnel_code, personnel_position, active)
+       values ($1::uuid, $2, $3, 'STAFF', true)`,
+      [person.recruiter, person.fullName, person.loginCode],
+    );
+    await db.query(
+      `insert into public.recruiter_provider_memberships (recruiter_id, provider_type, valid_from, is_current)
+       values ($1::uuid, 'hrp', '2026-01-01', true)`,
+      [person.recruiter],
+    );
+    await db.query(
+      `insert into public.recruiter_team_memberships (recruiter_id, team_id, valid_from, is_current)
+       values ($1::uuid, $2::uuid, '2026-01-01', true)`,
+      [person.recruiter, teamId],
+    );
+    await db.query(
+      `insert into public.direct_entry_app_user_recruiter_links (app_user_id, recruiter_id, verified, valid_from, is_current)
+       values ($1::uuid, $2::uuid, true, '2026-01-01', true)`,
+      [person.app, person.recruiter],
+    );
+  }
+
   const schema = structuredClone(RECRUITMENT_DAILY_TEMPLATE_SCHEMA);
   const contract = buildWorkReportMetricContract(schema);
   const { rows: tplRows } = await db.query(
@@ -1929,104 +1976,143 @@ test("Custom group assignment succeeds when a historical member was later deacti
     [ADMIN.auth, ADMIN.app, tplId, verId, KEY("hf_dis_tpl_pub")],
   );
 
-  // Create group with 3 eligible members: STAFF_A1, STAFF_B1, QLDA_USER
+  // Create group with 3 eligible members: LOGIN_ID_ACTIVE_USER, STAFF_B1, LATER_DISABLED_USER
   const { rows: grpRows } = await db.query(
     `select public.work_report_create_group(
        $1::uuid, $2::uuid, 'Nhân viên quản lý', 'Nhóm có 1 thành viên nghỉ việc sau khi tạo',
        $3::uuid[], $4
      ) as result`,
-    [ADMIN.auth, ADMIN.app, [STAFF_A1.app, STAFF_B1.app, QLDA_USER.app], KEY("hf_dis_grp_create")],
+    [ADMIN.auth, ADMIN.app, [LOGIN_ID_ACTIVE_USER.app, STAFF_B1.app, LATER_DISABLED_USER.app], KEY("hf_dis_grp_create")],
   );
   const grpId = grpRows[0].result.group_id;
 
-  try {
-    // Later, QLDA_USER is disabled (enabled = false), leaving 2 active eligible members
-    await db.query(
-      `update public.direct_entry_app_users set enabled = false where app_user_id = $1::uuid`,
-      [QLDA_USER.app],
-    );
+  // Create a second group with only LATER_DISABLED_USER while still enabled
+  const { rows: emptyEligibleGrpRows } = await db.query(
+    `select public.work_report_create_group(
+       $1::uuid, $2::uuid, 'Nhóm Đã Nghỉ Hết', null, $3::uuid[], $4
+     ) as result`,
+    [ADMIN.auth, ADMIN.app, [LATER_DISABLED_USER.app], KEY("hf_all_dis_grp_create")],
+  );
+  const allDisabledGrpId = emptyEligibleGrpRows[0].result.group_id;
 
-    // Deactivating and reactivating the group succeeds because 2 eligible members remain
-    const { rows: deactRows } = await db.query(
-      `select public.work_report_set_group_active($1::uuid, $2::uuid, $3::uuid, 1, false, $4) as result`,
-      [ADMIN.auth, ADMIN.app, grpId, KEY("hf_dis_grp_deact")],
-    );
-    assert.equal(deactRows[0].result.active, false);
+  // Later, LATER_DISABLED_USER is disabled (enabled = false), which also triggers direct_entry_clear_authority_on_disable
+  await db.query(
+    `update public.direct_entry_app_users set enabled = false where app_user_id = $1::uuid`,
+    [LATER_DISABLED_USER.app],
+  );
 
-    const { rows: reactRows } = await db.query(
-      `select public.work_report_set_group_active($1::uuid, $2::uuid, $3::uuid, 2, true, $4) as result`,
-      [ADMIN.auth, ADMIN.app, grpId, KEY("hf_dis_grp_react")],
-    );
-    assert.equal(reactRows[0].result.active, true);
+  // Verify work_report_list_groups resolves canonical recruiter full names for both active and disabled historical members
+  const { rows: listGroupsRows } = await db.query(
+    `select public.work_report_list_groups($1::uuid, $2::uuid) as result`,
+    [ADMIN.auth, ADMIN.app],
+  );
+  const listedGrp = listGroupsRows[0].result.groups.find((g) => g.group_id === grpId);
+  assert.ok(listedGrp, "created group is returned by work_report_list_groups");
+  const activeMemberInGrp = listedGrp.members.find((m) => m.app_user_id === LOGIN_ID_ACTIVE_USER.app);
+  const disabledMemberInGrp = listedGrp.members.find((m) => m.app_user_id === LATER_DISABLED_USER.app);
+  assert.equal(activeMemberInGrp?.display_name, LOGIN_ID_ACTIVE_USER.fullName, "active member resolves recruiter full name over login ID");
+  assert.equal(activeMemberInGrp?.enabled, true);
+  assert.equal(disabledMemberInGrp?.display_name, LATER_DISABLED_USER.fullName, "disabled historical member still resolves recruiter full name over login ID");
+  assert.equal(disabledMemberInGrp?.enabled, false);
 
-    // Creating a GROUP assignment succeeds and materializes obligations only for the 2 active members
-    const { rows: asgRows } = await db.query(
+  const eligibleActiveUser = listGroupsRows[0].result.eligible_users.find(
+    (u) => u.app_user_id === LOGIN_ID_ACTIVE_USER.app,
+  );
+  assert.equal(eligibleActiveUser?.display_name, LOGIN_ID_ACTIVE_USER.fullName, "eligible_users resolves recruiter full name");
+
+  // Verify work_report_list_assignment_options also resolves canonical full name
+  const { rows: optRows } = await db.query(
+    `select public.work_report_list_assignment_options($1::uuid, $2::uuid, $3::uuid) as result`,
+    [ADMIN.auth, ADMIN.app, TEAM_A],
+  );
+  const optActiveUser = optRows[0].result.users.find((u) => u.app_user_id === LOGIN_ID_ACTIVE_USER.app);
+  assert.equal(optActiveUser?.display_name, LOGIN_ID_ACTIVE_USER.fullName, "assignment options users resolves recruiter full name");
+
+  // Deactivating and reactivating grpId succeeds because 2 eligible members remain
+  const { rows: deactRows } = await db.query(
+    `select public.work_report_set_group_active($1::uuid, $2::uuid, $3::uuid, 1, false, $4) as result`,
+    [ADMIN.auth, ADMIN.app, grpId, KEY("hf_dis_grp_deact")],
+  );
+  assert.equal(deactRows[0].result.active, false);
+
+  const { rows: reactRows } = await db.query(
+    `select public.work_report_set_group_active($1::uuid, $2::uuid, $3::uuid, 2, true, $4) as result`,
+    [ADMIN.auth, ADMIN.app, grpId, KEY("hf_dis_grp_react")],
+  );
+  assert.equal(reactRows[0].result.active, true);
+
+  // Creating a GROUP assignment for grpId succeeds and materializes obligations only for the 2 active members
+  const { rows: asgRows } = await db.query(
+    `select public.work_report_create_group_assignment(
+       $1::uuid, $2::uuid, $3::uuid, $4::uuid,
+       'DAILY', true, 0, '23:59:59'::time, false, '2026-11-04'::date, null, $5
+     ) as result`,
+    [ADMIN.auth, ADMIN.app, tplId, grpId, KEY("hf_dis_grp_assign_ok")],
+  );
+  const asgId = asgRows[0].result.assignment_id;
+  assert.ok(asgId);
+
+  await db.query(
+    `select public.work_report_ensure_obligations_for_window($1::uuid, $2::uuid, '2099-12-10'::date)`,
+    [ADMIN.auth, ADMIN.app],
+  );
+  const { rows: obRows } = await db.query(
+    `select assignee_app_user_id from public.work_report_obligations
+      where assignment_id = $1::uuid and period_key = '2099-12-10'
+      order by assignee_app_user_id`,
+    [asgId],
+  );
+  assert.deepEqual(
+    obRows.map((r) => r.assignee_app_user_id),
+    [LOGIN_ID_ACTIVE_USER.app, STAFF_B1.app].sort(),
+    "disabled group member is skipped; active eligible members receive obligations",
+  );
+
+  // Verify work_report_get_assignment_detail resolves canonical full name in assignee_progress
+  const { rows: detailRows } = await db.query(
+    `select public.work_report_get_assignment_detail($1::uuid, $2::uuid, $3::uuid) as result`,
+    [ADMIN.auth, ADMIN.app, asgId],
+  );
+  const progressForActiveUser = detailRows[0].result.assignee_progress.find(
+    (p) => p.assignee_app_user_id === LOGIN_ID_ACTIVE_USER.app,
+  );
+  assert.equal(
+    progressForActiveUser?.assignee_display_name,
+    LOGIN_ID_ACTIVE_USER.fullName,
+    "assignment detail assignee_progress resolves recruiter full name",
+  );
+
+  // Verify work_report_analytics_filter_options resolves canonical full name
+  const { rows: filterOptRows } = await db.query(
+    `select public.work_report_analytics_filter_options($1::uuid, $2::uuid) as result`,
+    [ADMIN.auth, ADMIN.app],
+  );
+  const filterAssignee = filterOptRows[0].result.assignees.find(
+    (a) => a.app_user_id === LOGIN_ID_ACTIVE_USER.app,
+  );
+  assert.equal(
+    filterAssignee?.display_name,
+    LOGIN_ID_ACTIVE_USER.fullName,
+    "analytics filter options assignees resolves recruiter full name",
+  );
+
+  const { rows: listRows } = await db.query(
+    `select public.work_report_list_assignments($1::uuid, $2::uuid, null) as result`,
+    [ADMIN.auth, ADMIN.app],
+  );
+  const listed = listRows[0].result.items.find((a) => a.assignment_id === asgId);
+  assert.ok(listed);
+  assert.equal(listed.target_member_count, 2, "GROUP target_member_count reflects currently eligible members");
+
+  // Group with 0 eligible members is still rejected with WORK_REPORT_GROUP_MEMBER_INELIGIBLE
+  await assert.rejects(
+    db.query(
       `select public.work_report_create_group_assignment(
          $1::uuid, $2::uuid, $3::uuid, $4::uuid,
          'DAILY', true, 0, '23:59:59'::time, false, '2026-11-04'::date, null, $5
-       ) as result`,
-      [ADMIN.auth, ADMIN.app, tplId, grpId, KEY("hf_dis_grp_assign_ok")],
-    );
-    const asgId = asgRows[0].result.assignment_id;
-    assert.ok(asgId);
-
-    await db.query(
-      `select public.work_report_ensure_obligations_for_window($1::uuid, $2::uuid, '2099-12-10'::date)`,
-      [ADMIN.auth, ADMIN.app],
-    );
-    const { rows: obRows } = await db.query(
-      `select assignee_app_user_id from public.work_report_obligations
-        where assignment_id = $1::uuid and period_key = '2099-12-10'
-        order by assignee_app_user_id`,
-      [asgId],
-    );
-    assert.deepEqual(
-      obRows.map((r) => r.assignee_app_user_id),
-      [STAFF_A1.app, STAFF_B1.app].sort(),
-      "disabled group member is skipped; active eligible members receive obligations",
-    );
-
-    const { rows: listRows } = await db.query(
-      `select public.work_report_list_assignments($1::uuid, $2::uuid, null) as result`,
-      [ADMIN.auth, ADMIN.app],
-    );
-    const listed = listRows[0].result.items.find((a) => a.assignment_id === asgId);
-    assert.ok(listed);
-    assert.equal(listed.target_member_count, 2, "GROUP target_member_count reflects currently eligible members");
-
-    // Create a second group with only QLDA_USER ( temporarily re-enable to create, then disable ) -> 0 eligible members
-    await db.query(
-      `update public.direct_entry_app_users set enabled = true where app_user_id = $1::uuid`,
-      [QLDA_USER.app],
-    );
-    const { rows: emptyEligibleGrpRows } = await db.query(
-      `select public.work_report_create_group(
-         $1::uuid, $2::uuid, 'Nhóm Đã Nghỉ Hết', null, $3::uuid[], $4
-       ) as result`,
-      [ADMIN.auth, ADMIN.app, [QLDA_USER.app], KEY("hf_all_dis_grp_create")],
-    );
-    const allDisabledGrpId = emptyEligibleGrpRows[0].result.group_id;
-
-    await db.query(
-      `update public.direct_entry_app_users set enabled = false where app_user_id = $1::uuid`,
-      [QLDA_USER.app],
-    );
-
-    // Group with 0 eligible members is still rejected with WORK_REPORT_GROUP_MEMBER_INELIGIBLE
-    await assert.rejects(
-      db.query(
-        `select public.work_report_create_group_assignment(
-           $1::uuid, $2::uuid, $3::uuid, $4::uuid,
-           'DAILY', true, 0, '23:59:59'::time, false, '2026-11-04'::date, null, $5
-         )`,
-        [ADMIN.auth, ADMIN.app, tplId, allDisabledGrpId, KEY("hf_all_dis_grp_assign_fail")],
-      ),
-      (err) => err.code === "22023" && err.message.includes("WORK_REPORT_GROUP_MEMBER_INELIGIBLE"),
-    );
-  } finally {
-    await db.query(
-      `update public.direct_entry_app_users set enabled = true where app_user_id = $1::uuid`,
-      [QLDA_USER.app],
-    );
-  }
+       )`,
+      [ADMIN.auth, ADMIN.app, tplId, allDisabledGrpId, KEY("hf_all_dis_grp_assign_fail")],
+    ),
+    (err) => err.code === "22023" && err.message.includes("WORK_REPORT_GROUP_MEMBER_INELIGIBLE"),
+  );
 });
