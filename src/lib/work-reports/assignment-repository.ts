@@ -24,9 +24,18 @@ export type AssignmentCreateInput = WorkReportActorRef & {
   idempotency_key: string;
 };
 
+export type WorkReportInvalidReasonCode =
+  | "WORK_REPORT_GROUP_MEMBER_INELIGIBLE"
+  | "WORK_REPORT_GROUP_INACTIVE"
+  | "WORK_REPORT_TEMPLATE_NOT_ACTIVE";
+
 export type WorkReportRpcOutcome<T> =
   | { ok: true; data: T }
-  | { ok: false; kind: "conflict" | "denied" | "invalid" | "not-found" | "unavailable" };
+  | {
+      ok: false;
+      kind: "conflict" | "denied" | "invalid" | "not-found" | "unavailable";
+      code?: WorkReportInvalidReasonCode;
+    };
 
 export type WorkReportAssignmentOptions = {
   templates: readonly {
@@ -194,8 +203,29 @@ function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function outcome<T>(data: unknown, error: { code?: string } | null, valid: (value: unknown) => value is T): WorkReportRpcOutcome<T> {
-  if (error) return { ok: false, kind: classify(error) };
+const KNOWN_INVALID_REASON_CODES: readonly WorkReportInvalidReasonCode[] = [
+  "WORK_REPORT_GROUP_MEMBER_INELIGIBLE",
+  "WORK_REPORT_GROUP_INACTIVE",
+  "WORK_REPORT_TEMPLATE_NOT_ACTIVE",
+];
+
+function extractInvalidReasonCode(
+  error: { code?: string; message?: string },
+): WorkReportInvalidReasonCode | undefined {
+  if (error.code !== "22023" || typeof error.message !== "string") return undefined;
+  return KNOWN_INVALID_REASON_CODES.find((code) => error.message?.includes(code));
+}
+
+function outcome<T>(
+  data: unknown,
+  error: { code?: string; message?: string } | null,
+  valid: (value: unknown) => value is T,
+): WorkReportRpcOutcome<T> {
+  if (error) {
+    const kind = classify(error);
+    const reasonCode = extractInvalidReasonCode(error);
+    return reasonCode ? { ok: false, kind, code: reasonCode } : { ok: false, kind };
+  }
   return valid(data) ? { ok: true, data } : { ok: false, kind: "unavailable" };
 }
 

@@ -264,7 +264,10 @@ export function AssignmentManager() {
   }, [targetKind, selectedGroup, selectedTeam, selectedUser, targetUsers.length]);
 
   const summaryMemberCount = useMemo(() => {
-    if (targetKind === "GROUP") return selectedGroup?.members.length ?? 0;
+    if (targetKind === "GROUP") {
+      if (!selectedGroup) return 0;
+      return selectedGroup.members.filter((member) => member.enabled).length;
+    }
     if (targetKind === "USER") return targetId ? 1 : 0;
     if (targetKind === "USER_SET") return targetUsers.length;
     if (targetKind === "TEAM") return teamId ? users.length : 0;
@@ -413,6 +416,8 @@ export function AssignmentManager() {
       if (!response.ok || result?.ok !== true) throw new Error(result?.code ?? "WORK_REPORT_UNAVAILABLE");
       notify.success({
         title: isEdit ? "Đã cập nhật nhóm báo cáo." : "Đã tạo nhóm báo cáo mới.",
+        dedupeKey: "work-report-group-save",
+        countBurst: false,
       });
       if (!isEdit && typeof result.group_id === "string") {
         setTargetGroupId(result.group_id);
@@ -426,10 +431,15 @@ export function AssignmentManager() {
           ? "Bạn không có quyền với toàn bộ thành viên trong nhóm. Thao tác đã bị từ chối toàn bộ."
           : code === "WORK_REPORT_VERSION_CONFLICT"
             ? "Nhóm báo cáo vừa được cập nhật ở nơi khác. Hãy đóng hộp thoại và tải lại."
-            : "Không lưu được nhóm báo cáo. Kiểm tra danh sách thành viên đủ điều kiện rồi thử lại.";
+            : code === "WORK_REPORT_GROUP_MEMBER_INELIGIBLE"
+              ? "Nhóm chứa thành viên đã ngừng hoạt động hoặc không đủ điều kiện nhận báo cáo. Hãy bỏ các thành viên đó rồi lưu lại."
+              : "Không lưu được nhóm báo cáo. Kiểm tra danh sách thành viên đủ điều kiện rồi thử lại.";
       setGroupFormError(msg);
-      if (code === "WORK_REPORT_VERSION_CONFLICT") notify.warning({ title: msg });
-      else notify.error({ title: msg });
+      if (code === "WORK_REPORT_VERSION_CONFLICT") {
+        notify.warning({ title: msg, dedupeKey: "work-report-group-save", countBurst: false });
+      } else {
+        notify.error({ title: msg, dedupeKey: "work-report-group-save", countBurst: false });
+      }
     } finally {
       setGroupBusy(false);
     }
@@ -464,6 +474,8 @@ export function AssignmentManager() {
       }
       notify.success({
         title: nextActive ? "Đã kích hoạt lại nhóm báo cáo." : "Đã ngừng sử dụng nhóm báo cáo.",
+        dedupeKey: "work-report-group-active",
+        countBurst: false,
       });
       await Promise.all([reloadGroups(), reloadAssignments()]);
     } catch (cause) {
@@ -473,13 +485,15 @@ export function AssignmentManager() {
           ? "Bạn không có quyền với toàn bộ thành viên trong nhóm này."
           : code === "WORK_REPORT_VERSION_CONFLICT"
             ? "Nhóm báo cáo vừa được thay đổi ở nơi khác. Đang tải lại danh sách."
-            : "Không cập nhật được trạng thái nhóm báo cáo. Kiểm tra thành viên đủ điều kiện rồi thử lại.";
+            : code === "WORK_REPORT_GROUP_MEMBER_INELIGIBLE"
+              ? "Nhóm không còn thành viên nào đang hoạt động đủ điều kiện nhận báo cáo. Hãy cập nhật thành viên của nhóm trước khi kích hoạt."
+              : "Không cập nhật được trạng thái nhóm báo cáo. Kiểm tra thành viên đủ điều kiện rồi thử lại.";
       setGroupsError(msg);
       if (code === "WORK_REPORT_VERSION_CONFLICT") {
-        notify.warning({ title: msg });
+        notify.warning({ title: msg, dedupeKey: "work-report-group-active", countBurst: false });
         await reloadGroups();
       } else {
-        notify.error({ title: msg });
+        notify.error({ title: msg, dedupeKey: "work-report-group-active", countBurst: false });
       }
     } finally {
       setGroupBusy(false);
@@ -508,6 +522,8 @@ export function AssignmentManager() {
             : state === "REVOKED"
               ? "Đã thu hồi đợt giao báo cáo."
               : "Đã kích hoạt lại đợt giao báo cáo.",
+        dedupeKey: "work-report-assignment-state",
+        countBurst: false,
       });
       setRevokeConfirmAssignment(null);
       await reloadAssignments();
@@ -518,12 +534,12 @@ export function AssignmentManager() {
         ? "Đợt giao vừa được thay đổi ở nơi khác. Danh sách đã cũ; vui lòng tải lại."
         : code === "WORK_REPORT_ACCESS_DENIED" || code === "WORK_REPORT_SCOPE_DENIED"
           ? "Bạn không có quyền với toàn bộ thành viên của đợt giao này."
-          : code === "WORK_REPORT_REQUEST_INVALID"
+          : code === "WORK_REPORT_GROUP_INACTIVE" || code === "WORK_REPORT_REQUEST_INVALID"
             ? "Không thể kích hoạt lại đợt giao khi nhóm nhận báo cáo đang ngừng sử dụng."
             : "Không cập nhật được đợt giao báo cáo. Vui lòng thử lại.";
       setTrackingError(msg);
-      if (isConflict) notify.warning({ title: msg });
-      else notify.error({ title: msg });
+      if (isConflict) notify.warning({ title: msg, dedupeKey: "work-report-assignment-state", countBurst: false });
+      else notify.error({ title: msg, dedupeKey: "work-report-assignment-state", countBurst: false });
     } finally {
       setTrackingBusy(false);
     }
@@ -552,12 +568,16 @@ export function AssignmentManager() {
       });
       const result = await response.json().catch(() => null);
       if (!response.ok || result?.ok !== true) throw new Error(result?.code ?? "WORK_REPORT_UNAVAILABLE");
-      notify.success({ title: "Đã đồng bộ nghĩa vụ cho kỳ hiện tại." });
+      notify.success({
+        title: "Đã đồng bộ nghĩa vụ cho kỳ hiện tại.",
+        dedupeKey: "work-report-assignment-materialize",
+        countBurst: false,
+      });
       await reloadAssignments();
     } catch {
       const msg = "Không cập nhật được tiến độ nghĩa vụ. Vui lòng thử lại.";
       setTrackingError(msg);
-      notify.error({ title: msg });
+      notify.error({ title: msg, dedupeKey: "work-report-assignment-materialize", countBurst: false });
     } finally {
       setTrackingBusy(false);
     }
@@ -610,9 +630,13 @@ export function AssignmentManager() {
           idempotency_key,
         }),
       });
-      const result = await response.json();
+      const result = await response.json().catch(() => null);
       if (!response.ok || result?.ok !== true) throw new Error(result?.code ?? "WORK_REPORT_UNAVAILABLE");
-      notify.success({ title: "Đã tạo đợt giao báo cáo và phát sinh nghĩa vụ kỳ hiện hành." });
+      notify.success({
+        title: "Đã tạo đợt giao báo cáo và phát sinh nghĩa vụ kỳ hiện hành.",
+        dedupeKey: "work-report-assignment-create",
+        countBurst: false,
+      });
       setConfirmingCreate(false);
       setStateFilter("ACTIVE");
       await Promise.all([reloadAssignments(), reloadGroups()]);
@@ -626,10 +650,19 @@ export function AssignmentManager() {
           ? "Bạn không có quyền giao báo cáo cho toàn bộ đối tượng đã chọn. Không có đợt giao nào được tạo."
           : code === "WORK_REPORT_VERSION_CONFLICT"
             ? "Đợt giao báo cáo cho đối tượng này đã tồn tại hoặc mẫu đã thay đổi. Tải lại và thử lại."
-            : "Không tạo được đợt giao. Vui lòng kiểm tra thông tin hoặc thử lại.";
+            : code === "WORK_REPORT_GROUP_MEMBER_INELIGIBLE"
+              ? "Nhóm nhận báo cáo không còn thành viên đang hoạt động hoặc chứa thành viên không đủ điều kiện nhận báo cáo. Hãy mở tab Nhóm nhận báo cáo, bấm Sửa nhóm rồi Lưu thay đổi để cập nhật danh sách thành viên."
+              : code === "WORK_REPORT_GROUP_INACTIVE"
+                ? "Nhóm nhận báo cáo đang ngừng sử dụng. Hãy kích hoạt lại nhóm hoặc chọn nhóm khác."
+                : code === "WORK_REPORT_TEMPLATE_NOT_ACTIVE"
+                  ? "Mẫu báo cáo đã chọn không còn ở trạng thái phát hành. Hãy tải lại trang và chọn mẫu khác."
+                  : "Không tạo được đợt giao. Vui lòng kiểm tra thông tin hoặc thử lại.";
       setError(msg);
-      if (code === "WORK_REPORT_VERSION_CONFLICT") notify.warning({ title: msg });
-      else notify.error({ title: msg });
+      if (code === "WORK_REPORT_VERSION_CONFLICT") {
+        notify.warning({ title: msg, dedupeKey: "work-report-assignment-create", countBurst: false });
+      } else {
+        notify.error({ title: msg, dedupeKey: "work-report-assignment-create", countBurst: false });
+      }
     } finally {
       setBusy(false);
     }
@@ -832,12 +865,14 @@ export function AssignmentManager() {
                   {selectedGroup ? (
                     <div className="rounded-lg bg-subtle p-3 text-xs text-muted">
                       <span className="font-medium text-foreground">
-                        Thành viên hiện tại ({selectedGroup.members.length}):
+                        Thành viên đang hoạt động (
+                        {selectedGroup.members.filter((member) => member.enabled).length}/
+                        {selectedGroup.members.length}):
                       </span>{" "}
                       {selectedGroup.members
                         .map(
                           (member) =>
-                            `${member.display_name}${member.team_display_name ? ` (${member.team_display_name})` : ""}`,
+                            `${member.display_name}${member.team_display_name ? ` (${member.team_display_name})` : ""}${!member.enabled ? " · Ngừng hoạt động" : ""}`,
                         )
                         .join(", ")}
                     </div>

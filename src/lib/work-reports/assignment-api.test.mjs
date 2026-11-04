@@ -282,8 +282,15 @@ test("custom report group APIs enforce feature gate, CSRF, client-authority bans
     target_kind: "GROUP",
     target_user_id: null,
     target_team_id: null,
-    target_group_id: groupId,
+    target_group_id: "851177f1-b9d6-46b2-9802-b45045390dad",
     target_user_ids: [],
+    frequency: "DAILY",
+    is_mandatory: true,
+    due_day_offset: 0,
+    due_time_local: "23:59:59",
+    exclude_sundays: false,
+    effective_from: "2026-11-04",
+    effective_to: null,
   };
   const groupAssignRes = await createWorkReportAssignment(
     request("/api/work-reports/assignments", validGroupAssign),
@@ -297,7 +304,44 @@ test("custom report group APIs enforce feature gate, CSRF, client-authority bans
   );
   assert.equal(groupAssignRes.status, 200);
   assert.equal(groupAssignInput.target_kind, "GROUP");
-  assert.equal(groupAssignInput.target_group_id, groupId);
+  assert.equal(groupAssignInput.target_group_id, "851177f1-b9d6-46b2-9802-b45045390dad");
+  assert.equal(groupAssignInput.effective_from, "2026-11-04");
+  assert.equal(groupAssignInput.due_day_offset, 0);
+
+  // Specific 22023 domain codes propagate instead of being swallowed into WORK_REPORT_REQUEST_INVALID
+  const ineligibleRes = await createWorkReportAssignment(
+    request("/api/work-reports/assignments", validGroupAssign),
+    "true",
+    deps({
+      create: async () => ({
+        ok: false,
+        kind: "invalid",
+        code: "WORK_REPORT_GROUP_MEMBER_INELIGIBLE",
+      }),
+    }),
+  );
+  assert.equal(ineligibleRes.status, 400);
+  assert.deepEqual(await ineligibleRes.json(), {
+    ok: false,
+    code: "WORK_REPORT_GROUP_MEMBER_INELIGIBLE",
+  });
+
+  const inactiveGroupRes = await createWorkReportAssignment(
+    request("/api/work-reports/assignments", validGroupAssign),
+    "true",
+    deps({
+      create: async () => ({
+        ok: false,
+        kind: "invalid",
+        code: "WORK_REPORT_GROUP_INACTIVE",
+      }),
+    }),
+  );
+  assert.equal(inactiveGroupRes.status, 400);
+  assert.deepEqual(await inactiveGroupRes.json(), {
+    ok: false,
+    code: "WORK_REPORT_GROUP_INACTIVE",
+  });
 
   const groupsRoute = await readFile(path.resolve("src/app/api/work-reports/groups/route.ts"), "utf8");
   const groupDetailRoute = await readFile(path.resolve("src/app/api/work-reports/groups/[groupId]/route.ts"), "utf8");

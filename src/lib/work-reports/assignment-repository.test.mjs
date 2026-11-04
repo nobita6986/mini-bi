@@ -170,3 +170,45 @@ test("custom report group repository methods route to dedicated RPCs and validat
     ],
   );
 });
+
+test("assignment repository preserves specific 22023 domain error codes when present", async () => {
+  const ineligibleRepo = createAssignmentRepository(async () => ({
+    data: null,
+    error: { code: "22023", message: "WORK_REPORT_GROUP_MEMBER_INELIGIBLE" },
+  }));
+  assert.deepEqual(
+    await ineligibleRepo.create({
+      ...actor,
+      template_id: "33333333-3333-4333-8333-333333333333",
+      target_kind: "GROUP",
+      target_user_id: null,
+      target_team_id: null,
+      target_group_id: "851177f1-b9d6-46b2-9802-b45045390dad",
+      target_user_ids: [],
+      frequency: "DAILY",
+      is_mandatory: true,
+      due_day_offset: 0,
+      due_time_local: "23:59:59",
+      exclude_sundays: false,
+      effective_from: "2026-11-04",
+      effective_to: null,
+      idempotency_key: "grp-assign-ineligible",
+    }),
+    { ok: false, kind: "invalid", code: "WORK_REPORT_GROUP_MEMBER_INELIGIBLE" },
+  );
+
+  const inactiveRepo = createAssignmentRepository(async () => ({
+    data: null,
+    error: { code: "22023", message: "WORK_REPORT_GROUP_INACTIVE" },
+  }));
+  assert.deepEqual(
+    await inactiveRepo.setState({
+      ...actor,
+      assignment_id: "77777777-7777-4777-8777-777777777777",
+      expected_version: 2,
+      state: "ACTIVE",
+      idempotency_key: "asg-state-inactive-group",
+    }),
+    { ok: false, kind: "invalid", code: "WORK_REPORT_GROUP_INACTIVE" },
+  );
+});
