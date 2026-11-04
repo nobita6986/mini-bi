@@ -14,10 +14,15 @@ import {
   computeBranchUpsertRequestFingerprint,
   computeExplanationDecideRequestFingerprint,
   computeExplanationSubmitRequestFingerprint,
+  computeSlotPolicyAssignRequestFingerprint,
   computeSlotPolicyCreateRequestFingerprint,
+  computeSlotPolicyProfileUpsertRequestFingerprint,
+  computeSlotPolicyUnassignRequestFingerprint,
 } from "../src/lib/attendance/attendance-monthly-matrix-api.ts";
 import {
+  DEFAULT_ATTENDANCE_SLOT_POLICY_PROFILE_ID,
   projectAssignBranchResult,
+  projectAssignSlotPolicyResult,
   projectAttendanceBranchesAdminList,
   projectAttendanceExplanationApprovalInbox,
   projectAttendanceMonthlyMatrixReport,
@@ -27,7 +32,9 @@ import {
   projectMyAttendanceExplanationsOverview,
   projectSubmitAttendanceExplanationResult,
   projectUnassignBranchResult,
+  projectUnassignSlotPolicyResult,
   projectUpsertBranchResult,
+  projectUpsertSlotPolicyProfileResult,
 } from "../src/lib/attendance/attendance-monthly-matrix-contract.ts";
 import { computeHqLocationRequestFingerprint } from "../src/lib/attendance/attendance-report-api.ts";
 import { projectAttendanceAdminReport } from "../src/lib/attendance/attendance-report-contract.ts";
@@ -44,6 +51,8 @@ import {
   ATTENDANCE_FLEXIBLE_SLOT_POLICY_RPC_SIGNATURES,
   ATTENDANCE_MONTHLY_MATRIX_BRANCHES_PROJECT_COORDS_MIGRATION_NAME,
   ATTENDANCE_MONTHLY_MATRIX_BRANCHES_PROJECT_COORDS_RPC_SIGNATURES,
+  ATTENDANCE_MULTI_SLOT_POLICY_PROFILES_MIGRATION_NAME,
+  ATTENDANCE_MULTI_SLOT_POLICY_PROFILES_RPC_SIGNATURES,
   migrationChecksum,
   migrationSqlForTransaction,
 } from "./lib/migration-validation.mjs";
@@ -430,6 +439,8 @@ test("HRP Branches, Branch Check-In Distance Snapshot Immutability, Project Coor
         "attendance_branches",
         "attendance_branch_revisions",
         "attendance_branch_assignments",
+        "attendance_slot_policy_profiles",
+        "attendance_slot_policy_assignments",
       ]) {
         await assert.rejects(
           async () => {
@@ -1876,6 +1887,644 @@ test("HRP Branches, Branch Check-In Distance Snapshot Immutability, Project Coor
       assert.ok(rows[0].oid_name, `RPC ${sig} must exist`);
     }
     assert.ok(ATTENDANCE_EXPLANATIONS_WAVE2_MIGRATION_NAME.endsWith(".sql"));
+
+    // -------------------------------------------------------------------------
+    // 9. Multi-Profile Attendance Slot Policies & Historical Employee Assignments
+    // -------------------------------------------------------------------------
+    for (const sig of ATTENDANCE_MULTI_SLOT_POLICY_PROFILES_RPC_SIGNATURES) {
+      const { rows } = await db.query("select to_regprocedure($1)::text as oid_name", [sig]);
+      assert.ok(rows[0].oid_name, `RPC ${sig} must exist`);
+    }
+    assert.ok(ATTENDANCE_MULTI_SLOT_POLICY_PROFILES_MIGRATION_NAME.endsWith(".sql"));
+
+    // 9a. Create a named 2-slot profile "Hành chính" (08:00, 17:00) and a 3-slot profile "Tuyển dụng cơ động" (08:30, 13:30, 17:30)
+    const hanhChinhSlotsV1 = [
+      { slot_code: "SLOT_1", slot_index: 1, slot_label: "Ca sáng", session_code: "AM", target_time: "08:00", grace_before_minutes: 15, grace_after_minutes: 15 },
+      { slot_code: "SLOT_2", slot_index: 2, slot_label: "Ca chiều", session_code: "PM", target_time: "17:00", grace_before_minutes: 15, grace_after_minutes: 15 },
+    ];
+    const hcCreateKey = nextUuid();
+    const hcCreateFp = computeSlotPolicyProfileUpsertRequestFingerprint({
+      app_user_id: ACTORS.FULL_ADMIN.app,
+      profile_id: null,
+      profile_code: "HANH_CHINH",
+      display_name: "Hành chính",
+      description: "Khung giờ 2 mốc hành chính",
+      active: true,
+      expected_profile_version: 0,
+      effective_from_date: "2026-10-01",
+      slots: hanhChinhSlotsV1,
+      expected_version: 0,
+    });
+    const hcCreatedRaw = await callAsServiceRole(
+      db,
+      `select public.attendance_upsert_slot_policy_profile_admin(
+        $1::uuid, $2::uuid, null, 'HANH_CHINH', 'Hành chính', 'Khung giờ 2 mốc hành chính',
+        true, '2026-10-01'::date, $3::jsonb, 0, 0, $4::uuid, $5::text
+      ) as data`,
+      [
+        ACTORS.FULL_ADMIN.auth,
+        ACTORS.FULL_ADMIN.app,
+        JSON.stringify(hanhChinhSlotsV1),
+        hcCreateKey,
+        hcCreateFp,
+      ],
+    );
+    const hcCreated = projectUpsertSlotPolicyProfileResult(hcCreatedRaw);
+    assert.ok(hcCreated, "create HANH_CHINH profile strict projection passes");
+    assert.equal(hcCreated.replayed, false);
+    assert.equal(hcCreated.profile.profile_code, "HANH_CHINH");
+    assert.equal(hcCreated.profile.display_name, "Hành chính");
+    assert.equal(hcCreated.profile.is_default, false);
+    assert.equal(hcCreated.policy.version, 1);
+    assert.equal(hcCreated.policy.slots.length, 2);
+    const hcProfileId = hcCreated.profile.profile_id;
+
+    const tuyenDungSlotsV1 = [
+      { slot_code: "SLOT_1", slot_index: 1, slot_label: "Mốc 1", session_code: "AM", target_time: "08:30", grace_before_minutes: 15, grace_after_minutes: 15 },
+      { slot_code: "SLOT_2", slot_index: 2, slot_label: "Mốc 2", session_code: "PM", target_time: "13:30", grace_before_minutes: 15, grace_after_minutes: 15 },
+      { slot_code: "SLOT_3", slot_index: 3, slot_label: "Mốc 3", session_code: "PM", target_time: "17:30", grace_before_minutes: 15, grace_after_minutes: 15 },
+    ];
+    const tdCreateKey = nextUuid();
+    const tdCreateFp = computeSlotPolicyProfileUpsertRequestFingerprint({
+      app_user_id: ACTORS.FULL_ADMIN.app,
+      profile_id: null,
+      profile_code: "TUYEN_DUNG_3",
+      display_name: "Tuyển dụng cơ động",
+      description: "Khung giờ 3 mốc tuyển dụng",
+      active: true,
+      expected_profile_version: 0,
+      effective_from_date: "2026-10-01",
+      slots: tuyenDungSlotsV1,
+      expected_version: 0,
+    });
+    const tdCreated = projectUpsertSlotPolicyProfileResult(
+      await callAsServiceRole(
+        db,
+        `select public.attendance_upsert_slot_policy_profile_admin(
+          $1::uuid, $2::uuid, null, 'TUYEN_DUNG_3', 'Tuyển dụng cơ động', 'Khung giờ 3 mốc tuyển dụng',
+          true, '2026-10-01'::date, $3::jsonb, 0, 0, $4::uuid, $5::text
+        ) as data`,
+        [
+          ACTORS.FULL_ADMIN.auth,
+          ACTORS.FULL_ADMIN.app,
+          JSON.stringify(tuyenDungSlotsV1),
+          tdCreateKey,
+          tdCreateFp,
+        ],
+      ),
+    );
+    assert.ok(tdCreated);
+    const tdProfileId = tdCreated.profile.profile_id;
+
+    // 9b. Add a date-effective version v2 (08:15, 17:15) to HANH_CHINH starting 2026-12-08 without affecting Default or TUYEN_DUNG_3
+    const hanhChinhSlotsV2 = [
+      { slot_code: "SLOT_1", slot_index: 1, slot_label: "Ca sáng", session_code: "AM", target_time: "08:15", grace_before_minutes: 15, grace_after_minutes: 15 },
+      { slot_code: "SLOT_2", slot_index: 2, slot_label: "Ca chiều", session_code: "PM", target_time: "17:15", grace_before_minutes: 15, grace_after_minutes: 15 },
+    ];
+    const hcV2Key = nextUuid();
+    const hcV2Fp = computeSlotPolicyProfileUpsertRequestFingerprint({
+      app_user_id: ACTORS.FULL_ADMIN.app,
+      profile_id: hcProfileId,
+      profile_code: "HANH_CHINH",
+      display_name: "Hành chính",
+      description: "Khung giờ 2 mốc hành chính",
+      active: true,
+      expected_profile_version: 1,
+      effective_from_date: "2026-12-08",
+      slots: hanhChinhSlotsV2,
+      expected_version: 1,
+    });
+    const hcV2Created = projectUpsertSlotPolicyProfileResult(
+      await callAsServiceRole(
+        db,
+        `select public.attendance_upsert_slot_policy_profile_admin(
+          $1::uuid, $2::uuid, $3::uuid, 'HANH_CHINH', 'Hành chính', 'Khung giờ 2 mốc hành chính',
+          true, '2026-12-08'::date, $4::jsonb, 1, 1, $5::uuid, $6::text
+        ) as data`,
+        [
+          ACTORS.FULL_ADMIN.auth,
+          ACTORS.FULL_ADMIN.app,
+          hcProfileId,
+          JSON.stringify(hanhChinhSlotsV2),
+          hcV2Key,
+          hcV2Fp,
+        ],
+      ),
+    );
+    assert.ok(hcV2Created);
+    assert.equal(hcV2Created.policy.profile_id, hcProfileId);
+    assert.equal(hcV2Created.policy.version, 2);
+    assert.equal(hcV2Created.profile.version, 2);
+    assert.deepEqual(
+      hcV2Created.policy.slots.map((s) => s.target_time),
+      ["08:15", "17:15"],
+    );
+
+    // 9b-divergent. Regression test for divergent profile.version vs latest_policy.version:
+    // Simulate a profile at profile.version = 1 while its latest slot policy (v2 starting 2026-12-08) is at version = 3.
+    // After two new saves, profile.version = 3 and latest_policy.version = 5.
+    // A delayed/stale save request carrying expected_version = 3 (matching profile.version = 3, but stale vs latest_policy.version = 5)
+    // and an effective_from_date after the latest policy MUST be rejected with ATTENDANCE_SLOT_POLICY_VERSION_CONFLICT (PT409).
+    await db.query(
+      "update public.attendance_slot_policy_profiles set version = 1 where profile_id = $1::uuid",
+      [hcProfileId],
+    );
+    await db.query(
+      "alter table public.attendance_slot_policy_versions disable trigger attendance_slot_policy_versions_immutable_tg",
+    );
+    await db.query(
+      "update public.attendance_slot_policy_versions set version = 3 where profile_id = $1::uuid and version = 2",
+      [hcProfileId],
+    );
+    await db.query(
+      "alter table public.attendance_slot_policy_versions enable trigger attendance_slot_policy_versions_immutable_tg",
+    );
+
+    // Save 1 on divergent HC profile: expected_profile_version = 1, expected_version = 3 -> profile.version becomes 2, policy.version becomes 4
+    const hcSave1Key = nextUuid();
+    const hcSave1Fp = computeSlotPolicyProfileUpsertRequestFingerprint({
+      app_user_id: ACTORS.FULL_ADMIN.app,
+      profile_id: hcProfileId,
+      profile_code: "HANH_CHINH",
+      display_name: "Hành chính",
+      description: "Khung giờ 2 mốc hành chính",
+      active: true,
+      expected_profile_version: 1,
+      effective_from_date: "2026-12-10",
+      slots: hanhChinhSlotsV2,
+      expected_version: 3,
+    });
+    const hcSave1 = projectUpsertSlotPolicyProfileResult(
+      await callAsServiceRole(
+        db,
+        `select public.attendance_upsert_slot_policy_profile_admin(
+          $1::uuid, $2::uuid, $3::uuid, 'HANH_CHINH', 'Hành chính', 'Khung giờ 2 mốc hành chính',
+          true, '2026-12-10'::date, $4::jsonb, 3, 1, $5::uuid, $6::text
+        ) as data`,
+        [
+          ACTORS.FULL_ADMIN.auth,
+          ACTORS.FULL_ADMIN.app,
+          hcProfileId,
+          JSON.stringify(hanhChinhSlotsV2),
+          hcSave1Key,
+          hcSave1Fp,
+        ],
+      ),
+    );
+    assert.ok(hcSave1);
+    assert.equal(hcSave1.profile.version, 2);
+    assert.equal(hcSave1.policy.version, 4);
+
+    // Save 2 on divergent HC profile: expected_profile_version = 2, expected_version = 4 -> profile.version becomes 3, policy.version becomes 5
+    const hcSave2Key = nextUuid();
+    const hcSave2Fp = computeSlotPolicyProfileUpsertRequestFingerprint({
+      app_user_id: ACTORS.FULL_ADMIN.app,
+      profile_id: hcProfileId,
+      profile_code: "HANH_CHINH",
+      display_name: "Hành chính",
+      description: "Khung giờ 2 mốc hành chính",
+      active: true,
+      expected_profile_version: 2,
+      effective_from_date: "2026-12-15",
+      slots: hanhChinhSlotsV2,
+      expected_version: 4,
+    });
+    const hcSave2 = projectUpsertSlotPolicyProfileResult(
+      await callAsServiceRole(
+        db,
+        `select public.attendance_upsert_slot_policy_profile_admin(
+          $1::uuid, $2::uuid, $3::uuid, 'HANH_CHINH', 'Hành chính', 'Khung giờ 2 mốc hành chính',
+          true, '2026-12-15'::date, $4::jsonb, 4, 2, $5::uuid, $6::text
+        ) as data`,
+        [
+          ACTORS.FULL_ADMIN.auth,
+          ACTORS.FULL_ADMIN.app,
+          hcProfileId,
+          JSON.stringify(hanhChinhSlotsV2),
+          hcSave2Key,
+          hcSave2Fp,
+        ],
+      ),
+    );
+    assert.ok(hcSave2);
+    assert.equal(hcSave2.profile.version, 3);
+    assert.equal(hcSave2.policy.version, 5);
+
+    // Delayed/stale save request with expected_version = 3 (matches current profile.version = 3, but stale vs policy.version = 5)
+    // and effective_from_date = 2026-12-20 (after latest policy 2026-12-15) MUST be rejected!
+    for (const [stalePolicyVer, staleProfVer] of [
+      [3, 1],
+      [3, 3],
+      [5, 1],
+      [4, 3],
+    ]) {
+      await assert.rejects(
+        () =>
+          callAsServiceRole(
+            db,
+            `select public.attendance_upsert_slot_policy_profile_admin(
+              $1::uuid, $2::uuid, $3::uuid, 'HANH_CHINH', 'Hành chính', 'Khung giờ 2 mốc hành chính',
+              true, '2026-12-20'::date, $4::jsonb, $5::integer, $6::integer, $7::uuid, $8::text
+            ) as data`,
+            [
+              ACTORS.FULL_ADMIN.auth,
+              ACTORS.FULL_ADMIN.app,
+              hcProfileId,
+              JSON.stringify(hanhChinhSlotsV2),
+              stalePolicyVer,
+              staleProfVer,
+              nextUuid(),
+              "c".repeat(64),
+            ],
+          ),
+        (err) => /ATTENDANCE_SLOT_POLICY_VERSION_CONFLICT/.test(err.message),
+      );
+    }
+
+    // 9c. Reject future assignment dates (> today_vn), past assignment dates (< today_vn), Default profile assignment, and wrong assignment expected_version
+    const { rows: todayVnRows } = await db.query(
+      "select pg_catalog.to_char((clock_timestamp() at time zone 'Asia/Ho_Chi_Minh')::date, 'YYYY-MM-DD') as today_vn",
+    );
+    const todayVn = todayVnRows[0].today_vn;
+
+    await assert.rejects(
+      () =>
+        callAsServiceRole(
+          db,
+          `select public.attendance_assign_employee_slot_policy_admin(
+            $1::uuid, $2::uuid, $3::uuid, $4::uuid, '2099-01-01'::date, 0, $5::uuid, $6::text
+          ) as data`,
+          [
+            ACTORS.FULL_ADMIN.auth,
+            ACTORS.FULL_ADMIN.app,
+            ACTORS.STAFF_A.app,
+            hcProfileId,
+            nextUuid(),
+            "7".repeat(64),
+          ],
+        ),
+      (err) => /ATTENDANCE_SLOT_POLICY_ASSIGNMENT_FUTURE_DATE/.test(err.message),
+    );
+    await assert.rejects(
+      () =>
+        callAsServiceRole(
+          db,
+          `select public.attendance_assign_employee_slot_policy_admin(
+            $1::uuid, $2::uuid, $3::uuid, $4::uuid, '2026-10-05'::date, 0, $5::uuid, $6::text
+          ) as data`,
+          [
+            ACTORS.FULL_ADMIN.auth,
+            ACTORS.FULL_ADMIN.app,
+            ACTORS.STAFF_A.app,
+            hcProfileId,
+            nextUuid(),
+            "6".repeat(64),
+          ],
+        ),
+      (err) => /ATTENDANCE_SLOT_POLICY_ASSIGNMENT_PAST_DATE/.test(err.message),
+    );
+    await assert.rejects(
+      () =>
+        callAsServiceRole(
+          db,
+          `select public.attendance_assign_employee_slot_policy_admin(
+            $1::uuid, $2::uuid, $3::uuid, $4::uuid, null, 0, $5::uuid, $6::text
+          ) as data`,
+          [
+            ACTORS.FULL_ADMIN.auth,
+            ACTORS.FULL_ADMIN.app,
+            ACTORS.STAFF_A.app,
+            DEFAULT_ATTENDANCE_SLOT_POLICY_PROFILE_ID,
+            nextUuid(),
+            "8".repeat(64),
+          ],
+        ),
+      (err) => /ATTENDANCE_SLOT_POLICY_DEFAULT_ASSIGNMENT_REDUNDANT/.test(err.message),
+    );
+
+    // Reject assignment when employee has no open assignment (expected_version must be 0, NOT profile.version = 2)
+    await assert.rejects(
+      () =>
+        callAsServiceRole(
+          db,
+          `select public.attendance_assign_employee_slot_policy_admin(
+            $1::uuid, $2::uuid, $3::uuid, $4::uuid, null, 2, $5::uuid, $6::text
+          ) as data`,
+          [
+            ACTORS.FULL_ADMIN.auth,
+            ACTORS.FULL_ADMIN.app,
+            ACTORS.STAFF_A.app,
+            hcProfileId,
+            nextUuid(),
+            "3".repeat(64),
+          ],
+        ),
+      (err) => /ATTENDANCE_SLOT_POLICY_ASSIGNMENT_VERSION_CONFLICT/.test(err.message),
+    );
+
+    // 9d. Live immediate-effect assign (todayVn / null, expected_version = 0 since unassigned), switch on same day, and unassign on todayVn
+    const assignHcKey = nextUuid();
+    const assignHcFp = computeSlotPolicyAssignRequestFingerprint({
+      app_user_id: ACTORS.FULL_ADMIN.app,
+      target_app_user_id: ACTORS.STAFF_A.app,
+      profile_id: hcProfileId,
+      valid_from: null,
+      expected_version: 0,
+    });
+    const assignHcRes = projectAssignSlotPolicyResult(
+      await callAsServiceRole(
+        db,
+        `select public.attendance_assign_employee_slot_policy_admin(
+          $1::uuid, $2::uuid, $3::uuid, $4::uuid, null, 0, $5::uuid, $6::text
+        ) as data`,
+        [
+          ACTORS.FULL_ADMIN.auth,
+          ACTORS.FULL_ADMIN.app,
+          ACTORS.STAFF_A.app,
+          hcProfileId,
+          assignHcKey,
+          assignHcFp,
+        ],
+      ),
+    );
+    assert.ok(assignHcRes);
+    assert.equal(assignHcRes.assignment.profile_code, "HANH_CHINH");
+    assert.equal(assignHcRes.assignment.valid_from, todayVn);
+    assert.equal(assignHcRes.assignment.valid_to, null);
+    assert.equal(assignHcRes.assignment.version, 1);
+
+    // Reject switching STAFF_A to TUYEN_DUNG_3 when passing target profile.version (3) instead of open assignment.version (1)
+    await assert.rejects(
+      () =>
+        callAsServiceRole(
+          db,
+          `select public.attendance_assign_employee_slot_policy_admin(
+            $1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::date, 3, $6::uuid, $7::text
+          ) as data`,
+          [
+            ACTORS.FULL_ADMIN.auth,
+            ACTORS.FULL_ADMIN.app,
+            ACTORS.STAFF_A.app,
+            tdProfileId,
+            todayVn,
+            nextUuid(),
+            "2".repeat(64),
+          ],
+        ),
+      (err) => /ATTENDANCE_SLOT_POLICY_ASSIGNMENT_VERSION_CONFLICT/.test(err.message),
+    );
+
+    // Reject unassign with past or future date
+    await assert.rejects(
+      () =>
+        callAsServiceRole(
+          db,
+          `select public.attendance_unassign_employee_slot_policy_admin(
+            $1::uuid, $2::uuid, $3::uuid, '2026-10-05'::date, $4::integer, $5::uuid, $6::text
+          ) as data`,
+          [
+            ACTORS.FULL_ADMIN.auth,
+            ACTORS.FULL_ADMIN.app,
+            assignHcRes.assignment.assignment_id,
+            assignHcRes.assignment.version,
+            nextUuid(),
+            "5".repeat(64),
+          ],
+        ),
+      (err) => /ATTENDANCE_SLOT_POLICY_ASSIGNMENT_PAST_DATE/.test(err.message),
+    );
+    await assert.rejects(
+      () =>
+        callAsServiceRole(
+          db,
+          `select public.attendance_unassign_employee_slot_policy_admin(
+            $1::uuid, $2::uuid, $3::uuid, '2099-01-01'::date, $4::integer, $5::uuid, $6::text
+          ) as data`,
+          [
+            ACTORS.FULL_ADMIN.auth,
+            ACTORS.FULL_ADMIN.app,
+            assignHcRes.assignment.assignment_id,
+            assignHcRes.assignment.version,
+            nextUuid(),
+            "4".repeat(64),
+          ],
+        ),
+      (err) => /ATTENDANCE_SLOT_POLICY_ASSIGNMENT_FUTURE_DATE/.test(err.message),
+    );
+
+    // Switch STAFF_A to TUYEN_DUNG_3 today with open assignment.version = 1 (marks HANH_CHINH assignment as superseded_same_day = true)
+    const assignTdKey = nextUuid();
+    const assignTdFp = computeSlotPolicyAssignRequestFingerprint({
+      app_user_id: ACTORS.FULL_ADMIN.app,
+      target_app_user_id: ACTORS.STAFF_A.app,
+      profile_id: tdProfileId,
+      valid_from: todayVn,
+      expected_version: assignHcRes.assignment.version,
+    });
+    const assignTdRes = projectAssignSlotPolicyResult(
+      await callAsServiceRole(
+        db,
+        `select public.attendance_assign_employee_slot_policy_admin(
+          $1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::date, $6::integer, $7::uuid, $8::text
+        ) as data`,
+        [
+          ACTORS.FULL_ADMIN.auth,
+          ACTORS.FULL_ADMIN.app,
+          ACTORS.STAFF_A.app,
+          tdProfileId,
+          todayVn,
+          assignHcRes.assignment.version,
+          assignTdKey,
+          assignTdFp,
+        ],
+      ),
+    );
+    assert.ok(assignTdRes);
+    assert.equal(assignTdRes.assignment.profile_code, "TUYEN_DUNG_3");
+    assert.equal(assignTdRes.assignment.valid_from, todayVn);
+
+    // Unassign STAFF_A today so today returns to Default (5 slots)
+    const unassignTdKey = nextUuid();
+    const unassignTdFp = computeSlotPolicyUnassignRequestFingerprint({
+      app_user_id: ACTORS.FULL_ADMIN.app,
+      assignment_id: assignTdRes.assignment.assignment_id,
+      valid_to: todayVn,
+      expected_version: assignTdRes.assignment.version,
+    });
+    const unassignTdRes = projectUnassignSlotPolicyResult(
+      await callAsServiceRole(
+        db,
+        `select public.attendance_unassign_employee_slot_policy_admin(
+          $1::uuid, $2::uuid, $3::uuid, $4::date, $5::integer, $6::uuid, $7::text
+        ) as data`,
+        [
+          ACTORS.FULL_ADMIN.auth,
+          ACTORS.FULL_ADMIN.app,
+          assignTdRes.assignment.assignment_id,
+          todayVn,
+          assignTdRes.assignment.version,
+          unassignTdKey,
+          unassignTdFp,
+        ],
+      ),
+    );
+    assert.ok(unassignTdRes);
+    assert.equal(unassignTdRes.assignment.valid_to, todayVn);
+    assert.equal(unassignTdRes.assignment.superseded_same_day, true);
+    assert.equal(unassignTdRes.assignment.effective, false);
+
+    // Seed historical October 2026 assignment intervals for STAFF_A (2026-10-05..11 on HANH_CHINH, 2026-10-12..19 on TUYEN_DUNG_3)
+    // to verify historical multi-profile retention across past months while RPCs enforce immediate-effect todayVn
+    await db.query(
+      `insert into public.attendance_slot_policy_assignments (
+        app_user_id, profile_id, valid_from, valid_to, superseded_same_day, version,
+        assigned_by_user_id, revoked_by_user_id, revoked_at, idempotency_key, request_fingerprint
+      ) values
+      ($1::uuid, $2::uuid, '2026-10-05'::date, '2026-10-11'::date, false, 2, $4::uuid, $4::uuid, clock_timestamp(), $5::uuid, $6::text),
+      ($1::uuid, $3::uuid, '2026-10-12'::date, '2026-10-19'::date, false, 2, $4::uuid, $4::uuid, clock_timestamp(), $7::uuid, $8::text)`,
+      [
+        ACTORS.STAFF_A.app,
+        hcProfileId,
+        tdProfileId,
+        ACTORS.FULL_ADMIN.app,
+        nextUuid(),
+        "a".repeat(64),
+        nextUuid(),
+        "b".repeat(64),
+      ],
+    );
+
+    // 9e. Record check-in for STAFF_A on 2026-10-06 at 08:05 VN (01:05 UTC)
+    // Under Default (07:30 ±15m), 08:05 would be LATE (+35m), but under HANH_CHINH v1 (08:00 ±15m), 08:05 is ON_TIME!
+    await recordCheckInAsServiceRole(db, {
+      actor: ACTORS.STAFF_A,
+      latitude: HQ_HANOI.latitude,
+      longitude: HQ_HANOI.longitude,
+      captured_at: "2026-10-06T01:05:00.000Z",
+    });
+
+    // Verify October 2026 Monthly Matrix Report for STAFF_A preserves historical profiles & versions per day
+    const staffAOctMatrix = projectAttendanceMonthlyMatrixReport(
+      await callAsServiceRole(
+        db,
+        `select public.attendance_monthly_matrix_report(
+          $1::uuid, $2::uuid, '2026-10', null, $3::uuid, null, 1, 25
+        ) as data`,
+        [ACTORS.FULL_ADMIN.auth, ACTORS.FULL_ADMIN.app, ACTORS.STAFF_A.app],
+      ),
+    );
+    assert.ok(staffAOctMatrix);
+    const staffAOctRow = staffAOctMatrix.items[0];
+    assert.ok(staffAOctRow);
+
+    // 2026-10-02 (before assignment): Default v1 (5 slots), NO_CHECKIN -> 5 missing slots
+    const oct02 = staffAOctRow.days.find((d) => d.business_date === "2026-10-02");
+    assert.ok(oct02);
+    assert.equal(oct02.policy_profile_code_used, "DEFAULT");
+    assert.equal(oct02.policy_profile_name_used, "Mặc định");
+    assert.equal(oct02.policy_version_used, 1);
+    assert.equal(oct02.slots.length, 5);
+    assert.equal(oct02.missing_slot_count, 5);
+
+    // 2026-10-06 (assigned to HANH_CHINH, v1: 08:00 & 17:00): SLOT_1 is ON_TIME (08:05), SLOT_2 is MISSING -> 1 missing slot
+    const oct06 = staffAOctRow.days.find((d) => d.business_date === "2026-10-06");
+    assert.ok(oct06);
+    assert.equal(oct06.policy_profile_id_used, hcProfileId);
+    assert.equal(oct06.policy_profile_code_used, "HANH_CHINH");
+    assert.equal(oct06.policy_profile_name_used, "Hành chính");
+    assert.equal(oct06.policy_version_used, 1);
+    assert.equal(oct06.slots.length, 2);
+    assert.equal(oct06.slots[0].target_time, "08:00");
+    assert.equal(oct06.slots[0].slot_status, "ON_TIME");
+    assert.equal(oct06.slots[1].target_time, "17:00");
+    assert.equal(oct06.slots[1].slot_status, "MISSING");
+    assert.equal(oct06.missing_slot_count, 1);
+
+    // 2026-10-09 (still assigned to HANH_CHINH, v1: 08:00 & 17:00 since v2 starts 2026-12-08, zero check-ins): 2 missing slots
+    const oct09 = staffAOctRow.days.find((d) => d.business_date === "2026-10-09");
+    assert.ok(oct09);
+    assert.equal(oct09.policy_profile_code_used, "HANH_CHINH");
+    assert.equal(oct09.policy_version_used, 1);
+    assert.equal(oct09.slots.length, 2);
+    assert.equal(oct09.slots[0].target_time, "08:00");
+    assert.equal(oct09.slots[1].target_time, "17:00");
+    assert.equal(oct09.missing_slot_count, 2);
+
+    // 2026-10-15 (assigned to TUYEN_DUNG_3 v1: 08:30, 13:30, 17:30, zero check-ins): 3 missing slots
+    const oct15 = staffAOctRow.days.find((d) => d.business_date === "2026-10-15");
+    assert.ok(oct15);
+    assert.equal(oct15.policy_profile_code_used, "TUYEN_DUNG_3");
+    assert.equal(oct15.policy_profile_name_used, "Tuyển dụng cơ động");
+    assert.equal(oct15.policy_version_used, 1);
+    assert.equal(oct15.slots.length, 3);
+    assert.equal(oct15.missing_slot_count, 3);
+
+    // 2026-10-22 (after unassign on 2026-10-20 -> reverted to Default v1: 5 slots, zero check-ins): 5 missing slots
+    const oct22 = staffAOctRow.days.find((d) => d.business_date === "2026-10-22");
+    assert.ok(oct22);
+    assert.equal(oct22.policy_profile_code_used, "DEFAULT");
+    assert.equal(oct22.policy_profile_name_used, "Mặc định");
+    assert.equal(oct22.slots.length, 5);
+    assert.equal(oct22.missing_slot_count, 5);
+
+    // 9f. Verify Wave 2 Attendance Explanations for STAFF_A on 2026-10-06 use HANH_CHINH v1 (2 slots)
+    const staffAOverview = projectMyAttendanceExplanationsOverview(
+      await callAsServiceRole(
+        db,
+        "select public.attendance_get_my_explanations_overview($1::uuid, $2::uuid, '2026-10-06'::date) as data",
+        [ACTORS.STAFF_A.auth, ACTORS.STAFF_A.app],
+      ),
+    );
+    assert.ok(staffAOverview);
+    assert.equal(staffAOverview.day_evaluation.policy_profile_code_used, "HANH_CHINH");
+    assert.equal(staffAOverview.day_evaluation.policy_profile_name_used, "Hành chính");
+    assert.equal(staffAOverview.day_evaluation.policy_version_used, 1);
+    assert.equal(staffAOverview.day_evaluation.slots.length, 2);
+    assert.equal(staffAOverview.day_evaluation.slots[0].eligible_for_explanation, false); // SLOT_1 is ON_TIME
+    assert.equal(staffAOverview.day_evaluation.slots[1].eligible_for_explanation, true); // SLOT_2 is MISSING
+
+    // Submitting SLOT_3 on 2026-10-06 (which does not exist in 2-slot HANH_CHINH) is rejected
+    await assert.rejects(
+      () =>
+        callAsServiceRole(
+          db,
+          `select public.attendance_submit_explanation(
+            $1::uuid, $2::uuid, '2026-10-06'::date, 'SLOT_3', 'Mốc không tồn tại trong cấu hình 2 mốc', $3::text, $4::text
+          ) as data`,
+          [ACTORS.STAFF_A.auth, ACTORS.STAFF_A.app, nextUuid(), "9".repeat(64)],
+        ),
+      (err) => /ATTENDANCE_EXPLANATION_SLOT_INVALID/.test(err.message),
+    );
+
+    // Submitting SLOT_2 on 2026-10-06 succeeds and snapshots HANH_CHINH v1
+    const expHcBody = {
+      app_user_id: ACTORS.STAFF_A.app,
+      business_date: "2026-10-06",
+      slot_code: "SLOT_2",
+      reason: "Họp bàn giao hồ sơ tại chi nhánh đến cuối giờ chiều",
+    };
+    const expHcSub = projectSubmitAttendanceExplanationResult(
+      await callAsServiceRole(
+        db,
+        `select public.attendance_submit_explanation(
+          $1::uuid, $2::uuid, '2026-10-06'::date, 'SLOT_2', $3::text, $4::text, $5::text
+        ) as data`,
+        [
+          ACTORS.STAFF_A.auth,
+          ACTORS.STAFF_A.app,
+          expHcBody.reason,
+          nextUuid(),
+          computeExplanationSubmitRequestFingerprint(expHcBody),
+        ],
+      ),
+    );
+    assert.ok(expHcSub);
+    assert.equal(expHcSub.explanation.policy_profile_id_used, hcProfileId);
+    assert.equal(expHcSub.explanation.policy_profile_code_used, "HANH_CHINH");
+    assert.equal(expHcSub.explanation.policy_profile_name_used, "Hành chính");
+    assert.equal(expHcSub.explanation.policy_version_used, 1);
+    assert.equal(expHcSub.explanation.slot_label, "Ca chiều");
+    assert.equal(expHcSub.explanation.target_time, "17:00");
   } finally {
     await db.close();
   }

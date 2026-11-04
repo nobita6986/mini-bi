@@ -18,6 +18,7 @@ const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const YEAR_MONTH_PATTERN = /^(\d{4})-(0[1-9]|1[0-2])$/;
 const BRANCH_CODE_PATTERN = /^[A-Z0-9][A-Z0-9._:-]{0,63}$/;
+export const SLOT_PROFILE_CODE_PATTERN = /^[A-Z0-9][A-Z0-9._:-]{1,63}$/;
 const CONTROL_CHAR_PATTERN = /[\x00-\x1f\x7f]/;
 const ADDRESS_CONTROL_CHAR_PATTERN = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/;
 const HH_MM_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -195,6 +196,23 @@ export const ATTENDANCE_MONTHLY_MATRIX_ERROR_CODES = [
   "ATTENDANCE_SLOT_POLICY_EFFECTIVE_DATE_PAST",
   "ATTENDANCE_SLOT_POLICY_OVERLAP",
   "ATTENDANCE_SLOT_POLICY_VERSION_CONFLICT",
+  "ATTENDANCE_SLOT_POLICY_PROFILE_NOT_FOUND",
+  "ATTENDANCE_SLOT_POLICY_PROFILE_CODE_INVALID",
+  "ATTENDANCE_SLOT_POLICY_PROFILE_NAME_INVALID",
+  "ATTENDANCE_SLOT_POLICY_PROFILE_CODE_CONFLICT",
+  "ATTENDANCE_SLOT_POLICY_PROFILE_INACTIVE",
+  "ATTENDANCE_SLOT_POLICY_DEFAULT_DEACTIVATE_FORBIDDEN",
+  "ATTENDANCE_SLOT_POLICY_DEFAULT_ASSIGNMENT_REDUNDANT",
+  "ATTENDANCE_SLOT_POLICY_TARGET_USER_INVALID",
+  "ATTENDANCE_SLOT_POLICY_ASSIGNMENT_INVALID",
+  "ATTENDANCE_SLOT_POLICY_ASSIGNMENT_FUTURE_DATE",
+  "ATTENDANCE_SLOT_POLICY_ASSIGNMENT_PAST_DATE",
+  "ATTENDANCE_SLOT_POLICY_ASSIGNMENT_NOT_FOUND",
+  "ATTENDANCE_SLOT_POLICY_ASSIGNMENT_OVERLAP",
+  "ATTENDANCE_SLOT_POLICY_ASSIGNMENT_ALREADY_CLOSED",
+  "ATTENDANCE_SLOT_POLICY_ASSIGNMENT_RANGE_INVALID",
+  "ATTENDANCE_SLOT_POLICY_ASSIGNMENT_DATE_ORDER_INVALID",
+  "ATTENDANCE_SLOT_POLICY_ASSIGNMENT_VERSION_CONFLICT",
   "ATTENDANCE_EXPLANATION_INVALID",
   "ATTENDANCE_EXPLANATION_QUERY_INVALID",
   "ATTENDANCE_EXPLANATION_DATE_INVALID",
@@ -262,6 +280,23 @@ const MATRIX_ERROR_HTTP_STATUS: Readonly<Record<AttendanceMonthlyMatrixErrorCode
   ATTENDANCE_SLOT_POLICY_EFFECTIVE_DATE_PAST: 422,
   ATTENDANCE_SLOT_POLICY_OVERLAP: 409,
   ATTENDANCE_SLOT_POLICY_VERSION_CONFLICT: 409,
+  ATTENDANCE_SLOT_POLICY_PROFILE_NOT_FOUND: 404,
+  ATTENDANCE_SLOT_POLICY_PROFILE_CODE_INVALID: 400,
+  ATTENDANCE_SLOT_POLICY_PROFILE_NAME_INVALID: 400,
+  ATTENDANCE_SLOT_POLICY_PROFILE_CODE_CONFLICT: 409,
+  ATTENDANCE_SLOT_POLICY_PROFILE_INACTIVE: 422,
+  ATTENDANCE_SLOT_POLICY_DEFAULT_DEACTIVATE_FORBIDDEN: 422,
+  ATTENDANCE_SLOT_POLICY_DEFAULT_ASSIGNMENT_REDUNDANT: 422,
+  ATTENDANCE_SLOT_POLICY_TARGET_USER_INVALID: 422,
+  ATTENDANCE_SLOT_POLICY_ASSIGNMENT_INVALID: 400,
+  ATTENDANCE_SLOT_POLICY_ASSIGNMENT_FUTURE_DATE: 422,
+  ATTENDANCE_SLOT_POLICY_ASSIGNMENT_PAST_DATE: 422,
+  ATTENDANCE_SLOT_POLICY_ASSIGNMENT_NOT_FOUND: 404,
+  ATTENDANCE_SLOT_POLICY_ASSIGNMENT_OVERLAP: 409,
+  ATTENDANCE_SLOT_POLICY_ASSIGNMENT_ALREADY_CLOSED: 409,
+  ATTENDANCE_SLOT_POLICY_ASSIGNMENT_RANGE_INVALID: 400,
+  ATTENDANCE_SLOT_POLICY_ASSIGNMENT_DATE_ORDER_INVALID: 422,
+  ATTENDANCE_SLOT_POLICY_ASSIGNMENT_VERSION_CONFLICT: 409,
   ATTENDANCE_EXPLANATION_INVALID: 400,
   ATTENDANCE_EXPLANATION_QUERY_INVALID: 400,
   ATTENDANCE_EXPLANATION_DATE_INVALID: 400,
@@ -330,6 +365,11 @@ export type AttendanceBranchOptionProjection = {
   version: number;
 };
 
+export const DEFAULT_ATTENDANCE_SLOT_POLICY_PROFILE_ID =
+  "00000000-0000-4000-8000-000000000001";
+export const DEFAULT_ATTENDANCE_SLOT_POLICY_PROFILE_CODE = "DEFAULT";
+export const DEFAULT_ATTENDANCE_SLOT_POLICY_PROFILE_NAME = "Mặc định";
+
 export type AttendanceMonthlyMatrixEmployeeOptionProjection = {
   app_user_id: string;
   display_name: string;
@@ -337,6 +377,9 @@ export type AttendanceMonthlyMatrixEmployeeOptionProjection = {
   branch_id: string | null;
   branch_code: string | null;
   branch_name: string | null;
+  slot_profile_id?: string;
+  slot_profile_code?: string;
+  slot_profile_name?: string;
 };
 
 export type AttendanceMonthlyMatrixOverviewProjection = {
@@ -406,6 +449,10 @@ export type AttendanceSlotConfigItemProjection = {
 };
 
 export type AttendanceSlotPolicyProjection = {
+  profile_id?: string;
+  profile_code?: string;
+  profile_name?: string;
+  is_default?: boolean;
   version: number;
   effective_from_date: string;
   effective_to_date: string | null;
@@ -415,10 +462,35 @@ export type AttendanceSlotPolicyProjection = {
   slots: AttendanceSlotConfigItemProjection[];
 };
 
+export type AttendanceMonthlyMatrixSlotPolicyProfileSummaryProjection = {
+  profile_id: string;
+  profile_code: string;
+  display_name: string;
+  description: string | null;
+  is_default: boolean;
+  active: boolean;
+  version: number;
+  current_policy: AttendanceSlotPolicyProjection;
+  latest_policy: AttendanceSlotPolicyProjection;
+  month_policies: AttendanceSlotPolicyProjection[];
+};
+
 export type AttendanceMonthlyMatrixSlotPolicySummaryProjection = {
   current_policy: AttendanceSlotPolicyProjection;
   latest_policy: AttendanceSlotPolicyProjection;
   month_policies: AttendanceSlotPolicyProjection[];
+  profiles?: AttendanceMonthlyMatrixSlotPolicyProfileSummaryProjection[];
+};
+
+export type AttendanceMonthlyMatrixEmployeeSlotPolicyProfileProjection = {
+  profile_id: string;
+  profile_code: string;
+  display_name: string;
+  is_default: boolean;
+  assignment_id: string | null;
+  valid_from: string | null;
+  valid_to: string | null;
+  profile_names_in_month: string[];
 };
 
 export type AttendanceSlotCheckinItemProjection = {
@@ -497,6 +569,9 @@ export type AttendanceExplanationItemProjection = {
   target_time: string;
   grace_before_minutes: number;
   grace_after_minutes: number;
+  policy_profile_id_used?: string;
+  policy_profile_code_used?: string;
+  policy_profile_name_used?: string;
   policy_version_used: number;
   original_slot_status: AttendanceExplanationOriginalSlotStatus;
   effective_slot_status: AttendanceSlotStatus;
@@ -563,6 +638,10 @@ export type AttendanceMyExplanationsOverviewProjection = {
   selected_date: string;
   day_evaluation: {
     business_date: string;
+    policy_profile_id_used?: string;
+    policy_profile_code_used?: string;
+    policy_profile_name_used?: string;
+    policy_is_default_used?: boolean;
     policy_version_used: number;
     slots: AttendanceExplanationDaySlotEvaluationProjection[];
   };
@@ -689,6 +768,10 @@ export const DEFAULT_ATTENDANCE_SLOT_POLICY: AttendanceSlotPolicyProjection = {
 export type AttendanceMonthlyMatrixDayCellProjection = {
   business_date: string;
   day_of_month: number;
+  policy_profile_id_used?: string;
+  policy_profile_code_used?: string;
+  policy_profile_name_used?: string;
+  policy_is_default_used?: boolean;
   policy_version_used: number;
   has_checkin: boolean;
   checkin_count: number;
@@ -727,6 +810,7 @@ export type AttendanceMonthlyMatrixEmployeeRowProjection = {
   personnel_code: string | null;
   enabled: boolean;
   branch: AttendanceMonthlyMatrixEmployeeBranchProjection | null;
+  slot_policy_profile?: AttendanceMonthlyMatrixEmployeeSlotPolicyProfileProjection;
   summary: AttendanceMonthlyMatrixEmployeeSummaryProjection;
   days: AttendanceMonthlyMatrixDayCellProjection[];
 };
@@ -757,6 +841,53 @@ export type AttendanceMonthlyMatrixReportProjection = {
   items: AttendanceMonthlyMatrixEmployeeRowProjection[];
 };
 
+export type AttendanceSlotPolicyProfileAdminItemProjection = {
+  profile_id: string;
+  profile_code: string;
+  display_name: string;
+  description: string | null;
+  is_default: boolean;
+  active: boolean;
+  version: number;
+  active_assignment_count: number;
+  current_policy: AttendanceSlotPolicyProjection;
+  latest_policy: AttendanceSlotPolicyProjection;
+  versions: AttendanceSlotPolicyProjection[];
+};
+
+export type AttendanceSlotPolicyAssignmentAdminItemProjection = {
+  assignment_id: string;
+  app_user_id: string;
+  employee_display_name: string;
+  personnel_code: string | null;
+  enabled: boolean;
+  profile_id: string;
+  profile_code: string;
+  profile_name: string;
+  valid_from: string;
+  valid_to: string | null;
+  superseded_same_day: boolean;
+  effective: boolean;
+  version: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AttendanceSlotPolicyEmployeeOptionProjection = {
+  app_user_id: string;
+  display_name: string;
+  employee_display_name: string;
+  personnel_code: string | null;
+  enabled: boolean;
+  current_profile_id: string;
+  current_profile_code: string;
+  current_profile_name: string;
+  current_profile_is_default: boolean;
+  current_assignment_id: string | null;
+  current_assignment_version: number | null;
+  current_assignment_valid_from: string | null;
+};
+
 export type AttendanceSlotPoliciesAdminListProjection = {
   viewer: {
     can_manage_slot_policy: boolean;
@@ -765,16 +896,88 @@ export type AttendanceSlotPoliciesAdminListProjection = {
   current_policy: AttendanceSlotPolicyProjection;
   latest_policy: AttendanceSlotPolicyProjection;
   versions: AttendanceSlotPolicyProjection[];
+  profiles?: AttendanceSlotPolicyProfileAdminItemProjection[];
+  assignments?: AttendanceSlotPolicyAssignmentAdminItemProjection[];
+  employee_options?: AttendanceSlotPolicyEmployeeOptionProjection[];
+};
+
+export type AttendanceSlotPolicyProfileSavedProjection = {
+  profile_id: string;
+  profile_code: string;
+  display_name: string;
+  description: string | null;
+  is_default: boolean;
+  active: boolean;
+  version: number;
 };
 
 export type CreateAttendanceSlotPolicyResultProjection = {
   replayed: boolean;
   policy: AttendanceSlotPolicyProjection;
+  profile?: AttendanceSlotPolicyProfileSavedProjection;
 };
 
+export type UpsertAttendanceSlotPolicyProfileResultProjection =
+  CreateAttendanceSlotPolicyResultProjection;
+
+export type AssignAttendanceSlotPolicyResultProjection = {
+  replayed: boolean;
+  assignment: {
+    assignment_id: string;
+    app_user_id: string;
+    employee_display_name?: string;
+    personnel_code?: string | null;
+    enabled?: boolean;
+    profile_id: string;
+    profile_code: string;
+    profile_name: string;
+    valid_from: string;
+    valid_to: string | null;
+    superseded_same_day: boolean;
+    effective: boolean;
+    version: number;
+  };
+};
+
+export type UnassignAttendanceSlotPolicyResultProjection =
+  AssignAttendanceSlotPolicyResultProjection;
+
 export type ParsedCreateSlotPolicyRequest = {
+  profile_id?: string | null;
+  profile_code?: string | null;
+  display_name?: string | null;
+  description?: string | null;
+  active?: boolean;
+  expected_profile_version?: number;
   effective_from_date: string;
   slots: AttendanceSlotConfigItemProjection[];
+  expected_version: number;
+  idempotency_key: string;
+};
+
+export type ParsedUpsertSlotPolicyProfileRequest = {
+  profile_id: string | null;
+  profile_code: string | null;
+  display_name: string | null;
+  description: string | null;
+  active: boolean;
+  effective_from_date: string | null;
+  slots: AttendanceSlotConfigItemProjection[] | null;
+  expected_version: number | null;
+  expected_profile_version: number;
+  idempotency_key: string;
+};
+
+export type ParsedAssignSlotPolicyRequest = {
+  target_app_user_id: string;
+  profile_id: string;
+  valid_from: string | null;
+  expected_version: number;
+  idempotency_key: string;
+};
+
+export type ParsedUnassignSlotPolicyRequest = {
+  valid_to: string | null;
   expected_version: number;
   idempotency_key: string;
 };
@@ -1281,56 +1484,14 @@ function resolveIdempotencyKey(
   return resolvedKey.toLowerCase();
 }
 
-export function parseCreateSlotPolicyBody(
-  body: unknown,
-  headerIdempotencyKey?: string | null,
-):
-  | { ok: true; value: ParsedCreateSlotPolicyRequest }
-  | { ok: false; code: AttendanceMonthlyMatrixErrorCode } {
-  if (!isRecord(body)) {
-    return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
-  }
-  const allowedKeys = new Set([
-    "effective_from_date",
-    "slots",
-    "slot_1",
-    "slot_2",
-    "slot_3",
-    "slot_4",
-    "expected_version",
-    "idempotency_key",
-  ]);
-  for (const key of Object.keys(body)) {
-    if (!allowedKeys.has(key)) {
-      return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
-    }
-  }
-
-  const effectiveFromDate =
-    typeof body.effective_from_date === "string" ? body.effective_from_date.trim() : "";
+function parseSlotConfigList(
+  rawSlotsList: readonly unknown[],
+): AttendanceSlotConfigItemProjection[] | null {
   if (
-    !isValidIsoCalendarDate(effectiveFromDate) ||
-    effectiveFromDate < "2000-01-01" ||
-    effectiveFromDate > "2100-12-31"
-  ) {
-    return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
-  }
-
-  const rawSlotsList = Array.isArray(body.slots)
-    ? body.slots
-    : body.slot_1 !== undefined ||
-        body.slot_2 !== undefined ||
-        body.slot_3 !== undefined ||
-        body.slot_4 !== undefined
-      ? [body.slot_1, body.slot_2, body.slot_3, body.slot_4]
-      : null;
-
-  if (
-    !rawSlotsList ||
     rawSlotsList.length < ATTENDANCE_SLOT_MIN_COUNT ||
     rawSlotsList.length > ATTENDANCE_SLOT_MAX_COUNT
   ) {
-    return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+    return null;
   }
 
   const parsedSlots: AttendanceSlotConfigItemProjection[] = [];
@@ -1340,7 +1501,7 @@ export function parseCreateSlotPolicyBody(
     const slotIndex = i + 1;
     const expectedCode = ATTENDANCE_SLOT_CODES[i]!;
     if (!isRecord(rawSlot)) {
-      return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+      return null;
     }
     const slotAllowedKeys = new Set([
       "slot_code",
@@ -1353,28 +1514,25 @@ export function parseCreateSlotPolicyBody(
     ]);
     for (const key of Object.keys(rawSlot)) {
       if (!slotAllowedKeys.has(key)) {
-        return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+        return null;
       }
     }
 
     if (rawSlot.slot_code !== undefined && rawSlot.slot_code !== expectedCode) {
-      return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+      return null;
     }
     if (rawSlot.slot_index !== undefined && rawSlot.slot_index !== slotIndex) {
-      return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+      return null;
     }
 
     let slotLabel = `Time ${slotIndex}`;
     if (rawSlot.slot_label !== undefined && rawSlot.slot_label !== null) {
       if (typeof rawSlot.slot_label !== "string") {
-        return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+        return null;
       }
       const trimmedLabel = rawSlot.slot_label.trim();
-      if (
-        trimmedLabel.length > 64 ||
-        CONTROL_CHAR_PATTERN.test(trimmedLabel)
-      ) {
-        return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+      if (trimmedLabel.length > 64 || CONTROL_CHAR_PATTERN.test(trimmedLabel)) {
+        return null;
       }
       if (trimmedLabel.length > 0) {
         slotLabel = trimmedLabel;
@@ -1397,7 +1555,7 @@ export function parseCreateSlotPolicyBody(
       graceAfter < 0 ||
       graceAfter > ATTENDANCE_SLOT_MAX_GRACE_MINUTES
     ) {
-      return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+      return null;
     }
 
     const expectedSession: AttendanceSlotSessionCode =
@@ -1406,11 +1564,11 @@ export function parseCreateSlotPolicyBody(
       rawSlot.session_code !== undefined &&
       rawSlot.session_code !== expectedSession
     ) {
-      return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+      return null;
     }
 
     if (i > 0 && parsedSlots[i - 1]!.target_time >= targetTime) {
-      return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+      return null;
     }
 
     parsedSlots.push({
@@ -1424,11 +1582,176 @@ export function parseCreateSlotPolicyBody(
     });
   }
 
-  const expectedVersion = body.expected_version;
+  return parsedSlots;
+}
+
+export function parseCreateSlotPolicyBody(
+  body: unknown,
+  headerIdempotencyKey?: string | null,
+):
+  | { ok: true; value: ParsedCreateSlotPolicyRequest }
+  | { ok: false; code: AttendanceMonthlyMatrixErrorCode } {
+  if (!isRecord(body)) {
+    return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+  }
+  const allowedKeys = new Set([
+    "profile_id",
+    "profile_code",
+    "display_name",
+    "description",
+    "active",
+    "expected_profile_version",
+    "effective_from_date",
+    "slots",
+    "slot_1",
+    "slot_2",
+    "slot_3",
+    "slot_4",
+    "expected_version",
+    "idempotency_key",
+  ]);
+  for (const key of Object.keys(body)) {
+    if (!allowedKeys.has(key)) {
+      return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+    }
+  }
+
+  let profileId: string | null | undefined = undefined;
+  if (body.profile_id !== undefined) {
+    if (body.profile_id === null) {
+      profileId = null;
+    } else if (typeof body.profile_id === "string" && isUuidString(body.profile_id.trim())) {
+      profileId = body.profile_id.trim().toLowerCase();
+    } else {
+      return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+    }
+  }
+
+  let profileCode: string | null | undefined = undefined;
+  if (body.profile_code !== undefined && body.profile_code !== null) {
+    if (typeof body.profile_code !== "string") {
+      return { ok: false, code: "ATTENDANCE_SLOT_POLICY_PROFILE_CODE_INVALID" };
+    }
+    const normalizedCode = body.profile_code.trim().toUpperCase();
+    if (!SLOT_PROFILE_CODE_PATTERN.test(normalizedCode)) {
+      return { ok: false, code: "ATTENDANCE_SLOT_POLICY_PROFILE_CODE_INVALID" };
+    }
+    profileCode = normalizedCode;
+  }
+
+  let displayName: string | null | undefined = undefined;
+  if (body.display_name !== undefined && body.display_name !== null) {
+    if (typeof body.display_name !== "string") {
+      return { ok: false, code: "ATTENDANCE_SLOT_POLICY_PROFILE_NAME_INVALID" };
+    }
+    const trimmedName = body.display_name.trim();
+    if (
+      trimmedName.length < 1 ||
+      trimmedName.length > 128 ||
+      CONTROL_CHAR_PATTERN.test(trimmedName)
+    ) {
+      return { ok: false, code: "ATTENDANCE_SLOT_POLICY_PROFILE_NAME_INVALID" };
+    }
+    displayName = trimmedName;
+  }
+
+  let description: string | null | undefined = undefined;
+  if (body.description !== undefined) {
+    if (body.description === null) {
+      description = null;
+    } else if (typeof body.description === "string") {
+      const trimmedDesc = body.description.trim();
+      if (trimmedDesc.length > 500 || ADDRESS_CONTROL_CHAR_PATTERN.test(trimmedDesc)) {
+        return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+      }
+      description = trimmedDesc.length > 0 ? trimmedDesc : null;
+    } else {
+      return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+    }
+  }
+
+  let active: boolean | undefined = undefined;
+  if (body.active !== undefined) {
+    if (typeof body.active !== "boolean") {
+      return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+    }
+    active = body.active;
+  }
+
+  let expectedProfileVersion: number | undefined = undefined;
+  if (body.expected_profile_version !== undefined) {
+    if (
+      typeof body.expected_profile_version !== "number" ||
+      !Number.isSafeInteger(body.expected_profile_version) ||
+      body.expected_profile_version < 0
+    ) {
+      return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+    }
+    expectedProfileVersion = body.expected_profile_version;
+  }
+
+  const effectiveFromDate =
+    typeof body.effective_from_date === "string" ? body.effective_from_date.trim() : "";
+  if (
+    !isValidIsoCalendarDate(effectiveFromDate) ||
+    effectiveFromDate < "2000-01-01" ||
+    effectiveFromDate > "2100-12-31"
+  ) {
+    return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+  }
+
+  const rawSlotsList = Array.isArray(body.slots)
+    ? body.slots
+    : body.slot_1 !== undefined ||
+        body.slot_2 !== undefined ||
+        body.slot_3 !== undefined ||
+        body.slot_4 !== undefined
+      ? [body.slot_1, body.slot_2, body.slot_3, body.slot_4]
+      : null;
+
+  if (!rawSlotsList) {
+    return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+  }
+  const parsedSlots = parseSlotConfigList(rawSlotsList);
+  if (!parsedSlots) {
+    return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+  }
+
+  const hasProfileFields =
+    profileId !== undefined ||
+    profileCode !== undefined ||
+    displayName !== undefined ||
+    description !== undefined ||
+    active !== undefined ||
+    body.expected_profile_version !== undefined;
+  const isCreatingNewNamedProfile = !profileId && profileCode !== undefined;
+
+  if (isCreatingNewNamedProfile) {
+    if (expectedProfileVersion === undefined) {
+      expectedProfileVersion = 0;
+    } else if (expectedProfileVersion !== 0) {
+      return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+    }
+  } else if (hasProfileFields) {
+    if (
+      typeof profileId !== "string" ||
+      typeof expectedProfileVersion !== "number" ||
+      expectedProfileVersion < 1
+    ) {
+      return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+    }
+  }
+
+  const expectedVersion =
+    body.expected_version === undefined && isCreatingNewNamedProfile
+      ? 0
+      : body.expected_version;
+  const minExpectedVersion = isCreatingNewNamedProfile ? 0 : 1;
   if (
     typeof expectedVersion !== "number" ||
     !Number.isSafeInteger(expectedVersion) ||
-    expectedVersion < 1
+    expectedVersion < minExpectedVersion ||
+    (isCreatingNewNamedProfile && expectedVersion !== 0)
   ) {
     return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
   }
@@ -1441,8 +1764,345 @@ export function parseCreateSlotPolicyBody(
   return {
     ok: true,
     value: {
+      ...(profileId !== undefined ? { profile_id: profileId } : {}),
+      ...(profileCode !== undefined ? { profile_code: profileCode } : {}),
+      ...(displayName !== undefined ? { display_name: displayName } : {}),
+      ...(description !== undefined ? { description } : {}),
+      ...(active !== undefined ? { active } : {}),
+      ...(expectedProfileVersion !== undefined
+        ? { expected_profile_version: expectedProfileVersion }
+        : {}),
       effective_from_date: effectiveFromDate,
       slots: parsedSlots,
+      expected_version: expectedVersion,
+      idempotency_key: idempotencyKey,
+    },
+  };
+}
+
+export function parseUpsertSlotPolicyProfileBody(
+  body: unknown,
+  headerIdempotencyKey?: string | null,
+  routeProfileId?: string | null,
+):
+  | { ok: true; value: ParsedUpsertSlotPolicyProfileRequest }
+  | { ok: false; code: AttendanceMonthlyMatrixErrorCode } {
+  if (!isRecord(body)) {
+    return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+  }
+  const allowedKeys = new Set([
+    "profile_id",
+    "profile_code",
+    "display_name",
+    "description",
+    "active",
+    "effective_from_date",
+    "slots",
+    "expected_version",
+    "expected_profile_version",
+    "idempotency_key",
+  ]);
+  for (const key of Object.keys(body)) {
+    if (!allowedKeys.has(key)) {
+      return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+    }
+  }
+
+  let profileId: string | null = null;
+  if (routeProfileId !== undefined && routeProfileId !== null) {
+    const trimmedRoute = routeProfileId.trim();
+    if (!isUuidString(trimmedRoute)) {
+      return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+    }
+    profileId = trimmedRoute.toLowerCase();
+  }
+  if (body.profile_id !== undefined && body.profile_id !== null) {
+    if (typeof body.profile_id !== "string" || !isUuidString(body.profile_id.trim())) {
+      return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+    }
+    const normalizedBodyId = body.profile_id.trim().toLowerCase();
+    if (profileId !== null && profileId !== normalizedBodyId) {
+      return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+    }
+    profileId = normalizedBodyId;
+  }
+
+  let profileCode: string | null = null;
+  if (body.profile_code !== undefined && body.profile_code !== null) {
+    if (typeof body.profile_code !== "string") {
+      return { ok: false, code: "ATTENDANCE_SLOT_POLICY_PROFILE_CODE_INVALID" };
+    }
+    const normalizedCode = body.profile_code.trim().toUpperCase();
+    if (!SLOT_PROFILE_CODE_PATTERN.test(normalizedCode)) {
+      return { ok: false, code: "ATTENDANCE_SLOT_POLICY_PROFILE_CODE_INVALID" };
+    }
+    profileCode = normalizedCode;
+  } else if (profileId === null) {
+    return { ok: false, code: "ATTENDANCE_SLOT_POLICY_PROFILE_CODE_INVALID" };
+  }
+
+  let displayName: string | null = null;
+  if (body.display_name !== undefined && body.display_name !== null) {
+    if (typeof body.display_name !== "string") {
+      return { ok: false, code: "ATTENDANCE_SLOT_POLICY_PROFILE_NAME_INVALID" };
+    }
+    const trimmedName = body.display_name.trim();
+    if (
+      trimmedName.length < 1 ||
+      trimmedName.length > 128 ||
+      CONTROL_CHAR_PATTERN.test(trimmedName)
+    ) {
+      return { ok: false, code: "ATTENDANCE_SLOT_POLICY_PROFILE_NAME_INVALID" };
+    }
+    displayName = trimmedName;
+  } else if (profileId === null) {
+    return { ok: false, code: "ATTENDANCE_SLOT_POLICY_PROFILE_NAME_INVALID" };
+  }
+
+  let description: string | null = null;
+  if (body.description !== undefined && body.description !== null) {
+    if (typeof body.description !== "string") {
+      return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+    }
+    const trimmedDesc = body.description.trim();
+    if (trimmedDesc.length > 500 || ADDRESS_CONTROL_CHAR_PATTERN.test(trimmedDesc)) {
+      return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+    }
+    description = trimmedDesc.length > 0 ? trimmedDesc : null;
+  }
+
+  const active = body.active === undefined ? true : body.active;
+  if (typeof active !== "boolean") {
+    return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+  }
+  if (profileId === DEFAULT_ATTENDANCE_SLOT_POLICY_PROFILE_ID && !active) {
+    return { ok: false, code: "ATTENDANCE_SLOT_POLICY_DEFAULT_DEACTIVATE_FORBIDDEN" };
+  }
+
+  let parsedSlots: AttendanceSlotConfigItemProjection[] | null = null;
+  let effectiveFromDate: string | null = null;
+  if (body.slots !== undefined && body.slots !== null) {
+    if (!Array.isArray(body.slots)) {
+      return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+    }
+    parsedSlots = parseSlotConfigList(body.slots);
+    if (!parsedSlots) {
+      return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+    }
+    const rawDate =
+      typeof body.effective_from_date === "string" ? body.effective_from_date.trim() : "";
+    if (
+      !isValidIsoCalendarDate(rawDate) ||
+      rawDate < "2000-01-01" ||
+      rawDate > "2100-12-31"
+    ) {
+      return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+    }
+    effectiveFromDate = rawDate;
+  } else if (profileId === null) {
+    return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+  }
+
+  let parsedExpectedVersion: number | null = null;
+  let parsedExpectedProfileVersion: number = 0;
+
+  if (profileId === null) {
+    const rawExpectedVersion =
+      body.expected_version === undefined || body.expected_version === null
+        ? 0
+        : body.expected_version;
+    const rawExpectedProfileVersion =
+      body.expected_profile_version === undefined || body.expected_profile_version === null
+        ? 0
+        : body.expected_profile_version;
+    if (
+      typeof rawExpectedVersion !== "number" ||
+      !Number.isSafeInteger(rawExpectedVersion) ||
+      rawExpectedVersion !== 0 ||
+      typeof rawExpectedProfileVersion !== "number" ||
+      !Number.isSafeInteger(rawExpectedProfileVersion) ||
+      rawExpectedProfileVersion !== 0
+    ) {
+      return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+    }
+    parsedExpectedVersion = 0;
+    parsedExpectedProfileVersion = 0;
+  } else {
+    if (
+      typeof body.expected_profile_version !== "number" ||
+      !Number.isSafeInteger(body.expected_profile_version) ||
+      body.expected_profile_version < 1
+    ) {
+      return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+    }
+    parsedExpectedProfileVersion = body.expected_profile_version;
+
+    if (parsedSlots !== null) {
+      if (
+        typeof body.expected_version !== "number" ||
+        !Number.isSafeInteger(body.expected_version) ||
+        body.expected_version < 1
+      ) {
+        return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+      }
+      parsedExpectedVersion = body.expected_version;
+    } else if (body.expected_version !== undefined && body.expected_version !== null) {
+      if (
+        typeof body.expected_version !== "number" ||
+        !Number.isSafeInteger(body.expected_version) ||
+        body.expected_version < 1
+      ) {
+        return { ok: false, code: "ATTENDANCE_SLOT_POLICY_INVALID" };
+      }
+      parsedExpectedVersion = body.expected_version;
+    } else {
+      parsedExpectedVersion = null;
+    }
+  }
+
+  const idempotencyKey = resolveIdempotencyKey(body.idempotency_key, headerIdempotencyKey);
+  if (!idempotencyKey) {
+    return { ok: false, code: "IDEMPOTENCY_KEY_INVALID" };
+  }
+
+  return {
+    ok: true,
+    value: {
+      profile_id: profileId,
+      profile_code: profileCode,
+      display_name: displayName,
+      description,
+      active,
+      effective_from_date: effectiveFromDate,
+      slots: parsedSlots,
+      expected_version: parsedExpectedVersion,
+      expected_profile_version: parsedExpectedProfileVersion,
+      idempotency_key: idempotencyKey,
+    },
+  };
+}
+
+export function parseAssignSlotPolicyBody(
+  body: unknown,
+  headerIdempotencyKey?: string | null,
+):
+  | { ok: true; value: ParsedAssignSlotPolicyRequest }
+  | { ok: false; code: AttendanceMonthlyMatrixErrorCode } {
+  if (!isRecord(body)) {
+    return { ok: false, code: "ATTENDANCE_SLOT_POLICY_ASSIGNMENT_INVALID" };
+  }
+  const allowedKeys = new Set([
+    "app_user_id",
+    "profile_id",
+    "valid_from",
+    "expected_version",
+    "idempotency_key",
+  ]);
+  for (const key of Object.keys(body)) {
+    if (!allowedKeys.has(key)) {
+      return { ok: false, code: "ATTENDANCE_SLOT_POLICY_ASSIGNMENT_INVALID" };
+    }
+  }
+
+  const rawUserId = typeof body.app_user_id === "string" ? body.app_user_id.trim() : "";
+  const rawProfileId = typeof body.profile_id === "string" ? body.profile_id.trim() : "";
+  if (!isUuidString(rawUserId) || !isUuidString(rawProfileId)) {
+    return { ok: false, code: "ATTENDANCE_SLOT_POLICY_ASSIGNMENT_INVALID" };
+  }
+  const normalizedProfileId = rawProfileId.toLowerCase();
+  if (normalizedProfileId === DEFAULT_ATTENDANCE_SLOT_POLICY_PROFILE_ID) {
+    return { ok: false, code: "ATTENDANCE_SLOT_POLICY_DEFAULT_ASSIGNMENT_REDUNDANT" };
+  }
+
+  let validFrom: string | null = null;
+  if (body.valid_from !== undefined && body.valid_from !== null) {
+    if (
+      typeof body.valid_from !== "string" ||
+      !isValidIsoCalendarDate(body.valid_from.trim()) ||
+      body.valid_from.trim() < "2000-01-01" ||
+      body.valid_from.trim() > "2100-12-31"
+    ) {
+      return { ok: false, code: "ATTENDANCE_SLOT_POLICY_ASSIGNMENT_INVALID" };
+    }
+    validFrom = body.valid_from.trim();
+  }
+
+  const expectedVersion =
+    body.expected_version === undefined || body.expected_version === null
+      ? 0
+      : body.expected_version;
+  if (
+    typeof expectedVersion !== "number" ||
+    !Number.isSafeInteger(expectedVersion) ||
+    expectedVersion < 0
+  ) {
+    return { ok: false, code: "ATTENDANCE_SLOT_POLICY_ASSIGNMENT_INVALID" };
+  }
+
+  const idempotencyKey = resolveIdempotencyKey(body.idempotency_key, headerIdempotencyKey);
+  if (!idempotencyKey) {
+    return { ok: false, code: "IDEMPOTENCY_KEY_INVALID" };
+  }
+
+  return {
+    ok: true,
+    value: {
+      target_app_user_id: rawUserId.toLowerCase(),
+      profile_id: normalizedProfileId,
+      valid_from: validFrom,
+      expected_version: expectedVersion,
+      idempotency_key: idempotencyKey,
+    },
+  };
+}
+
+export function parseUnassignSlotPolicyBody(
+  body: unknown,
+  headerIdempotencyKey?: string | null,
+):
+  | { ok: true; value: ParsedUnassignSlotPolicyRequest }
+  | { ok: false; code: AttendanceMonthlyMatrixErrorCode } {
+  if (!isRecord(body)) {
+    return { ok: false, code: "ATTENDANCE_SLOT_POLICY_ASSIGNMENT_INVALID" };
+  }
+  const allowedKeys = new Set(["valid_to", "expected_version", "idempotency_key"]);
+  for (const key of Object.keys(body)) {
+    if (!allowedKeys.has(key)) {
+      return { ok: false, code: "ATTENDANCE_SLOT_POLICY_ASSIGNMENT_INVALID" };
+    }
+  }
+
+  let validTo: string | null = null;
+  if (body.valid_to !== undefined && body.valid_to !== null) {
+    if (
+      typeof body.valid_to !== "string" ||
+      !isValidIsoCalendarDate(body.valid_to.trim()) ||
+      body.valid_to.trim() < "2000-01-01" ||
+      body.valid_to.trim() > "2100-12-31"
+    ) {
+      return { ok: false, code: "ATTENDANCE_SLOT_POLICY_ASSIGNMENT_INVALID" };
+    }
+    validTo = body.valid_to.trim();
+  }
+
+  const expectedVersion = body.expected_version;
+  if (
+    typeof expectedVersion !== "number" ||
+    !Number.isSafeInteger(expectedVersion) ||
+    expectedVersion < 1
+  ) {
+    return { ok: false, code: "ATTENDANCE_SLOT_POLICY_ASSIGNMENT_INVALID" };
+  }
+
+  const idempotencyKey = resolveIdempotencyKey(body.idempotency_key, headerIdempotencyKey);
+  if (!idempotencyKey) {
+    return { ok: false, code: "IDEMPOTENCY_KEY_INVALID" };
+  }
+
+  return {
+    ok: true,
+    value: {
+      valid_to: validTo,
       expected_version: expectedVersion,
       idempotency_key: idempotencyKey,
     },
@@ -1732,18 +2392,28 @@ function projectSlotConfigItem(
 export function projectAttendanceSlotPolicy(
   value: unknown,
 ): AttendanceSlotPolicyProjection | null {
-  if (
-    !isRecord(value) ||
-    !hasExactKeys(value, [
-      "version",
-      "effective_from_date",
-      "effective_to_date",
-      "configured_at",
-      "configured_at_local",
-      "configured_by_display_name",
-      "slots",
-    ])
-  ) {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const baseKeys = [
+    "version",
+    "effective_from_date",
+    "effective_to_date",
+    "configured_at",
+    "configured_at_local",
+    "configured_by_display_name",
+    "slots",
+  ] as const;
+  const profileKeys = [
+    ...baseKeys,
+    "profile_id",
+    "profile_code",
+    "profile_name",
+    "is_default",
+  ] as const;
+  const hasProfileKeys = hasExactKeys(value, profileKeys);
+  const hasBaseKeys = !hasProfileKeys && hasExactKeys(value, baseKeys);
+  if (!hasProfileKeys && !hasBaseKeys) {
     return null;
   }
   if (
@@ -1765,6 +2435,18 @@ export function projectAttendanceSlotPolicy(
   ) {
     return null;
   }
+  if (hasProfileKeys) {
+    if (
+      !isUuidString(value.profile_id) ||
+      typeof value.profile_code !== "string" ||
+      !SLOT_PROFILE_CODE_PATTERN.test(value.profile_code) ||
+      typeof value.profile_name !== "string" ||
+      value.profile_name.trim().length === 0 ||
+      typeof value.is_default !== "boolean"
+    ) {
+      return null;
+    }
+  }
 
   const slots: AttendanceSlotConfigItemProjection[] = [];
   for (let i = 0; i < value.slots.length; i += 1) {
@@ -1777,6 +2459,14 @@ export function projectAttendanceSlotPolicy(
   }
 
   return {
+    ...(hasProfileKeys
+      ? {
+          profile_id: (value.profile_id as string).toLowerCase(),
+          profile_code: value.profile_code as string,
+          profile_name: (value.profile_name as string).trim(),
+          is_default: value.is_default as boolean,
+        }
+      : {}),
     version: value.version,
     effective_from_date: value.effective_from_date,
     effective_to_date: value.effective_to_date,
@@ -1787,14 +2477,77 @@ export function projectAttendanceSlotPolicy(
   };
 }
 
+function projectSlotPolicyProfileSummaryItem(
+  value: unknown,
+): AttendanceMonthlyMatrixSlotPolicyProfileSummaryProjection | null {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      "profile_id",
+      "profile_code",
+      "display_name",
+      "description",
+      "is_default",
+      "active",
+      "version",
+      "current_policy",
+      "latest_policy",
+      "month_policies",
+    ]) ||
+    !isUuidString(value.profile_id) ||
+    typeof value.profile_code !== "string" ||
+    !SLOT_PROFILE_CODE_PATTERN.test(value.profile_code) ||
+    typeof value.display_name !== "string" ||
+    value.display_name.trim().length === 0 ||
+    (value.description !== null && typeof value.description !== "string") ||
+    typeof value.is_default !== "boolean" ||
+    typeof value.active !== "boolean" ||
+    typeof value.version !== "number" ||
+    !Number.isSafeInteger(value.version) ||
+    value.version < 1 ||
+    !Array.isArray(value.month_policies)
+  ) {
+    return null;
+  }
+
+  const currentPolicy = projectAttendanceSlotPolicy(value.current_policy);
+  const latestPolicy = projectAttendanceSlotPolicy(value.latest_policy);
+  if (!currentPolicy || !latestPolicy) {
+    return null;
+  }
+
+  const monthPolicies: AttendanceSlotPolicyProjection[] = [];
+  for (const raw of value.month_policies) {
+    const projected = projectAttendanceSlotPolicy(raw);
+    if (!projected) return null;
+    monthPolicies.push(projected);
+  }
+
+  return {
+    profile_id: value.profile_id.toLowerCase(),
+    profile_code: value.profile_code,
+    display_name: value.display_name.trim(),
+    description: value.description,
+    is_default: value.is_default,
+    active: value.active,
+    version: value.version,
+    current_policy: currentPolicy,
+    latest_policy: latestPolicy,
+    month_policies: monthPolicies,
+  };
+}
+
 function projectSlotPolicySummary(
   value: unknown,
 ): AttendanceMonthlyMatrixSlotPolicySummaryProjection | null {
-  if (
-    !isRecord(value) ||
-    !hasExactKeys(value, ["current_policy", "latest_policy", "month_policies"]) ||
-    !Array.isArray(value.month_policies)
-  ) {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const baseKeys = ["current_policy", "latest_policy", "month_policies"] as const;
+  const withProfilesKeys = [...baseKeys, "profiles"] as const;
+  const hasProfiles = hasExactKeys(value, withProfilesKeys);
+  const hasBase = !hasProfiles && hasExactKeys(value, baseKeys);
+  if ((!hasProfiles && !hasBase) || !Array.isArray(value.month_policies)) {
     return null;
   }
   const currentPolicy = projectAttendanceSlotPolicy(value.current_policy);
@@ -1808,10 +2561,26 @@ function projectSlotPolicySummary(
     if (!projected) return null;
     monthPolicies.push(projected);
   }
+
+  let profiles: AttendanceMonthlyMatrixSlotPolicyProfileSummaryProjection[] | undefined =
+    undefined;
+  if (hasProfiles) {
+    if (!Array.isArray(value.profiles) || value.profiles.length < 1) {
+      return null;
+    }
+    profiles = [];
+    for (const rawProfile of value.profiles) {
+      const projectedProfile = projectSlotPolicyProfileSummaryItem(rawProfile);
+      if (!projectedProfile) return null;
+      profiles.push(projectedProfile);
+    }
+  }
+
   return {
     current_policy: currentPolicy,
     latest_policy: latestPolicy,
     month_policies: monthPolicies,
+    ...(profiles !== undefined ? { profiles } : {}),
   };
 }
 
@@ -2131,17 +2900,26 @@ function projectBranchOption(value: unknown): AttendanceBranchOptionProjection |
 function projectEmployeeOption(
   value: unknown,
 ): AttendanceMonthlyMatrixEmployeeOptionProjection | null {
-  if (
-    !isRecord(value) ||
-    !hasExactKeys(value, [
-      "app_user_id",
-      "display_name",
-      "personnel_code",
-      "branch_id",
-      "branch_code",
-      "branch_name",
-    ])
-  ) {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const baseKeys = [
+    "app_user_id",
+    "display_name",
+    "personnel_code",
+    "branch_id",
+    "branch_code",
+    "branch_name",
+  ] as const;
+  const profileKeys = [
+    ...baseKeys,
+    "slot_profile_id",
+    "slot_profile_code",
+    "slot_profile_name",
+  ] as const;
+  const hasProfileKeys = hasExactKeys(value, profileKeys);
+  const hasBaseKeys = !hasProfileKeys && hasExactKeys(value, baseKeys);
+  if (!hasProfileKeys && !hasBaseKeys) {
     return null;
   }
   if (
@@ -2155,6 +2933,17 @@ function projectEmployeeOption(
   ) {
     return null;
   }
+  if (hasProfileKeys) {
+    if (
+      !isUuidString(value.slot_profile_id) ||
+      typeof value.slot_profile_code !== "string" ||
+      !SLOT_PROFILE_CODE_PATTERN.test(value.slot_profile_code) ||
+      typeof value.slot_profile_name !== "string" ||
+      value.slot_profile_name.trim().length === 0
+    ) {
+      return null;
+    }
+  }
   return {
     app_user_id: value.app_user_id.toLowerCase(),
     display_name: value.display_name,
@@ -2162,6 +2951,13 @@ function projectEmployeeOption(
     branch_id: value.branch_id === null ? null : value.branch_id.toLowerCase(),
     branch_code: value.branch_code,
     branch_name: value.branch_name,
+    ...(hasProfileKeys
+      ? {
+          slot_profile_id: (value.slot_profile_id as string).toLowerCase(),
+          slot_profile_code: value.slot_profile_code as string,
+          slot_profile_name: (value.slot_profile_name as string).trim(),
+        }
+      : {}),
   };
 }
 
@@ -2470,7 +3266,17 @@ function projectDayCell(value: unknown): AttendanceMonthlyMatrixDayCellProjectio
     "slots",
   ] as const;
 
-  const hasFullFourSlotKeys = hasExactKeys(value, fullKeys);
+  const multiProfileKeys = [
+    ...fullKeys,
+    "policy_profile_id_used",
+    "policy_profile_code_used",
+    "policy_profile_name_used",
+    "policy_is_default_used",
+  ] as const;
+
+  const hasMultiProfileKeys = hasExactKeys(value, multiProfileKeys);
+  const hasFullFourSlotKeys =
+    hasMultiProfileKeys || (!hasMultiProfileKeys && hasExactKeys(value, fullKeys));
   const hasLegacyBaseKeys = !hasFullFourSlotKeys && hasExactKeys(value, baseKeys);
   if (!hasFullFourSlotKeys && !hasLegacyBaseKeys) {
     return null;
@@ -2609,6 +3415,18 @@ function projectDayCell(value: unknown): AttendanceMonthlyMatrixDayCellProjectio
     ) {
       return null;
     }
+    if (hasMultiProfileKeys) {
+      if (
+        !isUuidString(value.policy_profile_id_used) ||
+        typeof value.policy_profile_code_used !== "string" ||
+        !SLOT_PROFILE_CODE_PATTERN.test(value.policy_profile_code_used) ||
+        typeof value.policy_profile_name_used !== "string" ||
+        value.policy_profile_name_used.trim().length === 0 ||
+        typeof value.policy_is_default_used !== "boolean"
+      ) {
+        return null;
+      }
+    }
 
     const projectedSlots: AttendanceMonthlyMatrixDaySlotProjection[] = [];
     for (let i = 0; i < value.slots.length; i += 1) {
@@ -2693,6 +3511,14 @@ function projectDayCell(value: unknown): AttendanceMonthlyMatrixDayCellProjectio
   return {
     business_date: value.business_date,
     day_of_month: value.day_of_month,
+    ...(hasMultiProfileKeys
+      ? {
+          policy_profile_id_used: (value.policy_profile_id_used as string).toLowerCase(),
+          policy_profile_code_used: value.policy_profile_code_used as string,
+          policy_profile_name_used: (value.policy_profile_name_used as string).trim(),
+          policy_is_default_used: value.policy_is_default_used as boolean,
+        }
+      : {}),
     policy_version_used: policyVersionUsed,
     has_checkin: value.has_checkin,
     checkin_count: value.checkin_count,
@@ -2730,22 +3556,77 @@ function projectDayCell(value: unknown): AttendanceMonthlyMatrixDayCellProjectio
   };
 }
 
+function projectEmployeeSlotPolicyProfile(
+  value: unknown,
+): AttendanceMonthlyMatrixEmployeeSlotPolicyProfileProjection | null {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      "profile_id",
+      "profile_code",
+      "display_name",
+      "is_default",
+      "assignment_id",
+      "valid_from",
+      "valid_to",
+      "profile_names_in_month",
+    ]) ||
+    !isUuidString(value.profile_id) ||
+    typeof value.profile_code !== "string" ||
+    !SLOT_PROFILE_CODE_PATTERN.test(value.profile_code) ||
+    typeof value.display_name !== "string" ||
+    value.display_name.trim().length === 0 ||
+    typeof value.is_default !== "boolean" ||
+    (value.assignment_id !== null && !isUuidString(value.assignment_id)) ||
+    (value.valid_from !== null &&
+      (typeof value.valid_from !== "string" || !isValidIsoCalendarDate(value.valid_from))) ||
+    (value.valid_to !== null &&
+      (typeof value.valid_to !== "string" || !isValidIsoCalendarDate(value.valid_to))) ||
+    !Array.isArray(value.profile_names_in_month)
+  ) {
+    return null;
+  }
+
+  const profileNamesInMonth: string[] = [];
+  for (const rawName of value.profile_names_in_month) {
+    if (typeof rawName !== "string" || rawName.trim().length === 0) {
+      return null;
+    }
+    profileNamesInMonth.push(rawName.trim());
+  }
+
+  return {
+    profile_id: value.profile_id.toLowerCase(),
+    profile_code: value.profile_code,
+    display_name: value.display_name.trim(),
+    is_default: value.is_default,
+    assignment_id: value.assignment_id === null ? null : value.assignment_id.toLowerCase(),
+    valid_from: value.valid_from,
+    valid_to: value.valid_to,
+    profile_names_in_month: profileNamesInMonth,
+  };
+}
+
 function projectEmployeeRow(
   value: unknown,
   expectedDaysInMonth: number,
 ): AttendanceMonthlyMatrixEmployeeRowProjection | null {
-  if (
-    !isRecord(value) ||
-    !hasExactKeys(value, [
-      "app_user_id",
-      "employee_display_name",
-      "personnel_code",
-      "enabled",
-      "branch",
-      "summary",
-      "days",
-    ])
-  ) {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const baseKeys = [
+    "app_user_id",
+    "employee_display_name",
+    "personnel_code",
+    "enabled",
+    "branch",
+    "summary",
+    "days",
+  ] as const;
+  const withSlotProfileKeys = [...baseKeys, "slot_policy_profile"] as const;
+  const hasSlotProfileKey = hasExactKeys(value, withSlotProfileKeys);
+  const hasBaseKeys = !hasSlotProfileKey && hasExactKeys(value, baseKeys);
+  if (!hasSlotProfileKey && !hasBaseKeys) {
     return null;
   }
   if (
@@ -2766,6 +3647,15 @@ function projectEmployeeRow(
     if (!branch) return null;
   }
 
+  let slotPolicyProfile:
+    | AttendanceMonthlyMatrixEmployeeSlotPolicyProfileProjection
+    | undefined = undefined;
+  if (hasSlotProfileKey && value.slot_policy_profile !== null) {
+    const projectedProfile = projectEmployeeSlotPolicyProfile(value.slot_policy_profile);
+    if (!projectedProfile) return null;
+    slotPolicyProfile = projectedProfile;
+  }
+
   const summary = projectEmployeeSummary(value.summary);
   if (!summary) return null;
 
@@ -2782,6 +3672,7 @@ function projectEmployeeRow(
     personnel_code: value.personnel_code,
     enabled: value.enabled,
     branch,
+    ...(slotPolicyProfile !== undefined ? { slot_policy_profile: slotPolicyProfile } : {}),
     summary,
     days,
   };
@@ -2961,16 +3852,25 @@ export function projectAttendanceMonthlyMatrixReport(
 export function projectAttendanceSlotPoliciesAdminList(
   value: unknown,
 ): AttendanceSlotPoliciesAdminListProjection | null {
-  if (
-    !isRecord(value) ||
-    !hasExactKeys(value, [
-      "viewer",
-      "business_date",
-      "current_policy",
-      "latest_policy",
-      "versions",
-    ])
-  ) {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const baseKeys = [
+    "viewer",
+    "business_date",
+    "current_policy",
+    "latest_policy",
+    "versions",
+  ] as const;
+  const multiProfileKeys = [
+    ...baseKeys,
+    "profiles",
+    "assignments",
+    "employee_options",
+  ] as const;
+  const hasMultiProfileKeys = hasExactKeys(value, multiProfileKeys);
+  const hasBaseKeys = !hasMultiProfileKeys && hasExactKeys(value, baseKeys);
+  if (!hasMultiProfileKeys && !hasBaseKeys) {
     return null;
   }
   if (
@@ -2998,6 +3898,215 @@ export function projectAttendanceSlotPoliciesAdminList(
     versions.push(projected);
   }
 
+  let profiles: AttendanceSlotPolicyProfileAdminItemProjection[] | undefined = undefined;
+  let assignments: AttendanceSlotPolicyAssignmentAdminItemProjection[] | undefined =
+    undefined;
+  let employeeOptions: AttendanceSlotPolicyEmployeeOptionProjection[] | undefined =
+    undefined;
+
+  if (hasMultiProfileKeys) {
+    if (
+      !Array.isArray(value.profiles) ||
+      value.profiles.length < 1 ||
+      !Array.isArray(value.assignments) ||
+      !Array.isArray(value.employee_options)
+    ) {
+      return null;
+    }
+
+    profiles = [];
+    for (const rawProfile of value.profiles) {
+      if (
+        !isRecord(rawProfile) ||
+        !hasExactKeys(rawProfile, [
+          "profile_id",
+          "profile_code",
+          "display_name",
+          "description",
+          "is_default",
+          "active",
+          "version",
+          "active_assignment_count",
+          "current_policy",
+          "latest_policy",
+          "versions",
+        ]) ||
+        !isUuidString(rawProfile.profile_id) ||
+        typeof rawProfile.profile_code !== "string" ||
+        !SLOT_PROFILE_CODE_PATTERN.test(rawProfile.profile_code) ||
+        typeof rawProfile.display_name !== "string" ||
+        rawProfile.display_name.trim().length === 0 ||
+        (rawProfile.description !== null && typeof rawProfile.description !== "string") ||
+        typeof rawProfile.is_default !== "boolean" ||
+        typeof rawProfile.active !== "boolean" ||
+        typeof rawProfile.version !== "number" ||
+        !Number.isSafeInteger(rawProfile.version) ||
+        rawProfile.version < 1 ||
+        typeof rawProfile.active_assignment_count !== "number" ||
+        !Number.isSafeInteger(rawProfile.active_assignment_count) ||
+        rawProfile.active_assignment_count < 0 ||
+        !Array.isArray(rawProfile.versions) ||
+        rawProfile.versions.length < 1
+      ) {
+        return null;
+      }
+
+      const profileCurrentPolicy = projectAttendanceSlotPolicy(rawProfile.current_policy);
+      const profileLatestPolicy = projectAttendanceSlotPolicy(rawProfile.latest_policy);
+      if (!profileCurrentPolicy || !profileLatestPolicy) {
+        return null;
+      }
+
+      const profileVersions: AttendanceSlotPolicyProjection[] = [];
+      for (const rawVer of rawProfile.versions) {
+        const projectedVer = projectAttendanceSlotPolicy(rawVer);
+        if (!projectedVer) return null;
+        profileVersions.push(projectedVer);
+      }
+
+      profiles.push({
+        profile_id: rawProfile.profile_id.toLowerCase(),
+        profile_code: rawProfile.profile_code,
+        display_name: rawProfile.display_name.trim(),
+        description: rawProfile.description,
+        is_default: rawProfile.is_default,
+        active: rawProfile.active,
+        version: rawProfile.version,
+        active_assignment_count: rawProfile.active_assignment_count,
+        current_policy: profileCurrentPolicy,
+        latest_policy: profileLatestPolicy,
+        versions: profileVersions,
+      });
+    }
+
+    assignments = [];
+    for (const rawAsg of value.assignments) {
+      if (
+        !isRecord(rawAsg) ||
+        !hasExactKeys(rawAsg, [
+          "assignment_id",
+          "app_user_id",
+          "employee_display_name",
+          "personnel_code",
+          "enabled",
+          "profile_id",
+          "profile_code",
+          "profile_name",
+          "valid_from",
+          "valid_to",
+          "superseded_same_day",
+          "effective",
+          "version",
+          "created_at",
+          "updated_at",
+        ]) ||
+        !isUuidString(rawAsg.assignment_id) ||
+        !isUuidString(rawAsg.app_user_id) ||
+        typeof rawAsg.employee_display_name !== "string" ||
+        (rawAsg.personnel_code !== null && typeof rawAsg.personnel_code !== "string") ||
+        typeof rawAsg.enabled !== "boolean" ||
+        !isUuidString(rawAsg.profile_id) ||
+        typeof rawAsg.profile_code !== "string" ||
+        !SLOT_PROFILE_CODE_PATTERN.test(rawAsg.profile_code) ||
+        typeof rawAsg.profile_name !== "string" ||
+        rawAsg.profile_name.trim().length === 0 ||
+        typeof rawAsg.valid_from !== "string" ||
+        !isValidIsoCalendarDate(rawAsg.valid_from) ||
+        (rawAsg.valid_to !== null &&
+          (typeof rawAsg.valid_to !== "string" ||
+            !isValidIsoCalendarDate(rawAsg.valid_to))) ||
+        typeof rawAsg.superseded_same_day !== "boolean" ||
+        typeof rawAsg.effective !== "boolean" ||
+        typeof rawAsg.version !== "number" ||
+        !Number.isSafeInteger(rawAsg.version) ||
+        rawAsg.version < 1 ||
+        typeof rawAsg.created_at !== "string" ||
+        typeof rawAsg.updated_at !== "string"
+      ) {
+        return null;
+      }
+
+      assignments.push({
+        assignment_id: rawAsg.assignment_id.toLowerCase(),
+        app_user_id: rawAsg.app_user_id.toLowerCase(),
+        employee_display_name: rawAsg.employee_display_name,
+        personnel_code: rawAsg.personnel_code,
+        enabled: rawAsg.enabled,
+        profile_id: rawAsg.profile_id.toLowerCase(),
+        profile_code: rawAsg.profile_code,
+        profile_name: rawAsg.profile_name.trim(),
+        valid_from: rawAsg.valid_from,
+        valid_to: rawAsg.valid_to,
+        superseded_same_day: rawAsg.superseded_same_day,
+        effective: rawAsg.effective,
+        version: rawAsg.version,
+        created_at: rawAsg.created_at,
+        updated_at: rawAsg.updated_at,
+      });
+    }
+
+    employeeOptions = [];
+    for (const rawEmp of value.employee_options) {
+      if (
+        !isRecord(rawEmp) ||
+        !hasExactKeys(rawEmp, [
+          "app_user_id",
+          "display_name",
+          "employee_display_name",
+          "personnel_code",
+          "enabled",
+          "current_profile_id",
+          "current_profile_code",
+          "current_profile_name",
+          "current_profile_is_default",
+          "current_assignment_id",
+          "current_assignment_version",
+          "current_assignment_valid_from",
+        ]) ||
+        !isUuidString(rawEmp.app_user_id) ||
+        typeof rawEmp.display_name !== "string" ||
+        typeof rawEmp.employee_display_name !== "string" ||
+        (rawEmp.personnel_code !== null && typeof rawEmp.personnel_code !== "string") ||
+        typeof rawEmp.enabled !== "boolean" ||
+        !isUuidString(rawEmp.current_profile_id) ||
+        typeof rawEmp.current_profile_code !== "string" ||
+        !SLOT_PROFILE_CODE_PATTERN.test(rawEmp.current_profile_code) ||
+        typeof rawEmp.current_profile_name !== "string" ||
+        rawEmp.current_profile_name.trim().length === 0 ||
+        typeof rawEmp.current_profile_is_default !== "boolean" ||
+        (rawEmp.current_assignment_id !== null &&
+          !isUuidString(rawEmp.current_assignment_id)) ||
+        (rawEmp.current_assignment_version !== null &&
+          (typeof rawEmp.current_assignment_version !== "number" ||
+            !Number.isSafeInteger(rawEmp.current_assignment_version) ||
+            rawEmp.current_assignment_version < 1)) ||
+        (rawEmp.current_assignment_valid_from !== null &&
+          (typeof rawEmp.current_assignment_valid_from !== "string" ||
+            !isValidIsoCalendarDate(rawEmp.current_assignment_valid_from)))
+      ) {
+        return null;
+      }
+
+      employeeOptions.push({
+        app_user_id: rawEmp.app_user_id.toLowerCase(),
+        display_name: rawEmp.display_name,
+        employee_display_name: rawEmp.employee_display_name,
+        personnel_code: rawEmp.personnel_code,
+        enabled: rawEmp.enabled,
+        current_profile_id: rawEmp.current_profile_id.toLowerCase(),
+        current_profile_code: rawEmp.current_profile_code,
+        current_profile_name: rawEmp.current_profile_name.trim(),
+        current_profile_is_default: rawEmp.current_profile_is_default,
+        current_assignment_id:
+          rawEmp.current_assignment_id === null
+            ? null
+            : rawEmp.current_assignment_id.toLowerCase(),
+        current_assignment_version: rawEmp.current_assignment_version,
+        current_assignment_valid_from: rawEmp.current_assignment_valid_from,
+      });
+    }
+  }
+
   return {
     viewer: {
       can_manage_slot_policy: value.viewer.can_manage_slot_policy,
@@ -3006,27 +4115,172 @@ export function projectAttendanceSlotPoliciesAdminList(
     current_policy: currentPolicy,
     latest_policy: latestPolicy,
     versions,
+    ...(profiles !== undefined ? { profiles } : {}),
+    ...(assignments !== undefined ? { assignments } : {}),
+    ...(employeeOptions !== undefined ? { employee_options: employeeOptions } : {}),
   };
 }
 
 export function projectCreateSlotPolicyResult(
   value: unknown,
 ): CreateAttendanceSlotPolicyResultProjection | null {
-  if (
-    !isRecord(value) ||
-    !hasExactKeys(value, ["replayed", "policy"]) ||
-    typeof value.replayed !== "boolean"
-  ) {
+  if (!isRecord(value) || typeof value.replayed !== "boolean") {
+    return null;
+  }
+  const hasProfileKey = hasExactKeys(value, ["replayed", "policy", "profile"]);
+  const hasBaseKeys = !hasProfileKey && hasExactKeys(value, ["replayed", "policy"]);
+  if (!hasProfileKey && !hasBaseKeys) {
     return null;
   }
   const policy = projectAttendanceSlotPolicy(value.policy);
   if (!policy) return null;
 
+  let profile: AttendanceSlotPolicyProfileSavedProjection | undefined = undefined;
+  if (hasProfileKey) {
+    if (
+      !isRecord(value.profile) ||
+      !hasExactKeys(value.profile, [
+        "profile_id",
+        "profile_code",
+        "display_name",
+        "description",
+        "is_default",
+        "active",
+        "version",
+      ]) ||
+      !isUuidString(value.profile.profile_id) ||
+      typeof value.profile.profile_code !== "string" ||
+      !SLOT_PROFILE_CODE_PATTERN.test(value.profile.profile_code) ||
+      typeof value.profile.display_name !== "string" ||
+      value.profile.display_name.trim().length === 0 ||
+      (value.profile.description !== null &&
+        typeof value.profile.description !== "string") ||
+      typeof value.profile.is_default !== "boolean" ||
+      typeof value.profile.active !== "boolean" ||
+      typeof value.profile.version !== "number" ||
+      !Number.isSafeInteger(value.profile.version) ||
+      value.profile.version < 1
+    ) {
+      return null;
+    }
+    profile = {
+      profile_id: value.profile.profile_id.toLowerCase(),
+      profile_code: value.profile.profile_code,
+      display_name: value.profile.display_name.trim(),
+      description: value.profile.description,
+      is_default: value.profile.is_default,
+      active: value.profile.active,
+      version: value.profile.version,
+    };
+  }
+
   return {
     replayed: value.replayed,
     policy,
+    ...(profile !== undefined ? { profile } : {}),
   };
 }
+
+export const projectUpsertSlotPolicyProfileResult = projectCreateSlotPolicyResult;
+
+export function projectAssignSlotPolicyResult(
+  value: unknown,
+): AssignAttendanceSlotPolicyResultProjection | null {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ["replayed", "assignment"]) ||
+    typeof value.replayed !== "boolean" ||
+    !isRecord(value.assignment)
+  ) {
+    return null;
+  }
+  const a = value.assignment;
+  const fullKeys = [
+    "assignment_id",
+    "app_user_id",
+    "employee_display_name",
+    "personnel_code",
+    "enabled",
+    "profile_id",
+    "profile_code",
+    "profile_name",
+    "valid_from",
+    "valid_to",
+    "superseded_same_day",
+    "effective",
+    "version",
+  ] as const;
+  const minimalKeys = [
+    "assignment_id",
+    "app_user_id",
+    "profile_id",
+    "profile_code",
+    "profile_name",
+    "valid_from",
+    "valid_to",
+    "superseded_same_day",
+    "effective",
+    "version",
+  ] as const;
+  const hasFullKeys = hasExactKeys(a, fullKeys);
+  const hasMinimalKeys = !hasFullKeys && hasExactKeys(a, minimalKeys);
+  if (!hasFullKeys && !hasMinimalKeys) {
+    return null;
+  }
+  if (
+    !isUuidString(a.assignment_id) ||
+    !isUuidString(a.app_user_id) ||
+    !isUuidString(a.profile_id) ||
+    typeof a.profile_code !== "string" ||
+    !SLOT_PROFILE_CODE_PATTERN.test(a.profile_code) ||
+    typeof a.profile_name !== "string" ||
+    a.profile_name.trim().length === 0 ||
+    typeof a.valid_from !== "string" ||
+    !isValidIsoCalendarDate(a.valid_from) ||
+    (a.valid_to !== null &&
+      (typeof a.valid_to !== "string" || !isValidIsoCalendarDate(a.valid_to))) ||
+    typeof a.superseded_same_day !== "boolean" ||
+    typeof a.effective !== "boolean" ||
+    typeof a.version !== "number" ||
+    !Number.isSafeInteger(a.version) ||
+    a.version < 1
+  ) {
+    return null;
+  }
+  if (hasFullKeys) {
+    if (
+      typeof a.employee_display_name !== "string" ||
+      (a.personnel_code !== null && typeof a.personnel_code !== "string") ||
+      typeof a.enabled !== "boolean"
+    ) {
+      return null;
+    }
+  }
+  return {
+    replayed: value.replayed,
+    assignment: {
+      assignment_id: a.assignment_id.toLowerCase(),
+      app_user_id: a.app_user_id.toLowerCase(),
+      ...(hasFullKeys
+        ? {
+            employee_display_name: a.employee_display_name as string,
+            personnel_code: a.personnel_code as string | null,
+            enabled: a.enabled as boolean,
+          }
+        : {}),
+      profile_id: a.profile_id.toLowerCase(),
+      profile_code: a.profile_code,
+      profile_name: a.profile_name.trim(),
+      valid_from: a.valid_from,
+      valid_to: a.valid_to,
+      superseded_same_day: a.superseded_same_day,
+      effective: a.effective,
+      version: a.version,
+    },
+  };
+}
+
+export const projectUnassignSlotPolicyResult = projectAssignSlotPolicyResult;
 
 export function projectAttendanceBranchesAdminList(
   value: unknown,
@@ -3734,11 +4988,36 @@ export function projectAttendanceExplanationItem(
     "audit_events",
   ] as const;
   const withCanDecideKeys = [...baseKeys, "can_decide"] as const;
-  const hasCanDecide = hasExactKeys(value, withCanDecideKeys);
-  const hasBase = !hasCanDecide && hasExactKeys(value, baseKeys);
-  if (!hasCanDecide && !hasBase) {
+  const profileBaseKeys = [
+    ...baseKeys,
+    "policy_profile_id_used",
+    "policy_profile_code_used",
+    "policy_profile_name_used",
+  ] as const;
+  const profileWithCanDecideKeys = [...profileBaseKeys, "can_decide"] as const;
+
+  const hasProfileCanDecide = hasExactKeys(value, profileWithCanDecideKeys);
+  const hasProfileBase =
+    !hasProfileCanDecide && hasExactKeys(value, profileBaseKeys);
+  const hasLegacyCanDecide =
+    !hasProfileCanDecide &&
+    !hasProfileBase &&
+    hasExactKeys(value, withCanDecideKeys);
+  const hasLegacyBase =
+    !hasProfileCanDecide &&
+    !hasProfileBase &&
+    !hasLegacyCanDecide &&
+    hasExactKeys(value, baseKeys);
+  if (
+    !hasProfileCanDecide &&
+    !hasProfileBase &&
+    !hasLegacyCanDecide &&
+    !hasLegacyBase
+  ) {
     return null;
   }
+  const hasProfileKeys = hasProfileCanDecide || hasProfileBase;
+  const hasCanDecide = hasProfileCanDecide || hasLegacyCanDecide;
 
   const slotCode = value.slot_code as AttendanceSlotCode;
   if (
@@ -3797,6 +5076,17 @@ export function projectAttendanceExplanationItem(
     (hasCanDecide && typeof value.can_decide !== "boolean")
   ) {
     return null;
+  }
+  if (hasProfileKeys) {
+    if (
+      !isUuidString(value.policy_profile_id_used) ||
+      typeof value.policy_profile_code_used !== "string" ||
+      !SLOT_PROFILE_CODE_PATTERN.test(value.policy_profile_code_used) ||
+      typeof value.policy_profile_name_used !== "string" ||
+      value.policy_profile_name_used.trim().length === 0
+    ) {
+      return null;
+    }
   }
 
   const requester = projectExplanationAccountSummary(value.requester);
@@ -3862,6 +5152,13 @@ export function projectAttendanceExplanationItem(
     target_time: value.target_time,
     grace_before_minutes: value.grace_before_minutes,
     grace_after_minutes: value.grace_after_minutes,
+    ...(hasProfileKeys
+      ? {
+          policy_profile_id_used: (value.policy_profile_id_used as string).toLowerCase(),
+          policy_profile_code_used: value.policy_profile_code_used as string,
+          policy_profile_name_used: (value.policy_profile_name_used as string).trim(),
+        }
+      : {}),
     policy_version_used: value.policy_version_used,
     original_slot_status: value.original_slot_status as AttendanceExplanationOriginalSlotStatus,
     effective_slot_status: value.effective_slot_status as AttendanceSlotStatus,
@@ -4045,8 +5342,23 @@ export function projectAttendanceMyExplanationsOverview(
     !isValidIsoCalendarDate(value.today_local) ||
     typeof value.selected_date !== "string" ||
     !isValidIsoCalendarDate(value.selected_date) ||
-    !isRecord(value.day_evaluation) ||
-    !hasExactKeys(value.day_evaluation, ["business_date", "policy_version_used", "slots"]) ||
+    !isRecord(value.day_evaluation)
+  ) {
+    return null;
+  }
+  const baseEvalKeys = ["business_date", "policy_version_used", "slots"] as const;
+  const profileEvalKeys = [
+    ...baseEvalKeys,
+    "policy_profile_id_used",
+    "policy_profile_code_used",
+    "policy_profile_name_used",
+    "policy_is_default_used",
+  ] as const;
+  const evalHasProfileKeys = hasExactKeys(value.day_evaluation, profileEvalKeys);
+  const evalHasBaseKeys =
+    !evalHasProfileKeys && hasExactKeys(value.day_evaluation, baseEvalKeys);
+  if (
+    (!evalHasProfileKeys && !evalHasBaseKeys) ||
     typeof value.day_evaluation.business_date !== "string" ||
     !isValidIsoCalendarDate(value.day_evaluation.business_date) ||
     typeof value.day_evaluation.policy_version_used !== "number" ||
@@ -4057,6 +5369,18 @@ export function projectAttendanceMyExplanationsOverview(
     value.day_evaluation.slots.length > ATTENDANCE_SLOT_MAX_COUNT
   ) {
     return null;
+  }
+  if (evalHasProfileKeys) {
+    if (
+      !isUuidString(value.day_evaluation.policy_profile_id_used) ||
+      typeof value.day_evaluation.policy_profile_code_used !== "string" ||
+      !SLOT_PROFILE_CODE_PATTERN.test(value.day_evaluation.policy_profile_code_used) ||
+      typeof value.day_evaluation.policy_profile_name_used !== "string" ||
+      value.day_evaluation.policy_profile_name_used.trim().length === 0 ||
+      typeof value.day_evaluation.policy_is_default_used !== "boolean"
+    ) {
+      return null;
+    }
   }
 
   const evalSlots: AttendanceExplanationDaySlotEvaluationProjection[] = [];
@@ -4115,6 +5439,20 @@ export function projectAttendanceMyExplanationsOverview(
     selected_date: value.selected_date,
     day_evaluation: {
       business_date: value.day_evaluation.business_date,
+      ...(evalHasProfileKeys
+        ? {
+            policy_profile_id_used: (
+              value.day_evaluation.policy_profile_id_used as string
+            ).toLowerCase(),
+            policy_profile_code_used: value.day_evaluation
+              .policy_profile_code_used as string,
+            policy_profile_name_used: (
+              value.day_evaluation.policy_profile_name_used as string
+            ).trim(),
+            policy_is_default_used: value.day_evaluation
+              .policy_is_default_used as boolean,
+          }
+        : {}),
       policy_version_used: value.day_evaluation.policy_version_used,
       slots: evalSlots,
     },

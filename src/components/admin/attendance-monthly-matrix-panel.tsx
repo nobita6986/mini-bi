@@ -43,13 +43,17 @@ import {
   ATTENDANCE_SLOT_MAX_COUNT,
   ATTENDANCE_SLOT_MIN_COUNT,
   DEFAULT_ATTENDANCE_SLOT_POLICY,
+  DEFAULT_ATTENDANCE_SLOT_POLICY_PROFILE_ID,
   projectAssignBranchResult,
+  projectAssignSlotPolicyResult,
   projectAttendanceBranchesAdminList,
   projectAttendanceMonthlyMatrixReport,
   projectAttendanceSlotPoliciesAdminList,
   projectCreateSlotPolicyResult,
   projectUnassignBranchResult,
+  projectUnassignSlotPolicyResult,
   projectUpsertBranchResult,
+  projectUpsertSlotPolicyProfileResult,
   type AttendanceBranchAdminItemProjection,
   type AttendanceBranchAssignmentAdminItemProjection,
   type AttendanceBranchesAdminListProjection,
@@ -57,20 +61,27 @@ import {
   type AttendanceMonthlyMatrixEmployeeRowProjection,
   type AttendanceMonthlyMatrixReportProjection,
   type AttendanceSlotPoliciesAdminListProjection,
+  type AttendanceSlotPolicyAssignmentAdminItemProjection,
+  type AttendanceSlotPolicyProfileAdminItemProjection,
   type AttendanceSlotPolicyProjection,
 } from "@/lib/attendance/attendance-monthly-matrix-contract";
 import {
   MATRIX_LEGEND_ITEMS,
   MATRIX_SLOT_SHORT_LABELS,
   buildAssignEmployeeToBranchPayload,
+  buildAssignEmployeeToSlotPolicyPayload,
   buildCreateSlotPolicyPayload,
   buildGoogleMapsCoordinatesUrl,
   buildMonthlyMatrixExportUrl,
   buildMonthlyMatrixReportQuery,
   buildUnassignEmployeeFromBranchPayload,
+  buildUnassignEmployeeFromSlotPolicyPayload,
   buildUpsertBranchPayload,
+  buildUpsertSlotPolicyProfilePayload,
   describeBranchAssignmentStatus,
   describeMatrixDayCell,
+  describeSlotPolicyAssignmentStatus,
+  formatEmployeeSlotPolicySummaryLabel,
   formatMatrixWeekdayLabel,
   getVietnamCurrentYearMonth,
   mapBranchAdminMutationError,
@@ -154,10 +165,10 @@ function MatrixDayCell({ cell }: { cell: AttendanceMonthlyMatrixDayCellProjectio
         </span>
         <div className="flex items-center gap-1">
           <span
-            title={`Áp dụng khung giờ phiên bản v${presentation.policyVersionUsed}`}
+            title={`Áp dụng khung giờ ${presentation.policyProfileNameUsed} phiên bản v${presentation.policyVersionUsed}`}
             className="rounded border border-current/20 px-1 py-0.5 font-mono text-[10px] opacity-80"
           >
-            KG v{presentation.policyVersionUsed}
+            KG {presentation.policyProfileNameUsed} v{presentation.policyVersionUsed}
           </span>
           {presentation.targetBadgeLabel ? (
             <span className="rounded border border-current/25 px-1 py-0.5 font-mono text-[10px] font-medium">
@@ -338,6 +349,12 @@ function MatrixEmployeeStickySummary({
           <span>Đích tính khoảng cách: Trụ sở (HQ)</span>
         )}
       </div>
+      <div className="text-xs text-muted">
+        Khung giờ:{" "}
+        <strong className="font-medium text-foreground">
+          {formatEmployeeSlotPolicySummaryLabel(row)}
+        </strong>
+      </div>
       <div className="flex flex-wrap gap-1.5 pt-1 text-[11px]">
         <span className="rounded bg-emerald-100 px-1.5 py-0.5 font-medium text-emerald-900 dark:bg-emerald-950/60 dark:text-emerald-200">
           Check-in: {VI_INTEGER.format(row.summary.checkin_day_count)} ngày (
@@ -369,7 +386,8 @@ function MatrixEmployeeStickySummary({
 type SlotPolicyDialogMode =
   | { kind: "closed" }
   | { kind: "history" }
-  | { kind: "create" };
+  | { kind: "create" }
+  | { kind: "assignments" };
 
 type SlotDraftItem = {
   id: string;
@@ -420,10 +438,23 @@ function AttendanceSlotPolicySummaryCard({
   const [loadingPolicies, setLoadingPolicies] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
+  const [selectedProfileId, setSelectedProfileId] = useState<string>(
+    DEFAULT_ATTENDANCE_SLOT_POLICY_PROFILE_ID,
+  );
+  const [createTargetMode, setCreateTargetMode] = useState<"existing" | "new">(
+    "existing",
+  );
+  const [profileCodeInput, setProfileCodeInput] = useState("");
+  const [profileNameInput, setProfileNameInput] = useState("");
+  const [profileDescInput, setProfileDescInput] = useState("");
+  const [profileActiveInput, setProfileActiveInput] = useState(true);
+
   const [effectiveFromInput, setEffectiveFromInput] = useState("");
   const [slotsInput, setSlotsInput] = useState<SlotDraftItem[]>(() =>
     createSlotDraftsFromPolicy(DEFAULT_ATTENDANCE_SLOT_POLICY),
   );
+  const [assignEmployeeIdInput, setAssignEmployeeIdInput] = useState("");
+  const [assignProfileIdInput, setAssignProfileIdInput] = useState("");
   const [mutationBusy, setMutationBusy] = useState(false);
   const [mutationError, setMutationError] = useState<string | null>(null);
 
@@ -431,14 +462,37 @@ function AttendanceSlotPolicySummaryCard({
     activeReport?.viewer.can_manage_slot_policy === true ||
     policiesData?.viewer.can_manage_slot_policy === true;
 
+  const availableProfiles: AttendanceSlotPolicyProfileAdminItemProjection[] = useMemo(
+    () => policiesData?.profiles ?? [],
+    [policiesData],
+  );
+
+  const selectedProfile = useMemo(
+    () =>
+      availableProfiles.find((p) => p.profile_id === selectedProfileId) ??
+      availableProfiles[0] ??
+      null,
+    [availableProfiles, selectedProfileId],
+  );
+
   const populateFormFromPolicy = useCallback(
-    (seedPolicy: AttendanceSlotPolicyProjection, businessDate: string) => {
+    (
+      seedPolicy: AttendanceSlotPolicyProjection,
+      businessDate: string,
+      profile?: AttendanceSlotPolicyProfileAdminItemProjection | null,
+    ) => {
       const defaultDate =
         seedPolicy.effective_from_date >= businessDate
           ? shiftIsoDateDays(seedPolicy.effective_from_date, 1)
           : businessDate;
       setEffectiveFromInput(defaultDate);
       setSlotsInput(createSlotDraftsFromPolicy(seedPolicy));
+      if (profile) {
+        setProfileCodeInput(profile.profile_code);
+        setProfileNameInput(profile.display_name);
+        setProfileDescInput(profile.description ?? "");
+        setProfileActiveInput(profile.active);
+      }
     },
     [],
   );
@@ -505,7 +559,7 @@ function AttendanceSlotPolicySummaryCard({
   }
 
   const fetchSlotPolicies = useCallback(
-    async (openModeAfterLoad?: "history" | "create") => {
+    async (openModeAfterLoad?: "history" | "create" | "assignments") => {
       setLoadingPolicies(true);
       setLoadError(null);
       try {
@@ -529,13 +583,7 @@ function AttendanceSlotPolicySummaryCard({
           setLoadingPolicies(false);
           return;
         }
-        const projected = projectAttendanceSlotPoliciesAdminList({
-          viewer: payload.viewer,
-          business_date: payload.business_date,
-          current_policy: payload.current_policy,
-          latest_policy: payload.latest_policy,
-          versions: payload.versions,
-        });
+        const projected = projectAttendanceSlotPoliciesAdminList(payload);
         if (!projected) {
           setLoadError("Dữ liệu cấu hình khung giờ chấm công không đúng định dạng chuẩn.");
           setLoadingPolicies(false);
@@ -544,14 +592,33 @@ function AttendanceSlotPolicySummaryCard({
         setPoliciesData(projected);
         setLoadingPolicies(false);
         if (openModeAfterLoad === "create") {
-          populateFormFromPolicy(projected.latest_policy, projected.business_date);
+          const targetProf =
+            (projected.profiles ?? []).find((p) => p.profile_id === selectedProfileId) ??
+            projected.profiles?.[0] ??
+            null;
+          populateFormFromPolicy(
+            targetProf?.latest_policy ?? projected.latest_policy,
+            projected.business_date,
+            targetProf,
+          );
+        } else if (openModeAfterLoad === "assignments") {
+          const firstNonDefault = (projected.profiles ?? []).find(
+            (p) => !p.is_default && p.active,
+          );
+          setAssignProfileIdInput(
+            (current) =>
+              current ||
+              firstNonDefault?.profile_id ||
+              projected.profiles?.[0]?.profile_id ||
+              DEFAULT_ATTENDANCE_SLOT_POLICY_PROFILE_ID,
+          );
         }
       } catch {
         setLoadError("Không thể kết nối máy chủ để tải cấu hình khung giờ chấm công.");
         setLoadingPolicies(false);
       }
     },
-    [populateFormFromPolicy, router],
+    [populateFormFromPolicy, router, selectedProfileId],
   );
 
   function openHistoryDialog() {
@@ -560,16 +627,54 @@ function AttendanceSlotPolicySummaryCard({
     void fetchSlotPolicies("history");
   }
 
-  function openCreateDialog() {
+  function openAssignmentsDialog() {
     setMutationError(null);
-    const seed =
-      policiesData?.latest_policy ?? activeReport?.slot_policy.current_policy ?? null;
+    setDialogMode({ kind: "assignments" });
+    void fetchSlotPolicies("assignments");
+  }
+
+  function openCreateDialog(initialMode: "existing" | "new" = "existing") {
+    setMutationError(null);
+    setCreateTargetMode(initialMode);
     const todayVn = policiesData?.business_date ?? getVietnamTodayIsoDate();
-    if (seed) {
-      populateFormFromPolicy(seed, todayVn);
+    if (initialMode === "new") {
+      setProfileCodeInput("");
+      setProfileNameInput("");
+      setProfileDescInput("");
+      setProfileActiveInput(true);
+      setEffectiveFromInput(todayVn);
+      setSlotsInput([
+        {
+          id: "new-slot-1",
+          slotLabel: "Time 1",
+          targetTime: "08:00",
+          graceBeforeInput: "15",
+          graceAfterInput: "15",
+        },
+        {
+          id: "new-slot-2",
+          slotLabel: "Time 2",
+          targetTime: "17:00",
+          graceBeforeInput: "15",
+          graceAfterInput: "15",
+        },
+      ]);
+    } else {
+      const seed =
+        selectedProfile?.latest_policy ??
+        policiesData?.latest_policy ??
+        activeReport?.slot_policy.current_policy ??
+        null;
+      if (seed) {
+        populateFormFromPolicy(seed, todayVn, selectedProfile);
+      }
     }
     setDialogMode({ kind: "create" });
-    void fetchSlotPolicies("create");
+    if (initialMode === "existing") {
+      void fetchSlotPolicies("create");
+    } else {
+      void fetchSlotPolicies();
+    }
   }
 
   function closeDialog() {
@@ -582,23 +687,58 @@ function AttendanceSlotPolicySummaryCard({
     event.preventDefault();
     if (mutationBusy || !canManageSlotPolicy) return;
 
-    const latestVersion =
-      policiesData?.latest_policy.version ??
-      activeReport?.slot_policy.current_policy.version ??
-      1;
     const idempotencyKey = newAttendanceHqIntentKey();
+    const mappedSlots = slotsInput.map((item) => ({
+      slotLabel: item.slotLabel,
+      targetTime: item.targetTime,
+      graceBeforeInput: item.graceBeforeInput,
+      graceAfterInput: item.graceAfterInput,
+    }));
 
-    const built = buildCreateSlotPolicyPayload({
-      effectiveFromDate: effectiveFromInput,
-      slots: slotsInput.map((item) => ({
-        slotLabel: item.slotLabel,
-        targetTime: item.targetTime,
-        graceBeforeInput: item.graceBeforeInput,
-        graceAfterInput: item.graceAfterInput,
-      })),
-      expectedVersion: latestVersion,
-      idempotencyKey,
-    });
+    let built;
+    if (createTargetMode === "new") {
+      built = buildUpsertSlotPolicyProfilePayload({
+        profileId: null,
+        profileCode: profileCodeInput,
+        displayName: profileNameInput,
+        description: profileDescInput,
+        active: true,
+        expectedProfileVersion: 0,
+        effectiveFromDate: effectiveFromInput,
+        slots: mappedSlots,
+        expectedVersion: 0,
+        idempotencyKey,
+      });
+    } else if (selectedProfile) {
+      built = buildUpsertSlotPolicyProfilePayload({
+        profileId: selectedProfile.profile_id,
+        profileCode: selectedProfile.profile_code,
+        displayName:
+          selectedProfile.is_default
+            ? selectedProfile.display_name
+            : profileNameInput || selectedProfile.display_name,
+        description: selectedProfile.is_default
+          ? (selectedProfile.description ?? "")
+          : profileDescInput,
+        active: selectedProfile.is_default ? true : profileActiveInput,
+        expectedProfileVersion: selectedProfile.version,
+        effectiveFromDate: effectiveFromInput,
+        slots: mappedSlots,
+        expectedVersion: selectedProfile.latest_policy.version,
+        idempotencyKey,
+      });
+    } else {
+      const latestVersion =
+        policiesData?.latest_policy.version ??
+        activeReport?.slot_policy.current_policy.version ??
+        1;
+      built = buildCreateSlotPolicyPayload({
+        effectiveFromDate: effectiveFromInput,
+        slots: mappedSlots,
+        expectedVersion: latestVersion,
+        idempotencyKey,
+      });
+    }
 
     if (!built.ok) {
       setMutationError(built.message);
@@ -644,22 +784,30 @@ function AttendanceSlotPolicySummaryCard({
         return;
       }
 
-      const projected = projectCreateSlotPolicyResult({
-        replayed: payload.replayed,
-        policy: payload.policy,
-      });
-      if (!projected) {
+      const projected =
+        projectUpsertSlotPolicyProfileResult(payload) ??
+        projectCreateSlotPolicyResult({
+          replayed: payload.replayed,
+          policy: payload.policy,
+          ...(payload.profile ? { profile: payload.profile } : {}),
+        });
+      if (!projected || !projected.policy) {
         setMutationError("Phản hồi lưu khung giờ chấm công không đúng định dạng chuẩn.");
         setMutationBusy(false);
         return;
       }
 
       setMutationBusy(false);
+      const createdProfileId = projected.profile?.profile_id;
+      if (typeof createdProfileId === "string" && createdProfileId.length > 0) {
+        setSelectedProfileId(createdProfileId);
+      }
       setDialogMode({ kind: "closed" });
       notify.success({
-        title: `Đã tạo khung giờ chấm công v${projected.policy.version}`,
+        title: `Đã lưu cấu hình ${projected.policy.profile_name || "Mặc định"} v${projected.policy.version}`,
         description: `Hiệu lực từ ngày ${projected.policy.effective_from_date} (${projected.policy.slots.map((s) => s.target_time).join(" · ")})`,
       });
+      void fetchSlotPolicies();
       onPolicyCreated();
     } catch {
       setMutationBusy(false);
@@ -667,16 +815,205 @@ function AttendanceSlotPolicySummaryCard({
     }
   }
 
+  async function handleAssignEmployeeToProfile(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (mutationBusy || !canManageSlotPolicy) return;
+
+    const targetProf =
+      availableProfiles.find((p) => p.profile_id === assignProfileIdInput) ?? null;
+    const targetEmpOption =
+      (policiesData?.employee_options ?? []).find(
+        (e) => e.app_user_id === assignEmployeeIdInput,
+      ) ?? null;
+    const openAssignment =
+      (policiesData?.assignments ?? []).find(
+        (a) =>
+          a.app_user_id === assignEmployeeIdInput &&
+          a.valid_to === null &&
+          !a.superseded_same_day,
+      ) ?? null;
+    const expectedAssignmentVersion =
+      targetEmpOption?.current_assignment_version ?? openAssignment?.version ?? 0;
+    const idempotencyKey = newAttendanceHqIntentKey();
+    const built = buildAssignEmployeeToSlotPolicyPayload({
+      appUserId: assignEmployeeIdInput,
+      profile: targetProf,
+      expectedVersion: expectedAssignmentVersion,
+      idempotencyKey,
+      todayVn: policiesData?.business_date,
+    });
+    if (!built.ok) {
+      setMutationError(built.message);
+      return;
+    }
+
+    setMutationBusy(true);
+    setMutationError(null);
+    try {
+      const response = await fetch("/api/admin/attendance/slot-policies/assignments", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": idempotencyKey,
+        },
+        body: JSON.stringify(built.body),
+      });
+      if (response.status === 401) {
+        setMutationBusy(false);
+        router.replace("/login?next=/admin/attendance");
+        return;
+      }
+      let payload: unknown = null;
+      try {
+        payload = await response.json();
+      } catch {
+        payload = null;
+      }
+      if (!response.ok || !isRecord(payload) || payload.ok !== true) {
+        const mapped = mapSlotPolicyMutationError(
+          response.status,
+          extractErrorCode(payload),
+        );
+        setMutationError(mapped.message);
+        if (mapped.isConflict) {
+          void fetchSlotPolicies("assignments");
+        }
+        setMutationBusy(false);
+        return;
+      }
+      const projected = projectAssignSlotPolicyResult(payload);
+      if (!projected) {
+        setMutationError("Phản hồi gán cấu hình khung giờ không đúng định dạng chuẩn.");
+        setMutationBusy(false);
+        return;
+      }
+      setMutationBusy(false);
+      setAssignEmployeeIdInput("");
+      notify.success({
+        title: "Đã cập nhật cấu hình khung giờ cho nhân viên",
+        description: `${projected.assignment.employee_display_name} → ${projected.assignment.profile_name} (từ ${projected.assignment.valid_from})`,
+      });
+      void fetchSlotPolicies("assignments");
+      onPolicyCreated();
+    } catch {
+      setMutationBusy(false);
+      setMutationError("Không thể kết nối máy chủ khi gán cấu hình khung giờ.");
+    }
+  }
+
+  async function handleUnassignEmployeeFromProfile(
+    assignment: AttendanceSlotPolicyAssignmentAdminItemProjection,
+  ) {
+    if (mutationBusy || !canManageSlotPolicy) return;
+    const idempotencyKey = newAttendanceHqIntentKey();
+    const built = buildUnassignEmployeeFromSlotPolicyPayload({
+      expectedVersion: assignment.version,
+      idempotencyKey,
+      todayVn: policiesData?.business_date,
+    });
+    if (!built.ok) {
+      setMutationError(built.message);
+      return;
+    }
+    setMutationBusy(true);
+    setMutationError(null);
+    try {
+      const response = await fetch(
+        `/api/admin/attendance/slot-policies/assignments/${encodeURIComponent(assignment.assignment_id)}/unassign`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Idempotency-Key": idempotencyKey,
+          },
+          body: JSON.stringify(built.body),
+        },
+      );
+      if (response.status === 401) {
+        setMutationBusy(false);
+        router.replace("/login?next=/admin/attendance");
+        return;
+      }
+      let payload: unknown = null;
+      try {
+        payload = await response.json();
+      } catch {
+        payload = null;
+      }
+      if (!response.ok || !isRecord(payload) || payload.ok !== true) {
+        const mapped = mapSlotPolicyMutationError(
+          response.status,
+          extractErrorCode(payload),
+        );
+        setMutationError(mapped.message);
+        if (mapped.isConflict) {
+          void fetchSlotPolicies("assignments");
+        }
+        setMutationBusy(false);
+        return;
+      }
+      const projected = projectUnassignSlotPolicyResult(payload);
+      if (!projected) {
+        setMutationError("Phản hồi hủy gán cấu hình khung giờ không đúng định dạng chuẩn.");
+        setMutationBusy(false);
+        return;
+      }
+      setMutationBusy(false);
+      notify.success({
+        title: "Đã đưa nhân viên về cấu hình Mặc định",
+        description: `${projected.assignment.employee_display_name} quay về cấu hình Mặc định từ hôm nay.`,
+      });
+      void fetchSlotPolicies("assignments");
+      onPolicyCreated();
+    } catch {
+      setMutationBusy(false);
+      setMutationError("Không thể kết nối máy chủ khi hủy gán cấu hình khung giờ.");
+    }
+  }
+
+  const reportProfiles = activeReport?.slot_policy.profiles ?? [];
+  const selectedReportProfile =
+    reportProfiles.find((p) => p.profile_id === selectedProfileId) ??
+    reportProfiles[0] ??
+    null;
+  const activeSummaryProfile = selectedProfile ?? selectedReportProfile ?? null;
   const currentPolicy =
-    policiesData?.current_policy ?? activeReport?.slot_policy.current_policy ?? null;
-  const monthPolicies = activeReport?.slot_policy.month_policies ?? [];
+    selectedProfile?.current_policy ??
+    selectedReportProfile?.current_policy ??
+    policiesData?.current_policy ??
+    activeReport?.slot_policy.current_policy ??
+    null;
+  const monthPolicies =
+    selectedReportProfile?.month_policies ??
+    activeReport?.slot_policy.month_policies ??
+    [];
+  const profilePills =
+    availableProfiles.length > 0
+      ? availableProfiles.map((p) => ({
+          profile_id: p.profile_id,
+          profile_code: p.profile_code,
+          display_name: p.display_name,
+          is_default: p.is_default,
+          slot_count: p.current_policy.slots.length,
+          active_assignment_count: p.active_assignment_count,
+        }))
+      : reportProfiles.map((p) => ({
+          profile_id: p.profile_id,
+          profile_code: p.profile_code,
+          display_name: p.display_name,
+          is_default: p.is_default,
+          slot_count: p.current_policy.slots.length,
+          active_assignment_count: 0,
+        }));
+  const employeeOptionsForAssign =
+    policiesData?.employee_options ?? activeReport?.employee_options ?? [];
 
   return (
     <Card>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <CardHeader
-          title={`Cấu hình khung giờ chấm công (${currentPolicy ? `${currentPolicy.slots.length} mốc` : "linh hoạt"})`}
-          description="Áp dụng thống nhất các mốc giờ chuẩn đang có hiệu lực cho toàn bộ nhân sự. Admin có thể cấu hình số lượng mốc, chỉnh giờ chuẩn/dung sai, thêm, xóa hoặc sắp xếp lại mốc theo ngày hiệu lực mà vẫn bảo toàn dữ liệu lịch sử."
+          title={`Cấu hình khung giờ chấm công (${currentPolicy ? `${currentPolicy.profile_name || "Mặc định"} · ${currentPolicy.slots.length} mốc` : "linh hoạt"})`}
+          description="Quản trị đa cấu hình khung giờ chấm công theo tên (Mặc định, Hành chính, Tuyển dụng...) và gán nhân viên vào cấu hình phù hợp có hiệu lực tức thời mà vẫn bảo toàn nguyên vẹn lịch sử báo cáo."
         />
         <div className="flex flex-wrap items-center gap-2">
           <Button
@@ -687,20 +1024,66 @@ function AttendanceSlotPolicySummaryCard({
           >
             Lịch sử phiên bản khung giờ
           </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={openAssignmentsDialog}
+          >
+            Phân công nhân viên
+          </Button>
           {canManageSlotPolicy ? (
-            <Button
-              type="button"
-              variant="soft"
-              size="sm"
-              onClick={openCreateDialog}
-            >
-              Cấu hình khung giờ mới
-            </Button>
+            <>
+              <Button
+                type="button"
+                variant="soft"
+                size="sm"
+                onClick={() => openCreateDialog("existing")}
+              >
+                Cấu hình khung giờ mới
+              </Button>
+              <Button
+                type="button"
+                variant="primary"
+                size="sm"
+                onClick={() => openCreateDialog("new")}
+              >
+                + Tạo cấu hình có tên
+              </Button>
+            </>
           ) : activeReport ? (
             <StatusBadge tone="neutral">Chỉ xem (BoD)</StatusBadge>
           ) : null}
         </div>
       </div>
+
+      {profilePills.length > 1 ? (
+        <div className="mb-3 flex flex-wrap items-center gap-1.5 border-b border-border/70 pb-3">
+          <span className="mr-1 text-xs font-medium text-muted">Cấu hình đang xem:</span>
+          {profilePills.map((prof) => {
+            const isSelected = prof.profile_id === (activeSummaryProfile?.profile_id ?? selectedProfileId);
+            return (
+              <button
+                key={prof.profile_id}
+                type="button"
+                onClick={() => setSelectedProfileId(prof.profile_id)}
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors",
+                  isSelected
+                    ? "border-accent bg-accent/10 text-foreground"
+                    : "border-border bg-surface text-muted hover:text-foreground",
+                )}
+              >
+                <span>{prof.display_name}</span>
+                <span className="font-mono text-[11px] opacity-80">
+                  ({prof.slot_count} mốc
+                  {!prof.is_default ? ` · ${prof.active_assignment_count} NV` : ""})
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
 
       {currentPolicy ? (
         <div className="space-y-3">
@@ -811,9 +1194,15 @@ function AttendanceSlotPolicySummaryCard({
                     const amSlots = p.slots.filter((s) => s.session_code === "AM");
                     const pmSlots = p.slots.filter((s) => s.session_code === "PM");
                     return (
-                      <tr key={p.version} className={DATA_TABLE_ROW_CLASS}>
+                      <tr key={`${p.profile_id ?? "default"}-${p.version}`} className={DATA_TABLE_ROW_CLASS}>
                         <td data-label="Phiên bản & Hiệu lực" className={DATA_TABLE_TD_CLASS}>
                           <div className="space-y-0.5 text-xs">
+                            <p className="font-semibold text-foreground">
+                              {p.profile_name || "Mặc định"}{" "}
+                              <span className="font-mono text-muted">
+                                ({p.profile_code || "DEFAULT"})
+                              </span>
+                            </p>
                             <p className="font-mono font-semibold text-foreground">
                               Phiên bản v{p.version} ({p.slots.length} mốc)
                             </p>
@@ -875,7 +1264,7 @@ function AttendanceSlotPolicySummaryCard({
                 type="button"
                 variant="primary"
                 size="sm"
-                onClick={openCreateDialog}
+                onClick={() => openCreateDialog("existing")}
               >
                 Tạo phiên bản khung giờ mới
               </Button>
@@ -887,16 +1276,20 @@ function AttendanceSlotPolicySummaryCard({
         </div>
       </FormDialog>
 
-      {/* Dialog: Create New Date-Effective Slot Policy Version */}
+      {/* Dialog: Create / Update Slot Policy Profile & Date-Effective Version */}
       <FormDialog
         open={dialogMode.kind === "create"}
         onOpenChange={(nextOpen) => {
           if (!nextOpen) closeDialog();
         }}
-        title="Tạo phiên bản khung giờ chấm công mới"
-        description="Phiên bản mới sẽ áp dụng từ ngày bắt đầu hiệu lực được chọn và không ghi đè dữ liệu lịch sử của các ngày trước đó."
+        title={
+          createTargetMode === "new"
+            ? "Tạo cấu hình khung giờ chấm công mới (có tên riêng)"
+            : "Tạo phiên bản khung giờ chấm công mới"
+        }
+        description="Phiên bản mới sẽ áp dụng từ ngày bắt đầu hiệu lực được chọn cho cấu hình đó và không ghi đè dữ liệu lịch sử của các ngày trước."
         closeAriaLabel="Đóng hộp thoại cấu hình khung giờ chấm công"
-        contentClassName="sm:w-[min(46rem,calc(100vw-2rem))]"
+        contentClassName="sm:w-[min(48rem,calc(100vw-2rem))]"
       >
         <form onSubmit={handleSaveSlotPolicy} className="space-y-4">
           {mutationError ? (
@@ -904,6 +1297,176 @@ function AttendanceSlotPolicySummaryCard({
               <p>{mutationError}</p>
             </Alert>
           ) : null}
+
+          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-surface-muted/40 p-2">
+            <Button
+              type="button"
+              variant={createTargetMode === "existing" ? "primary" : "ghost"}
+              size="sm"
+              disabled={mutationBusy}
+              onClick={() => {
+                setCreateTargetMode("existing");
+                const todayVn = policiesData?.business_date ?? getVietnamTodayIsoDate();
+                const seed =
+                  selectedProfile?.latest_policy ??
+                  policiesData?.latest_policy ??
+                  activeReport?.slot_policy.current_policy ??
+                  null;
+                if (seed) {
+                  populateFormFromPolicy(seed, todayVn, selectedProfile);
+                }
+              }}
+            >
+              Tạo phiên bản mới cho cấu hình hiện có
+            </Button>
+            <Button
+              type="button"
+              variant={createTargetMode === "new" ? "primary" : "ghost"}
+              size="sm"
+              disabled={mutationBusy}
+              onClick={() => {
+                setCreateTargetMode("new");
+                setProfileCodeInput("");
+                setProfileNameInput("");
+                setProfileDescInput("");
+                setProfileActiveInput(true);
+                setEffectiveFromInput(
+                  policiesData?.business_date ?? getVietnamTodayIsoDate(),
+                );
+              }}
+            >
+              + Tạo cấu hình có tên mới
+            </Button>
+          </div>
+
+          {createTargetMode === "existing" ? (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <label
+                  htmlFor="slot-policy-profile-select"
+                  className="mb-1 block text-xs font-medium text-muted"
+                >
+                  Cấu hình khung giờ cần tạo phiên bản mới
+                </label>
+                <select
+                  id="slot-policy-profile-select"
+                  value={selectedProfile?.profile_id ?? selectedProfileId}
+                  disabled={mutationBusy}
+                  onChange={(event) => {
+                    const nextId = event.target.value;
+                    setSelectedProfileId(nextId);
+                    const nextProf =
+                      availableProfiles.find((p) => p.profile_id === nextId) ?? null;
+                    if (nextProf) {
+                      populateFormFromPolicy(
+                        nextProf.latest_policy,
+                        policiesData?.business_date ?? getVietnamTodayIsoDate(),
+                        nextProf,
+                      );
+                    }
+                  }}
+                  className={INPUT_CLASS}
+                >
+                  {(availableProfiles.length > 0
+                    ? availableProfiles
+                    : [
+                        {
+                          profile_id: DEFAULT_ATTENDANCE_SLOT_POLICY_PROFILE_ID,
+                          profile_code: "DEFAULT",
+                          display_name: "Mặc định",
+                          is_default: true,
+                        },
+                      ]
+                  ).map((prof) => (
+                    <option key={prof.profile_id} value={prof.profile_id}>
+                      {prof.display_name} ({prof.profile_code})
+                    </option>
+                  ))}
+                </select>
+              </div>
+              {selectedProfile && !selectedProfile.is_default ? (
+                <div>
+                  <label
+                    htmlFor="slot-policy-existing-name"
+                    className="mb-1 block text-xs font-medium text-muted"
+                  >
+                    Tên hiển thị cấu hình
+                  </label>
+                  <input
+                    id="slot-policy-existing-name"
+                    type="text"
+                    maxLength={128}
+                    required
+                    value={profileNameInput}
+                    disabled={mutationBusy}
+                    onChange={(event) => setProfileNameInput(event.target.value)}
+                    className={INPUT_CLASS}
+                  />
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div>
+                <label
+                  htmlFor="slot-policy-new-code"
+                  className="mb-1 block text-xs font-medium text-muted"
+                >
+                  Mã cấu hình (VD: HANH_CHINH, TUYEN_DUNG)
+                </label>
+                <input
+                  id="slot-policy-new-code"
+                  type="text"
+                  maxLength={64}
+                  required
+                  placeholder="HANH_CHINH"
+                  value={profileCodeInput}
+                  disabled={mutationBusy}
+                  onChange={(event) =>
+                    setProfileCodeInput(event.target.value.toUpperCase())
+                  }
+                  className={INPUT_CLASS}
+                />
+              </div>
+              <div>
+                <label
+                  htmlFor="slot-policy-new-name"
+                  className="mb-1 block text-xs font-medium text-muted"
+                >
+                  Tên cấu hình (VD: Hành chính 2 mốc)
+                </label>
+                <input
+                  id="slot-policy-new-name"
+                  type="text"
+                  maxLength={128}
+                  required
+                  placeholder="Hành chính 2 mốc"
+                  value={profileNameInput}
+                  disabled={mutationBusy}
+                  onChange={(event) => setProfileNameInput(event.target.value)}
+                  className={INPUT_CLASS}
+                />
+              </div>
+              <div>
+                <label
+                  htmlFor="slot-policy-new-desc"
+                  className="mb-1 block text-xs font-medium text-muted"
+                >
+                  Mô tả ngắn (tùy chọn)
+                </label>
+                <input
+                  id="slot-policy-new-desc"
+                  type="text"
+                  maxLength={500}
+                  placeholder="Chấm công 2 lượt 08:00 & 17:00"
+                  value={profileDescInput}
+                  disabled={mutationBusy}
+                  onChange={(event) => setProfileDescInput(event.target.value)}
+                  className={INPUT_CLASS}
+                />
+              </div>
+            </div>
+          )}
 
           <div>
             <label
@@ -1124,6 +1687,209 @@ function AttendanceSlotPolicySummaryCard({
             </Button>
           </div>
         </form>
+      </FormDialog>
+
+      {/* Dialog: Employee Slot Policy Assignments */}
+      <FormDialog
+        open={dialogMode.kind === "assignments"}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) closeDialog();
+        }}
+        title="Phân công nhân viên theo cấu hình khung giờ"
+        description="Nhân viên chưa được gán riêng sẽ tự động dùng cấu hình Mặc định. Việc gán mới, chuyển cấu hình hoặc hủy gán về Mặc định có hiệu lực ngay từ hôm nay và không làm thay đổi lịch sử những ngày trước."
+        closeAriaLabel="Đóng hộp thoại phân công nhân viên theo khung giờ"
+        contentClassName="sm:w-[min(56rem,calc(100vw-2rem))]"
+      >
+        <div className="space-y-4">
+          {mutationError ? (
+            <Alert tone="error" role="alert" title="Không thể cập nhật phân công khung giờ">
+              <p>{mutationError}</p>
+            </Alert>
+          ) : null}
+
+          {canManageSlotPolicy ? (
+            <form
+              onSubmit={handleAssignEmployeeToProfile}
+              className="grid gap-3 rounded-xl border border-border bg-surface-muted/40 p-3 sm:grid-cols-3"
+            >
+              <div>
+                <label
+                  htmlFor="slot-policy-assign-employee"
+                  className="mb-1 block text-xs font-medium text-muted"
+                >
+                  Chọn nhân viên (tài khoản BI)
+                </label>
+                <select
+                  id="slot-policy-assign-employee"
+                  required
+                  value={assignEmployeeIdInput}
+                  disabled={mutationBusy}
+                  onChange={(event) => setAssignEmployeeIdInput(event.target.value)}
+                  className={INPUT_CLASS}
+                >
+                  <option value="">-- Chọn nhân viên --</option>
+                  {employeeOptionsForAssign.map((emp) => {
+                    const resolved = resolveAttendanceEmployeeDisplayIdentity({
+                      displayName: emp.display_name,
+                      personnelCode: emp.personnel_code,
+                    });
+                    const currentProfileName =
+                      "slot_profile_name" in emp ? emp.slot_profile_name : undefined;
+                    return (
+                      <option key={emp.app_user_id} value={emp.app_user_id}>
+                        {resolved.displayName}
+                        {resolved.personnelCode ? ` (${resolved.personnelCode})` : ""}
+                        {currentProfileName
+                          ? ` · Đang dùng: ${currentProfileName}`
+                          : ""}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+
+              <div>
+                <label
+                  htmlFor="slot-policy-assign-profile"
+                  className="mb-1 block text-xs font-medium text-muted"
+                >
+                  Cấu hình khung giờ áp dụng ngay
+                </label>
+                <select
+                  id="slot-policy-assign-profile"
+                  required
+                  value={assignProfileIdInput}
+                  disabled={mutationBusy}
+                  onChange={(event) => setAssignProfileIdInput(event.target.value)}
+                  className={INPUT_CLASS}
+                >
+                  <option value="">-- Chọn cấu hình khung giờ --</option>
+                  {availableProfiles
+                    .filter((prof) => prof.active)
+                    .map((prof) => (
+                      <option key={prof.profile_id} value={prof.profile_id}>
+                        {prof.display_name} ({prof.current_policy.slots.length} mốc:{" "}
+                        {prof.current_policy.slots.map((s) => s.target_time).join("/")})
+                      </option>
+                    ))}
+                </select>
+              </div>
+
+              <div className="flex items-end">
+                <Button
+                  type="submit"
+                  variant="primary"
+                  size="sm"
+                  loading={mutationBusy}
+                  className="w-full"
+                >
+                  {mutationBusy ? "Đang áp dụng..." : "Áp dụng ngay từ hôm nay"}
+                </Button>
+              </div>
+            </form>
+          ) : null}
+
+          {loadingPolicies && !policiesData ? (
+            <p className="py-6 text-center text-sm text-muted">
+              Đang tải danh sách phân công khung giờ...
+            </p>
+          ) : (policiesData?.assignments ?? []).length === 0 ? (
+            <p className="rounded-xl border border-border bg-surface-muted/30 py-6 text-center text-sm text-muted">
+              Chưa có nhân viên nào được gán cấu hình riêng (toàn bộ đang áp dụng cấu hình Mặc định).
+            </p>
+          ) : (
+            <DataTableContainer>
+              <table className={DATA_TABLE_CLASS}>
+                <thead className={DATA_TABLE_HEAD_CLASS}>
+                  <tr>
+                    <th scope="col" className={DATA_TABLE_TH_CLASS}>
+                      Nhân sự
+                    </th>
+                    <th scope="col" className={DATA_TABLE_TH_CLASS}>
+                      Cấu hình khung giờ
+                    </th>
+                    <th scope="col" className={DATA_TABLE_TH_CLASS}>
+                      Kỳ hiệu lực &amp; Trạng thái
+                    </th>
+                    <th scope="col" className={DATA_TABLE_TH_CLASS}>
+                      Thao tác
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(policiesData?.assignments ?? []).map((item) => {
+                    const statusView = describeSlotPolicyAssignmentStatus(item);
+                    const identity = resolveAttendanceEmployeeDisplayIdentity({
+                      displayName: item.employee_display_name,
+                      personnelCode: item.personnel_code,
+                    });
+                    return (
+                      <tr key={item.assignment_id} className={DATA_TABLE_ROW_CLASS}>
+                        <td data-label="Nhân sự" className={DATA_TABLE_TD_CLASS}>
+                          <div className="space-y-0.5 text-xs">
+                            <p className="font-semibold text-foreground">
+                              {identity.displayName}
+                            </p>
+                            {identity.personnelCode ? (
+                              <p className="font-mono text-muted">
+                                Mã NS: {identity.personnelCode}
+                              </p>
+                            ) : null}
+                          </div>
+                        </td>
+                        <td data-label="Cấu hình khung giờ" className={DATA_TABLE_TD_CLASS}>
+                          <div className="space-y-0.5 text-xs">
+                            <p className="font-semibold text-foreground">
+                              {item.profile_name}
+                            </p>
+                            <p className="font-mono text-muted">{item.profile_code}</p>
+                          </div>
+                        </td>
+                        <td data-label="Kỳ hiệu lực & Trạng thái" className={DATA_TABLE_TD_CLASS}>
+                          <div className="space-y-1 text-xs">
+                            <StatusBadge
+                              tone={
+                                statusView.tone === "emerald"
+                                  ? "success"
+                                  : statusView.tone === "amber"
+                                    ? "warning"
+                                    : "neutral"
+                              }
+                            >
+                              {statusView.statusLabel}
+                            </StatusBadge>
+                            <p className="font-mono text-muted">{statusView.rangeLabel}</p>
+                          </div>
+                        </td>
+                        <td data-label="Thao tác" className={DATA_TABLE_TD_CLASS}>
+                          {canManageSlotPolicy && statusView.canUnassign ? (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              disabled={mutationBusy}
+                              onClick={() => void handleUnassignEmployeeFromProfile(item)}
+                            >
+                              Hủy gán (Về Mặc định)
+                            </Button>
+                          ) : (
+                            <span className="text-xs text-muted">—</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </DataTableContainer>
+          )}
+
+          <div className="flex justify-end">
+            <Button type="button" variant="secondary" size="sm" onClick={closeDialog}>
+              Đóng
+            </Button>
+          </div>
+        </div>
       </FormDialog>
     </Card>
   );

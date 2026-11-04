@@ -14,6 +14,7 @@ import {
   ATTENDANCE_MONTHLY_MATRIX_EXPORT_ROW_LIMIT,
   attendanceMonthlyMatrixHttpStatusForError,
   parseAssignBranchBody,
+  parseAssignSlotPolicyBody,
   parseAttendanceBranchesAdminQuery,
   parseAttendanceExplanationApprovalInboxQuery,
   parseAttendanceMonthlyMatrixExportQuery,
@@ -23,7 +24,9 @@ import {
   parseMyAttendanceExplanationsQuery,
   parseSubmitAttendanceExplanationBody,
   parseUnassignBranchBody,
+  parseUnassignSlotPolicyBody,
   parseUpsertBranchBody,
+  parseUpsertSlotPolicyProfileBody,
   type AttendanceExplanationDecision,
   type AttendanceMonthlyMatrixEmployeeRowProjection,
   type AttendanceMonthlyMatrixErrorCode,
@@ -250,6 +253,12 @@ export function computeBranchUnassignRequestFingerprint(input: {
 
 export function computeSlotPolicyCreateRequestFingerprint(input: {
   app_user_id: string;
+  profile_id?: string | null;
+  profile_code?: string | null;
+  display_name?: string | null;
+  description?: string | null;
+  active?: boolean;
+  expected_profile_version?: number;
   effective_from_date: string;
   slots?: readonly {
     slot_code?: string;
@@ -316,12 +325,122 @@ export function computeSlotPolicyCreateRequestFingerprint(input: {
     };
   });
 
+  const hasProfileMetadata =
+    typeof input.profile_id === "string" ||
+    typeof input.profile_code === "string" ||
+    typeof input.display_name === "string" ||
+    typeof input.description === "string" ||
+    typeof input.active === "boolean" ||
+    typeof input.expected_profile_version === "number";
+
+  const canonicalPayload = hasProfileMetadata
+    ? JSON.stringify({
+        v: 3,
+        op: "slot_policy_create",
+        app_user_id: input.app_user_id.toLowerCase(),
+        profile_id: input.profile_id ? input.profile_id.toLowerCase() : null,
+        profile_code: input.profile_code ?? null,
+        display_name: input.display_name ?? null,
+        description: input.description ?? null,
+        active: input.active ?? true,
+        expected_profile_version: input.expected_profile_version ?? 0,
+        effective_from_date: input.effective_from_date,
+        slots: normalizedSlots,
+        expected_version: input.expected_version,
+      })
+    : JSON.stringify({
+        v: 2,
+        op: "slot_policy_create",
+        app_user_id: input.app_user_id.toLowerCase(),
+        effective_from_date: input.effective_from_date,
+        slots: normalizedSlots,
+        expected_version: input.expected_version,
+      });
+  return createHash("sha256").update(canonicalPayload, "utf8").digest("hex");
+}
+
+export function computeSlotPolicyProfileUpsertRequestFingerprint(input: {
+  app_user_id: string;
+  profile_id: string | null;
+  profile_code: string | null;
+  display_name: string | null;
+  description: string | null;
+  active: boolean;
+  expected_profile_version?: number | null;
+  effective_from_date: string | null;
+  slots: readonly {
+    slot_code?: string;
+    slot_index?: number;
+    slot_label?: string;
+    target_time: string;
+    grace_before_minutes: number;
+    grace_after_minutes: number;
+  }[] | null;
+  expected_version: number | null;
+}): string {
+  const normalizedSlots = Array.isArray(input.slots)
+    ? input.slots.map((slot, index) => {
+        const slotIndex = index + 1;
+        const rawLabel = typeof slot.slot_label === "string" ? slot.slot_label.trim() : "";
+        return {
+          slot_index: slotIndex,
+          slot_code: `SLOT_${slotIndex}`,
+          slot_label: rawLabel.length > 0 ? rawLabel : `Time ${slotIndex}`,
+          target_time: slot.target_time,
+          grace_before_minutes: slot.grace_before_minutes,
+          grace_after_minutes: slot.grace_after_minutes,
+        };
+      })
+    : null;
+
   const canonicalPayload = JSON.stringify({
-    v: 2,
-    op: "slot_policy_create",
+    v: 1,
+    op: "slot_policy_profile_upsert",
     app_user_id: input.app_user_id.toLowerCase(),
+    profile_id: input.profile_id ? input.profile_id.toLowerCase() : null,
+    profile_code: input.profile_code,
+    display_name: input.display_name,
+    description: input.description,
+    active: input.active,
+    expected_profile_version: input.expected_profile_version,
     effective_from_date: input.effective_from_date,
     slots: normalizedSlots,
+    expected_version: input.expected_version,
+  });
+  return createHash("sha256").update(canonicalPayload, "utf8").digest("hex");
+}
+
+export function computeSlotPolicyAssignRequestFingerprint(input: {
+  app_user_id: string;
+  target_app_user_id: string;
+  profile_id: string;
+  valid_from: string | null;
+  expected_version: number;
+}): string {
+  const canonicalPayload = JSON.stringify({
+    v: 1,
+    op: "slot_policy_assign",
+    app_user_id: input.app_user_id.toLowerCase(),
+    target_app_user_id: input.target_app_user_id.toLowerCase(),
+    profile_id: input.profile_id.toLowerCase(),
+    valid_from: input.valid_from,
+    expected_version: input.expected_version,
+  });
+  return createHash("sha256").update(canonicalPayload, "utf8").digest("hex");
+}
+
+export function computeSlotPolicyUnassignRequestFingerprint(input: {
+  app_user_id: string;
+  assignment_id: string;
+  valid_to: string | null;
+  expected_version: number;
+}): string {
+  const canonicalPayload = JSON.stringify({
+    v: 1,
+    op: "slot_policy_unassign",
+    app_user_id: input.app_user_id.toLowerCase(),
+    assignment_id: input.assignment_id.toLowerCase(),
+    valid_to: input.valid_to,
     expected_version: input.expected_version,
   });
   return createHash("sha256").update(canonicalPayload, "utf8").digest("hex");
@@ -985,6 +1104,12 @@ export async function postAttendanceSlotPolicyAdmin(
 
   const requestFingerprint = computeSlotPolicyCreateRequestFingerprint({
     app_user_id: actorResult.app_user_id,
+    profile_id: parsedBody.value.profile_id,
+    profile_code: parsedBody.value.profile_code,
+    display_name: parsedBody.value.display_name,
+    description: parsedBody.value.description,
+    active: parsedBody.value.active,
+    expected_profile_version: parsedBody.value.expected_profile_version,
     effective_from_date: parsedBody.value.effective_from_date,
     slots: parsedBody.value.slots,
     expected_version: parsedBody.value.expected_version,
@@ -993,6 +1118,12 @@ export async function postAttendanceSlotPolicyAdmin(
   const saved = await dependencies.repository.createSlotPolicyAdmin({
     auth_subject: actorResult.auth_subject,
     app_user_id: actorResult.app_user_id,
+    profile_id: parsedBody.value.profile_id,
+    profile_code: parsedBody.value.profile_code,
+    display_name: parsedBody.value.display_name,
+    description: parsedBody.value.description,
+    active: parsedBody.value.active,
+    expected_profile_version: parsedBody.value.expected_profile_version,
     effective_from_date: parsedBody.value.effective_from_date,
     slots: parsedBody.value.slots,
     expected_version: parsedBody.value.expected_version,
@@ -1008,9 +1139,294 @@ export async function postAttendanceSlotPolicyAdmin(
     {
       ok: true,
       replayed: saved.result.replayed,
+      ...(saved.result.profile ? { profile: saved.result.profile } : {}),
       policy: saved.result.policy,
     },
     saved.result.replayed ? 200 : 201,
+  );
+}
+
+export async function postOrPutAttendanceSlotPolicyProfileAdmin(
+  request: Request,
+  profileId: string | null,
+  dependencies: AttendanceMonthlyMatrixApiDependencies,
+): Promise<Response> {
+  if (!isSameOriginAuthRequest(request)) {
+    return matrixError("CSRF_REJECTED");
+  }
+
+  if (hasDisallowedAuthorityHeaders(request)) {
+    return matrixError("ATTENDANCE_SLOT_POLICY_INVALID");
+  }
+
+  try {
+    const parsedUrl = new URL(request.url);
+    if (parsedUrl.search.length > 0) {
+      return matrixError("ATTENDANCE_SLOT_POLICY_INVALID");
+    }
+  } catch {
+    return matrixError("ATTENDANCE_SLOT_POLICY_INVALID");
+  }
+
+  let normalizedProfileId: string | null = null;
+  if (profileId !== null) {
+    if (!isUuid(profileId)) {
+      return matrixError("ATTENDANCE_SLOT_POLICY_INVALID");
+    }
+    normalizedProfileId = profileId.toLowerCase();
+  }
+
+  const contentType = request.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase();
+  if (contentType !== "application/json") {
+    return matrixError("CONTENT_TYPE_INVALID");
+  }
+
+  const actorResult = await resolveVerifiedActor(dependencies.resolveSession);
+  if (!actorResult.ok) {
+    return actorResult.response;
+  }
+
+  if (!adminAuthorityNavPredicate(actorResult.nav_actor)) {
+    return matrixError("ATTENDANCE_SLOT_POLICY_WRITE_DENIED");
+  }
+
+  const boundedBody = await readBoundedJsonBody(request, MAX_BRANCH_JSON_BODY_BYTES);
+  if (!boundedBody.ok) {
+    return boundedBody.kind === "too-large"
+      ? matrixError("BODY_TOO_LARGE")
+      : matrixError("ATTENDANCE_SLOT_POLICY_INVALID");
+  }
+
+  const parsedBody = parseUpsertSlotPolicyProfileBody(
+    boundedBody.value,
+    request.headers.get("idempotency-key"),
+    normalizedProfileId,
+  );
+  if (!parsedBody.ok) {
+    return matrixError(parsedBody.code);
+  }
+
+  if (!dependencies.repository.upsertSlotPolicyProfileAdmin) {
+    return matrixError("ATTENDANCE_REPORT_UNAVAILABLE");
+  }
+
+  const requestFingerprint = computeSlotPolicyProfileUpsertRequestFingerprint({
+    app_user_id: actorResult.app_user_id,
+    profile_id: parsedBody.value.profile_id,
+    profile_code: parsedBody.value.profile_code,
+    display_name: parsedBody.value.display_name,
+    description: parsedBody.value.description,
+    active: parsedBody.value.active,
+    expected_profile_version: parsedBody.value.expected_profile_version,
+    effective_from_date: parsedBody.value.effective_from_date,
+    slots: parsedBody.value.slots,
+    expected_version: parsedBody.value.expected_version,
+  });
+
+  const saved = await dependencies.repository.upsertSlotPolicyProfileAdmin({
+    auth_subject: actorResult.auth_subject,
+    app_user_id: actorResult.app_user_id,
+    profile_id: parsedBody.value.profile_id,
+    profile_code: parsedBody.value.profile_code,
+    display_name: parsedBody.value.display_name,
+    description: parsedBody.value.description,
+    active: parsedBody.value.active,
+    expected_profile_version: parsedBody.value.expected_profile_version,
+    effective_from_date: parsedBody.value.effective_from_date,
+    slots: parsedBody.value.slots,
+    expected_version: parsedBody.value.expected_version,
+    idempotency_key: parsedBody.value.idempotency_key,
+    request_fingerprint: requestFingerprint,
+  });
+
+  if (!saved.ok) {
+    return matrixError(saved.code);
+  }
+
+  const isCreate = parsedBody.value.profile_id === null || parsedBody.value.expected_version === 0;
+  const statusCode = saved.result.replayed ? 200 : isCreate ? 201 : 200;
+  return noStoreJson(
+    {
+      ok: true,
+      replayed: saved.result.replayed,
+      profile: saved.result.profile,
+      policy: saved.result.policy,
+    },
+    statusCode,
+  );
+}
+
+export async function postAttendanceSlotPolicyAssignmentAdmin(
+  request: Request,
+  dependencies: AttendanceMonthlyMatrixApiDependencies,
+): Promise<Response> {
+  if (!isSameOriginAuthRequest(request)) {
+    return matrixError("CSRF_REJECTED");
+  }
+
+  if (hasDisallowedAuthorityHeaders(request)) {
+    return matrixError("ATTENDANCE_SLOT_POLICY_ASSIGNMENT_INVALID");
+  }
+
+  try {
+    const parsedUrl = new URL(request.url);
+    if (parsedUrl.search.length > 0) {
+      return matrixError("ATTENDANCE_SLOT_POLICY_ASSIGNMENT_INVALID");
+    }
+  } catch {
+    return matrixError("ATTENDANCE_SLOT_POLICY_ASSIGNMENT_INVALID");
+  }
+
+  const contentType = request.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase();
+  if (contentType !== "application/json") {
+    return matrixError("CONTENT_TYPE_INVALID");
+  }
+
+  const actorResult = await resolveVerifiedActor(dependencies.resolveSession);
+  if (!actorResult.ok) {
+    return actorResult.response;
+  }
+
+  if (!adminAuthorityNavPredicate(actorResult.nav_actor)) {
+    return matrixError("ATTENDANCE_SLOT_POLICY_WRITE_DENIED");
+  }
+
+  const boundedBody = await readBoundedJsonBody(request, MAX_BRANCH_JSON_BODY_BYTES);
+  if (!boundedBody.ok) {
+    return boundedBody.kind === "too-large"
+      ? matrixError("BODY_TOO_LARGE")
+      : matrixError("ATTENDANCE_SLOT_POLICY_ASSIGNMENT_INVALID");
+  }
+
+  const parsedBody = parseAssignSlotPolicyBody(
+    boundedBody.value,
+    request.headers.get("idempotency-key"),
+  );
+  if (!parsedBody.ok) {
+    return matrixError(parsedBody.code);
+  }
+
+  if (!dependencies.repository.assignEmployeeSlotPolicyAdmin) {
+    return matrixError("ATTENDANCE_REPORT_UNAVAILABLE");
+  }
+
+  const requestFingerprint = computeSlotPolicyAssignRequestFingerprint({
+    app_user_id: actorResult.app_user_id,
+    target_app_user_id: parsedBody.value.target_app_user_id,
+    profile_id: parsedBody.value.profile_id,
+    valid_from: parsedBody.value.valid_from,
+    expected_version: parsedBody.value.expected_version,
+  });
+
+  const saved = await dependencies.repository.assignEmployeeSlotPolicyAdmin({
+    auth_subject: actorResult.auth_subject,
+    app_user_id: actorResult.app_user_id,
+    target_app_user_id: parsedBody.value.target_app_user_id,
+    profile_id: parsedBody.value.profile_id,
+    valid_from: parsedBody.value.valid_from,
+    expected_version: parsedBody.value.expected_version,
+    idempotency_key: parsedBody.value.idempotency_key,
+    request_fingerprint: requestFingerprint,
+  });
+
+  if (!saved.ok) {
+    return matrixError(saved.code);
+  }
+
+  return noStoreJson(
+    {
+      ok: true,
+      replayed: saved.result.replayed,
+      assignment: saved.result.assignment,
+    },
+    saved.result.replayed ? 200 : 201,
+  );
+}
+
+export async function postAttendanceSlotPolicyUnassignAdmin(
+  request: Request,
+  assignmentId: string,
+  dependencies: AttendanceMonthlyMatrixApiDependencies,
+): Promise<Response> {
+  if (!isSameOriginAuthRequest(request)) {
+    return matrixError("CSRF_REJECTED");
+  }
+
+  if (hasDisallowedAuthorityHeaders(request)) {
+    return matrixError("ATTENDANCE_SLOT_POLICY_ASSIGNMENT_INVALID");
+  }
+
+  try {
+    const parsedUrl = new URL(request.url);
+    if (parsedUrl.search.length > 0 || !isUuid(assignmentId)) {
+      return matrixError("ATTENDANCE_SLOT_POLICY_ASSIGNMENT_INVALID");
+    }
+  } catch {
+    return matrixError("ATTENDANCE_SLOT_POLICY_ASSIGNMENT_INVALID");
+  }
+
+  const contentType = request.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase();
+  if (contentType !== "application/json") {
+    return matrixError("CONTENT_TYPE_INVALID");
+  }
+
+  const actorResult = await resolveVerifiedActor(dependencies.resolveSession);
+  if (!actorResult.ok) {
+    return actorResult.response;
+  }
+
+  if (!adminAuthorityNavPredicate(actorResult.nav_actor)) {
+    return matrixError("ATTENDANCE_SLOT_POLICY_WRITE_DENIED");
+  }
+
+  const boundedBody = await readBoundedJsonBody(request, MAX_BRANCH_JSON_BODY_BYTES);
+  if (!boundedBody.ok) {
+    return boundedBody.kind === "too-large"
+      ? matrixError("BODY_TOO_LARGE")
+      : matrixError("ATTENDANCE_SLOT_POLICY_ASSIGNMENT_INVALID");
+  }
+
+  const parsedBody = parseUnassignSlotPolicyBody(
+    boundedBody.value,
+    request.headers.get("idempotency-key"),
+  );
+  if (!parsedBody.ok) {
+    return matrixError(parsedBody.code);
+  }
+
+  if (!dependencies.repository.unassignEmployeeSlotPolicyAdmin) {
+    return matrixError("ATTENDANCE_REPORT_UNAVAILABLE");
+  }
+
+  const normalizedAssignmentId = assignmentId.toLowerCase();
+  const requestFingerprint = computeSlotPolicyUnassignRequestFingerprint({
+    app_user_id: actorResult.app_user_id,
+    assignment_id: normalizedAssignmentId,
+    valid_to: parsedBody.value.valid_to,
+    expected_version: parsedBody.value.expected_version,
+  });
+
+  const saved = await dependencies.repository.unassignEmployeeSlotPolicyAdmin({
+    auth_subject: actorResult.auth_subject,
+    app_user_id: actorResult.app_user_id,
+    assignment_id: normalizedAssignmentId,
+    valid_to: parsedBody.value.valid_to,
+    expected_version: parsedBody.value.expected_version,
+    idempotency_key: parsedBody.value.idempotency_key,
+    request_fingerprint: requestFingerprint,
+  });
+
+  if (!saved.ok) {
+    return matrixError(saved.code);
+  }
+
+  return noStoreJson(
+    {
+      ok: true,
+      replayed: saved.result.replayed,
+      assignment: saved.result.assignment,
+    },
+    200,
   );
 }
 

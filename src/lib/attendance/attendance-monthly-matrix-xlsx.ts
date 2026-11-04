@@ -3,14 +3,18 @@ import {
 } from "./attendance-report-contract.ts";
 import {
   DEFAULT_ATTENDANCE_SLOT_POLICY,
+  DEFAULT_ATTENDANCE_SLOT_POLICY_PROFILE_CODE,
+  DEFAULT_ATTENDANCE_SLOT_POLICY_PROFILE_NAME,
   type AttendanceMonthlyMatrixCalendarDayProjection,
   type AttendanceMonthlyMatrixDayCellProjection,
   type AttendanceMonthlyMatrixEmployeeRowProjection,
   type AttendanceMonthlyMatrixReportProjection,
   type AttendanceMonthlyMatrixSlotPolicySummaryProjection,
+  type AttendanceSlotPolicyProjection,
 } from "./attendance-monthly-matrix-contract.ts";
 import {
   describeMatrixDayCell,
+  formatEmployeeSlotPolicySummaryLabel,
   MATRIX_DAY_STATUS_LABELS,
   MATRIX_LEAVE_SESSION_LABELS,
   MATRIX_LEAVE_TYPE_LABELS,
@@ -85,6 +89,13 @@ export function formatMatrixDayCellText(cell: AttendanceMonthlyMatrixDayCellProj
     parts.push(leaveText ? `Nghỉ: ${leaveText}` : `Nghỉ (${cell.approved_leave_units} ngày)`);
   }
 
+  if (
+    presentation.policyProfileCodeUsed !== DEFAULT_ATTENDANCE_SLOT_POLICY_PROFILE_CODE ||
+    presentation.policyProfileNameUsed !== DEFAULT_ATTENDANCE_SLOT_POLICY_PROFILE_NAME
+  ) {
+    parts.push(`[Khung giờ: ${presentation.policyProfileNameUsed} v${presentation.policyVersionUsed}]`);
+  }
+
   return parts.join("\n");
 }
 
@@ -113,6 +124,7 @@ export async function buildAttendanceMonthlyMatrixXlsx(input: {
     "Mã nhân sự",
     "Chi nhánh",
     "Mã chi nhánh",
+    "Cấu hình khung giờ",
     "Số ngày có check-in",
     "Tổng lượt check-in",
     "Số ngày có phép duyệt",
@@ -128,13 +140,13 @@ export async function buildAttendanceMonthlyMatrixXlsx(input: {
 
   const allMatrixHeaders = [...baseHeaders, ...dayHeaders];
   matrixSheet.addRow(allMatrixHeaders);
-  matrixSheet.views = [{ state: "frozen", xSplit: 5, ySplit: 1 }];
+  matrixSheet.views = [{ state: "frozen", xSplit: 6, ySplit: 1 }];
 
   const headerRow = matrixSheet.getRow(1);
   headerRow.font = { bold: true };
   for (let col = 1; col <= allMatrixHeaders.length; col += 1) {
-    matrixSheet.getColumn(col).width = col <= 5 ? 20 : col <= 10 ? 18 : 28;
-    if (col >= 2 && col <= 5) {
+    matrixSheet.getColumn(col).width = col <= 6 ? 20 : col <= 11 ? 18 : 28;
+    if (col >= 2 && col <= 6) {
       matrixSheet.getColumn(col).numFmt = "@";
     }
   }
@@ -149,6 +161,7 @@ export async function buildAttendanceMonthlyMatrixXlsx(input: {
       displayName: emp.employee_display_name,
       personnelCode: emp.personnel_code,
     });
+    const profileSummaryLabel = formatEmployeeSlotPolicySummaryLabel(emp);
 
     const rowValues: Array<string | number> = [
       index + 1,
@@ -156,6 +169,7 @@ export async function buildAttendanceMonthlyMatrixXlsx(input: {
       sanitizeSpreadsheetText(resolvedIdentity.personnelCode ?? ""),
       sanitizeSpreadsheetText(emp.branch?.display_name ?? "Mặc định (HQ)"),
       sanitizeSpreadsheetText(emp.branch?.branch_code ?? "HQ"),
+      sanitizeSpreadsheetText(profileSummaryLabel),
       emp.summary.checkin_day_count,
       emp.summary.total_checkins,
       emp.summary.approved_leave_day_count,
@@ -204,42 +218,63 @@ export async function buildAttendanceMonthlyMatrixXlsx(input: {
     });
   });
 
-  const monthPolicies =
-    input.slot_policy?.month_policies && input.slot_policy.month_policies.length > 0
-      ? input.slot_policy.month_policies
-      : input.slot_policy?.current_policy
-        ? [input.slot_policy.current_policy]
-        : [DEFAULT_ATTENDANCE_SLOT_POLICY];
-  const primaryPolicy =
-    input.slot_policy?.current_policy ??
-    monthPolicies[monthPolicies.length - 1] ??
-    DEFAULT_ATTENDANCE_SLOT_POLICY;
+  const collectedMonthPolicies: AttendanceSlotPolicyProjection[] = [];
+  const seenPolicyKeys = new Set<string>();
+  const addPolicyCandidate = (pol: AttendanceSlotPolicyProjection | null | undefined) => {
+    if (!pol) return;
+    const key = `${pol.profile_id ?? "default"}:${pol.version}`;
+    if (seenPolicyKeys.has(key)) return;
+    seenPolicyKeys.add(key);
+    collectedMonthPolicies.push(pol);
+  };
 
-  let detailSlotCount = Math.max(
-    1,
-    primaryPolicy.slots.length,
-    ...monthPolicies.map((pol) => pol.slots.length),
-  );
+  if (input.slot_policy?.profiles) {
+    for (const prof of input.slot_policy.profiles) {
+      for (const pol of prof.month_policies ?? []) {
+        addPolicyCandidate(pol);
+      }
+      if (!prof.month_policies || prof.month_policies.length === 0) {
+        addPolicyCandidate(prof.current_policy);
+      }
+    }
+  }
+  if (input.slot_policy?.month_policies) {
+    for (const pol of input.slot_policy.month_policies) {
+      addPolicyCandidate(pol);
+    }
+  }
+  if (collectedMonthPolicies.length === 0) {
+    addPolicyCandidate(input.slot_policy?.current_policy ?? DEFAULT_ATTENDANCE_SLOT_POLICY);
+  }
+
+  let maxObservedDaySlots = 0;
   for (const emp of input.items) {
     for (const day of emp.days) {
-      if (Array.isArray(day.slots) && day.slots.length > detailSlotCount) {
-        detailSlotCount = day.slots.length;
+      const pres = describeMatrixDayCell(day);
+      if (pres.slots.length > maxObservedDaySlots) {
+        maxObservedDaySlots = pres.slots.length;
       }
     }
   }
 
+  const detailSlotCount = Math.max(
+    1,
+    maxObservedDaySlots,
+    ...collectedMonthPolicies.map((pol) => pol.slots.length),
+  );
+
   const detailSlotHeaders = Array.from({ length: detailSlotCount }, (_, idx) => {
-    const fromPrimary = primaryPolicy.slots[idx];
-    if (fromPrimary) {
-      return `${fromPrimary.slot_label || `Time ${idx + 1}`} (${fromPrimary.target_time})`;
-    }
-    for (let pIdx = monthPolicies.length - 1; pIdx >= 0; pIdx -= 1) {
-      const candidate = monthPolicies[pIdx]?.slots[idx];
-      if (candidate) {
-        return `${candidate.slot_label || `Time ${idx + 1}`} (${candidate.target_time})`;
+    const distinctTitles = new Set<string>();
+    for (const pol of collectedMonthPolicies) {
+      const s = pol.slots[idx];
+      if (s) {
+        distinctTitles.add(`${s.slot_label || `Time ${idx + 1}`} (${s.target_time})`);
       }
     }
-    return `Time ${idx + 1}`;
+    if (distinctTitles.size === 1) {
+      return [...distinctTitles][0]!;
+    }
+    return `Mốc ${idx + 1}`;
   });
 
   const detailSheet = workbook.addWorksheet("Chi tiết theo ngày");
@@ -249,7 +284,8 @@ export async function buildAttendanceMonthlyMatrixXlsx(input: {
     "Mã nhân sự",
     "Chi nhánh hiện tại",
     "Trạng thái ngày",
-    "Phiên bản khung giờ",
+    "Cấu hình khung giờ",
+    "Số mốc áp dụng",
     ...detailSlotHeaders,
     "Số mốc chưa có lượt chấm",
     "Số lượt lệch khung giờ",
@@ -268,11 +304,12 @@ export async function buildAttendanceMonthlyMatrixXlsx(input: {
   detailSheet.getRow(1).font = { bold: true };
   for (let col = 1; col <= detailHeaders.length; col += 1) {
     detailSheet.getColumn(col).width =
-      col >= 7 && col < 7 + detailSlotCount ? 26 : 20;
+      col >= 8 && col < 8 + detailSlotCount ? 28 : 20;
   }
   detailSheet.getColumn(2).numFmt = "@";
   detailSheet.getColumn(3).numFmt = "@";
   detailSheet.getColumn(4).numFmt = "@";
+  detailSheet.getColumn(6).numFmt = "@";
 
   for (const emp of input.items) {
     const resolvedIdentity = resolveAttendanceEmployeeDisplayIdentity({
@@ -295,7 +332,7 @@ export async function buildAttendanceMonthlyMatrixXlsx(input: {
         if (!slotPres) {
           return "";
         }
-        return sanitizeSpreadsheetText(`${slotPres.targetTime}: ${slotPres.summaryText}`);
+        return sanitizeSpreadsheetText(`${slotPres.slotTitle}: ${slotPres.summaryText}`);
       });
 
       detailSheet.addRow([
@@ -304,7 +341,10 @@ export async function buildAttendanceMonthlyMatrixXlsx(input: {
         sanitizeSpreadsheetText(resolvedIdentity.personnelCode ?? ""),
         sanitizeSpreadsheetText(emp.branch?.display_name ?? "Mặc định (HQ)"),
         MATRIX_DAY_STATUS_LABELS[day.day_status],
-        `v${presentation.policyVersionUsed}`,
+        sanitizeSpreadsheetText(
+          `${presentation.policyProfileNameUsed} (v${presentation.policyVersionUsed})`,
+        ),
+        presentation.slots.length,
         ...dynamicSlotCells,
         presentation.missingSlotCount,
         presentation.lateOrEarlyCheckinCount,
@@ -341,12 +381,11 @@ export async function buildAttendanceMonthlyMatrixXlsx(input: {
   const policyHeaderRowIdx = legendSheet.rowCount;
   legendSheet.getRow(policyHeaderRowIdx).font = { bold: true };
 
-  const policySlotHeaders = Array.from({ length: detailSlotCount }, (_, idx) => {
-    const fromPrimary = primaryPolicy.slots[idx];
-    return fromPrimary?.slot_label || `Time ${idx + 1}`;
-  });
+  const policySlotHeaders = Array.from({ length: detailSlotCount }, (_, idx) => `Mốc ${idx + 1}`);
 
   legendSheet.addRow([
+    "Tên cấu hình",
+    "Mã cấu hình",
     "Phiên bản",
     "Hiệu lực từ ngày",
     "Hiệu lực đến ngày",
@@ -356,7 +395,7 @@ export async function buildAttendanceMonthlyMatrixXlsx(input: {
   ]);
   legendSheet.getRow(legendSheet.rowCount).font = { bold: true };
 
-  for (const pol of monthPolicies) {
+  for (const pol of collectedMonthPolicies) {
     const slotConfigCells = Array.from({ length: detailSlotCount }, (_, idx) => {
       const s = pol.slots[idx];
       if (!s) return "—";
@@ -364,6 +403,8 @@ export async function buildAttendanceMonthlyMatrixXlsx(input: {
       return `${labelPrefix}${s.target_time} (-${s.grace_before_minutes}p / +${s.grace_after_minutes}p)`;
     });
     legendSheet.addRow([
+      sanitizeSpreadsheetText(pol.profile_name || DEFAULT_ATTENDANCE_SLOT_POLICY_PROFILE_NAME),
+      sanitizeSpreadsheetText(pol.profile_code || DEFAULT_ATTENDANCE_SLOT_POLICY_PROFILE_CODE),
       `v${pol.version}`,
       pol.effective_from_date,
       pol.effective_to_date ?? "Đang mở",
@@ -373,7 +414,7 @@ export async function buildAttendanceMonthlyMatrixXlsx(input: {
     ]);
   }
 
-  const totalLegendCols = 5 + detailSlotCount;
+  const totalLegendCols = 7 + detailSlotCount;
   for (let col = 1; col <= totalLegendCols; col += 1) {
     legendSheet.getColumn(col).width = col === 3 ? 65 : 26;
   }
