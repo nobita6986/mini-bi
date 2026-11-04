@@ -50,7 +50,8 @@ export type AttendanceAdminWorkspaceTab =
   | "checkins"
   | "monthly-matrix"
   | "explanations"
-  | "branches";
+  | "branches"
+  | "config";
 
 export type MatrixEmployeeFilterMode = "employee" | "search";
 

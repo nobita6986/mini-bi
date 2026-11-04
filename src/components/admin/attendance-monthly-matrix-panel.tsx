@@ -422,12 +422,14 @@ function suggestNextSlotTargetTime(existingSlots: readonly SlotDraftItem[]): str
   return `${nextHh}:${nextMm}`;
 }
 
-function AttendanceSlotPolicySummaryCard({
-  activeReport,
+export function AttendanceSlotPolicySummaryCard({
+  activeReport = null,
+  canManageSlotPolicyFallback,
   onPolicyCreated,
 }: {
-  activeReport: AttendanceMonthlyMatrixReportProjection | null;
-  onPolicyCreated: () => void;
+  activeReport?: AttendanceMonthlyMatrixReportProjection | null;
+  canManageSlotPolicyFallback?: boolean;
+  onPolicyCreated?: () => void;
 }) {
   const router = useRouter();
   const notify = useNotify();
@@ -460,11 +462,31 @@ function AttendanceSlotPolicySummaryCard({
 
   const canManageSlotPolicy =
     activeReport?.viewer.can_manage_slot_policy === true ||
-    policiesData?.viewer.can_manage_slot_policy === true;
+    policiesData?.viewer.can_manage_slot_policy === true ||
+    canManageSlotPolicyFallback === true;
 
-  const availableProfiles: AttendanceSlotPolicyProfileAdminItemProjection[] = useMemo(
-    () => policiesData?.profiles ?? [],
-    [policiesData],
+  const availableProfiles: AttendanceSlotPolicyProfileAdminItemProjection[] = useMemo(() => {
+    if (policiesData?.profiles && policiesData.profiles.length > 0) {
+      return policiesData.profiles;
+    }
+    return (activeReport?.slot_policy.profiles ?? []).map((p) => ({
+      profile_id: p.profile_id,
+      profile_code: p.profile_code,
+      display_name: p.display_name,
+      description: p.description,
+      is_default: p.is_default,
+      active: p.active,
+      version: p.version,
+      active_assignment_count: 0,
+      current_policy: p.current_policy,
+      latest_policy: p.latest_policy,
+      versions: p.month_policies,
+    }));
+  }, [activeReport?.slot_policy.profiles, policiesData]);
+
+  const assignableProfiles = useMemo(
+    () => availableProfiles.filter((prof) => prof.active && !prof.is_default),
+    [availableProfiles],
   );
 
   const selectedProfile = useMemo(
@@ -602,15 +624,18 @@ function AttendanceSlotPolicySummaryCard({
             targetProf,
           );
         } else if (openModeAfterLoad === "assignments") {
-          const firstNonDefault = (projected.profiles ?? []).find(
+          const nonDefaultActive = (projected.profiles ?? []).filter(
             (p) => !p.is_default && p.active,
           );
-          setAssignProfileIdInput(
-            (current) =>
-              current ||
-              firstNonDefault?.profile_id ||
-              projected.profiles?.[0]?.profile_id ||
-              DEFAULT_ATTENDANCE_SLOT_POLICY_PROFILE_ID,
+          const preferredProfileId =
+            nonDefaultActive.find((p) => p.profile_id === selectedProfileId)
+              ?.profile_id ??
+            nonDefaultActive[0]?.profile_id ??
+            "";
+          setAssignProfileIdInput((current) =>
+            current && nonDefaultActive.some((p) => p.profile_id === current)
+              ? current
+              : preferredProfileId,
           );
         }
       } catch {
@@ -621,6 +646,52 @@ function AttendanceSlotPolicySummaryCard({
     [populateFormFromPolicy, router, selectedProfileId],
   );
 
+  useEffect(() => {
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const response = await fetch("/api/admin/attendance/slot-policies", {
+          method: "GET",
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        if (controller.signal.aborted) return;
+        if (response.status === 401) {
+          router.replace("/login?next=/admin/attendance");
+          return;
+        }
+        let payload: unknown = null;
+        try {
+          payload = await response.json();
+        } catch {
+          payload = null;
+        }
+        if (controller.signal.aborted) return;
+        if (!response.ok || !isRecord(payload) || payload.ok !== true) {
+          setLoadError("Không tải được lịch sử cấu hình khung giờ chấm công.");
+          return;
+        }
+        const projected = projectAttendanceSlotPoliciesAdminList(payload);
+        if (!projected) {
+          setLoadError("Dữ liệu cấu hình khung giờ chấm công không đúng định dạng chuẩn.");
+          return;
+        }
+        setPoliciesData(projected);
+      } catch (err) {
+        if (
+          controller.signal.aborted ||
+          (err instanceof Error && err.name === "AbortError")
+        ) {
+          return;
+        }
+        setLoadError("Không thể kết nối máy chủ để tải cấu hình khung giờ chấm công.");
+      }
+    })();
+    return () => {
+      controller.abort();
+    };
+  }, [router]);
+
   function openHistoryDialog() {
     setMutationError(null);
     setDialogMode({ kind: "history" });
@@ -629,6 +700,14 @@ function AttendanceSlotPolicySummaryCard({
 
   function openAssignmentsDialog() {
     setMutationError(null);
+    setAssignProfileIdInput((current) =>
+      current && assignableProfiles.some((p) => p.profile_id === current)
+        ? current
+        : assignableProfiles.find((p) => p.profile_id === selectedProfileId)
+            ?.profile_id ??
+            assignableProfiles[0]?.profile_id ??
+            "",
+    );
     setDialogMode({ kind: "assignments" });
     void fetchSlotPolicies("assignments");
   }
@@ -798,9 +877,18 @@ function AttendanceSlotPolicySummaryCard({
       }
 
       setMutationBusy(false);
-      const createdProfileId = projected.profile?.profile_id;
+      const createdProfileId =
+        projected.profile?.profile_id ?? projected.policy.profile_id;
       if (typeof createdProfileId === "string" && createdProfileId.length > 0) {
         setSelectedProfileId(createdProfileId);
+        if (
+          (projected.profile &&
+            !projected.profile.is_default &&
+            projected.profile.active) ||
+          projected.policy.is_default === false
+        ) {
+          setAssignProfileIdInput(createdProfileId);
+        }
       }
       setDialogMode({ kind: "closed" });
       notify.success({
@@ -808,7 +896,7 @@ function AttendanceSlotPolicySummaryCard({
         description: `Hiệu lực từ ngày ${projected.policy.effective_from_date} (${projected.policy.slots.map((s) => s.target_time).join(" · ")})`,
       });
       void fetchSlotPolicies();
-      onPolicyCreated();
+      onPolicyCreated?.();
     } catch {
       setMutationBusy(false);
       setMutationError("Không thể kết nối máy chủ khi lưu khung giờ chấm công.");
@@ -894,7 +982,7 @@ function AttendanceSlotPolicySummaryCard({
         description: `${projected.assignment.employee_display_name} → ${projected.assignment.profile_name} (từ ${projected.assignment.valid_from})`,
       });
       void fetchSlotPolicies("assignments");
-      onPolicyCreated();
+      onPolicyCreated?.();
     } catch {
       setMutationBusy(false);
       setMutationError("Không thể kết nối máy chủ khi gán cấu hình khung giờ.");
@@ -964,7 +1052,7 @@ function AttendanceSlotPolicySummaryCard({
         description: `${projected.assignment.employee_display_name} quay về cấu hình Mặc định từ hôm nay.`,
       });
       void fetchSlotPolicies("assignments");
-      onPolicyCreated();
+      onPolicyCreated?.();
     } catch {
       setMutationBusy(false);
       setMutationError("Không thể kết nối máy chủ khi hủy gán cấu hình khung giờ.");
@@ -1007,6 +1095,20 @@ function AttendanceSlotPolicySummaryCard({
         }));
   const employeeOptionsForAssign =
     policiesData?.employee_options ?? activeReport?.employee_options ?? [];
+  const historyVersions = useMemo(() => {
+    if (policiesData?.profiles && policiesData.profiles.length > 0) {
+      return policiesData.profiles.flatMap((prof) =>
+        prof.versions.map((ver) => ({
+          ...ver,
+          profile_id: ver.profile_id ?? prof.profile_id,
+          profile_code: ver.profile_code ?? prof.profile_code,
+          profile_name: ver.profile_name ?? prof.display_name,
+          is_default: ver.is_default ?? prof.is_default,
+        })),
+      );
+    }
+    return policiesData?.versions ?? [];
+  }, [policiesData]);
 
   return (
     <Card>
@@ -1051,7 +1153,7 @@ function AttendanceSlotPolicySummaryCard({
                 + Tạo cấu hình có tên
               </Button>
             </>
-          ) : activeReport ? (
+          ) : activeReport || policiesData ? (
             <StatusBadge tone="neutral">Chỉ xem (BoD)</StatusBadge>
           ) : null}
         </div>
@@ -1190,7 +1292,7 @@ function AttendanceSlotPolicySummaryCard({
                   </tr>
                 </thead>
                 <tbody>
-                  {policiesData.versions.map((p) => {
+                  {historyVersions.map((p) => {
                     const amSlots = p.slots.filter((s) => s.session_code === "AM");
                     const pmSlots = p.slots.filter((s) => s.session_code === "PM");
                     return (
@@ -1701,6 +1803,12 @@ function AttendanceSlotPolicySummaryCard({
         contentClassName="sm:w-[min(56rem,calc(100vw-2rem))]"
       >
         <div className="space-y-4">
+          {loadError ? (
+            <Alert tone="error" role="alert" title="Không tải được danh sách cấu hình khung giờ">
+              <p>{loadError}</p>
+            </Alert>
+          ) : null}
+
           {mutationError ? (
             <Alert tone="error" role="alert" title="Không thể cập nhật phân công khung giờ">
               <p>{mutationError}</p>
@@ -1734,7 +1842,11 @@ function AttendanceSlotPolicySummaryCard({
                       personnelCode: emp.personnel_code,
                     });
                     const currentProfileName =
-                      "slot_profile_name" in emp ? emp.slot_profile_name : undefined;
+                      "current_profile_name" in emp
+                        ? emp.current_profile_name
+                        : "slot_profile_name" in emp
+                          ? emp.slot_profile_name
+                          : undefined;
                     return (
                       <option key={emp.app_user_id} value={emp.app_user_id}>
                         {resolved.displayName}
@@ -1764,14 +1876,13 @@ function AttendanceSlotPolicySummaryCard({
                   className={INPUT_CLASS}
                 >
                   <option value="">-- Chọn cấu hình khung giờ --</option>
-                  {availableProfiles
-                    .filter((prof) => prof.active)
-                    .map((prof) => (
-                      <option key={prof.profile_id} value={prof.profile_id}>
-                        {prof.display_name} ({prof.current_policy.slots.length} mốc:{" "}
-                        {prof.current_policy.slots.map((s) => s.target_time).join("/")})
-                      </option>
-                    ))}
+                  {assignableProfiles.map((prof) => (
+                    <option key={prof.profile_id} value={prof.profile_id}>
+                      {prof.display_name} ({prof.profile_code} ·{" "}
+                      {prof.current_policy.slots.length} mốc:{" "}
+                      {prof.current_policy.slots.map((s) => s.target_time).join("/")})
+                    </option>
+                  ))}
                 </select>
               </div>
 
@@ -1926,6 +2037,7 @@ export function AttendanceMonthlyMatrixSection() {
     message: string;
     canRetry: boolean;
   } | null>(null);
+  const [legendExpanded, setLegendExpanded] = useState(false);
   const matrixTableContainerRef = useRef<HTMLDivElement | null>(null);
 
   const requestReload = useCallback(() => {
@@ -2170,11 +2282,6 @@ export function AttendanceMonthlyMatrixSection() {
           <p>{loadState.detail}</p>
         </Alert>
       ) : null}
-
-      <AttendanceSlotPolicySummaryCard
-        activeReport={activeReport}
-        onPolicyCreated={requestReload}
-      />
 
       <form onSubmit={handleFilterSubmit}>
         <FilterToolbar
@@ -2458,47 +2565,65 @@ export function AttendanceMonthlyMatrixSection() {
             aria-label="Chú giải màu sắc và quy tắc khung giờ"
             className="rounded-xl border border-border bg-surface-muted/40 p-3 text-xs"
           >
-            <p className="mb-2 font-semibold text-foreground">
-              Chú giải màu sắc &amp; tín hiệu rà soát HR HRP:
-            </p>
-            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-              {MATRIX_LEGEND_ITEMS.map((item) => {
-                const badgeClass =
-                  item.tone === "emerald"
-                    ? "border-emerald-300 bg-emerald-50 text-emerald-950 dark:border-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-200"
-                    : item.tone === "amber"
-                      ? "border-amber-300 bg-amber-50 text-amber-950 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-200"
-                      : item.tone === "sky"
-                        ? "border-sky-300 bg-sky-50 text-sky-950 dark:border-sky-800 dark:bg-sky-950/50 dark:text-sky-200"
-                        : "border-red-300 bg-red-50 text-red-950 dark:border-red-800 dark:bg-red-950/50 dark:text-red-200";
-                return (
-                  <div
-                    key={item.key}
-                    className="rounded-lg border border-border/80 bg-surface p-2"
-                  >
-                    <span
-                      className={cn(
-                        "inline-flex items-center rounded border px-1.5 py-0.5 text-[11px] font-semibold",
-                        badgeClass,
-                      )}
-                    >
-                      {item.badgeText}
-                    </span>
-                    <p className="mt-1 text-[11px] font-medium text-foreground">
-                      {item.title}
-                    </p>
-                    <p className="mt-0.5 text-[11px] leading-snug text-muted">
-                      {item.description}
-                    </p>
-                  </div>
-                );
-              })}
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="font-semibold text-foreground">
+                Chú giải màu sắc &amp; tín hiệu rà soát HR HRP
+              </p>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                aria-expanded={legendExpanded}
+                aria-controls="attendance-matrix-color-legend"
+                onClick={() => setLegendExpanded((prev) => !prev)}
+              >
+                {legendExpanded ? "Thu gọn chú giải màu sắc" : "Mở chú giải màu sắc"}
+              </Button>
             </div>
-            <p className="mt-2 text-[11px] text-muted">
-              <strong>Lưu ý nghiệp vụ:</strong> Hệ thống áp dụng thống nhất bộ mốc giờ chuẩn theo cấu hình đang có hiệu lực cho mọi nhân viên và không tự suy luận nghĩa vụ số lượt chấm của từng nhân sự. Nhãn{" "}
-              <strong className="text-foreground">“Chưa có lượt chấm”</strong> và cảnh báo{" "}
-              <strong className="text-foreground">Sớm/Muộn Xp</strong> là tín hiệu để HR HRP kiểm tra và đối chiếu theo quy định từng bộ phận.
-            </p>
+            <div
+              id="attendance-matrix-color-legend"
+              hidden={!legendExpanded}
+              className={cn("mt-2 space-y-2", !legendExpanded && "hidden")}
+            >
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                {MATRIX_LEGEND_ITEMS.map((item) => {
+                  const badgeClass =
+                    item.tone === "emerald"
+                      ? "border-emerald-300 bg-emerald-50 text-emerald-950 dark:border-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-200"
+                      : item.tone === "amber"
+                        ? "border-amber-300 bg-amber-50 text-amber-950 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-200"
+                        : item.tone === "sky"
+                          ? "border-sky-300 bg-sky-50 text-sky-950 dark:border-sky-800 dark:bg-sky-950/50 dark:text-sky-200"
+                          : "border-red-300 bg-red-50 text-red-950 dark:border-red-800 dark:bg-red-950/50 dark:text-red-200";
+                  return (
+                    <div
+                      key={item.key}
+                      className="rounded-lg border border-border/80 bg-surface p-2"
+                    >
+                      <span
+                        className={cn(
+                          "inline-flex items-center rounded border px-1.5 py-0.5 text-[11px] font-semibold",
+                          badgeClass,
+                        )}
+                      >
+                        {item.badgeText}
+                      </span>
+                      <p className="mt-1 text-[11px] font-medium text-foreground">
+                        {item.title}
+                      </p>
+                      <p className="mt-0.5 text-[11px] leading-snug text-muted">
+                        {item.description}
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
+              <p className="text-[11px] text-muted">
+                <strong>Lưu ý nghiệp vụ:</strong> Hệ thống áp dụng thống nhất bộ mốc giờ chuẩn theo cấu hình đang có hiệu lực cho mọi nhân viên và không tự suy luận nghĩa vụ số lượt chấm của từng nhân sự. Nhãn{" "}
+                <strong className="text-foreground">“Chưa có lượt chấm”</strong> và cảnh báo{" "}
+                <strong className="text-foreground">Sớm/Muộn Xp</strong> là tín hiệu để HR HRP kiểm tra và đối chiếu theo quy định từng bộ phận.
+              </p>
+            </div>
           </div>
         </div>
 

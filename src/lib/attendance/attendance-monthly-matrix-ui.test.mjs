@@ -1826,3 +1826,114 @@ test("Multi-Profile Slot Policies UI payload builders, assignment immediate effe
   const legendSheet = wb.getWorksheet("Chú giải & Khung giờ");
   assert.ok(legendSheet);
 });
+
+test("Attendance Config Hotfix: dedicated 'Cấu hình chấm công' tab, slot policy assignment dropdown, streamlined check-in overview cards, collapsible monthly legend, and preserved check-in distance display", () => {
+  // 1. Slot policy profile assignment dropdown & mount-time fetch
+  assert.match(
+    matrixPanelSource,
+    /export function AttendanceSlotPolicySummaryCard\(/,
+    "AttendanceSlotPolicySummaryCard should be exported for the dedicated configuration tab",
+  );
+  assert.match(
+    matrixPanelSource,
+    /useEffect\(\(\) => \{\s*const controller = new AbortController\(\);\s*void \(async \(\) => \{\s*try \{\s*const response = await fetch\("\/api\/admin\/attendance\/slot-policies"/,
+    "AttendanceSlotPolicySummaryCard should fetch slot policies on mount",
+  );
+  assert.match(
+    matrixPanelSource,
+    /const assignableProfiles = useMemo\(\s*\(\) => availableProfiles\.filter\(\(prof\) => prof\.active && !prof\.is_default\),\s*\[availableProfiles\],\s*\);/,
+    "Assignment dropdown should list active non-default named profiles",
+  );
+  assert.match(
+    matrixPanelSource,
+    /<select[\s\S]*?id="slot-policy-assign-profile"[\s\S]*?\{assignableProfiles\.map\(\(prof\) =>/,
+    "slot-policy-assign-profile select should render assignableProfiles",
+  );
+
+  // 2. Separate 'Cấu hình chấm công' tab at the end of the tab row; no duplication in report tabs
+  assert.match(
+    managerSource,
+    /id="attendance-tab-branches"[\s\S]*?Chi nhánh HRP[\s\S]*?<\/button>\s*<button[\s\S]*?id="attendance-tab-config"[\s\S]*?aria-controls="attendance-panel-config"[\s\S]*?Cấu hình chấm công\s*<\/button>/,
+    "'Cấu hình chấm công' tab must be at the end of the tab row after 'Chi nhánh HRP'",
+  );
+  assert.match(
+    managerSource,
+    /activeTab === "config"\s*\?\s*\(\s*<div\s+id="attendance-panel-config"\s+role="tabpanel"\s+aria-labelledby="attendance-tab-config"[\s\S]*?title="Vị trí trụ sở tính khoảng cách"[\s\S]*?<AttendanceSlotPolicySummaryCard/,
+    "Both Headquarters Location card and Slot Policy configuration card must render inside #attendance-panel-config",
+  );
+  const monthlyMatrixSectionSource =
+    matrixPanelSource.split("export function AttendanceMonthlyMatrixSection()")[1] ?? "";
+  assert.equal(
+    monthlyMatrixSectionSource.includes("<AttendanceSlotPolicySummaryCard"),
+    false,
+    "AttendanceMonthlyMatrixSection ('Báo cáo tháng') must not repeat AttendanceSlotPolicySummaryCard",
+  );
+  assert.equal(
+    explanationWorkspaceSource.includes("Vị trí trụ sở tính khoảng cách"),
+    false,
+    "Explanation workspace must not repeat Headquarters Location config",
+  );
+  assert.equal(
+    explanationWorkspaceSource.includes("AttendanceSlotPolicySummaryCard"),
+    false,
+    "Explanation workspace must not repeat Slot Policy config",
+  );
+
+  // 3. Remove the 3 redundant KPI cards from 'Chi tiết lượt chấm công' overview while keeping remaining 3 cards, OffsetPager, and FloatingTableNav
+  assert.equal(
+    managerSource.includes("Khoảng cách trung bình tới trụ sở"),
+    false,
+    "Removed 'Khoảng cách trung bình tới trụ sở' card from check-in overview",
+  );
+  assert.equal(
+    managerSource.includes("Khoảng cách xa nhất tới trụ sở"),
+    false,
+    "Removed 'Khoảng cách xa nhất tới trụ sở' card from check-in overview",
+  );
+  assert.equal(
+    managerSource.includes("Phân trang máy chủ"),
+    false,
+    "Removed 'Phân trang máy chủ' card from check-in overview",
+  );
+  assert.equal(
+    managerSource.includes("Tổng lượt chấm công") &&
+      managerSource.includes("Xác minh thời gian") &&
+      managerSource.includes("Độ phủ tính khoảng cách"),
+    true,
+    "Kept the 3 core overview cards in 'Chi tiết lượt chấm công'",
+  );
+  assert.match(
+    managerSource,
+    /<FloatingTableNav[\s\S]*?containerRef=\{checkinsTableContainerRef\}[\s\S]*?tableLabel="Chi tiết lượt chấm công"/,
+    "Kept FloatingTableNav on the check-in detail table",
+  );
+  assert.match(
+    managerSource,
+    /<OffsetPager[\s\S]*?ariaLabel="Phân trang danh sách lượt chấm công"/,
+    "Kept OffsetPager on the check-in detail table",
+  );
+
+  // 4. Collapsible color legend in 'Báo cáo tháng' with accessible button & aria attributes
+  assert.match(
+    monthlyMatrixSectionSource,
+    /const \[legendExpanded, setLegendExpanded\] = useState\(false\);/,
+    "Monthly matrix color legend state should be toggleable",
+  );
+  assert.match(
+    monthlyMatrixSectionSource,
+    /aria-expanded=\{legendExpanded\}\s+aria-controls="attendance-matrix-color-legend"[\s\S]*?\{legendExpanded \? "Thu gọn chú giải màu sắc" : "Mở chú giải màu sắc"\}/,
+    "Monthly matrix color legend toggle button must expose aria-expanded, aria-controls, and clear label",
+  );
+  assert.match(
+    monthlyMatrixSectionSource,
+    /id="attendance-matrix-color-legend"\s+hidden=\{!legendExpanded\}/,
+    "Monthly matrix color legend content container must match aria-controls id and toggle hidden state",
+  );
+
+  // 5. Preserve existing check-in location and distance display without nearest-location calculation
+  assert.match(
+    managerSource,
+    /<GpsDetailCell item=\{item\} \/>[\s\S]*?<DistanceCell item=\{item\} \/>/,
+    "Individual check-in rows preserve GpsDetailCell and DistanceCell display",
+  );
+});

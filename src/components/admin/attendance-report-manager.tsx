@@ -60,6 +60,7 @@ import {
 import {
   AttendanceBranchesAdminSection,
   AttendanceMonthlyMatrixSection,
+  AttendanceSlotPolicySummaryCard,
 } from "@/components/admin/attendance-monthly-matrix-panel";
 import { AttendanceExplanationWorkspace } from "@/components/attendance/attendance-explanation-workspace";
 import { FloatingTableNav } from "@/components/ui/floating-table-nav";
@@ -1503,6 +1504,22 @@ export function AttendanceReportManager() {
         >
           Chi nhánh HRP
         </button>
+        <button
+          type="button"
+          role="tab"
+          id="attendance-tab-config"
+          aria-selected={activeTab === "config"}
+          aria-controls="attendance-panel-config"
+          onClick={() => setActiveTab("config")}
+          className={cn(
+            "min-h-10 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors",
+            activeTab === "config"
+              ? "bg-accent text-on-primary shadow-2xs"
+              : "text-muted hover:bg-surface-muted/70 hover:text-foreground",
+          )}
+        >
+          Cấu hình chấm công
+        </button>
       </div>
 
       {loadState.kind === "error" ? (
@@ -1511,175 +1528,190 @@ export function AttendanceReportManager() {
         </Alert>
       ) : null}
 
-      {/* 1. Headquarters Location Card */}
-      <Card>
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <CardHeader
-            title="Vị trí trụ sở tính khoảng cách"
-            description="Mỗi lần cập nhật tạo một phiên bản tọa độ mới có hiệu lực từ thời điểm lưu. Các lượt chấm công lịch sử giữ nguyên khoảng cách theo phiên bản trụ sở hiệu lực lúc chấm công."
-          />
-          {activeReport?.viewer.can_configure_hq ? (
-            <div className="shrink-0">
-              {!hqFormOpen ? (
-                <Button variant="soft" size="sm" onClick={openHqEditor}>
-                  {activeReport.current_hq
-                    ? "Cập nhật tọa độ trụ sở"
-                    : "Cấu hình tọa độ trụ sở"}
-                </Button>
+      {activeTab === "config" ? (
+        <div
+          id="attendance-panel-config"
+          role="tabpanel"
+          aria-labelledby="attendance-tab-config"
+          className="space-y-6"
+        >
+          {/* 1. Headquarters Location Card */}
+          <Card>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <CardHeader
+                title="Vị trí trụ sở tính khoảng cách"
+                description="Mỗi lần cập nhật tạo một phiên bản tọa độ mới có hiệu lực từ thời điểm lưu. Các lượt chấm công lịch sử giữ nguyên khoảng cách theo phiên bản trụ sở hiệu lực lúc chấm công."
+              />
+              {activeReport?.viewer.can_configure_hq ? (
+                <div className="shrink-0">
+                  {!hqFormOpen ? (
+                    <Button variant="soft" size="sm" onClick={openHqEditor}>
+                      {activeReport.current_hq
+                        ? "Cập nhật tọa độ trụ sở"
+                        : "Cấu hình tọa độ trụ sở"}
+                    </Button>
+                  ) : null}
+                </div>
+              ) : activeReport ? (
+                <StatusBadge tone="neutral">Chỉ xem (BoD/Accounting)</StatusBadge>
               ) : null}
             </div>
-          ) : activeReport ? (
-            <StatusBadge tone="neutral">Chỉ xem (BoD/Accounting)</StatusBadge>
-          ) : null}
-        </div>
 
-        {activeReport ? (
-          activeReport.current_hq ? (
-            <div className="grid gap-3 rounded-xl border border-border bg-surface-muted/50 p-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
-              <div>
-                <p className="text-xs font-medium uppercase tracking-wide text-muted">
-                  Phiên bản hiện hành
-                </p>
-                <p className="mt-1 font-mono font-semibold text-foreground">
-                  v{activeReport.current_hq.version}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs font-medium uppercase tracking-wide text-muted">
-                  Tọa độ (Vĩ độ, Kinh độ)
-                </p>
-                <p className="mt-1 font-mono tabular-nums text-foreground">
-                  {activeReport.current_hq.latitude.toFixed(6)},{" "}
-                  {activeReport.current_hq.longitude.toFixed(6)}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs font-medium uppercase tracking-wide text-muted">
-                  Hiệu lực từ (GMT+7)
-                </p>
-                <p className="mt-1 font-mono tabular-nums text-foreground">
-                  {activeReport.current_hq.effective_from_local}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs font-medium uppercase tracking-wide text-muted">
-                  Người cấu hình
-                </p>
-                <p className="mt-1 font-medium text-foreground">
-                  {activeReport.current_hq.configured_by_display_name}
-                </p>
-              </div>
-            </div>
-          ) : (
-            <Alert tone="warning" title="Chưa cấu hình vị trí trụ sở">
-              <p>
-                Hệ thống chưa có tọa độ trụ sở. Các lượt chấm công phát sinh trước khi cấu hình sẽ hiển thị rõ là{" "}
-                <strong>Không tính được khoảng cách</strong>.
-              </p>
-            </Alert>
-          )
-        ) : (
-          <p className="text-sm text-muted">Đang tải thông tin vị trí trụ sở...</p>
-        )}
+            {activeReport ? (
+              activeReport.current_hq ? (
+                <div className="grid gap-3 rounded-xl border border-border bg-surface-muted/50 p-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wide text-muted">
+                      Phiên bản hiện hành
+                    </p>
+                    <p className="mt-1 font-mono font-semibold text-foreground">
+                      v{activeReport.current_hq.version}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wide text-muted">
+                      Tọa độ (Vĩ độ, Kinh độ)
+                    </p>
+                    <p className="mt-1 font-mono tabular-nums text-foreground">
+                      {activeReport.current_hq.latitude.toFixed(6)},{" "}
+                      {activeReport.current_hq.longitude.toFixed(6)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wide text-muted">
+                      Hiệu lực từ (GMT+7)
+                    </p>
+                    <p className="mt-1 font-mono tabular-nums text-foreground">
+                      {activeReport.current_hq.effective_from_local}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wide text-muted">
+                      Người cấu hình
+                    </p>
+                    <p className="mt-1 font-medium text-foreground">
+                      {activeReport.current_hq.configured_by_display_name}
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <Alert tone="warning" title="Chưa cấu hình vị trí trụ sở">
+                  <p>
+                    Hệ thống chưa có tọa độ trụ sở. Các lượt chấm công phát sinh trước khi cấu hình sẽ hiển thị rõ là{" "}
+                    <strong>Không tính được khoảng cách</strong>.
+                  </p>
+                </Alert>
+              )
+            ) : (
+              <p className="text-sm text-muted">Đang tải thông tin vị trí trụ sở...</p>
+            )}
 
-        {hqFormOpen && activeReport?.viewer.can_configure_hq ? (
-          <form
-            onSubmit={handleSaveHqLocation}
-            className="mt-4 space-y-4 rounded-xl border border-border bg-surface p-4"
-          >
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div>
-                <label
-                  htmlFor="hq-latitude-input"
-                  className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted"
-                >
-                  Vĩ độ trụ sở (Latitude: -90 đến 90)
-                </label>
-                <input
-                  id="hq-latitude-input"
-                  type="text"
-                  inputMode="decimal"
-                  autoComplete="off"
-                  placeholder="Ví dụ: 21.028511"
-                  value={hqLatInput}
-                  disabled={hqSaving}
-                  onChange={(event) => {
-                    setHqLatInput(event.target.value);
-                    setHqPendingAttempt(null);
-                  }}
-                  className={INPUT_CLASS}
-                />
-              </div>
-              <div>
-                <label
-                  htmlFor="hq-longitude-input"
-                  className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted"
-                >
-                  Kinh độ trụ sở (Longitude: -180 đến 180)
-                </label>
-                <input
-                  id="hq-longitude-input"
-                  type="text"
-                  inputMode="decimal"
-                  autoComplete="off"
-                  placeholder="Ví dụ: 105.804817"
-                  value={hqLonInput}
-                  disabled={hqSaving}
-                  onChange={(event) => {
-                    setHqLonInput(event.target.value);
-                    setHqPendingAttempt(null);
-                  }}
-                  className={INPUT_CLASS}
-                />
-              </div>
-            </div>
+            {hqFormOpen && activeReport?.viewer.can_configure_hq ? (
+              <form
+                onSubmit={handleSaveHqLocation}
+                className="mt-4 space-y-4 rounded-xl border border-border bg-surface p-4"
+              >
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div>
+                    <label
+                      htmlFor="hq-latitude-input"
+                      className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted"
+                    >
+                      Vĩ độ trụ sở (Latitude: -90 đến 90)
+                    </label>
+                    <input
+                      id="hq-latitude-input"
+                      type="text"
+                      inputMode="decimal"
+                      autoComplete="off"
+                      placeholder="Ví dụ: 21.028511"
+                      value={hqLatInput}
+                      disabled={hqSaving}
+                      onChange={(event) => {
+                        setHqLatInput(event.target.value);
+                        setHqPendingAttempt(null);
+                      }}
+                      className={INPUT_CLASS}
+                    />
+                  </div>
+                  <div>
+                    <label
+                      htmlFor="hq-longitude-input"
+                      className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted"
+                    >
+                      Kinh độ trụ sở (Longitude: -180 đến 180)
+                    </label>
+                    <input
+                      id="hq-longitude-input"
+                      type="text"
+                      inputMode="decimal"
+                      autoComplete="off"
+                      placeholder="Ví dụ: 105.804817"
+                      value={hqLonInput}
+                      disabled={hqSaving}
+                      onChange={(event) => {
+                        setHqLonInput(event.target.value);
+                        setHqPendingAttempt(null);
+                      }}
+                      className={INPUT_CLASS}
+                    />
+                  </div>
+                </div>
 
-            {hqFormError ? (
-              <Alert tone="error" role="alert" title="Không thể lưu tọa độ trụ sở">
-                <p>{hqFormError}</p>
-              </Alert>
-            ) : null}
+                {hqFormError ? (
+                  <Alert tone="error" role="alert" title="Không thể lưu tọa độ trụ sở">
+                    <p>{hqFormError}</p>
+                  </Alert>
+                ) : null}
 
-            {hqConflictMessage ? (
-              <Alert tone="warning" role="alert" title="Dữ liệu trụ sở đã thay đổi">
-                <p>{hqConflictMessage}</p>
-                <div className="mt-2">
+                {hqConflictMessage ? (
+                  <Alert tone="warning" role="alert" title="Dữ liệu trụ sở đã thay đổi">
+                    <p>{hqConflictMessage}</p>
+                    <div className="mt-2">
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => {
+                          setHqConflictMessage(null);
+                          setHqFormOpen(false);
+                          requestReload();
+                        }}
+                      >
+                        Tải lại phiên bản mới nhất
+                      </Button>
+                    </div>
+                  </Alert>
+                ) : null}
+
+                <div className="flex flex-wrap items-center justify-end gap-2">
                   <Button
                     variant="secondary"
                     size="sm"
+                    disabled={hqSaving}
                     onClick={() => {
-                      setHqConflictMessage(null);
                       setHqFormOpen(false);
-                      requestReload();
+                      setHqFormError(null);
+                      setHqConflictMessage(null);
+                      setHqPendingAttempt(null);
                     }}
                   >
-                    Tải lại phiên bản mới nhất
+                    Hủy
+                  </Button>
+                  <Button variant="primary" size="sm" type="submit" loading={hqSaving}>
+                    {hqSaving ? "Đang lưu..." : "Lưu phiên bản tọa độ mới"}
                   </Button>
                 </div>
-              </Alert>
+              </form>
             ) : null}
+          </Card>
 
-            <div className="flex flex-wrap items-center justify-end gap-2">
-              <Button
-                variant="secondary"
-                size="sm"
-                disabled={hqSaving}
-                onClick={() => {
-                  setHqFormOpen(false);
-                  setHqFormError(null);
-                  setHqConflictMessage(null);
-                  setHqPendingAttempt(null);
-                }}
-              >
-                Hủy
-              </Button>
-              <Button variant="primary" size="sm" type="submit" loading={hqSaving}>
-                {hqSaving ? "Đang lưu..." : "Lưu phiên bản tọa độ mới"}
-              </Button>
-            </div>
-          </form>
-        ) : null}
-      </Card>
+          {/* 2. Slot Policy Configuration Card */}
+          <AttendanceSlotPolicySummaryCard
+            canManageSlotPolicyFallback={activeReport?.viewer.can_configure_hq}
+            onPolicyCreated={requestReload}
+          />
+        </div>
+      ) : null}
 
       {activeTab === "monthly-matrix" ? (
         <div
@@ -1886,42 +1918,6 @@ export function AttendanceReportManager() {
                 <strong className="font-mono text-foreground">
                   {VI_INTEGER.format(activeReport.overview.distance_unavailable_count)}
                 </strong>
-              </p>
-            </Card>
-
-            <Card className="p-4">
-              <p className="text-xs font-medium uppercase tracking-wide text-muted">
-                Khoảng cách trung bình tới trụ sở
-              </p>
-              <p className="mt-1.5 font-mono text-xl font-semibold tabular-nums text-foreground">
-                {formatDistanceMeters(activeReport.overview.avg_distance_meters)}
-              </p>
-              <p className="mt-1 text-xs text-muted">
-                Chỉ tính trên các lượt có tọa độ hợp lệ và đã có trụ sở hiệu lực
-              </p>
-            </Card>
-
-            <Card className="p-4">
-              <p className="text-xs font-medium uppercase tracking-wide text-muted">
-                Khoảng cách xa nhất tới trụ sở
-              </p>
-              <p className="mt-1.5 font-mono text-xl font-semibold tabular-nums text-foreground">
-                {formatDistanceMeters(activeReport.overview.max_distance_meters)}
-              </p>
-              <p className="mt-1 text-xs text-muted">
-                Giá trị lớn nhất trong các lượt tính được khoảng cách
-              </p>
-            </Card>
-
-            <Card className="p-4">
-              <p className="text-xs font-medium uppercase tracking-wide text-muted">
-                Phân trang máy chủ
-              </p>
-              <p className="mt-1.5 font-mono text-xl font-semibold tabular-nums text-foreground">
-                Trang {activeReport.pagination.page} / {activeReport.pagination.total_pages}
-              </p>
-              <p className="mt-1 text-xs text-muted">
-                Tối đa {activeReport.pagination.page_size} dòng mỗi trang từ máy chủ
               </p>
             </Card>
           </div>
