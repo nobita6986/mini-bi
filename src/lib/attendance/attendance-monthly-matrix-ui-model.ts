@@ -15,6 +15,10 @@ import {
   ATTENDANCE_SLOT_MAX_COUNT,
   ATTENDANCE_SLOT_MAX_GRACE_MINUTES,
   ATTENDANCE_SLOT_MIN_COUNT,
+  DEFAULT_ATTENDANCE_SLOT_POLICY_PROFILE_CODE,
+  DEFAULT_ATTENDANCE_SLOT_POLICY_PROFILE_ID,
+  DEFAULT_ATTENDANCE_SLOT_POLICY_PROFILE_NAME,
+  SLOT_PROFILE_CODE_PATTERN,
   evaluateAttendanceDaySlots,
   isValidYearMonth,
   type AttendanceBranchAssignmentAdminItemProjection,
@@ -27,8 +31,10 @@ import {
   type AttendanceMonthlyMatrixDayCellProjection,
   type AttendanceMonthlyMatrixDaySlotProjection,
   type AttendanceMonthlyMatrixDayStatus,
+  type AttendanceMonthlyMatrixEmployeeRowProjection,
   type AttendanceMonthlyMatrixSlotExplanationProjection,
   type AttendanceSlotCode,
+  type AttendanceSlotPolicyAssignmentAdminItemProjection,
   type AttendanceSlotSessionCode,
   type AttendanceSlotStatus,
 } from "./attendance-monthly-matrix-contract.ts";
@@ -178,7 +184,11 @@ export type MatrixDayCellPresentation = {
   statusLabel: string;
   tone: MatrixDayCellTone;
   isRedHighlight: boolean;
+  policyProfileIdUsed: string;
+  policyProfileCodeUsed: string;
+  policyProfileNameUsed: string;
   policyVersionUsed: number;
+  policyBadgeLabel: string;
   hasCheckin: boolean;
   checkinCount: number;
   missingSlotCount: number;
@@ -478,17 +488,38 @@ function resolveSessionLeaveCoverageLabel(
 function resolveRawDaySlots(
   cell: AttendanceMonthlyMatrixDayCellProjection,
 ): {
+  policyProfileIdUsed: string;
+  policyProfileCodeUsed: string;
+  policyProfileNameUsed: string;
   policyVersionUsed: number;
   missingSlotCount: number;
   lateOrEarlyCheckinCount: number;
   slots: AttendanceMonthlyMatrixDaySlotProjection[];
 } {
+  const policyProfileIdUsed =
+    typeof cell.policy_profile_id_used === "string" && cell.policy_profile_id_used.trim().length > 0
+      ? cell.policy_profile_id_used.trim().toLowerCase()
+      : DEFAULT_ATTENDANCE_SLOT_POLICY_PROFILE_ID;
+  const policyProfileCodeUsed =
+    typeof cell.policy_profile_code_used === "string" &&
+    cell.policy_profile_code_used.trim().length > 0
+      ? cell.policy_profile_code_used.trim()
+      : DEFAULT_ATTENDANCE_SLOT_POLICY_PROFILE_CODE;
+  const policyProfileNameUsed =
+    typeof cell.policy_profile_name_used === "string" &&
+    cell.policy_profile_name_used.trim().length > 0
+      ? cell.policy_profile_name_used.trim()
+      : DEFAULT_ATTENDANCE_SLOT_POLICY_PROFILE_NAME;
+
   if (
     Array.isArray(cell.slots) &&
     cell.slots.length >= ATTENDANCE_SLOT_MIN_COUNT &&
     cell.slots.length <= ATTENDANCE_SLOT_MAX_COUNT
   ) {
     return {
+      policyProfileIdUsed,
+      policyProfileCodeUsed,
+      policyProfileNameUsed,
       policyVersionUsed:
         typeof cell.policy_version_used === "number" && cell.policy_version_used >= 1
           ? cell.policy_version_used
@@ -567,11 +598,49 @@ function resolveRawDaySlots(
   });
 
   return {
+    policyProfileIdUsed,
+    policyProfileCodeUsed,
+    policyProfileNameUsed,
     policyVersionUsed: evaluated.policy_version_used,
     missingSlotCount: evaluated.missing_slot_count,
     lateOrEarlyCheckinCount: evaluated.late_or_early_checkin_count,
     slots: evaluated.slots,
   };
+}
+
+export function formatEmployeeSlotPolicySummaryLabel(
+  employee: Pick<
+    AttendanceMonthlyMatrixEmployeeRowProjection,
+    "slot_policy_profile" | "days"
+  >,
+): string {
+  const profileNamesInMonth = employee.slot_policy_profile?.profile_names_in_month ?? [];
+  if (profileNamesInMonth.length > 1) {
+    return profileNamesInMonth.join(" → ");
+  }
+  if (
+    typeof employee.slot_policy_profile?.display_name === "string" &&
+    employee.slot_policy_profile.display_name.trim().length > 0
+  ) {
+    return employee.slot_policy_profile.display_name.trim();
+  }
+  const distinctDayNames: string[] = [];
+  for (const day of employee.days ?? []) {
+    const name =
+      typeof day.policy_profile_name_used === "string" && day.policy_profile_name_used.trim().length > 0
+        ? day.policy_profile_name_used.trim()
+        : null;
+    if (name && !distinctDayNames.includes(name)) {
+      distinctDayNames.push(name);
+    }
+  }
+  if (distinctDayNames.length > 1) {
+    return distinctDayNames.join(" → ");
+  }
+  if (distinctDayNames.length === 1) {
+    return distinctDayNames[0]!;
+  }
+  return DEFAULT_ATTENDANCE_SLOT_POLICY_PROFILE_NAME;
 }
 
 export function describeMatrixDayCell(
@@ -747,12 +816,18 @@ export function describeMatrixDayCell(
       )
     : null;
 
+  const policyBadgeLabel = `KG: ${resolvedSlots.policyProfileNameUsed} v${resolvedSlots.policyVersionUsed}`;
+
   return {
     dayStatus: cell.day_status,
     statusLabel,
     tone,
     isRedHighlight: tone === "red",
+    policyProfileIdUsed: resolvedSlots.policyProfileIdUsed,
+    policyProfileCodeUsed: resolvedSlots.policyProfileCodeUsed,
+    policyProfileNameUsed: resolvedSlots.policyProfileNameUsed,
     policyVersionUsed: resolvedSlots.policyVersionUsed,
+    policyBadgeLabel,
     hasCheckin: cell.has_checkin,
     checkinCount: cell.checkin_count,
     missingSlotCount: resolvedSlots.missingSlotCount,
@@ -845,6 +920,12 @@ export type BranchMutationPayloadResult =
   | { ok: false; message: string };
 
 export function buildCreateSlotPolicyPayload(input: {
+  profileId?: string | null;
+  profileCode?: string | null;
+  displayName?: string | null;
+  description?: string | null;
+  active?: boolean;
+  expectedProfileVersion?: number;
   effectiveFromDate: string;
   slots?: readonly {
     slotCode?: AttendanceSlotCode;
@@ -881,6 +962,52 @@ export function buildCreateSlotPolicyPayload(input: {
       ok: false,
       message: `Ngày bắt đầu hiệu lực không được lùi về quá khứ (phải từ ${input.todayVn} trở đi) để bảo toàn lịch sử báo cáo.`,
     };
+  }
+
+  let normalizedProfileId: string | undefined;
+  if (typeof input.profileId === "string" && input.profileId.trim().length > 0) {
+    const trimmed = input.profileId.trim().toLowerCase();
+    if (!UUID_PATTERN.test(trimmed)) {
+      return { ok: false, message: "Cấu hình khung giờ được chọn không hợp lệ." };
+    }
+    normalizedProfileId = trimmed;
+  }
+
+  let normalizedProfileCode: string | undefined;
+  if (typeof input.profileCode === "string" && input.profileCode.trim().length > 0) {
+    const upperCode = input.profileCode.trim().toUpperCase();
+    if (!SLOT_PROFILE_CODE_PATTERN.test(upperCode)) {
+      return {
+        ok: false,
+        message:
+          "Mã cấu hình khung giờ chỉ được chứa chữ in hoa A-Z, số 0-9 và các ký tự ., _, :, - (tối đa 64 ký tự).",
+      };
+    }
+    normalizedProfileCode = upperCode;
+  }
+
+  let normalizedDisplayName: string | undefined;
+  if (typeof input.displayName === "string" && input.displayName.trim().length > 0) {
+    const trimmedName = input.displayName.trim();
+    if (trimmedName.length > 128 || CONTROL_CHAR_PATTERN.test(trimmedName)) {
+      return {
+        ok: false,
+        message: "Tên cấu hình khung giờ tối đa 128 ký tự và không chứa ký tự điều khiển.",
+      };
+    }
+    normalizedDisplayName = trimmedName;
+  }
+
+  let normalizedDescription: string | undefined;
+  if (typeof input.description === "string") {
+    const trimmedDesc = input.description.trim();
+    if (trimmedDesc.length > 500 || ADDRESS_CONTROL_CHAR_PATTERN.test(trimmedDesc)) {
+      return {
+        ok: false,
+        message: "Mô tả cấu hình tối đa 500 ký tự và không chứa ký tự điều khiển.",
+      };
+    }
+    normalizedDescription = trimmedDesc;
   }
 
   const rawSlots =
@@ -1004,10 +1131,15 @@ export function buildCreateSlotPolicyPayload(input: {
     }
   }
 
+  const isCreatingNewProfile =
+    normalizedProfileId === undefined &&
+    (normalizedProfileCode !== undefined || normalizedDisplayName !== undefined);
+  const minExpectedVersion = isCreatingNewProfile ? 0 : 1;
+
   if (
     typeof input.expectedVersion !== "number" ||
     !Number.isSafeInteger(input.expectedVersion) ||
-    input.expectedVersion < 1
+    input.expectedVersion < minExpectedVersion
   ) {
     return {
       ok: false,
@@ -1023,11 +1155,259 @@ export function buildCreateSlotPolicyPayload(input: {
   return {
     ok: true,
     body: {
+      ...(normalizedProfileId !== undefined ? { profile_id: normalizedProfileId } : {}),
+      ...(normalizedProfileCode !== undefined ? { profile_code: normalizedProfileCode } : {}),
+      ...(normalizedDisplayName !== undefined ? { display_name: normalizedDisplayName } : {}),
+      ...(normalizedDescription !== undefined ? { description: normalizedDescription } : {}),
+      ...(typeof input.active === "boolean" ? { active: input.active } : {}),
+      ...(typeof input.expectedProfileVersion === "number"
+        ? { expected_profile_version: input.expectedProfileVersion }
+        : {}),
       effective_from_date: effectiveFromDate,
       slots: normalizedSlots,
       expected_version: input.expectedVersion,
       idempotency_key: key,
     },
+  };
+}
+
+export function buildUpsertSlotPolicyProfilePayload(input: {
+  profileId: string | null;
+  profileCode: string;
+  displayName: string;
+  description?: string;
+  active: boolean;
+  expectedProfileVersion: number;
+  effectiveFromDate: string;
+  slots: readonly {
+    slotCode?: AttendanceSlotCode;
+    slotLabel?: string;
+    targetTime: string;
+    graceBeforeInput: string | number;
+    graceAfterInput: string | number;
+  }[];
+  expectedVersion: number;
+  idempotencyKey: string;
+  todayVn?: string;
+}): BranchMutationPayloadResult {
+  const isCreate = input.profileId === null || input.profileId.trim() === "";
+  const profileCode = input.profileCode.trim().toUpperCase();
+  if (!SLOT_PROFILE_CODE_PATTERN.test(profileCode)) {
+    return {
+      ok: false,
+      message:
+        "Mã cấu hình khung giờ phải bắt đầu bằng chữ in hoa hoặc số, chỉ gồm A-Z, 0-9, ., _, :, - (tối đa 64 ký tự).",
+    };
+  }
+  if (isCreate && profileCode === DEFAULT_ATTENDANCE_SLOT_POLICY_PROFILE_CODE) {
+    return {
+      ok: false,
+      message: "Mã DEFAULT đã được dành riêng cho cấu hình Mặc định của hệ thống.",
+    };
+  }
+
+  const displayName = input.displayName.trim();
+  if (displayName.length < 1 || displayName.length > 128 || CONTROL_CHAR_PATTERN.test(displayName)) {
+    return {
+      ok: false,
+      message: "Tên cấu hình khung giờ bắt buộc (1–128 ký tự) và không chứa ký tự điều khiển.",
+    };
+  }
+  if (
+    isCreate &&
+    displayName.toLowerCase() === DEFAULT_ATTENDANCE_SLOT_POLICY_PROFILE_NAME.toLowerCase()
+  ) {
+    return {
+      ok: false,
+      message: "Tên 'Mặc định' đã được dành riêng cho cấu hình mặc định của hệ thống.",
+    };
+  }
+
+  if (
+    typeof input.expectedProfileVersion !== "number" ||
+    !Number.isSafeInteger(input.expectedProfileVersion) ||
+    (isCreate ? input.expectedProfileVersion !== 0 : input.expectedProfileVersion < 1)
+  ) {
+    return {
+      ok: false,
+      message: "Phiên bản cấu hình không hợp lệ. Vui lòng tải lại danh sách cấu hình.",
+    };
+  }
+
+  return buildCreateSlotPolicyPayload({
+    profileId: isCreate ? undefined : input.profileId,
+    profileCode,
+    displayName,
+    description: input.description ?? "",
+    active: input.active,
+    expectedProfileVersion: input.expectedProfileVersion,
+    effectiveFromDate: input.effectiveFromDate,
+    slots: input.slots,
+    expectedVersion: isCreate ? 0 : input.expectedVersion,
+    idempotencyKey: input.idempotencyKey,
+    todayVn: input.todayVn,
+  });
+}
+
+export function buildAssignEmployeeToSlotPolicyPayload(input: {
+  appUserId: string;
+  profile: { profile_id: string; active: boolean; version: number; is_default?: boolean } | null;
+  validFrom?: string;
+  idempotencyKey: string;
+  todayVn?: string;
+}): BranchMutationPayloadResult {
+  const userId = input.appUserId.trim().toLowerCase();
+  if (!UUID_PATTERN.test(userId)) {
+    return { ok: false, message: "Vui lòng chọn nhân viên hợp lệ để gán cấu hình khung giờ." };
+  }
+  if (!input.profile || !UUID_PATTERN.test(input.profile.profile_id)) {
+    return { ok: false, message: "Vui lòng chọn cấu hình khung giờ hợp lệ." };
+  }
+  if (
+    input.profile.is_default === true ||
+    input.profile.profile_id.toLowerCase() === DEFAULT_ATTENDANCE_SLOT_POLICY_PROFILE_ID
+  ) {
+    return {
+      ok: false,
+      message: "Nhân viên chưa có phân công riêng đã tự động dùng cấu hình Mặc định.",
+    };
+  }
+  if (!input.profile.active) {
+    return {
+      ok: false,
+      message: "Không thể gán nhân viên vào cấu hình khung giờ đang ngừng hoạt động.",
+    };
+  }
+  if (
+    typeof input.profile.version !== "number" ||
+    !Number.isSafeInteger(input.profile.version) ||
+    input.profile.version < 1
+  ) {
+    return { ok: false, message: "Phiên bản cấu hình khung giờ không hợp lệ. Vui lòng tải lại." };
+  }
+
+  const trimmedValidFrom = typeof input.validFrom === "string" ? input.validFrom.trim() : "";
+  let validFrom: string | null = null;
+  if (trimmedValidFrom !== "") {
+    if (!isValidIsoCalendarDate(trimmedValidFrom)) {
+      return { ok: false, message: "Ngày bắt đầu hiệu lực phải đúng định dạng YYYY-MM-DD." };
+    }
+    if (input.todayVn && trimmedValidFrom > input.todayVn) {
+      return {
+        ok: false,
+        message:
+          "Không được đặt ngày hiệu lực gán cấu hình trong tương lai. Phân công có hiệu lực ngay từ hôm nay.",
+      };
+    }
+    validFrom = trimmedValidFrom;
+  } else if (input.todayVn && isValidIsoCalendarDate(input.todayVn)) {
+    validFrom = input.todayVn;
+  }
+
+  const key = input.idempotencyKey.trim().toLowerCase();
+  if (!UUID_PATTERN.test(key)) {
+    return { ok: false, message: "Khóa chống gửi trùng (idempotency_key) không hợp lệ." };
+  }
+
+  return {
+    ok: true,
+    body: {
+      app_user_id: userId,
+      profile_id: input.profile.profile_id.toLowerCase(),
+      valid_from: validFrom,
+      expected_version: input.profile.version,
+      idempotency_key: key,
+    },
+  };
+}
+
+export function buildUnassignEmployeeFromSlotPolicyPayload(input: {
+  validTo?: string;
+  expectedVersion: number;
+  idempotencyKey: string;
+  todayVn?: string;
+}): BranchMutationPayloadResult {
+  const trimmedValidTo = typeof input.validTo === "string" ? input.validTo.trim() : "";
+  let validTo: string | null = null;
+  if (trimmedValidTo !== "") {
+    if (!isValidIsoCalendarDate(trimmedValidTo)) {
+      return { ok: false, message: "Ngày kết thúc hiệu lực phải đúng định dạng YYYY-MM-DD." };
+    }
+    if (input.todayVn && trimmedValidTo > input.todayVn) {
+      return {
+        ok: false,
+        message:
+          "Không được đặt ngày kết thúc gán cấu hình trong tương lai. Việc hủy gán có hiệu lực ngay từ hôm nay.",
+      };
+    }
+    validTo = trimmedValidTo;
+  } else if (input.todayVn && isValidIsoCalendarDate(input.todayVn)) {
+    validTo = input.todayVn;
+  }
+
+  if (
+    typeof input.expectedVersion !== "number" ||
+    !Number.isSafeInteger(input.expectedVersion) ||
+    input.expectedVersion < 1
+  ) {
+    return { ok: false, message: "Phiên bản bản ghi gán cấu hình không hợp lệ. Vui lòng tải lại." };
+  }
+
+  const key = input.idempotencyKey.trim().toLowerCase();
+  if (!UUID_PATTERN.test(key)) {
+    return { ok: false, message: "Khóa chống gửi trùng (idempotency_key) không hợp lệ." };
+  }
+
+  return {
+    ok: true,
+    body: {
+      valid_to: validTo,
+      expected_version: input.expectedVersion,
+      idempotency_key: key,
+    },
+  };
+}
+
+export function describeSlotPolicyAssignmentStatus(
+  assignment: Pick<
+    AttendanceSlotPolicyAssignmentAdminItemProjection,
+    "effective" | "valid_from" | "valid_to" | "superseded_same_day"
+  >,
+): {
+  statusLabel: string;
+  rangeLabel: string;
+  canUnassign: boolean;
+  tone: "emerald" | "amber" | "slate";
+} {
+  if (assignment.superseded_same_day) {
+    return {
+      statusLabel: "Đã thay thế trong ngày",
+      rangeLabel: `${assignment.valid_from} (đổi trong ngày)`,
+      canUnassign: false,
+      tone: "slate",
+    };
+  }
+  if (assignment.valid_to !== null) {
+    return {
+      statusLabel: "Đã kết thúc (Về Mặc định)",
+      rangeLabel: `${assignment.valid_from} → ${assignment.valid_to}`,
+      canUnassign: false,
+      tone: "slate",
+    };
+  }
+  if (assignment.effective) {
+    return {
+      statusLabel: "Đang áp dụng",
+      rangeLabel: `Từ ${assignment.valid_from}`,
+      canUnassign: true,
+      tone: "emerald",
+    };
+  }
+  return {
+    statusLabel: "Sắp hiệu lực",
+    rangeLabel: `Từ ${assignment.valid_from}`,
+    canUnassign: true,
+    tone: "amber",
   };
 }
 
@@ -1049,18 +1429,98 @@ export function mapSlotPolicyMutationError(
         "Ngày bắt đầu hiệu lực phải lớn hơn ngày hiệu lực của phiên bản khung giờ gần nhất (không chồng chéo kỳ hiệu lực).",
     };
   }
-  if (code === "ATTENDANCE_SLOT_POLICY_VERSION_CONFLICT") {
+  if (
+    code === "ATTENDANCE_SLOT_POLICY_VERSION_CONFLICT" ||
+    code === "ATTENDANCE_SLOT_POLICY_PROFILE_VERSION_CONFLICT"
+  ) {
     return {
       isConflict: true,
       message:
-        "Cấu hình khung giờ vừa được cập nhật ở phiên khác. Vui lòng tải lại dữ liệu trước khi lưu phiên bản mới.",
+        "Cấu hình khung giờ vừa được cập nhật ở phiên khác. Vui lòng tải lại dữ liệu trước khi lưu.",
     };
   }
-  if (code === "ATTENDANCE_SLOT_POLICY_INVALID") {
+  if (code === "ATTENDANCE_SLOT_POLICY_PROFILE_CODE_CONFLICT") {
+    return {
+      isConflict: true,
+      message: "Mã cấu hình khung giờ đã tồn tại. Vui lòng chọn mã khác.",
+    };
+  }
+  if (code === "ATTENDANCE_SLOT_POLICY_PROFILE_NAME_CONFLICT") {
+    return {
+      isConflict: true,
+      message: "Tên cấu hình khung giờ đã tồn tại. Vui lòng chọn tên khác.",
+    };
+  }
+  if (code === "ATTENDANCE_SLOT_POLICY_PROFILE_NOT_FOUND") {
+    return {
+      isConflict: true,
+      message: "Không tìm thấy cấu hình khung giờ. Vui lòng tải lại danh sách.",
+    };
+  }
+  if (code === "ATTENDANCE_SLOT_POLICY_PROFILE_INACTIVE") {
+    return {
+      isConflict: false,
+      message: "Cấu hình khung giờ đang ngừng hoạt động nên không thể gán nhân viên mới.",
+    };
+  }
+  if (code === "ATTENDANCE_SLOT_POLICY_PROFILE_DEFAULT_PROTECTED") {
+    return {
+      isConflict: false,
+      message: "Cấu hình 'Mặc định' là cấu hình chuẩn của hệ thống, không được ngừng hoạt động hoặc xóa.",
+    };
+  }
+  if (code === "ATTENDANCE_SLOT_POLICY_ASSIGNMENT_FUTURE_DATE") {
     return {
       isConflict: false,
       message:
-        "Thông số khung giờ hoặc dung sai không hợp lệ. Vui lòng kiểm tra thứ tự giờ chuẩn tăng dần và dung sai 0–240 phút.",
+        "Không được đặt ngày hiệu lực gán/hủy gán cấu hình trong tương lai. Mọi thay đổi có hiệu lực ngay từ hôm nay.",
+    };
+  }
+  if (code === "ATTENDANCE_SLOT_POLICY_ASSIGNMENT_OVERLAP") {
+    return {
+      isConflict: true,
+      message: "Khoảng thời gian gán cấu hình bị chồng lấn với một bản ghi phân công khác.",
+    };
+  }
+  if (code === "ATTENDANCE_SLOT_POLICY_ASSIGNMENT_ALREADY_CLOSED") {
+    return {
+      isConflict: true,
+      message: "Bản ghi gán cấu hình này đã kết thúc trước đó. Vui lòng tải lại danh sách.",
+    };
+  }
+  if (code === "ATTENDANCE_SLOT_POLICY_ASSIGNMENT_VERSION_CONFLICT") {
+    return {
+      isConflict: true,
+      message: "Phân công cấu hình khung giờ vừa thay đổi ở phiên khác. Vui lòng tải lại danh sách.",
+    };
+  }
+  if (code === "ATTENDANCE_SLOT_POLICY_ASSIGNMENT_NOT_FOUND") {
+    return {
+      isConflict: true,
+      message: "Không tìm thấy bản ghi phân công cấu hình khung giờ. Vui lòng tải lại danh sách.",
+    };
+  }
+  if (code === "ATTENDANCE_SLOT_POLICY_ASSIGNMENT_RANGE_INVALID") {
+    return {
+      isConflict: false,
+      message: "Khoảng ngày hiệu lực gán cấu hình không hợp lệ (ngày kết thúc phải từ ngày bắt đầu trở đi).",
+    };
+  }
+  if (code === "ATTENDANCE_SLOT_POLICY_TARGET_USER_INVALID") {
+    return {
+      isConflict: false,
+      message: "Nhân viên được chọn không hợp lệ hoặc đã ngừng hoạt động.",
+    };
+  }
+  if (
+    code === "ATTENDANCE_SLOT_POLICY_INVALID" ||
+    code === "ATTENDANCE_SLOT_POLICY_PROFILE_INVALID" ||
+    code === "ATTENDANCE_SLOT_POLICY_ASSIGNMENT_INVALID"
+  ) {
+    return {
+      isConflict: false,
+      message:
+        "Thông số cấu hình khung giờ hoặc phân công không hợp lệ. Vui lòng kiểm tra thứ tự giờ chuẩn tăng dần và dung sai 0–240 phút.",
     };
   }
   if (code === "IDEMPOTENCY_CONFLICT") {

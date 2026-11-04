@@ -25,6 +25,7 @@ import {
   TABLE_SCROLL_HORIZONTAL_VIEWPORT_STEP_RATIO,
   TABLE_SCROLL_VERTICAL_VIEWPORT_STEP_RATIO,
   buildAssignEmployeeToBranchPayload,
+  buildAssignEmployeeToSlotPolicyPayload,
   buildCreateSlotPolicyPayload,
   buildDecideAttendanceExplanationPayload,
   buildGoogleMapsCoordinatesUrl,
@@ -32,12 +33,16 @@ import {
   buildMonthlyMatrixReportQuery,
   buildSubmitAttendanceExplanationPayload,
   buildUnassignEmployeeFromBranchPayload,
+  buildUnassignEmployeeFromSlotPolicyPayload,
   buildUpsertBranchPayload,
+  buildUpsertSlotPolicyProfilePayload,
   computeClampedTableScrollTarget,
   computeTableScrollAvailability,
   computeTableScrollStepPx,
   describeBranchAssignmentStatus,
   describeMatrixDayCell,
+  describeSlotPolicyAssignmentStatus,
+  formatEmployeeSlotPolicySummaryLabel,
   formatMatrixDistanceStatusLabel,
   formatMatrixWeekdayLabel,
   getVietnamCurrentYearMonth,
@@ -1427,4 +1432,367 @@ test("Hotfix 4: resolveAttendanceEmployeeDisplayIdentity normalizes employee ful
     ],
   });
   assert.ok(xlsxBytes.byteLength > 0);
+});
+
+test("Multi-Profile Slot Policies UI payload builders, assignment immediate effect guard (no future dates), and mixed-profile Excel export (2-slot, 5-slot, Default)", async () => {
+  const CUSTOM_PROFILE_ID = "88888888-8888-4888-8888-888888888888";
+
+  // 1. Create named profile payload with 2 slots
+  const createProf = buildUpsertSlotPolicyProfilePayload({
+    profileId: null,
+    profileCode: "hanh_chinh",
+    displayName: "Hành chính",
+    description: "Khung giờ 2 mốc hành chính",
+    active: true,
+    expectedProfileVersion: 0,
+    effectiveFromDate: "2026-10-01",
+    slots: [
+      { slotLabel: "Ca sáng", targetTime: "08:00", graceBeforeInput: "15", graceAfterInput: "15" },
+      { slotLabel: "Ca chiều", targetTime: "17:00", graceBeforeInput: "15", graceAfterInput: "15" },
+    ],
+    expectedVersion: 0,
+    idempotencyKey: INTENT_KEY,
+  });
+  assert.equal(createProf.ok, true);
+  if (createProf.ok) {
+    assert.equal(createProf.body.profile_code, "HANH_CHINH");
+    assert.equal(createProf.body.display_name, "Hành chính");
+    assert.equal(createProf.body.slots?.length, 2);
+  }
+
+  // 2. Assign employee to profile: immediate effect, blocks Default profile, Inactive profile, and Future dates
+  const sampleProfile = {
+    profile_id: CUSTOM_PROFILE_ID,
+    profile_code: "HANH_CHINH",
+    display_name: "Hành chính",
+    description: null,
+    is_default: false,
+    active: true,
+    version: 2,
+    active_assignment_count: 0,
+    created_at: "2026-10-01T00:00:00Z",
+    updated_at: "2026-10-01T00:00:00Z",
+    current_policy: DEFAULT_ATTENDANCE_SLOT_POLICY,
+    latest_policy: DEFAULT_ATTENDANCE_SLOT_POLICY,
+    versions: [DEFAULT_ATTENDANCE_SLOT_POLICY],
+  };
+
+  const assignImmediate = buildAssignEmployeeToSlotPolicyPayload({
+    appUserId: EMPLOYEE_ID,
+    profile: sampleProfile,
+    todayVn: "2026-10-25",
+    idempotencyKey: INTENT_KEY,
+  });
+  assert.equal(assignImmediate.ok, true);
+  if (assignImmediate.ok) {
+    assert.equal(assignImmediate.body.valid_from, "2026-10-25");
+    assert.equal(assignImmediate.body.expected_version, 2);
+  }
+
+  // Future date (> todayVn) is rejected
+  const assignFuture = buildAssignEmployeeToSlotPolicyPayload({
+    appUserId: EMPLOYEE_ID,
+    profile: sampleProfile,
+    validFrom: "2026-10-26",
+    todayVn: "2026-10-25",
+    idempotencyKey: INTENT_KEY,
+  });
+  assert.equal(assignFuture.ok, false);
+
+  // Default profile is rejected
+  const assignDefault = buildAssignEmployeeToSlotPolicyPayload({
+    appUserId: EMPLOYEE_ID,
+    profile: { ...sampleProfile, is_default: true },
+    todayVn: "2026-10-25",
+    idempotencyKey: INTENT_KEY,
+  });
+  assert.equal(assignDefault.ok, false);
+
+  // Unassign immediate effect and future date guard
+  const unassignOk = buildUnassignEmployeeFromSlotPolicyPayload({
+    todayVn: "2026-10-25",
+    expectedVersion: 1,
+    idempotencyKey: INTENT_KEY,
+  });
+  assert.equal(unassignOk.ok, true);
+  if (unassignOk.ok) {
+    assert.equal(unassignOk.body.valid_to, "2026-10-25");
+  }
+
+  const unassignFuture = buildUnassignEmployeeFromSlotPolicyPayload({
+    validTo: "2026-10-26",
+    todayVn: "2026-10-25",
+    expectedVersion: 1,
+    idempotencyKey: INTENT_KEY,
+  });
+  assert.equal(unassignFuture.ok, false);
+
+  // 3. Employee slot policy summary label & assignment status
+  assert.equal(
+    formatEmployeeSlotPolicySummaryLabel({
+      slot_policy_profile: {
+        profile_id: CUSTOM_PROFILE_ID,
+        profile_code: "HANH_CHINH",
+        display_name: "Hành chính",
+        is_default: false,
+        slot_count: 2,
+      },
+      days: [],
+    }),
+    "Hành chính",
+  );
+  assert.equal(
+    describeSlotPolicyAssignmentStatus({
+      effective: true,
+      valid_from: "2026-10-05",
+      valid_to: null,
+      superseded_same_day: false,
+    }).canUnassign,
+    true,
+  );
+
+  // 4. Mixed-profile Excel workbook (2-slot employee + 5-slot Default employee in the same workbook)
+  const ExcelJS = (await import("exceljs")).default;
+  const twoSlotPolicy = {
+    ...DEFAULT_ATTENDANCE_SLOT_POLICY,
+    profile_id: CUSTOM_PROFILE_ID,
+    profile_code: "HANH_CHINH",
+    profile_name: "Hành chính",
+    is_default: false,
+    version: 1,
+    slots: [
+      {
+        slot_code: "SLOT_1",
+        slot_index: 1,
+        slot_label: "Ca sáng",
+        session_code: "AM",
+        target_time: "08:00",
+        grace_before_minutes: 15,
+        grace_after_minutes: 15,
+      },
+      {
+        slot_code: "SLOT_2",
+        slot_index: 2,
+        slot_label: "Ca chiều",
+        session_code: "PM",
+        target_time: "17:00",
+        grace_before_minutes: 15,
+        grace_after_minutes: 15,
+      },
+    ],
+  };
+
+  const eval2Slots = evaluateAttendanceDaySlots({
+    policy: twoSlotPolicy,
+    checkins: [
+      {
+        checkin_id: "c-hc-1",
+        sequence_in_day: 1,
+        captured_at: "2026-10-05T01:00:00Z",
+        captured_at_local: "2026-10-05 08:00:00",
+        time_local: "08:00",
+        time_verified: true,
+        distance_target_kind: "HQ",
+        distance_status: "COMPUTED",
+        distance_meters: 10,
+      },
+    ],
+    approved_leaves: [],
+  });
+  const eval5Slots = evaluateAttendanceDaySlots({
+    policy: DEFAULT_ATTENDANCE_SLOT_POLICY,
+    checkins: [],
+    approved_leaves: [],
+  });
+
+  const mixedXlsxBytes = await buildAttendanceMonthlyMatrixXlsx({
+    year_month: "2026-10",
+    from_date: "2026-10-05",
+    to_date: "2026-10-05",
+    calendar_days: [
+      {
+        business_date: "2026-10-05",
+        day_of_month: 5,
+        day_of_week: 1,
+        is_weekend: false,
+      },
+    ],
+    slot_policy: {
+      current_policy: DEFAULT_ATTENDANCE_SLOT_POLICY,
+      month_policies: [DEFAULT_ATTENDANCE_SLOT_POLICY, twoSlotPolicy],
+      profiles: [
+        {
+          profile_id: DEFAULT_ATTENDANCE_SLOT_POLICY.profile_id,
+          profile_code: "DEFAULT",
+          display_name: "Mặc định",
+          description: null,
+          is_default: true,
+          active: true,
+          version: 1,
+          current_policy: DEFAULT_ATTENDANCE_SLOT_POLICY,
+          month_policies: [DEFAULT_ATTENDANCE_SLOT_POLICY],
+        },
+        {
+          profile_id: CUSTOM_PROFILE_ID,
+          profile_code: "HANH_CHINH",
+          display_name: "Hành chính",
+          description: "Khung giờ 2 mốc",
+          is_default: false,
+          active: true,
+          version: 1,
+          current_policy: twoSlotPolicy,
+          month_policies: [twoSlotPolicy],
+        },
+      ],
+    },
+    items: [
+      {
+        app_user_id: EMPLOYEE_ID,
+        employee_display_name: "Nguyễn Hành Chính",
+        personnel_code: "NV_HC_01",
+        branch: null,
+        slot_policy_profile: {
+          profile_id: CUSTOM_PROFILE_ID,
+          profile_code: "HANH_CHINH",
+          display_name: "Hành chính",
+          is_default: false,
+          slot_count: 2,
+        },
+        summary: {
+          checkin_day_count: 1,
+          total_checkins: 1,
+          approved_leave_day_count: 0,
+          approved_leave_units: 0,
+          no_checkin_without_leave_day_count: 0,
+        },
+        days: [
+          {
+            business_date: "2026-10-05",
+            day_of_month: 5,
+            policy_profile_id_used: CUSTOM_PROFILE_ID,
+            policy_profile_code_used: "HANH_CHINH",
+            policy_profile_name_used: "Hành chính",
+            policy_version_used: 1,
+            has_checkin: true,
+            checkin_count: 1,
+            first_checkin_id: "c-hc-1",
+            last_checkin_id: "c-hc-1",
+            first_captured_at: "2026-10-05T01:00:00Z",
+            first_captured_at_local: "2026-10-05 08:00:00",
+            first_time_local: "08:00",
+            last_captured_at: "2026-10-05T01:00:00Z",
+            last_captured_at_local: "2026-10-05 08:00:00",
+            last_time_local: "08:00",
+            verified_checkin_count: 1,
+            unverified_checkin_count: 0,
+            distance_target_kind: "HQ",
+            branch_id_used: null,
+            branch_code_used: null,
+            branch_name_used: null,
+            branch_version_used: null,
+            hq_version_used: 1,
+            distance_status: "COMPUTED",
+            distance_meters: 10,
+            min_distance_meters: 10,
+            max_distance_meters: 10,
+            has_approved_leave: false,
+            approved_leave_units: 0,
+            approved_leaves: [],
+            day_status: "CHECKED_IN",
+            missing_slot_count: eval2Slots.missing_slot_count,
+            late_or_early_checkin_count: eval2Slots.late_or_early_checkin_count,
+            slots: eval2Slots.slots,
+          },
+        ],
+      },
+      {
+        app_user_id: "77777777-7777-4777-8777-777777777777",
+        employee_display_name: "Trần Mặc Định",
+        personnel_code: "NV_MD_02",
+        branch: null,
+        slot_policy_profile: {
+          profile_id: DEFAULT_ATTENDANCE_SLOT_POLICY.profile_id,
+          profile_code: "DEFAULT",
+          display_name: "Mặc định",
+          is_default: true,
+          slot_count: 5,
+        },
+        summary: {
+          checkin_day_count: 0,
+          total_checkins: 0,
+          approved_leave_day_count: 0,
+          approved_leave_units: 0,
+          no_checkin_without_leave_day_count: 1,
+        },
+        days: [
+          {
+            business_date: "2026-10-05",
+            day_of_month: 5,
+            policy_profile_id_used: DEFAULT_ATTENDANCE_SLOT_POLICY.profile_id,
+            policy_profile_code_used: "DEFAULT",
+            policy_profile_name_used: "Mặc định",
+            policy_version_used: 1,
+            has_checkin: false,
+            checkin_count: 0,
+            first_checkin_id: null,
+            last_checkin_id: null,
+            first_captured_at: null,
+            first_captured_at_local: null,
+            first_time_local: null,
+            last_captured_at: null,
+            last_captured_at_local: null,
+            last_time_local: null,
+            verified_checkin_count: 0,
+            unverified_checkin_count: 0,
+            distance_target_kind: null,
+            branch_id_used: null,
+            branch_code_used: null,
+            branch_name_used: null,
+            branch_version_used: null,
+            hq_version_used: null,
+            distance_status: null,
+            distance_meters: null,
+            min_distance_meters: null,
+            max_distance_meters: null,
+            has_approved_leave: false,
+            approved_leave_units: 0,
+            approved_leaves: [],
+            day_status: "NO_CHECKIN",
+            missing_slot_count: eval5Slots.missing_slot_count,
+            late_or_early_checkin_count: 0,
+            slots: eval5Slots.slots,
+          },
+        ],
+      },
+    ],
+  });
+
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(mixedXlsxBytes);
+
+  const matrixSheet = wb.getWorksheet("Ma trận chấm công");
+  assert.ok(matrixSheet);
+  // Row 2 = Nguyễn Hành Chính (2 slots), Row 3 = Trần Mặc Định (5 slots)
+  assert.equal(matrixSheet.getRow(2).getCell(6).value, "Hành chính");
+  assert.equal(matrixSheet.getRow(3).getCell(6).value, "Mặc định");
+  assert.match(String(matrixSheet.getRow(2).getCell(12).value), /\[Khung giờ: Hành chính v1\]/);
+
+  const detailSheet = wb.getWorksheet("Chi tiết theo ngày");
+  assert.ok(detailSheet);
+  // Row 2 = Nguyễn Hành Chính on 2026-10-05: has 2 slots; Mốc 3..5 (columns 10..12) are empty!
+  assert.equal(detailSheet.getRow(2).getCell(6).value, "Hành chính (v1)");
+  assert.equal(detailSheet.getRow(2).getCell(7).value, 2);
+  assert.match(String(detailSheet.getRow(2).getCell(8).value), /Ca sáng \(08:00\): 08:00/);
+  assert.match(String(detailSheet.getRow(2).getCell(9).value), /Ca chiều \(17:00\): Chưa có lượt chấm/);
+  assert.equal(detailSheet.getRow(2).getCell(10).value, "");
+  assert.equal(detailSheet.getRow(2).getCell(11).value, "");
+  assert.equal(detailSheet.getRow(2).getCell(12).value, "");
+
+  // Row 3 = Trần Mặc Định on 2026-10-05: has 5 slots; Mốc 1..5 all populated!
+  assert.equal(detailSheet.getRow(3).getCell(6).value, "Mặc định (v1)");
+  assert.equal(detailSheet.getRow(3).getCell(7).value, 5);
+  assert.match(String(detailSheet.getRow(3).getCell(12).value), /Time 5 \(16:30\): Chưa có lượt chấm/);
+
+  const legendSheet = wb.getWorksheet("Chú giải & Khung giờ");
+  assert.ok(legendSheet);
 });

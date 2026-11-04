@@ -631,7 +631,8 @@ export function AttendanceExplanationWorkspace({
                 </strong>{" "}
                 · Khung giờ{" "}
                 <strong className="text-foreground">
-                  v{activeOverview.day_evaluation.policy_version_used}
+                  {activeOverview.day_evaluation.policy_profile_name_used ?? "Mặc định"} v
+                  {activeOverview.day_evaluation.policy_version_used}
                 </strong>{" "}
                 ({activeOverview.day_evaluation.slots.length} mốc)
               </div>

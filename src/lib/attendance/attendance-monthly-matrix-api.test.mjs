@@ -13,14 +13,19 @@ import {
   postAttendanceBranchAssignmentAdmin,
   postAttendanceBranchUnassignAdmin,
   postAttendanceSlotPolicyAdmin,
+  postAttendanceSlotPolicyAssignmentAdmin,
+  postAttendanceSlotPolicyUnassignAdmin,
   postDecideAttendanceExplanation,
   postOrPutAttendanceBranchAdmin,
+  postOrPutAttendanceSlotPolicyProfileAdmin,
   postSubmitAttendanceExplanation,
 } from "./attendance-monthly-matrix-api.ts";
 import {
   ATTENDANCE_MONTHLY_MATRIX_EXPORT_ROW_LIMIT,
   DEFAULT_ATTENDANCE_SLOT_POLICY,
+  DEFAULT_ATTENDANCE_SLOT_POLICY_PROFILE_ID,
   parseAssignBranchBody,
+  parseAssignSlotPolicyBody,
   parseAttendanceExplanationApprovalInboxQuery,
   parseAttendanceExplanationsQuery,
   parseAttendanceMonthlyMatrixQuery,
@@ -28,7 +33,9 @@ import {
   parseDecideAttendanceExplanationBody,
   parseSubmitAttendanceExplanationBody,
   parseUnassignBranchBody,
+  parseUnassignSlotPolicyBody,
   parseUpsertBranchBody,
+  parseUpsertSlotPolicyProfileBody,
 } from "./attendance-monthly-matrix-contract.ts";
 import {
   ATTENDANCE_REPORT_MAX_PAGE_SIZE,
@@ -1708,4 +1715,301 @@ test("Wave 2 Attendance Explanation contracts, fingerprints, and API handlers en
   });
   assert.equal("p_auth_subject" in rpcCalls[3].args, false);
   assert.equal("p_app_user_id" in rpcCalls[3].args, false);
+});
+
+test("Multi-Profile Slot Policy Admin contracts, API handlers, and repository RPC calls enforce Full Admin, reject future dates, and support profile CRUD + employee assignment/unassign", async () => {
+  const PROFILE_ID = "39000000-0000-4000-8000-0000000000c2";
+  const twoSlots = [
+    { slot_label: "Ca sáng", target_time: "08:00", grace_before_minutes: 15, grace_after_minutes: 15 },
+    { slot_label: "Ca chiều", target_time: "17:00", grace_before_minutes: 15, grace_after_minutes: 15 },
+  ];
+
+  // 1. Body parsers
+  const parsedCreateProfile = parseUpsertSlotPolicyProfileBody({
+    profile_code: " hanh_chinh ",
+    display_name: " Hành chính ",
+    description: " Khung giờ 2 mốc ",
+    active: true,
+    effective_from_date: "2026-10-01",
+    slots: twoSlots,
+    idempotency_key: IDEMPOTENCY_KEY,
+  });
+  assert.equal(parsedCreateProfile.ok, true);
+  if (parsedCreateProfile.ok) {
+    assert.equal(parsedCreateProfile.value.profile_code, "HANH_CHINH");
+    assert.equal(parsedCreateProfile.value.display_name, "Hành chính");
+    assert.equal(parsedCreateProfile.value.slots?.length, 2);
+  }
+
+  // Creating a profile without slots is rejected
+  assert.equal(
+    parseUpsertSlotPolicyProfileBody({
+      profile_code: "HANH_CHINH",
+      display_name: "Hành chính",
+      active: true,
+      idempotency_key: IDEMPOTENCY_KEY,
+    }).ok,
+    false,
+  );
+
+  // Assigning to Default profile is rejected at parser level
+  const parsedAssignDefault = parseAssignSlotPolicyBody({
+    app_user_id: STAFF_USER_ID,
+    profile_id: DEFAULT_ATTENDANCE_SLOT_POLICY_PROFILE_ID,
+    valid_from: "2026-10-25",
+    expected_version: 1,
+    idempotency_key: IDEMPOTENCY_KEY,
+  });
+  assert.equal(parsedAssignDefault.ok, false);
+  if (!parsedAssignDefault.ok) {
+    assert.equal(
+      parsedAssignDefault.code,
+      "ATTENDANCE_SLOT_POLICY_DEFAULT_ASSIGNMENT_REDUNDANT",
+    );
+  }
+
+  const parsedAssignValid = parseAssignSlotPolicyBody({
+    app_user_id: STAFF_USER_ID,
+    profile_id: PROFILE_ID,
+    valid_from: "2026-10-25",
+    expected_version: 1,
+    idempotency_key: IDEMPOTENCY_KEY,
+  });
+  assert.equal(parsedAssignValid.ok, true);
+
+  const parsedUnassignValid = parseUnassignSlotPolicyBody({
+    valid_to: "2026-10-25",
+    expected_version: 1,
+    idempotency_key: IDEMPOTENCY_KEY,
+  });
+  assert.equal(parsedUnassignValid.ok, true);
+
+  // 2. BoD is denied on profile upsert, employee assign, and employee unassign
+  const bodProfileRes = await postOrPutAttendanceSlotPolicyProfileAdmin(
+    makeJsonRequest("https://bi.example.com/api/admin/attendance/slot-policies", "POST", {
+      profile_code: "HANH_CHINH",
+      display_name: "Hành chính",
+      active: true,
+      effective_from_date: "2026-10-01",
+      slots: twoSlots,
+      idempotency_key: IDEMPOTENCY_KEY,
+    }),
+    null,
+    { resolveSession: async () => makeSessionOk(BOD_PRIVILEGED_CAPS, ALL_SCOPE) },
+  );
+  assert.equal(bodProfileRes.status, 403);
+
+  const bodAssignRes = await postAttendanceSlotPolicyAssignmentAdmin(
+    makeJsonRequest("https://bi.example.com/api/admin/attendance/slot-policies/assignments", "POST", {
+      app_user_id: STAFF_USER_ID,
+      profile_id: PROFILE_ID,
+      valid_from: "2026-10-25",
+      expected_version: 1,
+      idempotency_key: IDEMPOTENCY_KEY,
+    }),
+    { resolveSession: async () => makeSessionOk(BOD_PRIVILEGED_CAPS, ALL_SCOPE) },
+  );
+  assert.equal(bodAssignRes.status, 403);
+
+  const bodUnassignRes = await postAttendanceSlotPolicyUnassignAdmin(
+    makeJsonRequest(
+      `https://bi.example.com/api/admin/attendance/slot-policies/assignments/${ASSIGNMENT_ID}/unassign`,
+      "POST",
+      {
+        valid_to: "2026-10-25",
+        expected_version: 1,
+        idempotency_key: IDEMPOTENCY_KEY,
+      },
+    ),
+    ASSIGNMENT_ID,
+    { resolveSession: async () => makeSessionOk(BOD_PRIVILEGED_CAPS, ALL_SCOPE) },
+  );
+  assert.equal(bodUnassignRes.status, 403);
+
+  // 3. Repository + API end-to-end RPC wiring and future date rejection
+  const rpcCalls = [];
+  const samplePolicy2Slots = {
+    ...DEFAULT_ATTENDANCE_SLOT_POLICY,
+    profile_id: PROFILE_ID,
+    profile_code: "HANH_CHINH",
+    profile_name: "Hành chính",
+    is_default: false,
+    slots: [
+      {
+        slot_code: "SLOT_1",
+        slot_index: 1,
+        slot_label: "Ca sáng",
+        session_code: "AM",
+        target_time: "08:00",
+        grace_before_minutes: 15,
+        grace_after_minutes: 15,
+      },
+      {
+        slot_code: "SLOT_2",
+        slot_index: 2,
+        slot_label: "Ca chiều",
+        session_code: "PM",
+        target_time: "17:00",
+        grace_before_minutes: 15,
+        grace_after_minutes: 15,
+      },
+    ],
+  };
+  const sampleProfile = {
+    profile_id: PROFILE_ID,
+    profile_code: "HANH_CHINH",
+    display_name: "Hành chính",
+    description: "Khung giờ 2 mốc",
+    is_default: false,
+    active: true,
+    version: 1,
+  };
+  const sampleAssignment = {
+    assignment_id: ASSIGNMENT_ID,
+    app_user_id: STAFF_USER_ID,
+    employee_display_name: "Nguyễn Văn B",
+    personnel_code: "NV002",
+    enabled: true,
+    profile_id: PROFILE_ID,
+    profile_code: "HANH_CHINH",
+    profile_name: "Hành chính",
+    valid_from: "2026-10-25",
+    valid_to: null,
+    superseded_same_day: false,
+    effective: true,
+    version: 1,
+  };
+
+  const repo = createServiceAttendanceMonthlyMatrixRepository(async (name, args) => {
+    rpcCalls.push({ name, args });
+    if (name === "attendance_upsert_slot_policy_profile_admin") {
+      return {
+        data: {
+          replayed: false,
+          profile: sampleProfile,
+          policy: samplePolicy2Slots,
+        },
+        error: null,
+      };
+    }
+    if (name === "attendance_assign_employee_slot_policy_admin") {
+      if (args.p_valid_from === "2099-01-01") {
+        return {
+          data: null,
+          error: {
+            code: "22023",
+            message: "ATTENDANCE_SLOT_POLICY_ASSIGNMENT_FUTURE_DATE: future assignment not allowed",
+          },
+        };
+      }
+      return {
+        data: {
+          replayed: false,
+          assignment: sampleAssignment,
+        },
+        error: null,
+      };
+    }
+    if (name === "attendance_unassign_employee_slot_policy_admin") {
+      return {
+        data: {
+          replayed: false,
+          assignment: {
+            ...sampleAssignment,
+            valid_to: "2026-10-25",
+            version: 2,
+            effective: false,
+          },
+        },
+        error: null,
+      };
+    }
+    return { data: null, error: { code: "42883", message: `unexpected ${name}` } };
+  });
+
+  const createProfileRes = await postOrPutAttendanceSlotPolicyProfileAdmin(
+    makeJsonRequest("https://bi.example.com/api/admin/attendance/slot-policies", "POST", {
+      profile_code: "HANH_CHINH",
+      display_name: "Hành chính",
+      description: "Khung giờ 2 mốc",
+      active: true,
+      effective_from_date: "2026-10-01",
+      slots: twoSlots,
+      idempotency_key: IDEMPOTENCY_KEY,
+    }),
+    null,
+    {
+      resolveSession: async () => makeSessionOk(FULL_ADMIN_CAPS, ALL_SCOPE),
+      repository: repo,
+    },
+  );
+  assert.equal(createProfileRes.status, 201);
+  const createProfileJson = await createProfileRes.json();
+  assert.equal(createProfileJson.ok, true);
+  assert.equal(createProfileJson.profile.profile_code, "HANH_CHINH");
+  assert.equal(createProfileJson.policy.slots.length, 2);
+
+  // Future date returns 422 ATTENDANCE_SLOT_POLICY_ASSIGNMENT_FUTURE_DATE
+  const futureAssignRes = await postAttendanceSlotPolicyAssignmentAdmin(
+    makeJsonRequest("https://bi.example.com/api/admin/attendance/slot-policies/assignments", "POST", {
+      app_user_id: STAFF_USER_ID,
+      profile_id: PROFILE_ID,
+      valid_from: "2099-01-01",
+      expected_version: 1,
+      idempotency_key: IDEMPOTENCY_KEY,
+    }),
+    {
+      resolveSession: async () => makeSessionOk(FULL_ADMIN_CAPS, ALL_SCOPE),
+      repository: repo,
+    },
+  );
+  assert.equal(futureAssignRes.status, 422);
+  assert.equal(
+    (await futureAssignRes.json()).code,
+    "ATTENDANCE_SLOT_POLICY_ASSIGNMENT_FUTURE_DATE",
+  );
+
+  // Immediate assignment returns 201
+  const assignOkRes = await postAttendanceSlotPolicyAssignmentAdmin(
+    makeJsonRequest("https://bi.example.com/api/admin/attendance/slot-policies/assignments", "POST", {
+      app_user_id: STAFF_USER_ID,
+      profile_id: PROFILE_ID,
+      valid_from: "2026-10-25",
+      expected_version: 1,
+      idempotency_key: IDEMPOTENCY_KEY,
+    }),
+    {
+      resolveSession: async () => makeSessionOk(FULL_ADMIN_CAPS, ALL_SCOPE),
+      repository: repo,
+    },
+  );
+  assert.equal(assignOkRes.status, 201);
+  const assignOkJson = await assignOkRes.json();
+  assert.equal(assignOkJson.assignment.profile_code, "HANH_CHINH");
+
+  // Unassign returns 200
+  const unassignOkRes = await postAttendanceSlotPolicyUnassignAdmin(
+    makeJsonRequest(
+      `https://bi.example.com/api/admin/attendance/slot-policies/assignments/${ASSIGNMENT_ID}/unassign`,
+      "POST",
+      {
+        valid_to: "2026-10-25",
+        expected_version: 1,
+        idempotency_key: IDEMPOTENCY_KEY,
+      },
+    ),
+    ASSIGNMENT_ID,
+    {
+      resolveSession: async () => makeSessionOk(FULL_ADMIN_CAPS, ALL_SCOPE),
+      repository: repo,
+    },
+  );
+  assert.equal(unassignOkRes.status, 200);
+  const unassignOkJson = await unassignOkRes.json();
+  assert.equal(unassignOkJson.assignment.valid_to, "2026-10-25");
+
+  assert.equal(rpcCalls.length, 4);
+  assert.equal(rpcCalls[0].name, "attendance_upsert_slot_policy_profile_admin");
+  assert.equal(rpcCalls[2].name, "attendance_assign_employee_slot_policy_admin");
+  assert.equal(rpcCalls[3].name, "attendance_unassign_employee_slot_policy_admin");
 });
