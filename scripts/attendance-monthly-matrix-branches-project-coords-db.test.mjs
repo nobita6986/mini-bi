@@ -2016,7 +2016,12 @@ test("HRP Branches, Branch Check-In Distance Snapshot Immutability, Project Coor
       ["08:15", "17:15"],
     );
 
-    // 9c. Reject future assignment dates (valid_from > today_vn) and Default profile assignment
+    // 9c. Reject future assignment dates (> today_vn), past assignment dates (< today_vn), and Default profile assignment
+    const { rows: todayVnRows } = await db.query(
+      "select pg_catalog.to_char((clock_timestamp() at time zone 'Asia/Ho_Chi_Minh')::date, 'YYYY-MM-DD') as today_vn",
+    );
+    const todayVn = todayVnRows[0].today_vn;
+
     await assert.rejects(
       () =>
         callAsServiceRole(
@@ -2046,6 +2051,24 @@ test("HRP Branches, Branch Check-In Distance Snapshot Immutability, Project Coor
             ACTORS.FULL_ADMIN.auth,
             ACTORS.FULL_ADMIN.app,
             ACTORS.STAFF_A.app,
+            hcProfileId,
+            nextUuid(),
+            "6".repeat(64),
+          ],
+        ),
+      (err) => /ATTENDANCE_SLOT_POLICY_ASSIGNMENT_PAST_DATE/.test(err.message),
+    );
+    await assert.rejects(
+      () =>
+        callAsServiceRole(
+          db,
+          `select public.attendance_assign_employee_slot_policy_admin(
+            $1::uuid, $2::uuid, $3::uuid, $4::uuid, null, 1, $5::uuid, $6::text
+          ) as data`,
+          [
+            ACTORS.FULL_ADMIN.auth,
+            ACTORS.FULL_ADMIN.app,
+            ACTORS.STAFF_A.app,
             DEFAULT_ATTENDANCE_SLOT_POLICY_PROFILE_ID,
             nextUuid(),
             "8".repeat(64),
@@ -2054,20 +2077,20 @@ test("HRP Branches, Branch Check-In Distance Snapshot Immutability, Project Coor
       (err) => /ATTENDANCE_SLOT_POLICY_DEFAULT_ASSIGNMENT_REDUNDANT/.test(err.message),
     );
 
-    // 9d. Assign STAFF_A to HANH_CHINH from 2026-10-05, switch to TUYEN_DUNG_3 on 2026-10-12, and unassign on 2026-10-20
+    // 9d. Live immediate-effect assign (todayVn / null), switch on same day, and unassign on todayVn
     const assignHcKey = nextUuid();
     const assignHcFp = computeSlotPolicyAssignRequestFingerprint({
       app_user_id: ACTORS.FULL_ADMIN.app,
       target_app_user_id: ACTORS.STAFF_A.app,
       profile_id: hcProfileId,
-      valid_from: "2026-10-05",
+      valid_from: null,
       expected_version: 2,
     });
     const assignHcRes = projectAssignSlotPolicyResult(
       await callAsServiceRole(
         db,
         `select public.attendance_assign_employee_slot_policy_admin(
-          $1::uuid, $2::uuid, $3::uuid, $4::uuid, '2026-10-05'::date, 2, $5::uuid, $6::text
+          $1::uuid, $2::uuid, $3::uuid, $4::uuid, null, 2, $5::uuid, $6::text
         ) as data`,
         [
           ACTORS.FULL_ADMIN.auth,
@@ -2081,29 +2104,68 @@ test("HRP Branches, Branch Check-In Distance Snapshot Immutability, Project Coor
     );
     assert.ok(assignHcRes);
     assert.equal(assignHcRes.assignment.profile_code, "HANH_CHINH");
-    assert.equal(assignHcRes.assignment.valid_from, "2026-10-05");
+    assert.equal(assignHcRes.assignment.valid_from, todayVn);
     assert.equal(assignHcRes.assignment.valid_to, null);
 
-    // Switch STAFF_A to TUYEN_DUNG_3 on 2026-10-12 (auto-closes HANH_CHINH on 2026-10-11)
+    // Reject unassign with past or future date
+    await assert.rejects(
+      () =>
+        callAsServiceRole(
+          db,
+          `select public.attendance_unassign_employee_slot_policy_admin(
+            $1::uuid, $2::uuid, $3::uuid, '2026-10-05'::date, $4::integer, $5::uuid, $6::text
+          ) as data`,
+          [
+            ACTORS.FULL_ADMIN.auth,
+            ACTORS.FULL_ADMIN.app,
+            assignHcRes.assignment.assignment_id,
+            assignHcRes.assignment.version,
+            nextUuid(),
+            "5".repeat(64),
+          ],
+        ),
+      (err) => /ATTENDANCE_SLOT_POLICY_ASSIGNMENT_PAST_DATE/.test(err.message),
+    );
+    await assert.rejects(
+      () =>
+        callAsServiceRole(
+          db,
+          `select public.attendance_unassign_employee_slot_policy_admin(
+            $1::uuid, $2::uuid, $3::uuid, '2099-01-01'::date, $4::integer, $5::uuid, $6::text
+          ) as data`,
+          [
+            ACTORS.FULL_ADMIN.auth,
+            ACTORS.FULL_ADMIN.app,
+            assignHcRes.assignment.assignment_id,
+            assignHcRes.assignment.version,
+            nextUuid(),
+            "4".repeat(64),
+          ],
+        ),
+      (err) => /ATTENDANCE_SLOT_POLICY_ASSIGNMENT_FUTURE_DATE/.test(err.message),
+    );
+
+    // Switch STAFF_A to TUYEN_DUNG_3 today (marks HANH_CHINH assignment as superseded_same_day = true)
     const assignTdKey = nextUuid();
     const assignTdFp = computeSlotPolicyAssignRequestFingerprint({
       app_user_id: ACTORS.FULL_ADMIN.app,
       target_app_user_id: ACTORS.STAFF_A.app,
       profile_id: tdProfileId,
-      valid_from: "2026-10-12",
-      expected_profile_version: 1,
+      valid_from: todayVn,
+      expected_version: 1,
     });
     const assignTdRes = projectAssignSlotPolicyResult(
       await callAsServiceRole(
         db,
         `select public.attendance_assign_employee_slot_policy_admin(
-          $1::uuid, $2::uuid, $3::uuid, $4::uuid, '2026-10-12'::date, 1, $5::uuid, $6::text
+          $1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::date, 1, $6::uuid, $7::text
         ) as data`,
         [
           ACTORS.FULL_ADMIN.auth,
           ACTORS.FULL_ADMIN.app,
           ACTORS.STAFF_A.app,
           tdProfileId,
+          todayVn,
           assignTdKey,
           assignTdFp,
         ],
@@ -2111,26 +2173,27 @@ test("HRP Branches, Branch Check-In Distance Snapshot Immutability, Project Coor
     );
     assert.ok(assignTdRes);
     assert.equal(assignTdRes.assignment.profile_code, "TUYEN_DUNG_3");
-    assert.equal(assignTdRes.assignment.valid_from, "2026-10-12");
+    assert.equal(assignTdRes.assignment.valid_from, todayVn);
 
-    // Unassign STAFF_A on 2026-10-20 so 2026-10-21+ returns to Default (5 slots) while keeping 2026-10-05..11 on HANH_CHINH and 2026-10-12..20 on TUYEN_DUNG_3
+    // Unassign STAFF_A today so today returns to Default (5 slots)
     const unassignTdKey = nextUuid();
     const unassignTdFp = computeSlotPolicyUnassignRequestFingerprint({
       app_user_id: ACTORS.FULL_ADMIN.app,
       assignment_id: assignTdRes.assignment.assignment_id,
-      valid_to: "2026-10-20",
+      valid_to: todayVn,
       expected_version: assignTdRes.assignment.version,
     });
     const unassignTdRes = projectUnassignSlotPolicyResult(
       await callAsServiceRole(
         db,
         `select public.attendance_unassign_employee_slot_policy_admin(
-          $1::uuid, $2::uuid, $3::uuid, '2026-10-20'::date, $4::integer, $5::uuid, $6::text
+          $1::uuid, $2::uuid, $3::uuid, $4::date, $5::integer, $6::uuid, $7::text
         ) as data`,
         [
           ACTORS.FULL_ADMIN.auth,
           ACTORS.FULL_ADMIN.app,
           assignTdRes.assignment.assignment_id,
+          todayVn,
           assignTdRes.assignment.version,
           unassignTdKey,
           unassignTdFp,
@@ -2138,7 +2201,30 @@ test("HRP Branches, Branch Check-In Distance Snapshot Immutability, Project Coor
       ),
     );
     assert.ok(unassignTdRes);
-    assert.equal(unassignTdRes.assignment.valid_to, "2026-10-19");
+    assert.equal(unassignTdRes.assignment.valid_to, todayVn);
+    assert.equal(unassignTdRes.assignment.superseded_same_day, true);
+    assert.equal(unassignTdRes.assignment.effective, false);
+
+    // Seed historical October 2026 assignment intervals for STAFF_A (2026-10-05..11 on HANH_CHINH, 2026-10-12..19 on TUYEN_DUNG_3)
+    // to verify historical multi-profile retention across past months while RPCs enforce immediate-effect todayVn
+    await db.query(
+      `insert into public.attendance_slot_policy_assignments (
+        app_user_id, profile_id, valid_from, valid_to, superseded_same_day, version,
+        assigned_by_user_id, revoked_by_user_id, revoked_at, idempotency_key, request_fingerprint
+      ) values
+      ($1::uuid, $2::uuid, '2026-10-05'::date, '2026-10-11'::date, false, 2, $4::uuid, $4::uuid, clock_timestamp(), $5::uuid, $6::text),
+      ($1::uuid, $3::uuid, '2026-10-12'::date, '2026-10-19'::date, false, 2, $4::uuid, $4::uuid, clock_timestamp(), $7::uuid, $8::text)`,
+      [
+        ACTORS.STAFF_A.app,
+        hcProfileId,
+        tdProfileId,
+        ACTORS.FULL_ADMIN.app,
+        nextUuid(),
+        "a".repeat(64),
+        nextUuid(),
+        "b".repeat(64),
+      ],
+    );
 
     // 9e. Record check-in for STAFF_A on 2026-10-06 at 08:05 VN (01:05 UTC)
     // Under Default (07:30 ±15m), 08:05 would be LATE (+35m), but under HANH_CHINH v1 (08:00 ±15m), 08:05 is ON_TIME!

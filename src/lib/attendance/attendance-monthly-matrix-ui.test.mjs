@@ -1499,6 +1499,16 @@ test("Multi-Profile Slot Policies UI payload builders, assignment immediate effe
   });
   assert.equal(assignFuture.ok, false);
 
+  // Past date (< todayVn) is rejected
+  const assignPast = buildAssignEmployeeToSlotPolicyPayload({
+    appUserId: EMPLOYEE_ID,
+    profile: sampleProfile,
+    validFrom: "2026-10-24",
+    todayVn: "2026-10-25",
+    idempotencyKey: INTENT_KEY,
+  });
+  assert.equal(assignPast.ok, false);
+
   // Default profile is rejected
   const assignDefault = buildAssignEmployeeToSlotPolicyPayload({
     appUserId: EMPLOYEE_ID,
@@ -1508,7 +1518,7 @@ test("Multi-Profile Slot Policies UI payload builders, assignment immediate effe
   });
   assert.equal(assignDefault.ok, false);
 
-  // Unassign immediate effect and future date guard
+  // Unassign immediate effect and future/past date guard
   const unassignOk = buildUnassignEmployeeFromSlotPolicyPayload({
     todayVn: "2026-10-25",
     expectedVersion: 1,
@@ -1526,6 +1536,14 @@ test("Multi-Profile Slot Policies UI payload builders, assignment immediate effe
     idempotencyKey: INTENT_KEY,
   });
   assert.equal(unassignFuture.ok, false);
+
+  const unassignPast = buildUnassignEmployeeFromSlotPolicyPayload({
+    validTo: "2026-10-24",
+    todayVn: "2026-10-25",
+    expectedVersion: 1,
+    idempotencyKey: INTENT_KEY,
+  });
+  assert.equal(unassignPast.ok, false);
 
   // 3. Employee slot policy summary label & assignment status
   assert.equal(

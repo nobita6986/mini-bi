@@ -785,15 +785,17 @@ begin
     );
   end if;
 
-  v_normalized_slots := public.attendance__internal_normalize_slots_jsonb(p_slots);
+  if p_slots is not null or p_profile_id is null then
+    v_normalized_slots := public.attendance__internal_normalize_slots_jsonb(p_slots);
 
-  if v_effective_from is null
-     or v_effective_from in ('infinity'::date, '-infinity'::date)
-     or v_effective_from < date '2000-01-01'
-     or v_effective_from > date '2100-12-31'
-     or not public.attendance__internal_validate_slots_jsonb(v_normalized_slots) then
-    raise exception 'ATTENDANCE_SLOT_POLICY_INVALID'
-      using errcode = '22023';
+    if v_effective_from is null
+       or v_effective_from in ('infinity'::date, '-infinity'::date)
+       or v_effective_from < date '2000-01-01'
+       or v_effective_from > date '2100-12-31'
+       or not public.attendance__internal_validate_slots_jsonb(v_normalized_slots) then
+      raise exception 'ATTENDANCE_SLOT_POLICY_INVALID'
+        using errcode = '22023';
+    end if;
   end if;
 
   if p_profile_id is null then
@@ -931,19 +933,21 @@ begin
     limit 1
     for update;
 
-    if not found or v_latest.version <> p_expected_version then
+    if not found or (v_latest.version <> p_expected_version and v_profile.version <> p_expected_version) then
       raise exception 'ATTENDANCE_SLOT_POLICY_VERSION_CONFLICT'
         using errcode = 'PT409';
     end if;
 
-    if v_effective_from < v_today_vn then
-      raise exception 'ATTENDANCE_SLOT_POLICY_EFFECTIVE_DATE_PAST'
-        using errcode = '22023';
-    end if;
+    if p_slots is not null then
+      if v_effective_from < v_today_vn then
+        raise exception 'ATTENDANCE_SLOT_POLICY_EFFECTIVE_DATE_PAST'
+          using errcode = '22023';
+      end if;
 
-    if v_effective_from <= v_latest.effective_from_date then
-      raise exception 'ATTENDANCE_SLOT_POLICY_OVERLAP'
-        using errcode = 'PT409';
+      if v_effective_from <= v_latest.effective_from_date then
+        raise exception 'ATTENDANCE_SLOT_POLICY_OVERLAP'
+          using errcode = 'PT409';
+      end if;
     end if;
 
     v_clean_name := coalesce(nullif(btrim(coalesce(p_display_name, '')), ''), v_profile.display_name);
@@ -994,51 +998,55 @@ begin
     where pr.profile_id = v_profile.profile_id
     returning * into v_profile;
 
-    insert into public.attendance_slot_policy_versions (
-      profile_id,
-      version,
-      effective_from_date,
-      slot_1_time,
-      slot_1_grace_before_minutes,
-      slot_1_grace_after_minutes,
-      slot_2_time,
-      slot_2_grace_before_minutes,
-      slot_2_grace_after_minutes,
-      slot_3_time,
-      slot_3_grace_before_minutes,
-      slot_3_grace_after_minutes,
-      slot_4_time,
-      slot_4_grace_before_minutes,
-      slot_4_grace_after_minutes,
-      slots,
-      configured_by_user_id,
-      configured_at,
-      idempotency_key,
-      request_fingerprint
-    )
-    values (
-      v_profile.profile_id,
-      v_latest.version + 1,
-      v_effective_from,
-      v_normalized_slots #>> '{0,target_time}',
-      (v_normalized_slots #>> '{0,grace_before_minutes}')::integer,
-      (v_normalized_slots #>> '{0,grace_after_minutes}')::integer,
-      v_normalized_slots #>> '{1,target_time}',
-      (v_normalized_slots #>> '{1,grace_before_minutes}')::integer,
-      (v_normalized_slots #>> '{1,grace_after_minutes}')::integer,
-      v_normalized_slots #>> '{2,target_time}',
-      (v_normalized_slots #>> '{2,grace_before_minutes}')::integer,
-      (v_normalized_slots #>> '{2,grace_after_minutes}')::integer,
-      v_normalized_slots #>> '{3,target_time}',
-      (v_normalized_slots #>> '{3,grace_before_minutes}')::integer,
-      (v_normalized_slots #>> '{3,grace_after_minutes}')::integer,
-      v_normalized_slots,
-      p_app_user_id,
-      clock_timestamp(),
-      p_idempotency_key,
-      p_request_fingerprint
-    )
-    returning * into v_saved;
+    if p_slots is not null then
+      insert into public.attendance_slot_policy_versions (
+        profile_id,
+        version,
+        effective_from_date,
+        slot_1_time,
+        slot_1_grace_before_minutes,
+        slot_1_grace_after_minutes,
+        slot_2_time,
+        slot_2_grace_before_minutes,
+        slot_2_grace_after_minutes,
+        slot_3_time,
+        slot_3_grace_before_minutes,
+        slot_3_grace_after_minutes,
+        slot_4_time,
+        slot_4_grace_before_minutes,
+        slot_4_grace_after_minutes,
+        slots,
+        configured_by_user_id,
+        configured_at,
+        idempotency_key,
+        request_fingerprint
+      )
+      values (
+        v_profile.profile_id,
+        v_latest.version + 1,
+        v_effective_from,
+        v_normalized_slots #>> '{0,target_time}',
+        (v_normalized_slots #>> '{0,grace_before_minutes}')::integer,
+        (v_normalized_slots #>> '{0,grace_after_minutes}')::integer,
+        v_normalized_slots #>> '{1,target_time}',
+        (v_normalized_slots #>> '{1,grace_before_minutes}')::integer,
+        (v_normalized_slots #>> '{1,grace_after_minutes}')::integer,
+        v_normalized_slots #>> '{2,target_time}',
+        (v_normalized_slots #>> '{2,grace_before_minutes}')::integer,
+        (v_normalized_slots #>> '{2,grace_after_minutes}')::integer,
+        v_normalized_slots #>> '{3,target_time}',
+        (v_normalized_slots #>> '{3,grace_before_minutes}')::integer,
+        (v_normalized_slots #>> '{3,grace_after_minutes}')::integer,
+        v_normalized_slots,
+        p_app_user_id,
+        clock_timestamp(),
+        p_idempotency_key,
+        p_request_fingerprint
+      )
+      returning * into v_saved;
+    else
+      v_saved := v_latest;
+    end if;
   end if;
 
   select array_agg(val order by ord)
@@ -1201,6 +1209,12 @@ begin
     raise exception 'ATTENDANCE_SLOT_POLICY_ASSIGNMENT_FUTURE_DATE'
       using errcode = '22023',
             detail = 'Slot policy profile assignment takes effect immediately and cannot be scheduled in the future.';
+  end if;
+
+  if v_effective_date < v_today_vn then
+    raise exception 'ATTENDANCE_SLOT_POLICY_ASSIGNMENT_PAST_DATE'
+      using errcode = '22023',
+            detail = 'Slot policy profile assignment takes effect immediately today and cannot retroactively alter past dates.';
   end if;
 
   perform pg_advisory_xact_lock(
@@ -1478,6 +1492,12 @@ begin
     raise exception 'ATTENDANCE_SLOT_POLICY_ASSIGNMENT_FUTURE_DATE'
       using errcode = '22023',
             detail = 'Slot policy profile unassignment takes effect immediately and cannot be scheduled in the future.';
+  end if;
+
+  if v_effective_date < v_today_vn then
+    raise exception 'ATTENDANCE_SLOT_POLICY_ASSIGNMENT_PAST_DATE'
+      using errcode = '22023',
+            detail = 'Slot policy profile unassignment takes effect immediately today and cannot retroactively alter past dates.';
   end if;
 
   perform pg_advisory_xact_lock(

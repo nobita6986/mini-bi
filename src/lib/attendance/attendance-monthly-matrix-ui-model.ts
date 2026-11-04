@@ -1299,6 +1299,13 @@ export function buildAssignEmployeeToSlotPolicyPayload(input: {
           "Không được đặt ngày hiệu lực gán cấu hình trong tương lai. Phân công có hiệu lực ngay từ hôm nay.",
       };
     }
+    if (input.todayVn && trimmedValidFrom < input.todayVn) {
+      return {
+        ok: false,
+        message:
+          "Không được đặt ngày hiệu lực gán cấu hình lùi về quá khứ để tránh sửa ngược lịch sử áp dụng cấu hình.",
+      };
+    }
     validFrom = trimmedValidFrom;
   } else if (input.todayVn && isValidIsoCalendarDate(input.todayVn)) {
     validFrom = input.todayVn;
@@ -1338,6 +1345,13 @@ export function buildUnassignEmployeeFromSlotPolicyPayload(input: {
         ok: false,
         message:
           "Không được đặt ngày kết thúc gán cấu hình trong tương lai. Việc hủy gán có hiệu lực ngay từ hôm nay.",
+      };
+    }
+    if (input.todayVn && trimmedValidTo < input.todayVn) {
+      return {
+        ok: false,
+        message:
+          "Không được đặt ngày kết thúc gán cấu hình lùi về quá khứ để tránh sửa ngược lịch sử áp dụng cấu hình.",
       };
     }
     validTo = trimmedValidTo;
@@ -1474,6 +1488,13 @@ export function mapSlotPolicyMutationError(
       isConflict: false,
       message:
         "Không được đặt ngày hiệu lực gán/hủy gán cấu hình trong tương lai. Mọi thay đổi có hiệu lực ngay từ hôm nay.",
+    };
+  }
+  if (code === "ATTENDANCE_SLOT_POLICY_ASSIGNMENT_PAST_DATE") {
+    return {
+      isConflict: false,
+      message:
+        "Không được đặt ngày hiệu lực gán/hủy gán cấu hình lùi về quá khứ để tránh sửa ngược lịch sử áp dụng cấu hình.",
     };
   }
   if (code === "ATTENDANCE_SLOT_POLICY_ASSIGNMENT_OVERLAP") {

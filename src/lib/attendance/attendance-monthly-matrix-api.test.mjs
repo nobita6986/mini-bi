@@ -4,6 +4,9 @@ import test from "node:test";
 import {
   computeExplanationDecideRequestFingerprint,
   computeExplanationSubmitRequestFingerprint,
+  computeSlotPolicyAssignRequestFingerprint,
+  computeSlotPolicyProfileUpsertRequestFingerprint,
+  computeSlotPolicyUnassignRequestFingerprint,
   exportAttendanceMonthlyMatrixXlsx,
   getAttendanceBranchesAdmin,
   getAttendanceExplanationApprovalInbox,
@@ -1893,12 +1896,21 @@ test("Multi-Profile Slot Policy Admin contracts, API handlers, and repository RP
       };
     }
     if (name === "attendance_assign_employee_slot_policy_admin") {
-      if (args.p_valid_from === "2099-01-01") {
+      if (args.p_effective_date === "2099-01-01") {
         return {
           data: null,
           error: {
             code: "22023",
             message: "ATTENDANCE_SLOT_POLICY_ASSIGNMENT_FUTURE_DATE: future assignment not allowed",
+          },
+        };
+      }
+      if (args.p_effective_date === "2020-01-01") {
+        return {
+          data: null,
+          error: {
+            code: "22023",
+            message: "ATTENDANCE_SLOT_POLICY_ASSIGNMENT_PAST_DATE: past assignment not allowed",
           },
         };
       }
@@ -1911,6 +1923,15 @@ test("Multi-Profile Slot Policy Admin contracts, API handlers, and repository RP
       };
     }
     if (name === "attendance_unassign_employee_slot_policy_admin") {
+      if (args.p_effective_date === "2020-01-01") {
+        return {
+          data: null,
+          error: {
+            code: "22023",
+            message: "ATTENDANCE_SLOT_POLICY_ASSIGNMENT_PAST_DATE: past unassignment not allowed",
+          },
+        };
+      }
       return {
         data: {
           replayed: false,
@@ -1969,6 +1990,26 @@ test("Multi-Profile Slot Policy Admin contracts, API handlers, and repository RP
     "ATTENDANCE_SLOT_POLICY_ASSIGNMENT_FUTURE_DATE",
   );
 
+  // Past date returns 422 ATTENDANCE_SLOT_POLICY_ASSIGNMENT_PAST_DATE
+  const pastAssignRes = await postAttendanceSlotPolicyAssignmentAdmin(
+    makeJsonRequest("https://bi.example.com/api/admin/attendance/slot-policies/assignments", "POST", {
+      app_user_id: STAFF_USER_ID,
+      profile_id: PROFILE_ID,
+      valid_from: "2020-01-01",
+      expected_version: 1,
+      idempotency_key: IDEMPOTENCY_KEY,
+    }),
+    {
+      resolveSession: async () => makeSessionOk(FULL_ADMIN_CAPS, ALL_SCOPE),
+      repository: repo,
+    },
+  );
+  assert.equal(pastAssignRes.status, 422);
+  assert.equal(
+    (await pastAssignRes.json()).code,
+    "ATTENDANCE_SLOT_POLICY_ASSIGNMENT_PAST_DATE",
+  );
+
   // Immediate assignment returns 201
   const assignOkRes = await postAttendanceSlotPolicyAssignmentAdmin(
     makeJsonRequest("https://bi.example.com/api/admin/attendance/slot-policies/assignments", "POST", {
@@ -1986,6 +2027,29 @@ test("Multi-Profile Slot Policy Admin contracts, API handlers, and repository RP
   assert.equal(assignOkRes.status, 201);
   const assignOkJson = await assignOkRes.json();
   assert.equal(assignOkJson.assignment.profile_code, "HANH_CHINH");
+
+  // Past date on unassign returns 422 ATTENDANCE_SLOT_POLICY_ASSIGNMENT_PAST_DATE
+  const pastUnassignRes = await postAttendanceSlotPolicyUnassignAdmin(
+    makeJsonRequest(
+      `https://bi.example.com/api/admin/attendance/slot-policies/assignments/${ASSIGNMENT_ID}/unassign`,
+      "POST",
+      {
+        valid_to: "2020-01-01",
+        expected_version: 1,
+        idempotency_key: IDEMPOTENCY_KEY,
+      },
+    ),
+    ASSIGNMENT_ID,
+    {
+      resolveSession: async () => makeSessionOk(FULL_ADMIN_CAPS, ALL_SCOPE),
+      repository: repo,
+    },
+  );
+  assert.equal(pastUnassignRes.status, 422);
+  assert.equal(
+    (await pastUnassignRes.json()).code,
+    "ATTENDANCE_SLOT_POLICY_ASSIGNMENT_PAST_DATE",
+  );
 
   // Unassign returns 200
   const unassignOkRes = await postAttendanceSlotPolicyUnassignAdmin(
@@ -2008,8 +2072,65 @@ test("Multi-Profile Slot Policy Admin contracts, API handlers, and repository RP
   const unassignOkJson = await unassignOkRes.json();
   assert.equal(unassignOkJson.assignment.valid_to, "2026-10-25");
 
-  assert.equal(rpcCalls.length, 4);
+  assert.equal(rpcCalls.length, 6);
   assert.equal(rpcCalls[0].name, "attendance_upsert_slot_policy_profile_admin");
-  assert.equal(rpcCalls[2].name, "attendance_assign_employee_slot_policy_admin");
-  assert.equal(rpcCalls[3].name, "attendance_unassign_employee_slot_policy_admin");
+  assert.deepEqual(rpcCalls[0].args, {
+    p_auth_subject: AUTH_SUBJECT,
+    p_app_user_id: APP_USER_ID,
+    p_profile_id: null,
+    p_profile_code: "HANH_CHINH",
+    p_display_name: "Hành chính",
+    p_description: "Khung giờ 2 mốc",
+    p_active: true,
+    p_effective_from_date: "2026-10-01",
+    p_slots: samplePolicy2Slots.slots,
+    p_expected_version: 0,
+    p_idempotency_key: IDEMPOTENCY_KEY,
+    p_request_fingerprint: computeSlotPolicyProfileUpsertRequestFingerprint({
+      app_user_id: APP_USER_ID,
+      profile_id: null,
+      profile_code: "HANH_CHINH",
+      display_name: "Hành chính",
+      description: "Khung giờ 2 mốc",
+      active: true,
+      expected_profile_version: 0,
+      effective_from_date: "2026-10-01",
+      slots: samplePolicy2Slots.slots,
+      expected_version: 0,
+    }),
+  });
+
+  assert.equal(rpcCalls[3].name, "attendance_assign_employee_slot_policy_admin");
+  assert.deepEqual(rpcCalls[3].args, {
+    p_auth_subject: AUTH_SUBJECT,
+    p_app_user_id: APP_USER_ID,
+    p_target_app_user_id: STAFF_USER_ID,
+    p_profile_id: PROFILE_ID,
+    p_effective_date: "2026-10-25",
+    p_expected_version: 1,
+    p_idempotency_key: IDEMPOTENCY_KEY,
+    p_request_fingerprint: computeSlotPolicyAssignRequestFingerprint({
+      app_user_id: APP_USER_ID,
+      target_app_user_id: STAFF_USER_ID,
+      profile_id: PROFILE_ID,
+      valid_from: "2026-10-25",
+      expected_version: 1,
+    }),
+  });
+
+  assert.equal(rpcCalls[5].name, "attendance_unassign_employee_slot_policy_admin");
+  assert.deepEqual(rpcCalls[5].args, {
+    p_auth_subject: AUTH_SUBJECT,
+    p_app_user_id: APP_USER_ID,
+    p_assignment_id: ASSIGNMENT_ID,
+    p_effective_date: "2026-10-25",
+    p_expected_version: 1,
+    p_idempotency_key: IDEMPOTENCY_KEY,
+    p_request_fingerprint: computeSlotPolicyUnassignRequestFingerprint({
+      app_user_id: APP_USER_ID,
+      assignment_id: ASSIGNMENT_ID,
+      valid_to: "2026-10-25",
+      expected_version: 1,
+    }),
+  });
 });

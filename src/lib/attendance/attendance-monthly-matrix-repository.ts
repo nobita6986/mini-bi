@@ -367,6 +367,10 @@ const KNOWN_MATRIX_RPC_TOKENS: ReadonlyMap<string, AttendanceMonthlyMatrixErrorC
     "ATTENDANCE_SLOT_POLICY_ASSIGNMENT_FUTURE_DATE",
   ],
   [
+    "ATTENDANCE_SLOT_POLICY_ASSIGNMENT_PAST_DATE",
+    "ATTENDANCE_SLOT_POLICY_ASSIGNMENT_PAST_DATE",
+  ],
+  [
     "ATTENDANCE_SLOT_POLICY_ASSIGNMENT_NOT_FOUND",
     "ATTENDANCE_SLOT_POLICY_ASSIGNMENT_NOT_FOUND",
   ],
@@ -751,8 +755,6 @@ export function createServiceAttendanceMonthlyMatrixRepository(
               p_effective_from_date: input.effective_from_date,
               p_slots: input.slots,
               p_expected_version: input.expected_version,
-              p_expected_profile_version:
-                input.expected_profile_version ?? input.expected_version,
               p_idempotency_key: input.idempotency_key,
               p_request_fingerprint: input.request_fingerprint,
             })
@@ -799,7 +801,6 @@ export function createServiceAttendanceMonthlyMatrixRepository(
           p_effective_from_date: input.effective_from_date,
           p_slots: input.slots,
           p_expected_version: input.expected_version,
-          p_expected_profile_version: input.expected_profile_version,
           p_idempotency_key: input.idempotency_key,
           p_request_fingerprint: input.request_fingerprint,
         });
@@ -831,7 +832,7 @@ export function createServiceAttendanceMonthlyMatrixRepository(
           p_app_user_id: input.app_user_id,
           p_target_app_user_id: input.target_app_user_id,
           p_profile_id: input.profile_id,
-          p_valid_from: input.valid_from,
+          p_effective_date: input.valid_from,
           p_expected_version: input.expected_version,
           p_idempotency_key: input.idempotency_key,
           p_request_fingerprint: input.request_fingerprint,
@@ -866,7 +867,7 @@ export function createServiceAttendanceMonthlyMatrixRepository(
           p_auth_subject: input.auth_subject,
           p_app_user_id: input.app_user_id,
           p_assignment_id: input.assignment_id,
-          p_valid_to: input.valid_to,
+          p_effective_date: input.valid_to,
           p_expected_version: input.expected_version,
           p_idempotency_key: input.idempotency_key,
           p_request_fingerprint: input.request_fingerprint,
