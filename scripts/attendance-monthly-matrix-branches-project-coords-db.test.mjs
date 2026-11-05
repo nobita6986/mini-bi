@@ -581,6 +581,27 @@ test("HRP Branches, Branch Check-In Distance Snapshot Immutability, Project Coor
       (err) => String(err.message).includes("ATTENDANCE_CHECKINS_IMMUTABLE"),
     );
 
+    // Anchor initial v1 HQ and branch revisions to 2026-01-01 so October/November 2026
+    // test check-ins remain deterministic regardless of the wall-clock date when CI runs.
+    await db.query(
+      "alter table public.attendance_hq_location_revisions disable trigger attendance_hq_location_revisions_immutable_guard",
+    );
+    await db.query(
+      "update public.attendance_hq_location_revisions set effective_from = '2026-01-01T00:00:00.000Z'::timestamptz where version = 1",
+    );
+    await db.query(
+      "alter table public.attendance_hq_location_revisions enable trigger attendance_hq_location_revisions_immutable_guard",
+    );
+    await db.query(
+      "alter table public.attendance_branch_revisions disable trigger user",
+    );
+    await db.query(
+      "update public.attendance_branch_revisions set effective_from = '2026-01-01T00:00:00.000Z'::timestamptz where version = 1",
+    );
+    await db.query(
+      "alter table public.attendance_branch_revisions enable trigger user",
+    );
+
     // -------------------------------------------------------------------------
     // 3. Employee Branch Assignment by app_user_id & Overlap Guard
     // -------------------------------------------------------------------------

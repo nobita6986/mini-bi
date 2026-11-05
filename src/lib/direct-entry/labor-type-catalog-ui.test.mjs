@@ -76,7 +76,7 @@ test("Direct Entry consumers use active catalog keys and server display projecti
   assert.match(live, /!hasActiveLaborTypes/);
   assert.match(live, /disabled=\{loadState !== "ready" \|\| stagedBusy \|\|\s*\(editingDraftSubmissionId === null && !hasActiveLaborTypes\)\}/);
   assert.match(worker, /labor_type_display/);
-  assert.match(worker, /sortedActiveLaborTypes\(entryCatalog\?\.labor_types\)/);
+  assert.match(worker, /sortedActiveLaborTypes\(catalog\?\.labor_types\)/);
   assert.match(worker, /labor_type_key/);
   assert.match(proposer, /labor_type_display/);
   assert.match(proposer, /sortedActiveLaborTypes\(catalog\?\.labor_types\)/);
