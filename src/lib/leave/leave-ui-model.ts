@@ -361,8 +361,18 @@ export type LeaveOpeningPreviewRowProjection = {
   row_index: number;
   app_user_id: string | null;
   account: LeaveAccountProjection | null;
+  as_of_date?: string | null;
   carry_over_units: number;
   opening_current_year_units: number;
+  target_current_year_units?: number;
+  current_year_accrued_units?: number;
+  current_year_granted_units?: number;
+  current_year_locked_units?: number;
+  current_year_available_units?: number;
+  delta_current_year_units?: number;
+  reconciled_current_year_granted_units?: number;
+  reconciled_current_year_available_units?: number;
+  profile_row_version?: number;
   seniority_units: number;
   note: string | null;
   valid: boolean;
@@ -371,6 +381,7 @@ export type LeaveOpeningPreviewRowProjection = {
 
 export type LeaveOpeningPreviewProjection = {
   leave_year: number;
+  as_of_date?: string | null;
   carry_over_expires_after_date: string | null;
   valid: boolean;
   has_carry_over_expiry_error: boolean;
@@ -743,7 +754,10 @@ export function leaveLotKindLabel(
   }
 }
 
-export function leaveLedgerEntryTypeLabel(entryType: string): string {
+export function leaveLedgerEntryTypeLabel(
+  entryType: string,
+  deltaAvailableUnits?: number,
+): string {
   switch (entryType) {
     case "GRANT_MONTHLY_ACCRUAL":
       return "Cộng phép định kỳ tháng";
@@ -753,7 +767,14 @@ export function leaveLedgerEntryTypeLabel(entryType: string): string {
       return "Cộng phép thâm niên";
     case "GRANT_OPENING_CARRY_OVER":
       return "Khởi tạo phép tồn năm trước";
+    case "ADJUST_OPENING_CURRENT_YEAR_DECREASE":
+      return "Điều chỉnh giảm số dư đầu kỳ năm hiện tại (đối soát)";
+    case "ADJUST_OPENING_CURRENT_YEAR_INCREASE":
+      return "Điều chỉnh tăng số dư đầu kỳ năm hiện tại (đối soát)";
     case "GRANT_OPENING_CURRENT_YEAR":
+      if (typeof deltaAvailableUnits === "number" && deltaAvailableUnits < 0) {
+        return "Điều chỉnh giảm số dư đầu kỳ năm hiện tại (đối soát)";
+      }
       return "Khởi tạo số dư đầu kỳ năm hiện tại";
     case "GRANT_MANUAL_ADJUSTMENT":
       return "Điều chỉnh số dư phép";
@@ -809,8 +830,12 @@ export function leaveOpeningRowErrorLabel(errorCode: string): string {
       return "Chưa cấu hình hạn sử dụng phép tồn năm trước trong Chính sách nghỉ phép";
     case "CARRY_OVER_LOT_ALREADY_EXISTS":
       return "Nhân sự này đã được khởi tạo phép tồn năm trước trong năm hiện tại";
+    case "SENIORITY_LOT_ALREADY_EXISTS":
+      return "Nhân sự này đã được cấp phép thâm niên trong năm hiện tại (đặt Phép thâm niên = 0 khi đối soát lại phép năm nay)";
     case "OPENING_CURRENT_YEAR_LOT_ALREADY_EXISTS":
       return "Nhân sự này đã được khởi tạo số dư đầu kỳ năm hiện tại";
+    case "OPENING_TARGET_BELOW_LOCKED_BALANCE":
+      return "Số dư mục tiêu năm nay thấp hơn số phép đang giữ chỗ hoặc đã duyệt sử dụng trên hệ thống";
     default:
       return errorCode;
   }
@@ -897,6 +922,8 @@ export function leaveErrorMessage(code: string | null | undefined): string {
       return "Chưa cấu hình ngày hết hạn phép chuyển năm. Vui lòng cấu hình Chính sách nghỉ phép trước khi nhập phép tồn năm trước.";
     case "LEAVE_OPENING_BATCH_VALIDATION_FAILED":
       return "Lô số dư đầu kỳ còn dòng lỗi. Vui lòng xem trước và xử lý hết lỗi trước khi áp dụng.";
+    case "LEAVE_OPENING_PREVIEW_STALE":
+      return "Dữ liệu số dư hoặc hồ sơ đã thay đổi sau lần xem trước. Vui lòng bấm '1. Xem trước & Kiểm tra' lại trước khi áp dụng.";
     case "LEAVE_REPORT_FORBIDDEN":
       return "Bạn không có quyền xem hoặc xuất Báo cáo chốt công & phép tháng.";
     case "LEAVE_REPORT_YEAR_MONTH_INVALID":
@@ -1283,6 +1310,68 @@ export function canApplyOpeningBatch(input: {
     };
   }
   return { ok: true, blockingReason: null };
+}
+
+export function buildOpeningBatchApplyRows(
+  rows: readonly OpeningBatchRowInput[],
+  preview: LeaveOpeningPreviewProjection | null,
+): OpeningBatchRowInput[] {
+  return rows.map((row, idx) => {
+    const previewRow = preview?.rows[idx];
+    const asOfDate =
+      previewRow?.as_of_date ?? preview?.as_of_date ?? undefined;
+    return {
+      ...row,
+      ...(typeof asOfDate === "string" && asOfDate.trim().length > 0
+        ? { expected_as_of_date: asOfDate.trim() }
+        : {}),
+      ...(typeof previewRow?.current_year_granted_units === "number" &&
+      Number.isInteger(previewRow.current_year_granted_units)
+        ? {
+            expected_current_year_granted_units:
+              previewRow.current_year_granted_units,
+          }
+        : {}),
+      ...(typeof previewRow?.current_year_locked_units === "number" &&
+      Number.isInteger(previewRow.current_year_locked_units)
+        ? {
+            expected_current_year_locked_units:
+              previewRow.current_year_locked_units,
+          }
+        : {}),
+      ...(typeof previewRow?.profile_row_version === "number" &&
+      Number.isInteger(previewRow.profile_row_version)
+        ? { expected_profile_row_version: previewRow.profile_row_version }
+        : {}),
+    };
+  });
+}
+
+export function resolveAppliedOpeningRowCount(
+  payload: unknown,
+  fallbackRowCount = 0,
+): number {
+  if (typeof payload === "object" && payload !== null) {
+    const record = payload as Record<string, unknown>;
+    const directCount = Number(record.applied_row_count);
+    if (Number.isInteger(directCount) && directCount >= 0) {
+      return directCount;
+    }
+    if (typeof record.batch === "object" && record.batch !== null) {
+      const batchCount = Number(
+        (record.batch as Record<string, unknown>).row_count,
+      );
+      if (Number.isInteger(batchCount) && batchCount >= 0) {
+        return batchCount;
+      }
+    }
+    if (Array.isArray(record.applied_rows)) {
+      return record.applied_rows.length;
+    }
+  }
+  return Number.isInteger(fallbackRowCount) && fallbackRowCount > 0
+    ? fallbackRowCount
+    : 0;
 }
 
 export type LeaveAdminAccountOption = {

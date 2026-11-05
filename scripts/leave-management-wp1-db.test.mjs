@@ -914,7 +914,7 @@ test("Leave Management WP1 full PGlite integration & business rule verification"
     "fp-prof-tl-off",
   ]);
 
-  // Now apply opening batch (bulk of 2 rows: recruiterOfficial gets 4 carry_over_units, leaderAlpha gets 2 opening_current_year_units)
+  // Now apply opening batch (bulk of 2 rows: recruiterOfficial gets 4 carry_over_units + confirms 6 target current-year units, leaderAlpha reconciles current-year target to 2 units)
   const batchApplied = await rpc("leave_management_apply_opening_batch", [
     ACTORS.hrOperator.auth,
     ACTORS.hrOperator.app,
@@ -923,16 +923,16 @@ test("Leave Management WP1 full PGlite integration & business rule verification"
       {
         app_user_id: ACTORS.recruiterOfficial.app,
         carry_over_units: 4,
-        opening_current_year_units: 0,
+        opening_current_year_units: 6,
         seniority_units: 0,
-        note: "Phép chuyển năm 2 ngày",
+        note: "Phép chuyển năm 2 ngày và chốt số dư năm nay 3 ngày",
       },
       {
         app_user_id: ACTORS.leaderAlpha.app,
         carry_over_units: 0,
         opening_current_year_units: 2,
         seniority_units: 0,
-        note: "Số dư đầu kỳ 1 ngày",
+        note: "Số dư mục tiêu đầu kỳ 1 ngày sau đối soát",
       },
     ]),
     "Áp dụng lô số dư đầu kỳ 2026",
@@ -941,7 +941,30 @@ test("Leave Management WP1 full PGlite integration & business rule verification"
   ]);
   assert.equal(batchApplied.batch.batch_kind, "BULK");
   assert.equal(batchApplied.batch.row_count, 2);
+  assert.equal(batchApplied.applied_row_count, 2);
+  assert.equal(batchApplied.batch_id, batchApplied.batch.batch_id);
   assert.equal(batchApplied.batch.total_carry_over_units, 4);
+
+  const leaderAlphaAfterReconcile = await rpc("leave_management_get_my_summary", [
+    ACTORS.leaderAlpha.auth,
+    ACTORS.leaderAlpha.app,
+    2026,
+  ]);
+  assert.equal(
+    leaderAlphaAfterReconcile.balance.monthly_accrued_units,
+    6,
+    "leaderAlpha retains 6 units of original monthly accrual history",
+  );
+  assert.equal(
+    leaderAlphaAfterReconcile.balance.opening_or_adjustment_units,
+    -4,
+    "leaderAlpha opening reconciliation adjustment is -4 units (from 6 accrued to target 2)",
+  );
+  assert.equal(
+    leaderAlphaAfterReconcile.balance.available_units,
+    2,
+    "leaderAlpha post-reconciliation available current-year balance matches target 2 units (1 day)",
+  );
 
   // At 2026-03-20, recruiterOfficial has: 4 carry-over + 6 monthly + 2 seniority = 12 available units
   // Submit a request for 2.5 days (5 units): 2026-03-19 (FULL, past/current -> CONSUME), 2026-03-26 (FULL, future -> RESERVE), 2026-03-27 (AM, future -> RESERVE)
@@ -1760,5 +1783,414 @@ test("Leave Management WP1 full PGlite integration & business rule verification"
       { leave_date: "2028-03-17", session_code: "AM", leave_type: "BEREAVEMENT", half_day_units: 1 },
       { leave_date: "2028-03-17", session_code: "PM", leave_type: "SICK", half_day_units: 1 },
     ],
+  );
+
+  // 21. Opening Balance Target Reconciliation Regression Suite (2028):
+  //   - Reconcile OFFICIAL employee with existing monthly accruals down to 0 and non-zero targets
+  //   - Protect consumed/reserved units when target < locked balance (OPENING_TARGET_BELOW_LOCKED_BALANCE)
+  //   - Subsequent month accrues strictly once (+2 units) without re-granting earlier months
+  //   - Re-applying / editing an already-applied opening balance works with append-only ledger & idempotency
+  //   - Stale preview rejection (LEAVE_OPENING_PREVIEW_STALE) when state changes between preview and apply
+  await setBusinessDate(db, "2028-03-20");
+
+  // At 2028-03-20, leaderAlpha has 3 months of 2028 monthly accruals = 6 units (3 days), 0 consumed/reserved.
+  const tlSummary2028Before = await rpc("leave_management_get_my_summary", [
+    ACTORS.leaderAlpha.auth,
+    ACTORS.leaderAlpha.app,
+    2028,
+  ]);
+  assert.equal(tlSummary2028Before.balance.monthly_accrued_units, 6);
+  assert.equal(tlSummary2028Before.balance.available_units, 6);
+
+  // Reconcile leaderAlpha down to 0 units (took all 3 days before BI tracking)
+  const previewZeroTarget = await rpc("leave_management_preview_opening_batch", [
+    ACTORS.hrOperator.auth,
+    ACTORS.hrOperator.app,
+    2028,
+    JSON.stringify([
+      {
+        app_user_id: ACTORS.leaderAlpha.app,
+        carry_over_units: 0,
+        opening_current_year_units: 0,
+        seniority_units: 0,
+        note: "Đã nghỉ hết 3 ngày phép đầu năm trước khi lên BI",
+      },
+    ]),
+  ]);
+  assert.equal(previewZeroTarget.valid, true);
+  assert.equal(previewZeroTarget.as_of_date, "2028-03-20");
+  assert.equal(previewZeroTarget.rows[0].current_year_accrued_units, 6);
+  assert.equal(previewZeroTarget.rows[0].current_year_granted_units, 6);
+  assert.equal(previewZeroTarget.rows[0].delta_current_year_units, -6);
+  assert.equal(previewZeroTarget.rows[0].reconciled_current_year_available_units, 0);
+
+  const applyZeroTarget = await rpc("leave_management_apply_opening_batch", [
+    ACTORS.hrOperator.auth,
+    ACTORS.hrOperator.app,
+    2028,
+    JSON.stringify([
+      {
+        app_user_id: ACTORS.leaderAlpha.app,
+        carry_over_units: 0,
+        opening_current_year_units: 0,
+        seniority_units: 0,
+        note: "Đã nghỉ hết 3 ngày phép đầu năm trước khi lên BI",
+        expected_as_of_date: previewZeroTarget.rows[0].as_of_date,
+        expected_current_year_granted_units:
+          previewZeroTarget.rows[0].current_year_granted_units,
+        expected_current_year_locked_units:
+          previewZeroTarget.rows[0].current_year_locked_units,
+        expected_profile_row_version:
+          previewZeroTarget.rows[0].profile_row_version,
+      },
+    ]),
+    "Đối soát số dư mục tiêu = 0 ngày",
+    nextIdem("reconcile-2028-zero"),
+    "fp-reconcile-2028-zero",
+  ]);
+  assert.equal(applyZeroTarget.replayed, false);
+  assert.equal(applyZeroTarget.applied_row_count, 1);
+  assert.equal(applyZeroTarget.batch_id, applyZeroTarget.batch.batch_id);
+  assert.equal(applyZeroTarget.applied_rows[0].balance.available_units, 0);
+  assert.equal(applyZeroTarget.applied_rows[0].balance.total_granted_units, 0);
+  assert.equal(applyZeroTarget.applied_rows[0].balance.monthly_accrued_units, 6);
+  assert.equal(applyZeroTarget.applied_rows[0].balance.opening_or_adjustment_units, -6);
+
+  // Verify ledger records explicit ADJUST_OPENING_CURRENT_YEAR_DECREASE entry type for downward reconciliation
+  const tlSummaryAfterZero = await rpc("leave_management_get_my_summary", [
+    ACTORS.leaderAlpha.auth,
+    ACTORS.leaderAlpha.app,
+    2028,
+  ]);
+  const decreaseLedgerEntries = tlSummaryAfterZero.ledger_entries.filter(
+    (e) =>
+      e.entry_type === "ADJUST_OPENING_CURRENT_YEAR_DECREASE" &&
+      e.effective_date === "2028-03-20",
+  );
+  assert.ok(
+    decreaseLedgerEntries.length > 0,
+    "Downward opening balance reconciliation must write ADJUST_OPENING_CURRENT_YEAR_DECREASE ledger entries",
+  );
+  assert.equal(
+    decreaseLedgerEntries.reduce((sum, e) => sum + e.delta_available_units, 0),
+    -6,
+  );
+
+  // Re-applying the same preview with a new idempotency key (without re-previewing) must fail with LEAVE_OPENING_PREVIEW_STALE
+  await assert.rejects(
+    rpc("leave_management_apply_opening_batch", [
+      ACTORS.hrOperator.auth,
+      ACTORS.hrOperator.app,
+      2028,
+      JSON.stringify([
+        {
+          app_user_id: ACTORS.leaderAlpha.app,
+          carry_over_units: 0,
+          opening_current_year_units: 0,
+          seniority_units: 0,
+          note: "Đã nghỉ hết 3 ngày phép đầu năm trước khi lên BI",
+        },
+      ]),
+      "Thử dùng lại bản preview cũ đã áp dụng",
+      nextIdem("reconcile-2028-stale-replay"),
+      "fp-reconcile-2028-stale-replay",
+    ]),
+    (err) => String(err?.message).includes("LEAVE_OPENING_PREVIEW_STALE"),
+    "Applying a consumed/stale preview without re-previewing must reject with LEAVE_OPENING_PREVIEW_STALE",
+  );
+
+  // Re-preview and edit/re-apply leaderAlpha's opening balance upward from 0 to 4 units (2 days), then to 8 units (4 days)
+  const previewEditTo4 = await rpc("leave_management_preview_opening_batch", [
+    ACTORS.hrOperator.auth,
+    ACTORS.hrOperator.app,
+    2028,
+    JSON.stringify([
+      {
+        app_user_id: ACTORS.leaderAlpha.app,
+        carry_over_units: 0,
+        opening_current_year_units: 4,
+        seniority_units: 0,
+        note: "Điều chỉnh lại số dư sau đối soát = 2 ngày",
+      },
+    ]),
+  ]);
+  assert.equal(previewEditTo4.valid, true);
+  assert.equal(previewEditTo4.rows[0].current_year_granted_units, 0);
+  assert.equal(previewEditTo4.rows[0].delta_current_year_units, 4);
+
+  const applyEditTo4Idem = nextIdem("reconcile-2028-edit-4");
+  const applyEditTo4 = await rpc("leave_management_apply_opening_batch", [
+    ACTORS.hrOperator.auth,
+    ACTORS.hrOperator.app,
+    2028,
+    JSON.stringify([
+      {
+        app_user_id: ACTORS.leaderAlpha.app,
+        carry_over_units: 0,
+        opening_current_year_units: 4,
+        seniority_units: 0,
+        note: "Điều chỉnh lại số dư sau đối soát = 2 ngày",
+      },
+    ]),
+    "Hiệu chỉnh số dư mục tiêu lên 2 ngày",
+    applyEditTo4Idem,
+    "fp-reconcile-2028-edit-4",
+  ]);
+  assert.equal(applyEditTo4.applied_rows[0].balance.available_units, 4);
+  assert.equal(applyEditTo4.applied_rows[0].balance.opening_or_adjustment_units, -2);
+
+  // Verify upward reconciliation after reduction writes ADJUST_OPENING_CURRENT_YEAR_INCREASE ledger entries
+  const tlSummaryAfterEditTo4 = await rpc("leave_management_get_my_summary", [
+    ACTORS.leaderAlpha.auth,
+    ACTORS.leaderAlpha.app,
+    2028,
+  ]);
+  const increaseLedgerEntries = tlSummaryAfterEditTo4.ledger_entries.filter(
+    (e) =>
+      e.entry_type === "ADJUST_OPENING_CURRENT_YEAR_INCREASE" &&
+      e.effective_date === "2028-03-20",
+  );
+  assert.ok(
+    increaseLedgerEntries.length > 0,
+    "Upward opening balance reconciliation must write ADJUST_OPENING_CURRENT_YEAR_INCREASE ledger entries",
+  );
+  assert.equal(
+    increaseLedgerEntries.reduce((sum, e) => sum + e.delta_available_units, 0),
+    4,
+  );
+
+  // Applying seniority_units > 0 once succeeds, and re-applying seniority_units > 0 in the same year is blocked with SENIORITY_LOT_ALREADY_EXISTS
+  const previewWithSeniority = await rpc("leave_management_preview_opening_batch", [
+    ACTORS.hrOperator.auth,
+    ACTORS.hrOperator.app,
+    2028,
+    JSON.stringify([
+      {
+        app_user_id: ACTORS.leaderAlpha.app,
+        carry_over_units: 0,
+        opening_current_year_units: 4,
+        seniority_units: 2,
+        note: "Khởi tạo thêm 1 ngày phép thâm niên năm 2028",
+      },
+    ]),
+  ]);
+  assert.equal(previewWithSeniority.valid, true);
+
+  const applyWithSeniority = await rpc("leave_management_apply_opening_batch", [
+    ACTORS.hrOperator.auth,
+    ACTORS.hrOperator.app,
+    2028,
+    JSON.stringify([
+      {
+        app_user_id: ACTORS.leaderAlpha.app,
+        carry_over_units: 0,
+        opening_current_year_units: 4,
+        seniority_units: 2,
+        note: "Khởi tạo thêm 1 ngày phép thâm niên năm 2028",
+      },
+    ]),
+    "Cấp phép thâm niên 2028 cho leaderAlpha",
+    nextIdem("reconcile-2028-sen-once"),
+    "fp-reconcile-2028-sen-once",
+  ]);
+  assert.equal(applyWithSeniority.applied_rows[0].balance.seniority_granted_units, 2);
+  assert.equal(applyWithSeniority.applied_rows[0].balance.available_units, 6);
+
+  // Attempting to re-apply with seniority_units > 0 for the same employee & year must fail with SENIORITY_LOT_ALREADY_EXISTS
+  const previewDuplicateSeniority = await rpc("leave_management_preview_opening_batch", [
+    ACTORS.hrOperator.auth,
+    ACTORS.hrOperator.app,
+    2028,
+    JSON.stringify([
+      {
+        app_user_id: ACTORS.leaderAlpha.app,
+        carry_over_units: 0,
+        opening_current_year_units: 4,
+        seniority_units: 2,
+        note: "Thử cấp trùng phép thâm niên khi đối soát lại",
+      },
+    ]),
+  ]);
+  assert.equal(previewDuplicateSeniority.valid, false);
+  assert.deepEqual(previewDuplicateSeniority.rows[0].errors, [
+    "SENIORITY_LOT_ALREADY_EXISTS",
+  ]);
+
+  await assert.rejects(
+    rpc("leave_management_apply_opening_batch", [
+      ACTORS.hrOperator.auth,
+      ACTORS.hrOperator.app,
+      2028,
+      JSON.stringify([
+        {
+          app_user_id: ACTORS.leaderAlpha.app,
+          carry_over_units: 0,
+          opening_current_year_units: 4,
+          seniority_units: 2,
+          note: "Thử cấp trùng phép thâm niên khi đối soát lại",
+        },
+      ]),
+      "Thử áp dụng lặp phép thâm niên",
+      nextIdem("reconcile-2028-sen-dup-fail"),
+      "fp-reconcile-2028-sen-dup-fail",
+    ]),
+    (err) =>
+      String(err?.message).includes("LEAVE_OPENING_BATCH_VALIDATION_FAILED"),
+    "Re-applying opening balance with seniority_units > 0 when SENIORITY_GRANT already exists must fail closed",
+  );
+
+  // Idempotent replay with the same idempotency key & fingerprint returns replayed=true and preserves top-level applied_row_count
+  const replayEditTo4 = await rpc("leave_management_apply_opening_batch", [
+    ACTORS.hrOperator.auth,
+    ACTORS.hrOperator.app,
+    2028,
+    JSON.stringify([
+      {
+        app_user_id: ACTORS.leaderAlpha.app,
+        carry_over_units: 0,
+        opening_current_year_units: 4,
+        seniority_units: 0,
+        note: "Điều chỉnh lại số dư sau đối soát = 2 ngày",
+      },
+    ]),
+    "Hiệu chỉnh số dư mục tiêu lên 2 ngày",
+    applyEditTo4Idem,
+    "fp-reconcile-2028-edit-4",
+  ]);
+  assert.equal(replayEditTo4.replayed, true);
+  assert.equal(replayEditTo4.applied_row_count, 1);
+  assert.equal(replayEditTo4.batch_id, applyEditTo4.batch_id);
+
+  // Advance business date to next month (2028-04-15): month 4 must accrue strictly once (+2 units -> available becomes 4 current-year + 2 seniority + 2 April = 8)
+  await setBusinessDate(db, "2028-04-15");
+  const tlSummary2028April1 = await rpc("leave_management_get_my_summary", [
+    ACTORS.leaderAlpha.auth,
+    ACTORS.leaderAlpha.app,
+    2028,
+  ]);
+  assert.equal(tlSummary2028April1.balance.monthly_accrued_units, 8);
+  assert.equal(tlSummary2028April1.balance.seniority_granted_units, 2);
+  assert.equal(tlSummary2028April1.balance.opening_or_adjustment_units, -2);
+  assert.equal(tlSummary2028April1.balance.available_units, 8);
+
+  // Calling summary again in April does not duplicate month 4 accrual
+  const tlSummary2028April2 = await rpc("leave_management_get_my_summary", [
+    ACTORS.leaderAlpha.auth,
+    ACTORS.leaderAlpha.app,
+    2028,
+  ]);
+  assert.equal(tlSummary2028April2.balance.available_units, 8);
+
+  // Test locked balance protection: recruiterOfficial in 2028-03 already has 6 consumed ANNUAL units (from splitApproved).
+  // At 2028-04-15, recruiterOfficial has 8 granted (4 months * 2), 6 consumed (locked), 2 available.
+  // Setting target below 6 locked units (e.g. target = 4 units) must fail with OPENING_TARGET_BELOW_LOCKED_BALANCE!
+  const previewBelowLocked = await rpc("leave_management_preview_opening_batch", [
+    ACTORS.hrOperator.auth,
+    ACTORS.hrOperator.app,
+    2028,
+    JSON.stringify([
+      {
+        app_user_id: ACTORS.recruiterOfficial.app,
+        carry_over_units: 0,
+        opening_current_year_units: 4,
+        seniority_units: 0,
+        note: "Thử đặt mục tiêu 2 ngày thấp hơn 3 ngày đã nghỉ trên app",
+      },
+    ]),
+  ]);
+  assert.equal(previewBelowLocked.valid, false);
+  assert.deepEqual(previewBelowLocked.rows[0].errors, [
+    "OPENING_TARGET_BELOW_LOCKED_BALANCE",
+  ]);
+  assert.equal(previewBelowLocked.rows[0].current_year_locked_units, 6);
+
+  await assert.rejects(
+    rpc("leave_management_apply_opening_batch", [
+      ACTORS.hrOperator.auth,
+      ACTORS.hrOperator.app,
+      2028,
+      JSON.stringify([
+        {
+          app_user_id: ACTORS.recruiterOfficial.app,
+          carry_over_units: 0,
+          opening_current_year_units: 4,
+          seniority_units: 0,
+          note: "Thử đặt mục tiêu 2 ngày thấp hơn 3 ngày đã nghỉ trên app",
+        },
+      ]),
+      "Thử áp dụng mục tiêu thấp hơn số phép đã dùng",
+      nextIdem("reconcile-below-locked-fail"),
+      "fp-reconcile-below-locked-fail",
+    ]),
+    (err) =>
+      String(err?.message).includes("LEAVE_OPENING_BATCH_VALIDATION_FAILED"),
+    "Applying target below locked (consumed/reserved) balance must fail closed",
+  );
+
+  // Test stale preview rejection when employee state changes between preview and apply:
+  // 1. HR previews reconciling recruiterOfficial from 8 granted (6 consumed, 2 available) down to 6 granted (0 available)
+  const previewBeforeStateChange = await rpc(
+    "leave_management_preview_opening_batch",
+    [
+      ACTORS.hrOperator.auth,
+      ACTORS.hrOperator.app,
+      2028,
+      JSON.stringify([
+        {
+          app_user_id: ACTORS.recruiterOfficial.app,
+          carry_over_units: 0,
+          opening_current_year_units: 6,
+          seniority_units: 0,
+          note: "Chốt số dư mục tiêu 3 ngày",
+        },
+      ]),
+    ],
+  );
+  assert.equal(previewBeforeStateChange.valid, true);
+  assert.equal(previewBeforeStateChange.rows[0].current_year_locked_units, 6);
+
+  // 2. Before HR clicks Apply, recruiterOfficial submits & gets approved 1 day (2 units) of ANNUAL leave on 2028-04-20 (reserved_units increases by 2 -> locked becomes 8)
+  const interveningReq = await rpc("leave_management_create_request", [
+    ACTORS.recruiterOfficial.auth,
+    ACTORS.recruiterOfficial.app,
+    JSON.stringify([
+      { leave_date: "2028-04-20", session_code: "FULL", leave_type: "ANNUAL" },
+    ]),
+    "Xin nghỉ phép năm phát sinh giữa preview và apply",
+    nextIdem("intervening-req-2028"),
+    "fp-intervening-req-2028",
+  ]);
+  await rpc("leave_management_decide_request", [
+    ACTORS.leaderAlpha.auth,
+    ACTORS.leaderAlpha.app,
+    interveningReq.request.request_id,
+    "APPROVE",
+    interveningReq.request.row_version,
+    "Duyệt phép phát sinh",
+    nextIdem("approve-intervening-2028"),
+    "fp-approve-intervening-2028",
+  ]);
+
+  // 3. HR now attempts to apply the stale preview -> rejected with LEAVE_OPENING_PREVIEW_STALE
+  await assert.rejects(
+    rpc("leave_management_apply_opening_batch", [
+      ACTORS.hrOperator.auth,
+      ACTORS.hrOperator.app,
+      2028,
+      JSON.stringify([
+        {
+          app_user_id: ACTORS.recruiterOfficial.app,
+          carry_over_units: 0,
+          opening_current_year_units: 6,
+          seniority_units: 0,
+          note: "Chốt số dư mục tiêu 3 ngày",
+        },
+      ]),
+      "Áp dụng bản preview cũ sau khi nhân viên vừa được duyệt thêm phép",
+      nextIdem("apply-stale-after-req"),
+      "fp-apply-stale-after-req",
+    ]),
+    (err) => String(err?.message).includes("LEAVE_OPENING_PREVIEW_STALE"),
+    "Applying opening balance after underlying locked balance changed since preview must reject with LEAVE_OPENING_PREVIEW_STALE",
   );
 });

@@ -5,6 +5,7 @@ import {
   autoAllocateDraftDaysByBalance,
   buildMonthlyLeaveReportExportUrl,
   buildMonthlyLeaveReportQuery,
+  buildOpeningBatchApplyRows,
   canApplyOpeningBatch,
   canWithdrawOwnLeaveRequest,
   computeOpeningBatchDraftSignature,
@@ -22,6 +23,7 @@ import {
   leaveEmploymentStatusBadge,
   leaveErrorMessage,
   leaveFallbackReasonLabel,
+  leaveLedgerEntryTypeLabel,
   leaveOpeningRowErrorLabel,
   leaveRequestStatusBadge,
   leaveRouteKindLabel,
@@ -36,6 +38,7 @@ import {
   parseDaysInputToHalfDayUnits,
   parseOpeningBalanceBulkText,
   resolveAdminSelectorEmployeeOptions,
+  resolveAppliedOpeningRowCount,
   resolveKnownLeaveAccountLabel,
   resolveLeaveAdminDropdownEmployees,
   resolveLeaveOpeningBalanceEmployees,
@@ -947,4 +950,138 @@ test("Admin dropdown employee options with >25 accounts stay independent of prof
   );
   assert.equal(bulkInactiveRejected.rows.length, 0);
   assert.equal(bulkInactiveRejected.parseErrors.length, 1);
+});
+
+test("Opening balance reconciliation helpers: resolveAppliedOpeningRowCount never returns undefined and buildOpeningBatchApplyRows attaches preview snapshot expectations", () => {
+  // 1. Direct top-level applied_row_count from updated RPC contract
+  assert.equal(
+    resolveAppliedOpeningRowCount(
+      {
+        replayed: false,
+        batch_id: "b-1",
+        applied_row_count: 3,
+        batch: { batch_id: "b-1", row_count: 3 },
+        applied_rows: [{}, {}, {}],
+      },
+      1,
+    ),
+    3,
+  );
+
+  // 2. Legacy RPC shape without top-level applied_row_count -> falls back to batch.row_count
+  assert.equal(
+    resolveAppliedOpeningRowCount(
+      {
+        replayed: false,
+        batch: { batch_id: "b-2", row_count: 2 },
+        applied_rows: [{}, {}],
+      },
+      1,
+    ),
+    2,
+  );
+
+  // 3. Fallback to applied_rows.length when batch is omitted
+  assert.equal(
+    resolveAppliedOpeningRowCount(
+      {
+        applied_rows: [{ app_user_id: "u1" }, { app_user_id: "u2" }, { app_user_id: "u3" }, { app_user_id: "u4" }],
+      },
+      1,
+    ),
+    4,
+  );
+
+  // 4. Fallback to fallbackRowCount when payload is sparse
+  assert.equal(resolveAppliedOpeningRowCount({}, 5), 5);
+  assert.equal(resolveAppliedOpeningRowCount(null, 2), 2);
+  assert.equal(resolveAppliedOpeningRowCount(undefined, 0), 0);
+
+  // 5. buildOpeningBatchApplyRows attaches expected cutoff date and current-year balance state from preview
+  const draftRows = [
+    {
+      app_user_id: "11111111-1111-4111-8111-111111111105",
+      carry_over_units: 0,
+      opening_current_year_units: 2,
+      seniority_units: 0,
+      note: "Đối soát còn 1 ngày",
+    },
+  ];
+  const preview = {
+    leave_year: 2026,
+    as_of_date: "2026-11-05",
+    carry_over_expires_after_date: "2026-03-31",
+    valid: true,
+    has_carry_over_expiry_error: false,
+    row_count: 1,
+    error_row_count: 0,
+    total_carry_over_units: 0,
+    total_opening_current_year_units: 2,
+    total_seniority_units: 0,
+    rows: [
+      {
+        row_index: 1,
+        app_user_id: "11111111-1111-4111-8111-111111111105",
+        account: null,
+        as_of_date: "2026-11-05",
+        carry_over_units: 0,
+        opening_current_year_units: 2,
+        current_year_accrued_units: 6,
+        current_year_granted_units: 6,
+        current_year_locked_units: 2,
+        current_year_available_units: 4,
+        delta_current_year_units: -4,
+        profile_row_version: 3,
+        seniority_units: 0,
+        note: "Đối soát còn 1 ngày",
+        valid: true,
+        errors: [],
+      },
+    ],
+  };
+
+  const applyRows = buildOpeningBatchApplyRows(draftRows, preview);
+  assert.deepEqual(applyRows, [
+    {
+      app_user_id: "11111111-1111-4111-8111-111111111105",
+      carry_over_units: 0,
+      opening_current_year_units: 2,
+      seniority_units: 0,
+      note: "Đối soát còn 1 ngày",
+      expected_as_of_date: "2026-11-05",
+      expected_current_year_granted_units: 6,
+      expected_current_year_locked_units: 2,
+      expected_profile_row_version: 3,
+    },
+  ]);
+
+  assert.ok(
+    leaveOpeningRowErrorLabel("OPENING_TARGET_BELOW_LOCKED_BALANCE").includes(
+      "giữ chỗ",
+    ),
+  );
+  assert.ok(
+    leaveOpeningRowErrorLabel("SENIORITY_LOT_ALREADY_EXISTS").includes(
+      "phép thâm niên",
+    ),
+  );
+  assert.equal(
+    leaveLedgerEntryTypeLabel("ADJUST_OPENING_CURRENT_YEAR_DECREASE", -4),
+    "Điều chỉnh giảm số dư đầu kỳ năm hiện tại (đối soát)",
+  );
+  assert.equal(
+    leaveLedgerEntryTypeLabel("ADJUST_OPENING_CURRENT_YEAR_INCREASE", 4),
+    "Điều chỉnh tăng số dư đầu kỳ năm hiện tại (đối soát)",
+  );
+  assert.equal(
+    leaveLedgerEntryTypeLabel("GRANT_OPENING_CURRENT_YEAR", -2),
+    "Điều chỉnh giảm số dư đầu kỳ năm hiện tại (đối soát)",
+  );
+  assert.equal(
+    leaveLedgerEntryTypeLabel("GRANT_OPENING_CURRENT_YEAR", 2),
+    "Khởi tạo số dư đầu kỳ năm hiện tại",
+  );
+  assert.ok(
+    leaveErrorMessage("LEAVE_OPENING_PREVIEW_STALE").includes("Xem trước"),
+  );
 });

@@ -70,6 +70,7 @@ const KNOWN_LEAVE_ERROR_CODES = new Set<LeaveErrorCode>([
   "LEAVE_OPENING_ROWS_INVALID",
   "LEAVE_CARRY_OVER_EXPIRY_NOT_CONFIGURED",
   "LEAVE_OPENING_BATCH_VALIDATION_FAILED",
+  "LEAVE_OPENING_PREVIEW_STALE",
   "LEAVE_REPORT_FORBIDDEN",
   "LEAVE_REPORT_YEAR_MONTH_INVALID",
 ]);
@@ -83,6 +84,15 @@ export function mapLeaveRpcError(error: {
     if (message.includes(known)) {
       return known;
     }
+  }
+  if (
+    message.includes("OPENING_TARGET_BELOW_LOCKED_BALANCE") ||
+    message.includes("SENIORITY_LOT_ALREADY_EXISTS")
+  ) {
+    return "LEAVE_OPENING_BATCH_VALIDATION_FAILED";
+  }
+  if (message.includes("LEAVE_IDEMPOTENCY_PAYLOAD_CONFLICT")) {
+    return "LEAVE_IDEMPOTENCY_FINGERPRINT_MISMATCH";
   }
   if (message.includes("Direct entry actor mapping is not active")) {
     return "ACTOR_NOT_AVAILABLE";
