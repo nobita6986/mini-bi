@@ -799,6 +799,121 @@ test("Leave Management WP1 full PGlite integration & business rule verification"
     "2026-03-31",
   );
 
+  // Preview and apply opening batch must reject UNCONFIGURED and PROBATION employees with EMPLOYEE_NOT_OFFICIAL
+  const leaderAlphaProbation = await rpc(
+    "leave_management_upsert_employee_profile_admin",
+    [
+      ACTORS.hrOperator.auth,
+      ACTORS.hrOperator.app,
+      ACTORS.leaderAlpha.app,
+      false,
+      "PROBATION",
+      "RECRUITMENT",
+      "2026-02-01",
+      null,
+      null,
+      0,
+      0,
+      "Cấu hình tạm trạng thái thử việc cho Trưởng nhóm Alpha để kiểm tra chặn khởi tạo phép đầu kỳ",
+      nextIdem("prof-tl-prob"),
+      "fp-prof-tl-prob",
+    ],
+  );
+  assert.equal(leaderAlphaProbation.profile.employment_status, "PROBATION");
+
+  const previewNonOfficial = await rpc(
+    "leave_management_preview_opening_batch",
+    [
+      ACTORS.hrOperator.auth,
+      ACTORS.hrOperator.app,
+      2026,
+      JSON.stringify([
+        {
+          app_user_id: ACTORS.unconfiguredUser.app,
+          carry_over_units: 0,
+          opening_current_year_units: 2,
+          seniority_units: 0,
+          note: "Nhân sự chưa cấu hình hồ sơ",
+        },
+        {
+          app_user_id: ACTORS.leaderAlpha.app,
+          carry_over_units: 0,
+          opening_current_year_units: 2,
+          seniority_units: 0,
+          note: "Nhân sự đang thử việc",
+        },
+      ]),
+    ],
+  );
+  assert.equal(previewNonOfficial.valid, false);
+  assert.equal(previewNonOfficial.error_row_count, 2);
+  assert.deepEqual(previewNonOfficial.rows[0].errors, ["EMPLOYEE_NOT_OFFICIAL"]);
+  assert.deepEqual(previewNonOfficial.rows[1].errors, ["EMPLOYEE_NOT_OFFICIAL"]);
+
+  await assert.rejects(
+    rpc("leave_management_apply_opening_batch", [
+      ACTORS.hrOperator.auth,
+      ACTORS.hrOperator.app,
+      2026,
+      JSON.stringify([
+        {
+          app_user_id: ACTORS.leaderAlpha.app,
+          carry_over_units: 0,
+          opening_current_year_units: 2,
+          seniority_units: 0,
+          note: "Thử áp dụng trực tiếp cho nhân sự thử việc",
+        },
+      ]),
+      "Thử áp dụng số dư đầu kỳ cho nhân sự thử việc",
+      nextIdem("apply-probation-fail"),
+      "fp-apply-probation-fail",
+    ]),
+    (err) =>
+      String(err?.message).includes("LEAVE_OPENING_BATCH_VALIDATION_FAILED"),
+    "Applying opening balance to a PROBATION employee must fail closed at the RPC boundary",
+  );
+
+  await assert.rejects(
+    rpc("leave_management_apply_opening_batch", [
+      ACTORS.hrOperator.auth,
+      ACTORS.hrOperator.app,
+      2026,
+      JSON.stringify([
+        {
+          app_user_id: ACTORS.unconfiguredUser.app,
+          carry_over_units: 0,
+          opening_current_year_units: 2,
+          seniority_units: 0,
+          note: "Thử áp dụng trực tiếp cho nhân sự chưa cấu hình",
+        },
+      ]),
+      "Thử áp dụng số dư đầu kỳ cho nhân sự chưa cấu hình",
+      nextIdem("apply-unconf-fail"),
+      "fp-apply-unconf-fail",
+    ]),
+    (err) =>
+      String(err?.message).includes("LEAVE_OPENING_BATCH_VALIDATION_FAILED"),
+    "Applying opening balance to an UNCONFIGURED employee must fail closed at the RPC boundary",
+  );
+
+  // Transition leaderAlpha to OFFICIAL so opening batch can be applied
+  await rpc("leave_management_upsert_employee_profile_admin", [
+    ACTORS.hrOperator.auth,
+    ACTORS.hrOperator.app,
+    ACTORS.leaderAlpha.app,
+    false,
+    "OFFICIAL",
+    "RECRUITMENT",
+    "2024-01-01",
+    "2024-03-01",
+    null,
+    0,
+    leaderAlphaProbation.profile.row_version,
+    "Cấu hình hồ sơ chính thức cho Trưởng nhóm Alpha",
+    nextIdem("prof-tl-off"),
+    "fp-prof-tl-off",
+  ]);
+
   // Now apply opening batch (bulk of 2 rows: recruiterOfficial gets 4 carry_over_units, leaderAlpha gets 2 opening_current_year_units)
   const batchApplied = await rpc("leave_management_apply_opening_batch", [
     ACTORS.hrOperator.auth,

@@ -104,6 +104,11 @@ test("WP2 Admin & HR Config surface covers employee profiles, seniority mileston
   assert.ok(workspaceSource.includes('data-testid="leave-opening-preview-btn"'));
   assert.ok(workspaceSource.includes('data-testid="leave-opening-apply-btn"'));
   assert.ok(workspaceSource.includes("canApplyOpeningBatch"));
+  assert.ok(workspaceSource.includes("fetchAllLeaveAdminEmployeeOptions"));
+  assert.ok(workspaceSource.includes("resolveAdminSelectorEmployeeOptions"));
+  assert.ok(workspaceSource.includes("resolveLeaveOpeningBalanceEmployees"));
+  assert.ok(workspaceSource.includes("openingOfficialEmployees"));
+  assert.ok(workspaceSource.includes("resolveOpeningRowSelectOptions"));
 });
 
 test("WP2 Monthly Attendance & Leave Closing Report surface supports server filters, attendance dates, explicit leave types, and Excel (.xlsx) export without pay_treatment inference", () => {

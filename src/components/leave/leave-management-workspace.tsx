@@ -41,8 +41,10 @@ import {
   currentVietnamLeaveYear,
   currentVietnamMonthIso,
   evaluateLeaveRequestDraft,
+  fetchAllLeaveAdminEmployeeOptions,
   formatHalfDayUnits,
   formatIsoDateVi,
+  formatLeaveAdminAccountOptionLabel,
   formatSignedHalfDayUnits,
   halfDayUnitsToDays,
   leaveDecisionActionLabel,
@@ -61,13 +63,19 @@ import {
   leaveTypeLabel,
   leaveTypeShortLabel,
   leaveUnitKindLabel,
+  mergeLeaveAdminKnownAccounts,
   newClientIdempotencyKey,
   parseDaysInputToHalfDayUnits,
   parseOpeningBalanceBulkText,
+  resolveAdminSelectorEmployeeOptions,
+  resolveKnownLeaveAccountLabel,
+  resolveLeaveOpeningBalanceEmployees,
+  resolveOpeningRowSelectOptions,
   resolveRequestTypeBreakdown,
   resolveVisibleLeaveTabs,
   todayVietnamIsoDate,
   validateApproverDecisionInput,
+  type LeaveAccountProjection,
   type LeaveAdminEmployeeItemProjection,
   type LeaveAdminOverviewProjection,
   type LeaveApprovalInboxProjection,
@@ -95,16 +103,18 @@ const REPORT_PAGE_SIZE = 50;
 type OpeningDraftUiRow = {
   id: string;
   app_user_id: string;
+  selected_label?: string;
   carry_over_days: string;
   opening_current_year_days: string;
   seniority_days: string;
   note: string;
 };
 
-function createEmptyOpeningDraftRow(defaultUserId = ""): OpeningDraftUiRow {
+function createEmptyOpeningDraftRow(defaultUserId = "", selectedLabel?: string): OpeningDraftUiRow {
   return {
     id: newClientIdempotencyKey("open-row"),
     app_user_id: defaultUserId,
+    ...(selectedLabel ? { selected_label: selectedLabel } : {}),
     carry_over_days: "0",
     opening_current_year_days: "0",
     seniority_days: "0",
@@ -262,6 +272,13 @@ export function LeaveManagementWorkspace({
   const [adminLoading, setAdminLoading] = useState<boolean>(false);
   const [adminErrorCode, setAdminErrorCode] = useState<string | null>(null);
   const [adminData, setAdminData] = useState<LeaveAdminOverviewProjection | null>(null);
+  const [adminOptionEmployees, setAdminOptionEmployees] = useState<
+    LeaveAdminEmployeeItemProjection[]
+  >([]);
+  const [adminOptionLoaded, setAdminOptionLoaded] = useState<boolean>(false);
+  const [knownAccountsById, setKnownAccountsById] = useState<
+    ReadonlyMap<string, LeaveAccountProjection>
+  >(() => new Map());
 
   // Admin Policy Form State
   const [policyExpiryMonth, setPolicyExpiryMonth] = useState<string>("3");
@@ -407,18 +424,93 @@ export function LeaveManagementWorkspace({
       if (!parsed.ok || !parsed.data) {
         setAdminErrorCode(parsed.errorCode ?? "LEAVE_INTERNAL_ERROR");
       } else {
-        setAdminData(parsed.data);
-        if (parsed.data.policy.carry_over_expiry_month !== null) {
-          setPolicyExpiryMonth(String(parsed.data.policy.carry_over_expiry_month));
+        const overviewData = parsed.data;
+        setAdminData(overviewData);
+        setKnownAccountsById((prev) =>
+          mergeLeaveAdminKnownAccounts(
+            prev,
+            overviewData.employees.map((emp) => emp.account),
+            overviewData.department_approvers.map((da) => da.approver),
+            overviewData.module_grants.map((gr) => gr.account),
+          ),
+        );
+        if (overviewData.policy.carry_over_expiry_month !== null) {
+          setPolicyExpiryMonth(String(overviewData.policy.carry_over_expiry_month));
         }
-        if (parsed.data.policy.carry_over_expiry_day !== null) {
-          setPolicyExpiryDay(String(parsed.data.policy.carry_over_expiry_day));
+        if (overviewData.policy.carry_over_expiry_day !== null) {
+          setPolicyExpiryDay(String(overviewData.policy.carry_over_expiry_day));
         }
       }
     } catch {
       setAdminErrorCode("LEAVE_INTERNAL_ERROR");
     } finally {
       setAdminLoading(false);
+    }
+  }, []);
+
+  // Load Unpaginated / Unfiltered Active Employee Options for Admin Dropdowns
+  const loadAdminEmployeeOptions = useCallback(async () => {
+    await Promise.resolve();
+    const result = await fetchAllLeaveAdminEmployeeOptions(
+      async ({ limit, offset, account_status }) => {
+        const qs = new URLSearchParams({
+          limit: String(limit),
+          offset: String(offset),
+          account_status,
+        });
+        try {
+          const response = await fetch(`/api/leave/admin/config?${qs.toString()}`, {
+            method: "GET",
+            credentials: "same-origin",
+            cache: "no-store",
+          });
+          const parsed = await parseJsonResponse<LeaveAdminOverviewProjection>(response);
+          if (!parsed.ok || !parsed.data) {
+            return {
+              ok: false as const,
+              errorCode: parsed.errorCode ?? "LEAVE_INTERNAL_ERROR",
+            };
+          }
+          return {
+            ok: true as const,
+            data: parsed.data,
+          };
+        } catch {
+          return {
+            ok: false as const,
+            errorCode: "LEAVE_INTERNAL_ERROR",
+          };
+        }
+      },
+    );
+
+    if (result.ok) {
+      setAdminOptionEmployees(result.employees);
+      setAdminOptionLoaded(true);
+      const officialIds = new Set(
+        resolveLeaveOpeningBalanceEmployees(result.employees).map((emp) =>
+          emp.account.app_user_id.trim().toLowerCase(),
+        ),
+      );
+      setOpeningUiRows((prev) =>
+        prev.map((row) => {
+          const key = row.app_user_id.trim().toLowerCase();
+          if (!key || officialIds.has(key)) {
+            return row;
+          }
+          return {
+            ...row,
+            app_user_id: "",
+            selected_label: undefined,
+          };
+        }),
+      );
+      setKnownAccountsById((prev) =>
+        mergeLeaveAdminKnownAccounts(
+          prev,
+          result.allEmployees.map((emp) => emp.account),
+        ),
+      );
     }
   }, []);
 
@@ -480,6 +572,14 @@ export function LeaveManagementWorkspace({
       });
     }
   }, [activeTab, authority?.can_manage_config, adminAppliedSearch, adminAccountStatus, adminPage, loadAdminConfig]);
+
+  useEffect(() => {
+    if (activeTab === "admin" && authority?.can_manage_config) {
+      queueMicrotask(() => {
+        void loadAdminEmployeeOptions();
+      });
+    }
+  }, [activeTab, authority?.can_manage_config, loadAdminEmployeeOptions]);
 
   useEffect(() => {
     if (activeTab === "reports" && authority?.can_view_monthly_report) {
@@ -1045,7 +1145,10 @@ export function LeaveManagementWorkspace({
         description: `Đã cập nhật cấu hình nghỉ phép cho ${editingEmployee.account.display_name}.`,
       });
       setEditingEmployee(null);
-      await loadAdminConfig(adminAppliedSearch, adminPage, adminAccountStatus);
+      await Promise.all([
+        loadAdminConfig(adminAppliedSearch, adminPage, adminAccountStatus),
+        loadAdminEmployeeOptions(),
+      ]);
       await loadMySummary(leaveYear);
     } catch {
       notify.error({
@@ -1057,11 +1160,46 @@ export function LeaveManagementWorkspace({
     }
   };
 
+  const nonSharedEmployees = useMemo(
+    () =>
+      resolveAdminSelectorEmployeeOptions({
+        optionCatalogEmployees: adminOptionEmployees,
+        fallbackPageEmployees: adminData?.employees,
+        optionCatalogLoaded: adminOptionLoaded,
+      }),
+    [adminOptionEmployees, adminData?.employees, adminOptionLoaded],
+  );
+
+  const openingOfficialEmployees = useMemo(
+    () => resolveLeaveOpeningBalanceEmployees(nonSharedEmployees),
+    [nonSharedEmployees],
+  );
+
+  const effectiveKnownAccountsById = useMemo(
+    () =>
+      mergeLeaveAdminKnownAccounts(
+        knownAccountsById,
+        adminOptionEmployees.map((emp) => emp.account),
+        (adminData?.employees ?? []).map((emp) => emp.account),
+        (adminData?.department_approvers ?? []).map((da) => da.approver),
+        (adminData?.module_grants ?? []).map((gr) => gr.account),
+        (openingPreviewResult?.rows ?? []).map((r) => r.account),
+      ),
+    [
+      knownAccountsById,
+      adminOptionEmployees,
+      adminData?.employees,
+      adminData?.department_approvers,
+      adminData?.module_grants,
+      openingPreviewResult?.rows,
+    ],
+  );
+
   // Handlers for Opening Balance Preview & Apply
   const handleParseOpeningBulkText = () => {
     const parsed = parseOpeningBalanceBulkText(
       openingBulkText,
-      adminData?.employees ?? [],
+      nonSharedEmployees,
     );
     if (parsed.parseErrors.length > 0) {
       notify.warning({
@@ -1081,6 +1219,11 @@ export function LeaveManagementWorkspace({
       parsed.rows.map((row) => ({
         id: newClientIdempotencyKey("open-row"),
         app_user_id: row.app_user_id,
+        selected_label: resolveKnownLeaveAccountLabel(
+          row.app_user_id,
+          effectiveKnownAccountsById,
+          openingOfficialEmployees,
+        ),
         carry_over_days: String(halfDayUnitsToDays(row.carry_over_units)),
         opening_current_year_days: String(halfDayUnitsToDays(row.opening_current_year_units)),
         seniority_days: String(halfDayUnitsToDays(row.seniority_units)),
@@ -1124,8 +1267,15 @@ export function LeaveManagementWorkspace({
         });
         return;
       }
-      setOpeningPreviewResult(parsed.data);
+      const previewData = parsed.data;
+      setOpeningPreviewResult(previewData);
       setOpeningPreviewSignature(currentOpeningSignature);
+      setKnownAccountsById((prev) =>
+        mergeLeaveAdminKnownAccounts(
+          prev,
+          previewData.rows.map((r) => r.account),
+        ),
+      );
       if (parsed.data.valid && parsed.data.error_row_count === 0) {
         notify.success({
           title: "Kiểm tra xem trước hợp lệ",
@@ -1251,11 +1401,6 @@ export function LeaveManagementWorkspace({
     Math.ceil((reportData?.total ?? 0) / (reportData?.limit ?? REPORT_PAGE_SIZE)),
   );
 
-  const nonSharedEmployees = useMemo(
-    () => (adminData?.employees ?? []).filter((emp) => !emp.profile.is_shared_non_employee),
-    [adminData?.employees],
-  );
-
   return (
     <PageShell dataTestId="leave-management-workspace">
       <PageHeader
@@ -1304,6 +1449,7 @@ export function LeaveManagementWorkspace({
                 }
                 if (activeTab === "admin" && authority?.can_manage_config) {
                   void loadAdminConfig(adminAppliedSearch, adminPage, adminAccountStatus);
+                  void loadAdminEmployeeOptions();
                 }
                 if (activeTab === "reports" && authority?.can_view_monthly_report) {
                   void loadMonthlyReport(
@@ -2641,8 +2787,7 @@ export function LeaveManagementWorkspace({
                                 key={emp.account.app_user_id}
                                 value={emp.account.app_user_id}
                               >
-                                {emp.account.display_name}
-                                {emp.account.login_id ? ` (@${emp.account.login_id})` : ""}
+                                {formatLeaveAdminAccountOptionLabel(emp.account)}
                               </option>
                             ))}
                           </select>
@@ -2782,8 +2927,7 @@ export function LeaveManagementWorkspace({
                                 key={emp.account.app_user_id}
                                 value={emp.account.app_user_id}
                               >
-                                {emp.account.display_name}
-                                {emp.account.login_id ? ` (@${emp.account.login_id})` : ""}
+                                {formatLeaveAdminAccountOptionLabel(emp.account)}
                               </option>
                             ))}
                           </select>
@@ -2928,41 +3072,54 @@ export function LeaveManagementWorkspace({
                           </tr>
                         </thead>
                         <tbody>
-                          {openingUiRows.map((row, idx) => (
+                          {openingUiRows.map((row, idx) => {
+                            const rowOptions = resolveOpeningRowSelectOptions({
+                              eligibleEmployees: openingOfficialEmployees,
+                              selectedAppUserId: row.app_user_id,
+                              knownAccountsById: effectiveKnownAccountsById,
+                              fallbackLabel: row.selected_label,
+                            });
+                            const selectedInOptions = rowOptions.some(
+                              (opt) =>
+                                opt.app_user_id.trim().toLowerCase() ===
+                                row.app_user_id.trim().toLowerCase(),
+                            );
+                            return (
                             <tr key={row.id} className={DATA_TABLE_ROW_CLASS}>
                               <td className={DATA_TABLE_TD_CLASS} data-label="Nhân sự">
                                 <select
-                                  value={row.app_user_id}
-                                  onChange={(e) =>
+                                  value={selectedInOptions ? row.app_user_id : ""}
+                                  onChange={(e) => {
+                                    const nextUserId = e.target.value;
+                                    const nextLabel = resolveKnownLeaveAccountLabel(
+                                      nextUserId,
+                                      effectiveKnownAccountsById,
+                                      openingOfficialEmployees,
+                                    );
                                     setOpeningUiRows((prev) =>
                                       prev.map((item, i) =>
                                         i === idx
-                                          ? { ...item, app_user_id: e.target.value }
+                                          ? {
+                                              ...item,
+                                              app_user_id: nextUserId,
+                                              selected_label: nextLabel,
+                                            }
                                           : item,
                                       ),
-                                    )
-                                  }
+                                    );
+                                  }}
                                   data-testid={`leave-opening-row-user-${idx}`}
                                   className="w-full min-h-9 rounded-lg border border-border bg-surface px-2.5 py-1 text-xs text-foreground"
                                 >
                                   <option value="">-- Chọn nhân sự --</option>
-                                  {nonSharedEmployees.map((emp) => (
+                                  {rowOptions.map((opt) => (
                                     <option
-                                      key={emp.account.app_user_id}
-                                      value={emp.account.app_user_id}
+                                      key={opt.app_user_id}
+                                      value={opt.app_user_id}
                                     >
-                                      {emp.account.display_name}
-                                      {emp.account.login_id
-                                        ? ` (@${emp.account.login_id})`
-                                        : ""}
+                                      {opt.label}
                                     </option>
                                   ))}
-                                  {row.app_user_id &&
-                                  !nonSharedEmployees.some(
-                                    (emp) => emp.account.app_user_id === row.app_user_id,
-                                  ) ? (
-                                    <option value={row.app_user_id}>{row.app_user_id}</option>
-                                  ) : null}
                                 </select>
                               </td>
                               <td
@@ -3069,7 +3226,8 @@ export function LeaveManagementWorkspace({
                                 </Button>
                               </td>
                             </tr>
-                          ))}
+                            );
+                          })}
                         </tbody>
                       </table>
                     </DataTableContainer>

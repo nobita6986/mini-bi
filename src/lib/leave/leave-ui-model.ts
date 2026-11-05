@@ -799,6 +799,8 @@ export function leaveOpeningRowErrorLabel(errorCode: string): string {
       return "Không tìm thấy tài khoản nhân sự";
     case "SHARED_ACCOUNT_NOT_ELIGIBLE":
       return "Tài khoản dùng chung không thuộc diện cấp phép";
+    case "EMPLOYEE_NOT_OFFICIAL":
+      return "Chỉ nhân sự Chính thức mới thuộc diện khởi tạo số dư phép đầu kỳ";
     case "UNITS_OUT_OF_RANGE":
       return "Số phép vượt ngoài giới hạn hợp lệ";
     case "ZERO_UNITS_ROW":
@@ -1283,6 +1285,292 @@ export function canApplyOpeningBatch(input: {
   return { ok: true, blockingReason: null };
 }
 
+export type LeaveAdminAccountOption = {
+  app_user_id: string;
+  label: string;
+  display_name: string;
+  login_id: string | null;
+  personnel_code: string | null;
+};
+
+export const ADMIN_EMPLOYEE_OPTIONS_PAGE_SIZE = 300;
+export const MAX_ADMIN_EMPLOYEE_OPTION_PAGES = 20;
+
+export function isEligibleLeaveAdminDropdownEmployee(
+  emp:
+    | Pick<LeaveAdminEmployeeItemProjection, "account" | "profile">
+    | null
+    | undefined,
+): boolean {
+  if (!emp?.account || typeof emp.account.app_user_id !== "string") {
+    return false;
+  }
+  if (emp.account.app_user_id.trim().length === 0) {
+    return false;
+  }
+  if (emp.account.account_enabled === false) {
+    return false;
+  }
+  if (emp.profile?.is_shared_non_employee === true) {
+    return false;
+  }
+  return true;
+}
+
+export function isEligibleLeaveOpeningBalanceEmployee(
+  emp:
+    | (Pick<LeaveAdminEmployeeItemProjection, "account" | "profile"> &
+        Partial<Pick<LeaveAdminEmployeeItemProjection, "balance">>)
+    | null
+    | undefined,
+): boolean {
+  if (!isEligibleLeaveAdminDropdownEmployee(emp)) {
+    return false;
+  }
+  const status =
+    emp?.profile?.employment_status ?? emp?.balance?.employment_status;
+  return status === "OFFICIAL";
+}
+
+export function formatLeaveAdminAccountOptionLabel(
+  account: Pick<
+    LeaveAccountProjection,
+    "app_user_id" | "display_name" | "login_id" | "personnel_code"
+  >,
+): string {
+  const displayName = (account.display_name ?? "").trim();
+  const loginId = (account.login_id ?? "").trim();
+  const personnelCode = (account.personnel_code ?? "").trim();
+  const baseName =
+    displayName || loginId || personnelCode || account.app_user_id.trim();
+  if (displayName && loginId) {
+    return `${displayName} (@${loginId})`;
+  }
+  if (displayName && personnelCode) {
+    return `${displayName} (${personnelCode})`;
+  }
+  return baseName;
+}
+
+export function resolveLeaveAdminDropdownEmployees(
+  employees: readonly LeaveAdminEmployeeItemProjection[],
+): LeaveAdminEmployeeItemProjection[] {
+  const seen = new Set<string>();
+  const eligible: LeaveAdminEmployeeItemProjection[] = [];
+  for (const emp of employees) {
+    if (!isEligibleLeaveAdminDropdownEmployee(emp)) {
+      continue;
+    }
+    const key = emp.account.app_user_id.trim().toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    eligible.push(emp);
+  }
+  return eligible;
+}
+
+export function resolveLeaveOpeningBalanceEmployees(
+  employees: readonly LeaveAdminEmployeeItemProjection[],
+): LeaveAdminEmployeeItemProjection[] {
+  return resolveLeaveAdminDropdownEmployees(employees).filter((emp) =>
+    isEligibleLeaveOpeningBalanceEmployee(emp),
+  );
+}
+
+export function resolveAdminSelectorEmployeeOptions(input: {
+  optionCatalogEmployees: readonly LeaveAdminEmployeeItemProjection[];
+  fallbackPageEmployees?: readonly LeaveAdminEmployeeItemProjection[];
+  optionCatalogLoaded: boolean;
+}): LeaveAdminEmployeeItemProjection[] {
+  if (input.optionCatalogLoaded) {
+    return resolveLeaveAdminDropdownEmployees(input.optionCatalogEmployees);
+  }
+  return resolveLeaveAdminDropdownEmployees(
+    input.optionCatalogEmployees.length > 0
+      ? input.optionCatalogEmployees
+      : (input.fallbackPageEmployees ?? []),
+  );
+}
+
+export function mergeLeaveAdminKnownAccounts(
+  existingById: ReadonlyMap<string, LeaveAccountProjection>,
+  ...accountCollections: ReadonlyArray<
+    ReadonlyArray<LeaveAccountProjection | null | undefined>
+  >
+): Map<string, LeaveAccountProjection> {
+  const next = new Map<string, LeaveAccountProjection>(existingById);
+  for (const collection of accountCollections) {
+    for (const acc of collection) {
+      if (!acc || typeof acc.app_user_id !== "string") {
+        continue;
+      }
+      const key = acc.app_user_id.trim().toLowerCase();
+      if (!key) {
+        continue;
+      }
+      next.set(key, acc);
+    }
+  }
+  return next;
+}
+
+export function resolveKnownLeaveAccountLabel(
+  appUserId: string,
+  knownAccountsById?: ReadonlyMap<string, LeaveAccountProjection>,
+  eligibleEmployees?: readonly LeaveAdminEmployeeItemProjection[],
+  fallbackLabel?: string | null,
+): string {
+  const trimmed = (appUserId ?? "").trim();
+  if (!trimmed) {
+    return "";
+  }
+  const key = trimmed.toLowerCase();
+  if (eligibleEmployees) {
+    const matched = eligibleEmployees.find(
+      (emp) => emp.account.app_user_id.trim().toLowerCase() === key,
+    );
+    if (matched) {
+      const formatted = formatLeaveAdminAccountOptionLabel(matched.account);
+      if (formatted.toLowerCase() !== key) {
+        return formatted;
+      }
+    }
+  }
+  const known = knownAccountsById?.get(key);
+  if (known) {
+    const formatted = formatLeaveAdminAccountOptionLabel(known);
+    if (formatted.toLowerCase() !== key) {
+      return formatted;
+    }
+  }
+  if (typeof fallbackLabel === "string" && fallbackLabel.trim().length > 0) {
+    return fallbackLabel.trim();
+  }
+  return trimmed;
+}
+
+export function resolveOpeningRowSelectOptions(input: {
+  eligibleEmployees: readonly LeaveAdminEmployeeItemProjection[];
+  selectedAppUserId: string;
+  knownAccountsById?: ReadonlyMap<string, LeaveAccountProjection>;
+  fallbackLabel?: string | null;
+}): LeaveAdminAccountOption[] {
+  const eligible = resolveLeaveOpeningBalanceEmployees(input.eligibleEmployees);
+  const selectedKey = (input.selectedAppUserId ?? "").trim().toLowerCase();
+
+  return eligible.map((emp) => {
+    const empKey = emp.account.app_user_id.trim().toLowerCase();
+    const isSelected = selectedKey.length > 0 && empKey === selectedKey;
+    const label = resolveKnownLeaveAccountLabel(
+      emp.account.app_user_id,
+      input.knownAccountsById,
+      [emp],
+      isSelected ? input.fallbackLabel : null,
+    );
+    const known = input.knownAccountsById?.get(empKey);
+    return {
+      app_user_id: emp.account.app_user_id,
+      label,
+      display_name:
+        emp.account.display_name?.trim() ||
+        known?.display_name?.trim() ||
+        label,
+      login_id: emp.account.login_id ?? known?.login_id ?? null,
+      personnel_code: emp.account.personnel_code ?? known?.personnel_code ?? null,
+    };
+  });
+}
+
+export async function fetchAllLeaveAdminEmployeeOptions(
+  fetchPage: (query: {
+    limit: number;
+    offset: number;
+    account_status: LeaveAdminAccountStatusFilter;
+  }) => Promise<
+    | {
+        ok: true;
+        data: Pick<
+          LeaveAdminOverviewProjection,
+          "total_employees" | "employees"
+        >;
+      }
+    | {
+        ok: false;
+        errorCode?: string;
+      }
+  >,
+  pageSize = ADMIN_EMPLOYEE_OPTIONS_PAGE_SIZE,
+): Promise<
+  | {
+      ok: true;
+      allEmployees: LeaveAdminEmployeeItemProjection[];
+      employees: LeaveAdminEmployeeItemProjection[];
+    }
+  | {
+      ok: false;
+      errorCode: string;
+    }
+> {
+  const boundedPageSize = Math.max(
+    1,
+    Math.min(Math.trunc(pageSize), ADMIN_EMPLOYEE_OPTIONS_PAGE_SIZE),
+  );
+  const first = await fetchPage({
+    limit: boundedPageSize,
+    offset: 0,
+    account_status: "ACTIVE",
+  });
+  if (!first.ok) {
+    return {
+      ok: false,
+      errorCode: first.errorCode ?? "LEAVE_INTERNAL_ERROR",
+    };
+  }
+
+  const firstRows = Array.isArray(first.data.employees)
+    ? first.data.employees
+    : [];
+  const total = Number.isFinite(Number(first.data.total_employees))
+    ? Math.max(0, Math.trunc(Number(first.data.total_employees)))
+    : firstRows.length;
+
+  const allEmployees: LeaveAdminEmployeeItemProjection[] = [...firstRows];
+  let pagesFetched = 1;
+
+  while (
+    allEmployees.length < total &&
+    pagesFetched < MAX_ADMIN_EMPLOYEE_OPTION_PAGES
+  ) {
+    const next = await fetchPage({
+      limit: boundedPageSize,
+      offset: allEmployees.length,
+      account_status: "ACTIVE",
+    });
+    if (!next.ok) {
+      return {
+        ok: false,
+        errorCode: next.errorCode ?? "LEAVE_INTERNAL_ERROR",
+      };
+    }
+    const nextRows = Array.isArray(next.data.employees)
+      ? next.data.employees
+      : [];
+    if (nextRows.length === 0) {
+      break;
+    }
+    allEmployees.push(...nextRows);
+    pagesFetched += 1;
+  }
+
+  return {
+    ok: true,
+    allEmployees,
+    employees: resolveLeaveAdminDropdownEmployees(allEmployees),
+  };
+}
+
 export type ParsedBulkOpeningTextResult = {
   rows: OpeningBatchRowInput[];
   parseErrors: string[];
@@ -1299,7 +1587,13 @@ export function parseOpeningBalanceBulkText(
 ): ParsedBulkOpeningTextResult {
   const byIdentifier = new Map<string, string>();
   for (const emp of employees) {
+    if (!isEligibleLeaveOpeningBalanceEmployee(emp)) {
+      continue;
+    }
     const uid = emp.account.app_user_id.trim().toLowerCase();
+    if (!uid) {
+      continue;
+    }
     byIdentifier.set(uid, uid);
     if (emp.account.personnel_code) {
       byIdentifier.set(emp.account.personnel_code.trim().toLowerCase(), uid);
@@ -1345,11 +1639,10 @@ export function parseOpeningBalanceBulkText(
       return;
     }
 
-    const resolvedUserId =
-      byIdentifier.get(rawId) ?? (isValidUuid(rawId) ? rawId : null);
+    const resolvedUserId = byIdentifier.get(rawId) ?? null;
     if (!resolvedUserId) {
       parseErrors.push(
-        `Dòng ${lineNum}: Không tìm thấy nhân sự khớp với '${parts[0]}'.`,
+        `Dòng ${lineNum}: Không tìm thấy nhân sự chính thức khớp với '${parts[0]}'.`,
       );
       return;
     }
