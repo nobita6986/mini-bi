@@ -21,6 +21,7 @@ const grid = read("./direct-entry-spreadsheet-grid.tsx");
 const shell = read("./direct-entry-shell.tsx");
 const proposer = read("./direct-entry-change-request-proposer.tsx");
 const reviewer = read("./direct-entry-change-request-reviewer.tsx");
+const workerOperations = read("./worker-operations.tsx");
 
 /**
  * P3-W07C-R6-R1: quet MOI cach dung ensureCatalog va tra ve cac vi pham.
@@ -63,7 +64,12 @@ test("R6-R1-1: bo quet bat duoc dung cac dang tai catalog theo ngay cua ban cu",
   assert.deepEqual(findCatalogLoadViolations(oldProposer).sort(),
     ["dateset:rowDateSet", "direct:date"]);
   // Va scanner khong bao dong thuan nao tren code hien tai.
-  for (const [name, source] of [["live", live], ["proposer", proposer], ["reviewer", reviewer]]) {
+  for (const [name, source] of [
+    ["live", live],
+    ["proposer", proposer],
+    ["reviewer", reviewer],
+    ["workerOperations", workerOperations],
+  ]) {
     assert.deepEqual(findCatalogLoadViolations(source), [], name + " con tai catalog theo ngay");
   }
 });
@@ -74,9 +80,13 @@ test("R6-R1-2: chi catalog ngay HCM cua trang duoc load", () => {
   assert.equal(/neededDates/.test(live), false, "neededDates da bi xoa");
   assert.equal(/\.map\(\s*ensureCatalog\s*\)/.test(live), false);
   // Khong con lookup catalog bang first_work_date o bat ky be mat nao.
-  for (const [name, source] of [["live", live], ["proposer", proposer]]) {
+  for (const [name, source] of [
+    ["live", live],
+    ["proposer", proposer],
+    ["workerOperations", workerOperations],
+  ]) {
     assert.equal(/catalogs\[(row|entry|cells|target)[.\w]*first_work/i.test(source), false, name);
-    assert.equal(/catalogFor\(\s*(row|entry|singleEntry|draft)\.first_work_date/.test(source), false, name);
+    assert.equal(/catalogFor\(\s*(row|entry|singleEntry|draft|entryForm)[?.\w]*first_work_date/.test(source), false, name);
   }
 });
 

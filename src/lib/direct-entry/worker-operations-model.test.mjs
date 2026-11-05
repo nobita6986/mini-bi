@@ -54,6 +54,8 @@ import {
   buildDirectEditEntryFieldProposal,
   buildDirectEditPaymentPatch,
   buildDirectEditWorkerDetailsProposal,
+  buildWorkerEditProjectOptions,
+  buildWorkerEditRecruiterOptions,
   directEditWorkerFormFromBaseline,
   formatBankReferenceDisplay,
   initialDirectEditBankQueryText,
@@ -905,6 +907,116 @@ test("HF Edit Values: buildDirectEditPaymentPatch preserves untouched empty stat
       bank_id: null,
       bank_name: null,
       account_holder_name: "NGUYEN VAN A",
+    },
+  });
+});
+
+test("HF Catalog Effective Date: worker starting before a recruiter's membership valid_from sees and saves that currently active recruiter; inactive current selection remains separately visible", () => {
+  const CURRENT_RECRUITER_ID = "22222222-2222-4222-8222-222222222222";
+  const MAY_RECRUITER_ID = "77777777-7777-4777-8777-777777777777";
+  const INACTIVE_RECRUITER_ID = "88888888-8888-4888-8888-888888888888";
+
+  // Worker hrp-2026-002553 started 2026-09-28; Nguyễn Thị Mây (maynt.td) has membership from 2026-10-06
+  // and is active in today's catalog (2026-11-05).
+  const todayCatalogRecruiters = [
+    { recruiter_id: CURRENT_RECRUITER_ID, label: "Trần Thị B · B-01" },
+    { recruiter_id: MAY_RECRUITER_ID, label: "Nguyễn Thị Mây · maynt.td" },
+  ];
+  const todayCatalogProjects = [
+    { project_id: "proj-current", display_name: "Dự án Bắc Ninh" },
+    { project_id: "proj-new", display_name: "Dự án Hải Phòng" },
+  ];
+
+  // 1. When current recruiter is active today, today's catalog lists both current recruiter and Nguyễn Thị Mây (without duplicate fallback option)
+  const optionsWhenCurrentActive = buildWorkerEditRecruiterOptions({
+    catalogRecruiters: todayCatalogRecruiters,
+    currentRecruiterId: CURRENT_RECRUITER_ID,
+    currentRecruiterDisplay: "Trần Thị B · B-01",
+  });
+  assert.deepEqual(optionsWhenCurrentActive, [
+    { value: CURRENT_RECRUITER_ID, label: "Trần Thị B · B-01", isCurrentFallback: false },
+    { value: MAY_RECRUITER_ID, label: "Nguyễn Thị Mây · maynt.td", isCurrentFallback: false },
+  ]);
+
+  // Selecting Nguyễn Thị Mây and saving on worker with first_work_date = 2026-09-28 produces a valid recruiter_id patch
+  const baselineEntry = {
+    project_id: "proj-current",
+    first_work_date: "2026-09-28",
+    employee_code: "hrp-2026-002553",
+    recruiter_id: CURRENT_RECRUITER_ID,
+    labor_type: "TEMPORARY",
+    worker_details: {
+      display_name: "Lê Văn Công",
+      date_of_birth: { state: "omitted" },
+      national_id: { state: "omitted" },
+      address: { state: "omitted" },
+      phone: { state: "omitted" },
+    },
+  };
+  const form = directEditWorkerFormFromBaseline(baselineEntry);
+  const savedBuilt = buildDirectEditEntryFieldProposal({
+    baseline: baselineEntry,
+    form: {
+      ...form,
+      recruiter_id: MAY_RECRUITER_ID,
+    },
+  });
+  assert.deepEqual(savedBuilt, {
+    ok: true,
+    proposal: {
+      recruiter_id: MAY_RECRUITER_ID,
+    },
+  });
+
+  // 2. When current recruiter (or project) is no longer eligible in today's catalog for new selection,
+  // it is preserved as a separate "(hiện tại)" option ahead of today's active catalog options.
+  const optionsWhenCurrentInactive = buildWorkerEditRecruiterOptions({
+    catalogRecruiters: todayCatalogRecruiters,
+    currentRecruiterId: INACTIVE_RECRUITER_ID,
+    currentRecruiterDisplay: "Phạm Văn Cũ · cu.td",
+  });
+  assert.deepEqual(optionsWhenCurrentInactive, [
+    {
+      value: INACTIVE_RECRUITER_ID,
+      label: "Phạm Văn Cũ · cu.td (hiện tại)",
+      isCurrentFallback: true,
+    },
+    { value: CURRENT_RECRUITER_ID, label: "Trần Thị B · B-01", isCurrentFallback: false },
+    { value: MAY_RECRUITER_ID, label: "Nguyễn Thị Mây · maynt.td", isCurrentFallback: false },
+  ]);
+
+  const projectOptionsWhenCurrentInactive = buildWorkerEditProjectOptions({
+    catalogProjects: todayCatalogProjects,
+    currentProjectId: "proj-expired",
+    currentProjectDisplay: "Dự án Cũ",
+  });
+  assert.deepEqual(projectOptionsWhenCurrentInactive, [
+    {
+      value: "proj-expired",
+      label: "Dự án Cũ (hiện tại)",
+      isCurrentFallback: true,
+    },
+    { value: "proj-current", label: "Dự án Bắc Ninh", isCurrentFallback: false },
+    { value: "proj-new", label: "Dự án Hải Phòng", isCurrentFallback: false },
+  ]);
+
+  // Editing another field while keeping the inactive recruiter preserves the current recruiter (omits recruiter_id from patch)
+  const baselineWithInactiveRecruiter = {
+    ...baselineEntry,
+    recruiter_id: INACTIVE_RECRUITER_ID,
+  };
+  const formWithInactiveRecruiter = directEditWorkerFormFromBaseline(baselineWithInactiveRecruiter);
+  const keepInactiveRecruiterPatch = buildDirectEditEntryFieldProposal({
+    baseline: baselineWithInactiveRecruiter,
+    form: {
+      ...formWithInactiveRecruiter,
+      project_id: "proj-new",
+    },
+  });
+  assert.deepEqual(keepInactiveRecruiterPatch, {
+    ok: true,
+    proposal: {
+      project_id: "proj-new",
     },
   });
 });
