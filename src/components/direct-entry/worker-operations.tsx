@@ -50,6 +50,8 @@ import {
   canSelectQuickOffboardingWorker,
   buildDirectEditEntryFieldProposal,
   buildDirectEditPaymentPatch,
+  buildWorkerEditProjectOptions,
+  buildWorkerEditRecruiterOptions,
   checkDirectEditDocumentFile,
   directEditDocumentErrorMessage,
   directEditWorkerFormFromBaseline,
@@ -1360,15 +1362,9 @@ function ProposeDrawer({
   const [leaveReason, setLeaveReason] = useState("");
   const today = hcmTodayDate();
   const catalog = catalogFor(today);
-  const entryCatalogDate = entryForm?.first_work_date;
-  const entryCatalog = catalogFor(entryCatalogDate ?? today);
   const mergedBankOptions = useMemo<MergedBankCatalogOption[]>(
-    () =>
-      mergeVietQrBankCatalog([
-        ...(catalog?.banks ?? []),
-        ...(entryCatalog?.banks ?? []),
-      ]),
-    [catalog, entryCatalog],
+    () => mergeVietQrBankCatalog(catalog?.banks ?? []),
+    [catalog],
   );
   // The row has already passed server-side worker view and scope; edits still require the existing action.
   const workerFieldMode = mode === "correction" || target === "WORKER";
@@ -1434,12 +1430,6 @@ function ProposeDrawer({
   useEffect(() => {
     if (row !== null) void ensureCatalog(today).catch(() => undefined);
   }, [row, ensureCatalog, today]);
-
-  useEffect(() => {
-    if (row !== null && entryCatalogDate) {
-      void ensureCatalog(entryCatalogDate).catch(() => undefined);
-    }
-  }, [row, entryCatalogDate, ensureCatalog]);
 
   async function retrySingleFile(kind: DirectEditFileKind): Promise<void> {
     if (row === null || baseline === null || busy) return;
@@ -1539,10 +1529,7 @@ function ProposeDrawer({
           bankId,
           bankQueryText: bankQuery,
           accountHolderName: accountHolder,
-          catalogBanks: [
-            ...(catalog?.banks ?? []),
-            ...(entryCatalog?.banks ?? []),
-          ],
+          catalogBanks: catalog?.banks ?? [],
         });
         if (paymentBuilt.kind === "invalid") {
           setMessage(paymentBuilt.message);
@@ -1939,17 +1926,15 @@ function ProposeDrawer({
                   <div className="flex flex-col gap-1.5">
                     <label htmlFor="worker-project" className="text-sm font-medium">Dự án</label>
                     <select id="worker-project" className={inputClass} value={entryForm.project_id}
-                      disabled={loading || entryCatalog === undefined}
+                      disabled={loading || catalog === undefined}
                       onChange={(event) => setEntryForm({ ...entryForm, project_id: event.target.value })}>
-                      {entryCatalog?.projects.some((project) =>
-                        project.project_id === entryForm.project_id) ? null : (
-                        <option value={entryForm.project_id}>
-                          {(row?.project_display ?? "Dự án hiện tại") + " (hiện tại)"}
-                        </option>
-                      )}
-                      {(entryCatalog?.projects ?? []).map((project) => (
-                        <option key={project.project_id} value={project.project_id}>
-                          {project.display_name}
+                      {buildWorkerEditProjectOptions({
+                        catalogProjects: catalog?.projects,
+                        currentProjectId: baseline?.projectId ?? entryForm.project_id,
+                        currentProjectDisplay: row?.project_display,
+                      }).map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
                         </option>
                       ))}
                     </select>
@@ -1968,18 +1953,16 @@ function ProposeDrawer({
                       Người tuyển
                     </label>
                     <select id="worker-recruiter" className={inputClass} value={entryForm.recruiter_id}
-                      disabled={loading || entryCatalog === undefined}
+                      disabled={loading || catalog === undefined}
                       onChange={(event) => setEntryForm({ ...entryForm,
                         recruiter_id: event.target.value })}>
-                      {entryCatalog?.recruiters.some((recruiter) =>
-                        recruiter.recruiter_id === entryForm.recruiter_id) ? null : (
-                        <option value={entryForm.recruiter_id}>
-                          {(row?.recruiter_display ?? "Người tuyển hiện tại") + " (hiện tại)"}
-                        </option>
-                      )}
-                      {(entryCatalog?.recruiters ?? []).map((recruiter) => (
-                        <option key={recruiter.recruiter_id} value={recruiter.recruiter_id}>
-                          {recruiter.label}
+                      {buildWorkerEditRecruiterOptions({
+                        catalogRecruiters: catalog?.recruiters,
+                        currentRecruiterId: baseline?.recruiterId ?? entryForm.recruiter_id,
+                        currentRecruiterDisplay: row?.recruiter_display,
+                      }).map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
                         </option>
                       ))}
                     </select>
@@ -1989,31 +1972,31 @@ function ProposeDrawer({
                       Loại hình lao động
                     </label>
                     <select id="worker-labor-type" className={inputClass}
-                      value={(entryCatalog?.labor_types ?? []).some((option) =>
+                      value={(catalog?.labor_types ?? []).some((option) =>
                         option.labor_type_key === entryForm.labor_type) ? entryForm.labor_type : ""}
-                      disabled={loading || entryCatalog === undefined ||
-                        (entryCatalog.labor_types ?? []).length === 0}
+                      disabled={loading || catalog === undefined ||
+                        (catalog.labor_types ?? []).length === 0}
                       onChange={(event) => setEntryForm({ ...entryForm,
                         labor_type: event.target.value })}>
                       <option value="">Chọn loại hình</option>
-                      {sortedActiveLaborTypes(entryCatalog?.labor_types).map((option) => (
+                      {sortedActiveLaborTypes(catalog?.labor_types).map((option) => (
                         <option key={option.labor_type_key} value={option.labor_type_key}>
                           {option.display_name}
                         </option>
                       ))}
                     </select>
                     {baseline !== null &&
-                      !(entryCatalog?.labor_types ?? []).some((option) =>
+                      !(catalog?.labor_types ?? []).some((option) =>
                         option.labor_type_key === baseline.laborType) && (
                       <small>Hiện tại: {baseline.laborTypeDisplay} · không còn hoạt động</small>
                     )}
                   </div>
-                  {!loading && entryCatalog === undefined && catalogDenied ? (
+                  {!loading && catalog === undefined && catalogDenied ? (
                     <p role="status" className={infoClass}>
                       Vai trò hiện tại không có quyền đọc danh mục; không thể chọn giá trị danh mục mới.
                     </p>
                   ) : null}
-                  {!loading && entryCatalog === undefined && !catalogDenied ? (
+                  {!loading && catalog === undefined && !catalogDenied ? (
                     <p role="alert" className={errorClass}>
                       Không tải được danh mục hiện có. Không thể chọn dự án hoặc người tuyển mới.
                     </p>

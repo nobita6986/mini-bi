@@ -1298,6 +1298,68 @@ export function buildDirectEditEntryFieldProposal(input: {
   return { ok: true, proposal };
 }
 
+export type WorkerEditCatalogSelectOption = {
+  value: string;
+  label: string;
+  isCurrentFallback: boolean;
+};
+
+/**
+ * Builds `<select>` options for Project in the worker edit/propose drawer using
+ * the current catalog (`today`), while keeping the worker's currently saved project
+ * as a separate `(hiện tại)` option if it is not present in the active catalog.
+ */
+export function buildWorkerEditProjectOptions(input: {
+  catalogProjects: readonly { project_id: string; display_name: string }[] | undefined;
+  currentProjectId: string;
+  currentProjectDisplay?: string | null;
+}): readonly WorkerEditCatalogSelectOption[] {
+  const projects = input.catalogProjects ?? [];
+  const options: WorkerEditCatalogSelectOption[] = projects.map((project) => ({
+    value: project.project_id,
+    label: project.display_name,
+    isCurrentFallback: false,
+  }));
+  const currentId = input.currentProjectId.trim();
+  if (currentId !== "" && !projects.some((project) => project.project_id === currentId)) {
+    const baseLabel = input.currentProjectDisplay?.trim() || "Dự án hiện tại";
+    options.unshift({
+      value: currentId,
+      label: `${baseLabel} (hiện tại)`,
+      isCurrentFallback: true,
+    });
+  }
+  return options;
+}
+
+/**
+ * Builds `<select>` options for Recruiter in the worker edit/propose drawer using
+ * the current catalog (`today`), while keeping the worker's currently saved recruiter
+ * as a separate `(hiện tại)` option if that recruiter is no longer in the active catalog.
+ */
+export function buildWorkerEditRecruiterOptions(input: {
+  catalogRecruiters: readonly { recruiter_id: string; label: string }[] | undefined;
+  currentRecruiterId: string;
+  currentRecruiterDisplay?: string | null;
+}): readonly WorkerEditCatalogSelectOption[] {
+  const recruiters = input.catalogRecruiters ?? [];
+  const options: WorkerEditCatalogSelectOption[] = recruiters.map((recruiter) => ({
+    value: recruiter.recruiter_id,
+    label: recruiter.label,
+    isCurrentFallback: false,
+  }));
+  const currentId = input.currentRecruiterId.trim();
+  if (currentId !== "" && !recruiters.some((recruiter) => recruiter.recruiter_id === currentId)) {
+    const baseLabel = input.currentRecruiterDisplay?.trim() || "Người tuyển hiện tại";
+    options.unshift({
+      value: currentId,
+      label: `${baseLabel} (hiện tại)`,
+      isCurrentFallback: true,
+    });
+  }
+  return options;
+}
+
 export type DirectEditBaselinePayment = {
   state: PaymentState;
   account_number: string | null;

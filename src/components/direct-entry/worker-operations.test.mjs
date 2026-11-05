@@ -408,8 +408,8 @@ test("HF-R5A: catalog bi tu choi (403) la gioi han quyen, khong phai loi he thon
   // Drawer nhan cung mot su that: fail-closed tren gia tri hien tai, khong tu suy quyen.
   assert.match(source, /catalogDenied={filterCatalogState === "denied"}/);
   assert.match(source, /catalogDenied: boolean/);
-  assert.match(source, /entryCatalog === undefined && catalogDenied/);
-  assert.match(source, /disabled=\{loading \|\| entryCatalog === undefined\}/);
+  assert.match(source, /catalog === undefined && catalogDenied/);
+  assert.match(source, /disabled=\{loading \|\| catalog === undefined\}/);
 });
 
 test("HF-R5A: dong drawer phai tra focus ve dung nut da mo", () => {
@@ -470,4 +470,24 @@ test("HF Edit Values: Sửa trực tiếp bỏ các bộ chọn trạng thái d�
   assert.match(source, /role="combobox"/);
   assert.match(source, /Danh mục ngân hàng VietQR/);
   assert.match(source, /Chưa có trong danh mục — sẽ lưu tên ngân hàng dạng tham chiếu\./);
+});
+
+test("HF Catalog Effective Date: ProposeDrawer uses today's catalog (not first_work_date) and keeps current project/recruiter option separately when absent from active catalog", () => {
+  const proposalStart = source.indexOf("function ProposeDrawer(");
+  const proposalEnd = source.indexOf("/** Tai Blob", proposalStart);
+  assert.ok(proposalStart >= 0 && proposalEnd > proposalStart);
+  const drawerSource = source.slice(proposalStart, proposalEnd);
+
+  // Uses today's catalog aligned with backend direct_entry_authorization_date()
+  assert.match(drawerSource, /const today = hcmTodayDate\(\);/);
+  assert.match(drawerSource, /const catalog = catalogFor\(today\);/);
+  assert.doesNotMatch(drawerSource, /entryCatalog|entryCatalogDate/);
+  assert.doesNotMatch(drawerSource, /catalogFor\([^)]*first_work_date/);
+
+  const ensureCalls = [...drawerSource.matchAll(/ensureCatalog\(([^)]*)\)/g)].map((m) => m[1].trim());
+  assert.deepEqual(ensureCalls, ["today"]);
+
+  // Current project/recruiter options are built from baseline?.projectId / baseline?.recruiterId
+  assert.match(drawerSource, /buildWorkerEditProjectOptions\(\{\s*catalogProjects: catalog\?\.projects,\s*currentProjectId: baseline\?\.projectId \?\? entryForm\.project_id,/);
+  assert.match(drawerSource, /buildWorkerEditRecruiterOptions\(\{\s*catalogRecruiters: catalog\?\.recruiters,\s*currentRecruiterId: baseline\?\.recruiterId \?\? entryForm\.recruiter_id,/);
 });
