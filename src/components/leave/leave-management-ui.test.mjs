@@ -109,6 +109,15 @@ test("WP2 Admin & HR Config surface covers employee profiles, seniority mileston
   assert.ok(workspaceSource.includes("resolveLeaveOpeningBalanceEmployees"));
   assert.ok(workspaceSource.includes("openingOfficialEmployees"));
   assert.ok(workspaceSource.includes("resolveOpeningRowSelectOptions"));
+  assert.ok(workspaceSource.includes("buildOpeningBatchApplyRows"));
+  assert.ok(workspaceSource.includes("resolveAppliedOpeningRowCount"));
+  assert.ok(workspaceSource.includes("Số dư mục tiêu sau đối soát"));
+  assert.ok(workspaceSource.includes("Ngày chốt đối soát số dư:"));
+  assert.equal(
+    workspaceSource.includes("parsed.data.applied_row_count"),
+    false,
+    "Toast must use resolveAppliedOpeningRowCount instead of raw parsed.data.applied_row_count",
+  );
 });
 
 test("WP2 Monthly Attendance & Leave Closing Report surface supports server filters, attendance dates, explicit leave types, and Excel (.xlsx) export without pay_treatment inference", () => {

@@ -819,3 +819,105 @@ test("leave-api monthly report .xlsx export paginates beyond 500 employees and f
   const oversizedBody = await oversizedRes.json();
   assert.equal(oversizedBody.code, "LEAVE_REPORT_EXPORT_LIMIT_EXCEEDED");
 });
+
+test("Opening balance apply contract preserves expected snapshot metadata, maps LEAVE_OPENING_PREVIEW_STALE to 409, and returns applied_row_count", async () => {
+  assert.equal(leaveHttpStatusForError("LEAVE_OPENING_PREVIEW_STALE"), 409);
+  assert.equal(
+    mapLeaveRpcError({
+      code: "40001",
+      message: "LEAVE_OPENING_PREVIEW_STALE",
+    }),
+    "LEAVE_OPENING_PREVIEW_STALE",
+  );
+  assert.equal(
+    mapLeaveRpcError({
+      code: "22023",
+      message: "OPENING_TARGET_BELOW_LOCKED_BALANCE",
+    }),
+    "LEAVE_OPENING_BATCH_VALIDATION_FAILED",
+  );
+
+  const parsedApply = parseApplyOpeningBatchBody({
+    leave_year: 2026,
+    idempotency_key: "idem-reconcile-1",
+    reason: "Đối soát số dư đầu kỳ",
+    rows: [
+      {
+        app_user_id: TARGET_APP,
+        carry_over_units: 0,
+        opening_current_year_units: 2,
+        seniority_units: 0,
+        note: "Nghỉ 2 ngày trước khi dùng BI",
+        expected_as_of_date: "2026-11-05",
+        expected_current_year_granted_units: 6,
+        expected_current_year_locked_units: 0,
+        expected_profile_row_version: 2,
+      },
+    ],
+  });
+  assert.equal(parsedApply.ok, true);
+  assert.deepEqual(parsedApply.data.rows[0], {
+    app_user_id: TARGET_APP,
+    carry_over_units: 0,
+    opening_current_year_units: 2,
+    seniority_units: 0,
+    note: "Nghỉ 2 ngày trước khi dùng BI",
+    expected_as_of_date: "2026-11-05",
+    expected_current_year_granted_units: 6,
+    expected_current_year_locked_units: 0,
+    expected_profile_row_version: 2,
+  });
+
+  // Invalid expected_as_of_date is rejected by contract parser
+  const badExpectedDate = parseApplyOpeningBatchBody({
+    leave_year: 2026,
+    idempotency_key: "idem-reconcile-bad",
+    rows: [
+      {
+        app_user_id: TARGET_APP,
+        carry_over_units: 0,
+        opening_current_year_units: 2,
+        seniority_units: 0,
+        expected_as_of_date: "not-a-date",
+      },
+    ],
+  });
+  assert.equal(badExpectedDate.ok, false);
+  assert.equal(badExpectedDate.code, "LEAVE_OPENING_ROWS_INVALID");
+
+  // Stale preview error from repository returns 409 LEAVE_OPENING_PREVIEW_STALE
+  const staleRes = await handlePostApplyOpeningBalances(
+    new Request("https://bi.example.com/api/leave/admin/opening-balances/apply", {
+      method: "POST",
+      headers: {
+        Host: "bi.example.com",
+        Origin: "https://bi.example.com",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        leave_year: 2026,
+        idempotency_key: "idem-stale-1",
+        rows: [
+          {
+            app_user_id: TARGET_APP,
+            carry_over_units: 0,
+            opening_current_year_units: 2,
+            seniority_units: 0,
+          },
+        ],
+      }),
+    }),
+    "true",
+    {
+      resolveSession: mockActiveSession(),
+      repository: createNoopRepo({
+        async applyOpeningBatch() {
+          return { ok: false, code: "LEAVE_OPENING_PREVIEW_STALE" };
+        },
+      }),
+    },
+  );
+  assert.equal(staleRes.status, 409);
+  const staleJson = await staleRes.json();
+  assert.equal(staleJson.code, "LEAVE_OPENING_PREVIEW_STALE");
+});

@@ -123,6 +123,7 @@ export type LeaveErrorCode =
   | "LEAVE_OPENING_ROWS_INVALID"
   | "LEAVE_CARRY_OVER_EXPIRY_NOT_CONFIGURED"
   | "LEAVE_OPENING_BATCH_VALIDATION_FAILED"
+  | "LEAVE_OPENING_PREVIEW_STALE"
   | "LEAVE_REPORT_FORBIDDEN"
   | "LEAVE_REPORT_YEAR_MONTH_INVALID"
   | "LEAVE_REPORT_EXPORT_LIMIT_EXCEEDED"
@@ -161,6 +162,7 @@ export function leaveHttpStatusForError(code: LeaveErrorCode): number {
     case "LEAVE_ROW_VERSION_CONFLICT":
     case "LEAVE_IDEMPOTENCY_FINGERPRINT_MISMATCH":
     case "LEAVE_INVALID_STATE_TRANSITION":
+    case "LEAVE_OPENING_PREVIEW_STALE":
     case "LEAVE_REPORT_EXPORT_INCOMPLETE":
       return 409;
     case "LEAVE_INSUFFICIENT_BALANCE":
@@ -335,6 +337,10 @@ export type OpeningBatchRowInput = {
   opening_current_year_units: number;
   seniority_units: number;
   note: string | null;
+  expected_as_of_date?: string | null;
+  expected_current_year_granted_units?: number | null;
+  expected_current_year_locked_units?: number | null;
+  expected_profile_row_version?: number | null;
 };
 
 export type PreviewOpeningBatchInput = {
@@ -1131,12 +1137,69 @@ function normalizeOpeningRows(
       typeof item.note === "string" && item.note.trim().length > 0
         ? item.note.trim().slice(0, 500)
         : null;
+    const expectedAsOfDate =
+      item.expected_as_of_date === undefined || item.expected_as_of_date === null
+        ? undefined
+        : isValidIsoDate(item.expected_as_of_date)
+          ? item.expected_as_of_date.trim()
+          : null;
+    if (expectedAsOfDate === null) {
+      return { ok: false, code: "LEAVE_OPENING_ROWS_INVALID" };
+    }
+    const expectedCurrentYearGrantedUnits =
+      item.expected_current_year_granted_units === undefined ||
+      item.expected_current_year_granted_units === null
+        ? undefined
+        : Number(item.expected_current_year_granted_units);
+    if (
+      expectedCurrentYearGrantedUnits !== undefined &&
+      !Number.isInteger(expectedCurrentYearGrantedUnits)
+    ) {
+      return { ok: false, code: "LEAVE_OPENING_ROWS_INVALID" };
+    }
+    const expectedCurrentYearLockedUnits =
+      item.expected_current_year_locked_units === undefined ||
+      item.expected_current_year_locked_units === null
+        ? undefined
+        : Number(item.expected_current_year_locked_units);
+    if (
+      expectedCurrentYearLockedUnits !== undefined &&
+      !Number.isInteger(expectedCurrentYearLockedUnits)
+    ) {
+      return { ok: false, code: "LEAVE_OPENING_ROWS_INVALID" };
+    }
+    const expectedProfileRowVersion =
+      item.expected_profile_row_version === undefined ||
+      item.expected_profile_row_version === null
+        ? undefined
+        : Number(item.expected_profile_row_version);
+    if (
+      expectedProfileRowVersion !== undefined &&
+      !Number.isInteger(expectedProfileRowVersion)
+    ) {
+      return { ok: false, code: "LEAVE_OPENING_ROWS_INVALID" };
+    }
     rows.push({
       app_user_id: appUserId,
       carry_over_units: carryUnits,
       opening_current_year_units: openUnits,
       seniority_units: senUnits,
       note,
+      ...(expectedAsOfDate !== undefined
+        ? { expected_as_of_date: expectedAsOfDate }
+        : {}),
+      ...(expectedCurrentYearGrantedUnits !== undefined
+        ? {
+            expected_current_year_granted_units:
+              expectedCurrentYearGrantedUnits,
+          }
+        : {}),
+      ...(expectedCurrentYearLockedUnits !== undefined
+        ? { expected_current_year_locked_units: expectedCurrentYearLockedUnits }
+        : {}),
+      ...(expectedProfileRowVersion !== undefined
+        ? { expected_profile_row_version: expectedProfileRowVersion }
+        : {}),
     });
   }
   return { ok: true, rows };

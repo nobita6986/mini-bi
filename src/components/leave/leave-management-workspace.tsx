@@ -35,6 +35,7 @@ import {
   autoAllocateDraftDaysByBalance,
   buildMonthlyLeaveReportExportUrl,
   buildMonthlyLeaveReportQuery,
+  buildOpeningBatchApplyRows,
   canApplyOpeningBatch,
   canWithdrawOwnLeaveRequest,
   computeOpeningBatchDraftSignature,
@@ -68,6 +69,7 @@ import {
   parseDaysInputToHalfDayUnits,
   parseOpeningBalanceBulkText,
   resolveAdminSelectorEmployeeOptions,
+  resolveAppliedOpeningRowCount,
   resolveKnownLeaveAccountLabel,
   resolveLeaveOpeningBalanceEmployees,
   resolveOpeningRowSelectOptions,
@@ -1302,30 +1304,42 @@ export function LeaveManagementWorkspace({
 
     setOpeningApplyLoading(true);
     try {
+      const applyRows = buildOpeningBatchApplyRows(
+        parsedOpeningContractRows.rows,
+        openingPreviewResult,
+      );
       const response = await fetch("/api/leave/admin/opening-balances/apply", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "same-origin",
         body: JSON.stringify({
           leave_year: openingYear,
-          rows: parsedOpeningContractRows.rows,
+          rows: applyRows,
           reason: openingReason.trim() || null,
           idempotency_key: newClientIdempotencyKey("leave-opening-apply"),
         }),
       });
-      const parsed = await parseJsonResponse<{ batch_id: string; applied_row_count: number }>(
+      const parsed = await parseJsonResponse<Record<string, unknown>>(
         response,
       );
       if (!parsed.ok || !parsed.data) {
+        if (parsed.errorCode === "LEAVE_OPENING_PREVIEW_STALE") {
+          setOpeningPreviewResult(null);
+          setOpeningPreviewSignature(null);
+        }
         notify.error({
           title: "Áp dụng số dư đầu kỳ không thành công",
           description: leaveErrorMessage(parsed.errorCode),
         });
         return;
       }
+      const appliedRowCount = resolveAppliedOpeningRowCount(
+        parsed.data,
+        parsedOpeningContractRows.rows.length,
+      );
       notify.success({
         title: "Đã áp dụng số dư đầu kỳ thành công",
-        description: `Đã khởi tạo số dư đầu kỳ năm ${openingYear} cho ${parsed.data.applied_row_count} nhân sự.`,
+        description: `Đã khởi tạo số dư đầu kỳ năm ${openingYear} cho ${appliedRowCount} nhân sự.`,
       });
       setOpeningPreviewResult(null);
       setOpeningPreviewSignature(null);
@@ -2985,8 +2999,8 @@ export function LeaveManagementWorkspace({
                 <div className="space-y-4" data-testid="leave-admin-opening-section">
                   <Card className="space-y-4">
                     <CardHeader
-                      title="Khởi tạo số dư phép đầu kỳ (Bắt buộc Xem trước rồi mới Áp dụng)"
-                      description="Hỗ trợ nhập cho từng nhân viên hoặc dán nhanh hàng loạt. Hệ thống kiểm tra trạng thái nhân sự, chính sách hạn phép chuyển năm và chống ghi trùng lô trước khi cho phép áp dụng nguyên tử."
+                      title="Khởi tạo & Đối soát số dư phép đầu kỳ (Bắt buộc Xem trước rồi mới Áp dụng)"
+                      description="Cột 'Phép đầu kỳ năm nay' là số dư mục tiêu sau đối soát tại ngày chốt (sau khi đã trừ các ngày phép nghỉ trước khi dùng BI), không phải khoản cộng thêm lên phép định kỳ tự động. Hệ thống bảo toàn phép đang giữ chỗ/đã duyệt theo FIFO và ghi nhận điều chỉnh vào sổ cái kiểm toán."
                     />
 
                     <div className="flex flex-wrap items-end justify-between gap-3">
@@ -3065,7 +3079,9 @@ export function LeaveManagementWorkspace({
                           <tr>
                             <th className={DATA_TABLE_TH_CLASS}>Nhân sự (Tài khoản)</th>
                             <th className={DATA_TABLE_TH_CLASS}>Phép chuyển năm (Ngày)</th>
-                            <th className={DATA_TABLE_TH_CLASS}>Phép đầu kỳ năm nay (Ngày)</th>
+                            <th className={DATA_TABLE_TH_CLASS}>
+                              Phép đầu kỳ năm nay — Số dư mục tiêu sau đối soát (Ngày)
+                            </th>
                             <th className={DATA_TABLE_TH_CLASS}>Phép thâm niên (Ngày)</th>
                             <th className={DATA_TABLE_TH_CLASS}>Ghi chú</th>
                             <th className={DATA_TABLE_TH_CLASS}>Xóa</th>
@@ -3290,9 +3306,19 @@ export function LeaveManagementWorkspace({
                         data-testid="leave-opening-preview-result"
                       >
                         <div className="flex flex-wrap items-center justify-between gap-2">
-                          <h3 className="text-sm font-semibold text-foreground">
-                            Kết quả kiểm tra xem trước (Năm {openingPreviewResult.leave_year})
-                          </h3>
+                          <div>
+                            <h3 className="text-sm font-semibold text-foreground">
+                              Kết quả kiểm tra xem trước (Năm {openingPreviewResult.leave_year})
+                            </h3>
+                            <p className="text-xs text-muted">
+                              Ngày chốt đối soát số dư:{" "}
+                              <strong className="font-mono text-foreground">
+                                {formatIsoDateVi(
+                                  openingPreviewResult.as_of_date ?? adminData?.as_of_date,
+                                )}
+                              </strong>
+                            </p>
+                          </div>
                           <StatusBadge
                             tone={openingPreviewResult.valid ? "success" : "danger"}
                             dot
@@ -3311,7 +3337,9 @@ export function LeaveManagementWorkspace({
                             </div>
                           </div>
                           <div className="rounded-lg border border-border bg-surface p-2.5">
-                            <span className="text-muted">Tổng phép đầu kỳ năm nay:</span>
+                            <span className="text-muted">
+                              Tổng số dư mục tiêu năm nay (sau đối soát):
+                            </span>
                             <div className="mt-0.5 font-mono font-semibold text-foreground">
                               {formatHalfDayUnits(
                                 openingPreviewResult.total_opening_current_year_units,
@@ -3341,7 +3369,9 @@ export function LeaveManagementWorkspace({
                                 <th className={DATA_TABLE_TH_CLASS}>#</th>
                                 <th className={DATA_TABLE_TH_CLASS}>Nhân sự</th>
                                 <th className={DATA_TABLE_TH_CLASS}>Chuyển năm</th>
-                                <th className={DATA_TABLE_TH_CLASS}>Đầu kỳ năm nay</th>
+                                <th className={DATA_TABLE_TH_CLASS}>
+                                  Số dư mục tiêu năm nay (Đối soát)
+                                </th>
                                 <th className={DATA_TABLE_TH_CLASS}>Thâm niên</th>
                                 <th className={DATA_TABLE_TH_CLASS}>Kết quả kiểm tra</th>
                               </tr>
@@ -3368,8 +3398,20 @@ export function LeaveManagementWorkspace({
                                   <td className={DATA_TABLE_TD_CLASS} data-label="Chuyển năm">
                                     {formatHalfDayUnits(pr.carry_over_units)}
                                   </td>
-                                  <td className={DATA_TABLE_TD_CLASS} data-label="Đầu kỳ năm nay">
-                                    {formatHalfDayUnits(pr.opening_current_year_units)}
+                                  <td
+                                    className={DATA_TABLE_TD_CLASS}
+                                    data-label="Số dư mục tiêu năm nay (Đối soát)"
+                                  >
+                                    <div className="font-mono font-medium">
+                                      {formatHalfDayUnits(pr.opening_current_year_units)}
+                                    </div>
+                                    {typeof pr.current_year_granted_units === "number" &&
+                                    typeof pr.delta_current_year_units === "number" ? (
+                                      <div className="text-[11px] text-muted">
+                                        Hiện có: {formatHalfDayUnits(pr.current_year_granted_units)}{" "}
+                                        ({formatSignedHalfDayUnits(pr.delta_current_year_units)})
+                                      </div>
+                                    ) : null}
                                   </td>
                                   <td className={DATA_TABLE_TD_CLASS} data-label="Thâm niên">
                                     {formatHalfDayUnits(pr.seniority_units)}

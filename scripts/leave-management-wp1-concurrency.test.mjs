@@ -223,6 +223,10 @@ const DECIDE_REQ_SQL =
   "select public.leave_management_decide_request($1::uuid, $2::uuid, $3::uuid, $4::text, $5::int, $6::text, $7::text, $8::text) as data";
 const WITHDRAW_REQ_SQL =
   "select public.leave_management_withdraw_request($1::uuid, $2::uuid, $3::uuid, $4::int, $5::text, $6::text, $7::text) as data";
+const PREVIEW_OPENING_SQL =
+  "select public.leave_management_preview_opening_batch($1::uuid, $2::uuid, $3::int, $4::jsonb) as data";
+const APPLY_OPENING_SQL =
+  "select public.leave_management_apply_opening_batch($1::uuid, $2::uuid, $3::int, $4::jsonb, $5::text, $6::text, $7::text) as data";
 
 test("LEAVE-WP1 real PostgreSQL concurrency: accrual burst, overlapping requests, concurrent decisions, and approve-vs-withdraw serialize cleanly", async (t) => {
   const initdb = binary("initdb");
@@ -455,6 +459,90 @@ test("LEAVE-WP1 real PostgreSQL concurrency: accrual burst, overlapping requests
       [EMP_1.app],
     );
     assert.deepEqual(emp1LotsFinal[0], { granted: 6, reserved: 1, consumed: 0 });
+
+    // -------------------------------------------------------------------------
+    // Stage 5: Deterministic lock-hold race on `apply_opening_batch`
+    // -------------------------------------------------------------------------
+    const openingRowsPayload = JSON.stringify([
+      {
+        app_user_id: EMP_1.app,
+        carry_over_units: 0,
+        opening_current_year_units: 2,
+        seniority_units: 0,
+        note: "Đối soát số dư mục tiêu còn 1 ngày (2 units)",
+      },
+    ]);
+
+    const previewRes = await burstClients[0].query(PREVIEW_OPENING_SQL, [
+      ADMIN_1.auth,
+      ADMIN_1.app,
+      2026,
+      openingRowsPayload,
+    ]);
+    assert.equal(previewRes.rows[0].data.valid, true);
+    assert.equal(previewRes.rows[0].data.rows[0].current_year_granted_units, 6);
+    assert.equal(previewRes.rows[0].data.rows[0].current_year_locked_units, 1);
+    assert.equal(previewRes.rows[0].data.rows[0].delta_current_year_units, -4);
+
+    await worker1.query("begin");
+    await worker1.query("set local role service_role");
+    const winOpeningApply = await worker1.query(APPLY_OPENING_SQL, [
+      ADMIN_1.auth,
+      ADMIN_1.app,
+      2026,
+      openingRowsPayload,
+      "Chốt số dư mục tiêu 1 ngày (luồng 1)",
+      "race-opening-apply-1",
+      "fp-race-opening-apply-1",
+    ]);
+    assert.equal(winOpeningApply.rows[0].data.applied_row_count, 1);
+    assert.equal(
+      winOpeningApply.rows[0].data.applied_rows[0].balance.total_granted_units,
+      2,
+    );
+    assert.equal(
+      winOpeningApply.rows[0].data.applied_rows[0].balance.available_units,
+      1,
+    );
+
+    await worker2.query("begin");
+    await worker2.query("set local role service_role");
+    const blockedOpeningApply = worker2.query(APPLY_OPENING_SQL, [
+      ADMIN_1.auth,
+      ADMIN_1.app,
+      2026,
+      openingRowsPayload,
+      "Chốt số dư mục tiêu 1 ngày (luồng 2 trùng lúc)",
+      "race-opening-apply-2",
+      "fp-race-opening-apply-2",
+    ]);
+    blockedOpeningApply.catch(() => {});
+
+    await waitUntilBlocked(observer, "leave-wp1-worker-2");
+    await worker1.query("commit");
+
+    await assert.rejects(
+      blockedOpeningApply,
+      (err) =>
+        err.code === "40001" &&
+        String(err.message).includes("LEAVE_OPENING_PREVIEW_STALE"),
+      "contending apply_opening_batch after state changed must reject with 40001 LEAVE_OPENING_PREVIEW_STALE",
+    );
+    await worker2.query("rollback");
+
+    const { rows: emp1LotsAfterOpeningRace } = await observer.query(
+      `select coalesce(sum(granted_units), 0)::int as granted,
+              coalesce(sum(reserved_units), 0)::int as reserved,
+              coalesce(sum(consumed_units), 0)::int as consumed
+         from public.leave_lots
+        where app_user_id = $1 and leave_year = 2026`,
+      [EMP_1.app],
+    );
+    assert.deepEqual(emp1LotsAfterOpeningRace[0], {
+      granted: 2,
+      reserved: 1,
+      consumed: 0,
+    });
   } finally {
     await worker1?.query("rollback").catch(() => {});
     await worker2?.query("rollback").catch(() => {});
