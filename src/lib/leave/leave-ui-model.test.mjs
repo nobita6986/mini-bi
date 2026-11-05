@@ -23,6 +23,7 @@ import {
   leaveEmploymentStatusBadge,
   leaveErrorMessage,
   leaveFallbackReasonLabel,
+  leaveLedgerEntryTypeLabel,
   leaveOpeningRowErrorLabel,
   leaveRequestStatusBadge,
   leaveRouteKindLabel,
@@ -1058,6 +1059,27 @@ test("Opening balance reconciliation helpers: resolveAppliedOpeningRowCount neve
     leaveOpeningRowErrorLabel("OPENING_TARGET_BELOW_LOCKED_BALANCE").includes(
       "giữ chỗ",
     ),
+  );
+  assert.ok(
+    leaveOpeningRowErrorLabel("SENIORITY_LOT_ALREADY_EXISTS").includes(
+      "phép thâm niên",
+    ),
+  );
+  assert.equal(
+    leaveLedgerEntryTypeLabel("ADJUST_OPENING_CURRENT_YEAR_DECREASE", -4),
+    "Điều chỉnh giảm số dư đầu kỳ năm hiện tại (đối soát)",
+  );
+  assert.equal(
+    leaveLedgerEntryTypeLabel("ADJUST_OPENING_CURRENT_YEAR_INCREASE", 4),
+    "Điều chỉnh tăng số dư đầu kỳ năm hiện tại (đối soát)",
+  );
+  assert.equal(
+    leaveLedgerEntryTypeLabel("GRANT_OPENING_CURRENT_YEAR", -2),
+    "Điều chỉnh giảm số dư đầu kỳ năm hiện tại (đối soát)",
+  );
+  assert.equal(
+    leaveLedgerEntryTypeLabel("GRANT_OPENING_CURRENT_YEAR", 2),
+    "Khởi tạo số dư đầu kỳ năm hiện tại",
   );
   assert.ok(
     leaveErrorMessage("LEAVE_OPENING_PREVIEW_STALE").includes("Xem trước"),

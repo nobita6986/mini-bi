@@ -85,7 +85,10 @@ export function mapLeaveRpcError(error: {
       return known;
     }
   }
-  if (message.includes("OPENING_TARGET_BELOW_LOCKED_BALANCE")) {
+  if (
+    message.includes("OPENING_TARGET_BELOW_LOCKED_BALANCE") ||
+    message.includes("SENIORITY_LOT_ALREADY_EXISTS")
+  ) {
     return "LEAVE_OPENING_BATCH_VALIDATION_FAILED";
   }
   if (message.includes("LEAVE_IDEMPOTENCY_PAYLOAD_CONFLICT")) {

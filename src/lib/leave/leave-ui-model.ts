@@ -754,7 +754,10 @@ export function leaveLotKindLabel(
   }
 }
 
-export function leaveLedgerEntryTypeLabel(entryType: string): string {
+export function leaveLedgerEntryTypeLabel(
+  entryType: string,
+  deltaAvailableUnits?: number,
+): string {
   switch (entryType) {
     case "GRANT_MONTHLY_ACCRUAL":
       return "Cộng phép định kỳ tháng";
@@ -764,7 +767,14 @@ export function leaveLedgerEntryTypeLabel(entryType: string): string {
       return "Cộng phép thâm niên";
     case "GRANT_OPENING_CARRY_OVER":
       return "Khởi tạo phép tồn năm trước";
+    case "ADJUST_OPENING_CURRENT_YEAR_DECREASE":
+      return "Điều chỉnh giảm số dư đầu kỳ năm hiện tại (đối soát)";
+    case "ADJUST_OPENING_CURRENT_YEAR_INCREASE":
+      return "Điều chỉnh tăng số dư đầu kỳ năm hiện tại (đối soát)";
     case "GRANT_OPENING_CURRENT_YEAR":
+      if (typeof deltaAvailableUnits === "number" && deltaAvailableUnits < 0) {
+        return "Điều chỉnh giảm số dư đầu kỳ năm hiện tại (đối soát)";
+      }
       return "Khởi tạo số dư đầu kỳ năm hiện tại";
     case "GRANT_MANUAL_ADJUSTMENT":
       return "Điều chỉnh số dư phép";
@@ -820,6 +830,8 @@ export function leaveOpeningRowErrorLabel(errorCode: string): string {
       return "Chưa cấu hình hạn sử dụng phép tồn năm trước trong Chính sách nghỉ phép";
     case "CARRY_OVER_LOT_ALREADY_EXISTS":
       return "Nhân sự này đã được khởi tạo phép tồn năm trước trong năm hiện tại";
+    case "SENIORITY_LOT_ALREADY_EXISTS":
+      return "Nhân sự này đã được cấp phép thâm niên trong năm hiện tại (đặt Phép thâm niên = 0 khi đối soát lại phép năm nay)";
     case "OPENING_CURRENT_YEAR_LOT_ALREADY_EXISTS":
       return "Nhân sự này đã được khởi tạo số dư đầu kỳ năm hiện tại";
     case "OPENING_TARGET_BELOW_LOCKED_BALANCE":

@@ -836,6 +836,13 @@ test("Opening balance apply contract preserves expected snapshot metadata, maps 
     }),
     "LEAVE_OPENING_BATCH_VALIDATION_FAILED",
   );
+  assert.equal(
+    mapLeaveRpcError({
+      code: "22023",
+      message: "SENIORITY_LOT_ALREADY_EXISTS",
+    }),
+    "LEAVE_OPENING_BATCH_VALIDATION_FAILED",
+  );
 
   const parsedApply = parseApplyOpeningBatchBody({
     leave_year: 2026,

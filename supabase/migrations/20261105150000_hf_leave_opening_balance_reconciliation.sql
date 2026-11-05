@@ -25,6 +25,27 @@ alter table public.leave_lots
   add constraint leave_lots_granted_units_chk
   check (granted_units >= 0);
 
+alter table public.leave_ledger_entries
+  drop constraint if exists leave_ledger_entries_type_chk;
+
+alter table public.leave_ledger_entries
+  add constraint leave_ledger_entries_type_chk check (entry_type in (
+    'GRANT_OPENING_CARRY_OVER',
+    'GRANT_OPENING_CURRENT_YEAR',
+    'ADJUST_OPENING_CURRENT_YEAR_INCREASE',
+    'ADJUST_OPENING_CURRENT_YEAR_DECREASE',
+    'GRANT_MONTHLY_ACCRUAL',
+    'GRANT_PROBATION_CATCHUP',
+    'GRANT_SENIORITY',
+    'GRANT_MANUAL_ADJUSTMENT',
+    'RESERVE',
+    'SETTLE_RESERVE_TO_CONSUME',
+    'CONSUME',
+    'RELEASE_RESERVE',
+    'REVERSAL_CONSUME',
+    'EXPIRE_CARRY_OVER'
+  ));
+
 create table if not exists public.leave_opening_preview_snapshots (
   actor_app_user_id uuid not null
     references public.direct_entry_app_users(app_user_id) on delete cascade,
@@ -540,6 +561,18 @@ begin
           v_row_errors := v_row_errors || pg_catalog.jsonb_build_array('CARRY_OVER_LOT_ALREADY_EXISTS');
         end if;
       end if;
+
+      if v_target_id is not null and v_sen_units > 0 then
+        if exists (
+          select 1
+            from public.leave_lots l
+           where l.app_user_id = v_target_id
+             and l.leave_year = v_year
+             and l.lot_kind = 'SENIORITY_GRANT'
+        ) then
+          v_row_errors := v_row_errors || pg_catalog.jsonb_build_array('SENIORITY_LOT_ALREADY_EXISTS');
+        end if;
+      end if;
     end if;
 
     if pg_catalog.jsonb_array_length(v_row_errors) > 0 then
@@ -949,7 +982,7 @@ begin
             v_target_id,
             v_lot.lot_id,
             v_batch.batch_id,
-            'GRANT_OPENING_CURRENT_YEAR',
+            'ADJUST_OPENING_CURRENT_YEAR_DECREASE',
             v_today,
             -v_take,
             0,
@@ -1025,7 +1058,7 @@ begin
             v_target_id,
             v_lot.lot_id,
             v_batch.batch_id,
-            'GRANT_OPENING_CURRENT_YEAR',
+            'ADJUST_OPENING_CURRENT_YEAR_INCREASE',
             v_today,
             v_give,
             0,
@@ -1069,6 +1102,45 @@ begin
                  opening_batch_id = v_batch.batch_id,
                  updated_at = pg_catalog.timezone('utc', pg_catalog.now())
            where lot_id = v_lot_id;
+
+          insert into public.leave_ledger_entries (
+            app_user_id,
+            lot_id,
+            opening_batch_id,
+            entry_type,
+            effective_date,
+            delta_available_units,
+            delta_reserved_units,
+            delta_consumed_units,
+            delta_expired_units,
+            actor_app_user_id,
+            reason,
+            metadata
+          )
+          values (
+            v_target_id,
+            v_lot_id,
+            v_batch.batch_id,
+            'ADJUST_OPENING_CURRENT_YEAR_INCREASE',
+            v_today,
+            v_remaining_addition,
+            0,
+            0,
+            0,
+            p_actor_app_user_id,
+            v_reason,
+            pg_catalog.jsonb_build_object(
+              'leave_year', v_year,
+              'reconciliation_mode', 'TARGET_BALANCE',
+              'as_of_date', v_today,
+              'target_current_year_units', v_open_units,
+              'previous_current_year_granted_units', v_current_year_granted,
+              'current_year_accrued_units', v_current_year_accrued,
+              'current_year_locked_units', v_current_year_locked,
+              'delta_current_year_units', v_delta_current_year,
+              'note', v_row->>'note'
+            )
+          );
         else
           insert into public.leave_lots (
             app_user_id,
@@ -1097,46 +1169,46 @@ begin
             pg_catalog.jsonb_build_object('reconciliation_mode', 'TARGET_BALANCE')
           )
           returning lot_id into v_lot_id;
-        end if;
 
-        insert into public.leave_ledger_entries (
-          app_user_id,
-          lot_id,
-          opening_batch_id,
-          entry_type,
-          effective_date,
-          delta_available_units,
-          delta_reserved_units,
-          delta_consumed_units,
-          delta_expired_units,
-          actor_app_user_id,
-          reason,
-          metadata
-        )
-        values (
-          v_target_id,
-          v_lot_id,
-          v_batch.batch_id,
-          'GRANT_OPENING_CURRENT_YEAR',
-          v_today,
-          v_remaining_addition,
-          0,
-          0,
-          0,
-          p_actor_app_user_id,
-          v_reason,
-          pg_catalog.jsonb_build_object(
-            'leave_year', v_year,
-            'reconciliation_mode', 'TARGET_BALANCE',
-            'as_of_date', v_today,
-            'target_current_year_units', v_open_units,
-            'previous_current_year_granted_units', v_current_year_granted,
-            'current_year_accrued_units', v_current_year_accrued,
-            'current_year_locked_units', v_current_year_locked,
-            'delta_current_year_units', v_delta_current_year,
-            'note', v_row->>'note'
+          insert into public.leave_ledger_entries (
+            app_user_id,
+            lot_id,
+            opening_batch_id,
+            entry_type,
+            effective_date,
+            delta_available_units,
+            delta_reserved_units,
+            delta_consumed_units,
+            delta_expired_units,
+            actor_app_user_id,
+            reason,
+            metadata
           )
-        );
+          values (
+            v_target_id,
+            v_lot_id,
+            v_batch.batch_id,
+            'GRANT_OPENING_CURRENT_YEAR',
+            v_today,
+            v_remaining_addition,
+            0,
+            0,
+            0,
+            p_actor_app_user_id,
+            v_reason,
+            pg_catalog.jsonb_build_object(
+              'leave_year', v_year,
+              'reconciliation_mode', 'TARGET_BALANCE',
+              'as_of_date', v_today,
+              'target_current_year_units', v_open_units,
+              'previous_current_year_granted_units', v_current_year_granted,
+              'current_year_accrued_units', v_current_year_accrued,
+              'current_year_locked_units', v_current_year_locked,
+              'delta_current_year_units', v_delta_current_year,
+              'note', v_row->>'note'
+            )
+          );
+        end if;
       end if;
     elsif v_open_units > 0 then
       v_lot_id := null;
@@ -1190,6 +1262,17 @@ begin
     end if;
 
     if v_sen_units > 0 then
+      if exists (
+        select 1
+          from public.leave_lots l
+         where l.app_user_id = v_target_id
+           and l.leave_year = v_year
+           and l.lot_kind = 'SENIORITY_GRANT'
+      ) then
+        raise exception 'SENIORITY_LOT_ALREADY_EXISTS'
+          using errcode = '22023';
+      end if;
+
       insert into public.leave_lots (
         app_user_id,
         leave_year,

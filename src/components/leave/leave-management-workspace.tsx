@@ -2150,7 +2150,10 @@ export function LeaveManagementWorkspace({
                               </span>
                             </td>
                             <td className={DATA_TABLE_TD_CLASS} data-label="Loại bút toán">
-                              {leaveLedgerEntryTypeLabel(entry.entry_type)}
+                              {leaveLedgerEntryTypeLabel(
+                                entry.entry_type,
+                                entry.delta_available_units,
+                              )}
                             </td>
                             <td className={DATA_TABLE_TD_CLASS} data-label="Biến động khả dụng">
                               <span
