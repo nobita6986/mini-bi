@@ -10,6 +10,7 @@ import {
   type NavActorProjection,
 } from "../navigation/registry-capability.ts";
 import {
+  ATTENDANCE_MONTHLY_MATRIX_EXPORT_FALLBACK_PAGE_SIZE,
   ATTENDANCE_MONTHLY_MATRIX_EXPORT_PAGE_SIZE,
   ATTENDANCE_MONTHLY_MATRIX_EXPORT_ROW_LIMIT,
   attendanceMonthlyMatrixHttpStatusForError,
@@ -30,9 +31,14 @@ import {
   type AttendanceExplanationDecision,
   type AttendanceMonthlyMatrixEmployeeRowProjection,
   type AttendanceMonthlyMatrixErrorCode,
+  type AttendanceMonthlyMatrixReportProjection,
   type AttendanceSlotCode,
 } from "./attendance-monthly-matrix-contract.ts";
-import type { AttendanceMonthlyMatrixRepository } from "./attendance-monthly-matrix-repository.ts";
+import {
+  logAttendanceMatrixDiagnostic,
+  sanitizeAttendanceDiagnosticRequestId,
+  type AttendanceMonthlyMatrixRepository,
+} from "./attendance-monthly-matrix-repository.ts";
 import {
   attendanceMonthlyMatrixExportFilename,
   buildAttendanceMonthlyMatrixXlsx,
@@ -511,6 +517,10 @@ export async function getAttendanceMonthlyMatrixReport(
     return matrixError(parsedQuery.code);
   }
 
+  const requestId = sanitizeAttendanceDiagnosticRequestId(
+    request.headers.get("x-request-id"),
+  );
+
   const result = await dependencies.repository.getMonthlyMatrixReport({
     auth_subject: actorResult.auth_subject,
     app_user_id: actorResult.app_user_id,
@@ -520,6 +530,8 @@ export async function getAttendanceMonthlyMatrixReport(
     search: parsedQuery.value.search,
     page: parsedQuery.value.page,
     page_size: parsedQuery.value.page_size,
+    request_id: requestId,
+    phase: "report_fetch",
   });
 
   if (!result.ok) {
@@ -564,89 +576,141 @@ export async function exportAttendanceMonthlyMatrixXlsx(
     return matrixError(parsedQuery.code);
   }
 
-  const firstPageResult = await dependencies.repository.getMonthlyMatrixReport({
-    auth_subject: actorResult.auth_subject,
-    app_user_id: actorResult.app_user_id,
-    year_month: parsedQuery.value.year_month,
-    branch_id: parsedQuery.value.branch_id,
-    employee_id: parsedQuery.value.employee_id,
-    search: parsedQuery.value.search,
-    page: 1,
-    page_size: ATTENDANCE_MONTHLY_MATRIX_EXPORT_PAGE_SIZE,
-  });
+  const requestId = sanitizeAttendanceDiagnosticRequestId(
+    request.headers.get("x-request-id"),
+  );
 
-  if (!firstPageResult.ok) {
-    return matrixError(firstPageResult.code);
-  }
+  const collectExportPages = async (
+    pageSize: number,
+    phasePrefix: "export" | "export_fallback",
+  ): Promise<
+    | {
+        ok: true;
+        firstReport: AttendanceMonthlyMatrixReportProjection;
+        collectedItems: AttendanceMonthlyMatrixEmployeeRowProjection[];
+      }
+    | { ok: false; code: AttendanceMonthlyMatrixErrorCode }
+  > => {
+    const firstPageResult = await dependencies.repository.getMonthlyMatrixReport({
+      auth_subject: actorResult.auth_subject,
+      app_user_id: actorResult.app_user_id,
+      year_month: parsedQuery.value.year_month,
+      branch_id: parsedQuery.value.branch_id,
+      employee_id: parsedQuery.value.employee_id,
+      search: parsedQuery.value.search,
+      page: 1,
+      page_size: pageSize,
+      request_id: requestId,
+      phase: `${phasePrefix}_page_1`,
+    });
 
-  const firstReport = firstPageResult.report;
-  const expectedTotalRows = firstReport.pagination.total_rows;
-  const expectedTotalPages = firstReport.pagination.total_pages;
-  const expectedSnapshotToken = firstReport.pagination.snapshot_token;
-
-  if (expectedTotalRows > ATTENDANCE_MONTHLY_MATRIX_EXPORT_ROW_LIMIT) {
-    return matrixError("ATTENDANCE_MATRIX_EXPORT_ROW_LIMIT_EXCEEDED");
-  }
-
-  const collectedItems: AttendanceMonthlyMatrixEmployeeRowProjection[] = [];
-  const seenEmployeeIds = new Set<string>();
-
-  for (const item of firstReport.items) {
-    if (seenEmployeeIds.has(item.app_user_id)) {
-      return matrixError("ATTENDANCE_MATRIX_EXPORT_PAGINATION_INCOMPLETE");
-    }
-    seenEmployeeIds.add(item.app_user_id);
-    collectedItems.push(item);
-  }
-
-  if (expectedTotalRows === 0) {
-    if (collectedItems.length !== 0 || expectedTotalPages !== 0) {
-      return matrixError("ATTENDANCE_MATRIX_EXPORT_PAGINATION_INCOMPLETE");
-    }
-  } else {
-    if (firstReport.items.length === 0 || expectedTotalPages < 1) {
-      return matrixError("ATTENDANCE_MATRIX_EXPORT_PAGINATION_INCOMPLETE");
+    if (!firstPageResult.ok) {
+      return { ok: false, code: firstPageResult.code };
     }
 
-    for (let page = 2; page <= expectedTotalPages; page += 1) {
-      const nextPageResult = await dependencies.repository.getMonthlyMatrixReport({
-        auth_subject: actorResult.auth_subject,
-        app_user_id: actorResult.app_user_id,
-        year_month: firstReport.filters.year_month,
-        branch_id: parsedQuery.value.branch_id,
-        employee_id: parsedQuery.value.employee_id,
-        search: parsedQuery.value.search,
-        page,
-        page_size: ATTENDANCE_MONTHLY_MATRIX_EXPORT_PAGE_SIZE,
-      });
+    const firstReport = firstPageResult.report;
+    const expectedTotalRows = firstReport.pagination.total_rows;
+    const expectedTotalPages = firstReport.pagination.total_pages;
+    const expectedSnapshotToken = firstReport.pagination.snapshot_token;
 
-      if (!nextPageResult.ok) {
-        return matrixError(nextPageResult.code);
+    if (expectedTotalRows > ATTENDANCE_MONTHLY_MATRIX_EXPORT_ROW_LIMIT) {
+      return { ok: false, code: "ATTENDANCE_MATRIX_EXPORT_ROW_LIMIT_EXCEEDED" };
+    }
+
+    const collectedItems: AttendanceMonthlyMatrixEmployeeRowProjection[] = [];
+    const seenEmployeeIds = new Set<string>();
+
+    for (const item of firstReport.items) {
+      if (seenEmployeeIds.has(item.app_user_id)) {
+        return { ok: false, code: "ATTENDANCE_MATRIX_EXPORT_PAGINATION_INCOMPLETE" };
+      }
+      seenEmployeeIds.add(item.app_user_id);
+      collectedItems.push(item);
+    }
+
+    if (expectedTotalRows === 0) {
+      if (collectedItems.length !== 0 || expectedTotalPages !== 0) {
+        return { ok: false, code: "ATTENDANCE_MATRIX_EXPORT_PAGINATION_INCOMPLETE" };
+      }
+    } else {
+      if (firstReport.items.length === 0 || expectedTotalPages < 1) {
+        return { ok: false, code: "ATTENDANCE_MATRIX_EXPORT_PAGINATION_INCOMPLETE" };
       }
 
-      const nextReport = nextPageResult.report;
-      if (
-        nextReport.pagination.total_rows !== expectedTotalRows ||
-        nextReport.pagination.total_pages !== expectedTotalPages ||
-        nextReport.pagination.snapshot_token !== expectedSnapshotToken ||
-        nextReport.items.length === 0
-      ) {
-        return matrixError("ATTENDANCE_MATRIX_EXPORT_PAGINATION_INCOMPLETE");
-      }
+      for (let page = 2; page <= expectedTotalPages; page += 1) {
+        const nextPageResult = await dependencies.repository.getMonthlyMatrixReport({
+          auth_subject: actorResult.auth_subject,
+          app_user_id: actorResult.app_user_id,
+          year_month: firstReport.filters.year_month,
+          branch_id: parsedQuery.value.branch_id,
+          employee_id: parsedQuery.value.employee_id,
+          search: parsedQuery.value.search,
+          page,
+          page_size: pageSize,
+          request_id: requestId,
+          phase: `${phasePrefix}_page_n`,
+        });
 
-      for (const item of nextReport.items) {
-        if (seenEmployeeIds.has(item.app_user_id)) {
-          return matrixError("ATTENDANCE_MATRIX_EXPORT_PAGINATION_INCOMPLETE");
+        if (!nextPageResult.ok) {
+          return { ok: false, code: nextPageResult.code };
         }
-        seenEmployeeIds.add(item.app_user_id);
-        collectedItems.push(item);
+
+        const nextReport = nextPageResult.report;
+        if (
+          nextReport.pagination.total_rows !== expectedTotalRows ||
+          nextReport.pagination.total_pages !== expectedTotalPages ||
+          nextReport.pagination.snapshot_token !== expectedSnapshotToken ||
+          nextReport.items.length === 0
+        ) {
+          return { ok: false, code: "ATTENDANCE_MATRIX_EXPORT_PAGINATION_INCOMPLETE" };
+        }
+
+        for (const item of nextReport.items) {
+          if (seenEmployeeIds.has(item.app_user_id)) {
+            return { ok: false, code: "ATTENDANCE_MATRIX_EXPORT_PAGINATION_INCOMPLETE" };
+          }
+          seenEmployeeIds.add(item.app_user_id);
+          collectedItems.push(item);
+        }
+      }
+
+      if (collectedItems.length !== expectedTotalRows) {
+        return { ok: false, code: "ATTENDANCE_MATRIX_EXPORT_PAGINATION_INCOMPLETE" };
       }
     }
 
-    if (collectedItems.length !== expectedTotalRows) {
-      return matrixError("ATTENDANCE_MATRIX_EXPORT_PAGINATION_INCOMPLETE");
-    }
+    return { ok: true, firstReport, collectedItems };
+  };
+
+  let collectionResult = await collectExportPages(
+    ATTENDANCE_MONTHLY_MATRIX_EXPORT_PAGE_SIZE,
+    "export",
+  );
+
+  if (
+    !collectionResult.ok &&
+    collectionResult.code === "ATTENDANCE_REPORT_UNAVAILABLE" &&
+    ATTENDANCE_MONTHLY_MATRIX_EXPORT_FALLBACK_PAGE_SIZE <
+      ATTENDANCE_MONTHLY_MATRIX_EXPORT_PAGE_SIZE
+  ) {
+    logAttendanceMatrixDiagnostic({
+      phase: "export_page_size_fallback",
+      fallback_phase: "export_page_size_fallback",
+      code: collectionResult.code,
+      sqlstate: null,
+      request_id: requestId,
+    });
+    collectionResult = await collectExportPages(
+      ATTENDANCE_MONTHLY_MATRIX_EXPORT_FALLBACK_PAGE_SIZE,
+      "export_fallback",
+    );
   }
+
+  if (!collectionResult.ok) {
+    return matrixError(collectionResult.code);
+  }
+
+  const { firstReport, collectedItems } = collectionResult;
 
   try {
     const bytes = await buildAttendanceMonthlyMatrixXlsx({
@@ -673,7 +737,13 @@ export async function exportAttendanceMonthlyMatrixXlsx(
       },
     });
   } catch {
-    console.error("[attendance-monthly-matrix] XLSX export generation failed");
+    logAttendanceMatrixDiagnostic({
+      phase: "workbook_build",
+      fallback_phase: "workbook_build",
+      code: "ATTENDANCE_REPORT_UNAVAILABLE",
+      sqlstate: null,
+      request_id: requestId,
+    });
     return matrixError("ATTENDANCE_REPORT_UNAVAILABLE");
   }
 }

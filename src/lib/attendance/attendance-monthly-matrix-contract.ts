@@ -13,12 +13,14 @@ import {
 
 export const ATTENDANCE_MONTHLY_MATRIX_EXPORT_ROW_LIMIT = 1_000;
 export const ATTENDANCE_MONTHLY_MATRIX_EXPORT_PAGE_SIZE = 100;
+export const ATTENDANCE_MONTHLY_MATRIX_EXPORT_FALLBACK_PAGE_SIZE =
+  ATTENDANCE_REPORT_DEFAULT_PAGE_SIZE;
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const YEAR_MONTH_PATTERN = /^(\d{4})-(0[1-9]|1[0-2])$/;
 const BRANCH_CODE_PATTERN = /^[A-Z0-9][A-Z0-9._:-]{0,63}$/;
-export const SLOT_PROFILE_CODE_PATTERN = /^[A-Z0-9][A-Z0-9._:-]{1,63}$/;
+export const SLOT_PROFILE_CODE_PATTERN = /^[A-Z0-9][A-Z0-9._:-]{0,63}$/;
 const CONTROL_CHAR_PATTERN = /[\x00-\x1f\x7f]/;
 const ADDRESS_CONTROL_CHAR_PATTERN = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/;
 const HH_MM_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -3700,9 +3702,10 @@ function projectEmployeeRow(
 }
 
 export function projectAttendanceMonthlyMatrixReport(
-  value: unknown,
+  rawValue: unknown,
 ): AttendanceMonthlyMatrixReportProjection | null {
-  if (!isRecord(value)) {
+  const value = unwrapOptionalOkEnvelope(rawValue);
+  if (!value) {
     return null;
   }
   const baseRootKeys = [

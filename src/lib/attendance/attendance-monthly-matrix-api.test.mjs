@@ -24,6 +24,8 @@ import {
   postSubmitAttendanceExplanation,
 } from "./attendance-monthly-matrix-api.ts";
 import {
+  ATTENDANCE_MONTHLY_MATRIX_EXPORT_FALLBACK_PAGE_SIZE,
+  ATTENDANCE_MONTHLY_MATRIX_EXPORT_PAGE_SIZE,
   ATTENDANCE_MONTHLY_MATRIX_EXPORT_ROW_LIMIT,
   DEFAULT_ATTENDANCE_SLOT_POLICY,
   DEFAULT_ATTENDANCE_SLOT_POLICY_PROFILE_ID,
@@ -40,6 +42,7 @@ import {
   parseUpsertBranchBody,
   parseUpsertSlotPolicyProfileBody,
   projectAssignSlotPolicyResult,
+  projectAttendanceMonthlyMatrixReport,
   projectAttendanceSlotPoliciesAdminList,
   projectUnassignSlotPolicyResult,
   projectUpsertSlotPolicyProfileResult,
@@ -2328,4 +2331,219 @@ test("Multi-Profile Slot Policy Admin contracts, API handlers, and repository RP
       expected_version: 1,
     }),
   });
+});
+
+test("exportAttendanceMonthlyMatrixXlsx falls back from page_size=100 to page_size=25 when 100-row RPC times out or is unavailable, while preserving snapshot_token and row limit guards", async () => {
+  const calls = [];
+  const fallbackRes = await exportAttendanceMonthlyMatrixXlsx(
+    new Request(
+      "https://bi.example.com/api/admin/attendance/monthly-matrix/export?year_month=2026-11",
+      {
+        headers: {
+          "x-request-id": "req-export-2026-11-fallback",
+        },
+      },
+    ),
+    {
+      resolveSession: async () => makeSessionOk(FULL_ADMIN_CAPS, ALL_SCOPE),
+      repository: {
+        getMonthlyMatrixReport: async (input) => {
+          calls.push({
+            page: input.page,
+            page_size: input.page_size,
+            phase: input.phase,
+            request_id: input.request_id,
+          });
+          if (input.page_size === ATTENDANCE_MONTHLY_MATRIX_EXPORT_PAGE_SIZE) {
+            return { ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" };
+          }
+          assert.equal(input.page_size, ATTENDANCE_MONTHLY_MATRIX_EXPORT_FALLBACK_PAGE_SIZE);
+          const item = {
+            ...buildValidMonthlyMatrixReport().items[0],
+            app_user_id: input.page === 1 ? STAFF_USER_ID : APP_USER_ID,
+            employee_display_name:
+              input.page === 1 ? "Nhân viên Fallback Trang 1" : "Nhân viên Fallback Trang 2",
+          };
+          return {
+            ok: true,
+            report: buildValidMonthlyMatrixReport({
+              filters: {
+                ...buildValidMonthlyMatrixReport().filters,
+                year_month: "2026-11",
+                from_date: "2026-11-01",
+                to_date: "2026-11-30",
+              },
+              pagination: {
+                page: input.page,
+                page_size: ATTENDANCE_MONTHLY_MATRIX_EXPORT_FALLBACK_PAGE_SIZE,
+                total_rows: 2,
+                total_pages: 2,
+                has_more: input.page < 2,
+                snapshot_token: "b".repeat(32),
+              },
+              items: [item],
+            }),
+          };
+        },
+        listBranchesAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        upsertBranchAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        assignEmployeeBranchAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        unassignEmployeeBranchAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+      },
+    },
+  );
+
+  assert.equal(fallbackRes.status, 200);
+  assert.deepEqual(calls, [
+    {
+      page: 1,
+      page_size: 100,
+      phase: "export_page_1",
+      request_id: "req-export-2026-11-fallback",
+    },
+    {
+      page: 1,
+      page_size: 25,
+      phase: "export_fallback_page_1",
+      request_id: "req-export-2026-11-fallback",
+    },
+    {
+      page: 2,
+      page_size: 25,
+      phase: "export_fallback_page_n",
+      request_id: "req-export-2026-11-fallback",
+    },
+  ]);
+  const bytes = new Uint8Array(await fallbackRes.arrayBuffer());
+  assert.equal(bytes[0], 0x50);
+  assert.equal(bytes[1], 0x4b);
+
+  // Snapshot drift during 25-row fallback still returns 409 ATTENDANCE_MATRIX_EXPORT_PAGINATION_INCOMPLETE
+  const driftRes = await exportAttendanceMonthlyMatrixXlsx(
+    new Request("https://bi.example.com/api/admin/attendance/monthly-matrix/export?year_month=2026-11"),
+    {
+      resolveSession: async () => makeSessionOk(FULL_ADMIN_CAPS, ALL_SCOPE),
+      repository: {
+        getMonthlyMatrixReport: async (input) => {
+          if (input.page_size === ATTENDANCE_MONTHLY_MATRIX_EXPORT_PAGE_SIZE) {
+            return { ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" };
+          }
+          const item = {
+            ...buildValidMonthlyMatrixReport().items[0],
+            app_user_id: input.page === 1 ? STAFF_USER_ID : APP_USER_ID,
+          };
+          return {
+            ok: true,
+            report: buildValidMonthlyMatrixReport({
+              pagination: {
+                page: input.page,
+                page_size: ATTENDANCE_MONTHLY_MATRIX_EXPORT_FALLBACK_PAGE_SIZE,
+                total_rows: 2,
+                total_pages: 2,
+                has_more: input.page < 2,
+                snapshot_token: input.page === 1 ? "b".repeat(32) : "c".repeat(32),
+              },
+              items: [item],
+            }),
+          };
+        },
+        listBranchesAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        upsertBranchAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        assignEmployeeBranchAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        unassignEmployeeBranchAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+      },
+    },
+  );
+  assert.equal(driftRes.status, 409);
+  assert.equal((await driftRes.json()).code, "ATTENDANCE_MATRIX_EXPORT_PAGINATION_INCOMPLETE");
+});
+
+test("projectAttendanceMonthlyMatrixReport accepts 1-char slot policy profile codes and optional ok envelope, and repository logs only sanitized diagnostic fields", async () => {
+  const baseReport = projectAttendanceMonthlyMatrixReport(buildValidMonthlyMatrixReport());
+  assert.ok(baseReport);
+  const singleCharPolicy = {
+    ...baseReport.slot_policy.current_policy,
+    profile_id: DEFAULT_ATTENDANCE_SLOT_POLICY_PROFILE_ID,
+    profile_code: "A",
+    profile_name: "Ca A",
+    is_default: false,
+  };
+  const singleCharCodeReport = {
+    ok: true,
+    ...baseReport,
+    slot_policy: {
+      current_policy: singleCharPolicy,
+      latest_policy: singleCharPolicy,
+      month_policies: [singleCharPolicy],
+      profiles: [
+        {
+          profile_id: DEFAULT_ATTENDANCE_SLOT_POLICY_PROFILE_ID,
+          profile_code: "A",
+          display_name: "Ca A",
+          description: "Khung giờ A",
+          is_default: false,
+          active: true,
+          version: 1,
+          current_policy: singleCharPolicy,
+          latest_policy: singleCharPolicy,
+          month_policies: [singleCharPolicy],
+        },
+      ],
+    },
+    items: baseReport.items.map((item) => ({
+      ...item,
+      days: item.days.map((day) => ({
+        ...day,
+        policy_profile_id_used: DEFAULT_ATTENDANCE_SLOT_POLICY_PROFILE_ID,
+        policy_profile_code_used: "A",
+        policy_profile_name_used: "Ca A",
+        policy_is_default_used: false,
+      })),
+    })),
+  };
+
+  const projected = projectAttendanceMonthlyMatrixReport(singleCharCodeReport);
+  assert.ok(projected);
+  assert.equal(projected.slot_policy.current_policy.profile_code, "A");
+  assert.equal(projected.slot_policy.profiles?.[0]?.profile_code, "A");
+  assert.equal(projected.items[0].days[0].policy_profile_code_used, "A");
+
+  const logged = [];
+  const origConsoleError = console.error;
+  console.error = (...args) => {
+    logged.push(args);
+  };
+  try {
+    const repo = createServiceAttendanceMonthlyMatrixRepository(async () => ({
+      data: null,
+      error: {
+        code: "57014",
+        message: "canceling statement due to statement timeout for sensitive_user@example.com",
+      },
+    }));
+    const res = await repo.getMonthlyMatrixReport({
+      auth_subject: AUTH_SUBJECT,
+      app_user_id: APP_USER_ID,
+      year_month: "2026-11",
+      branch_id: null,
+      employee_id: null,
+      search: "Nguyễn Văn Bí Mật",
+      page: 1,
+      page_size: 100,
+      request_id: "req-57014-check",
+      phase: "export_page_1",
+    });
+    assert.deepEqual(res, { ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" });
+    assert.equal(logged.length, 1);
+    assert.equal(logged[0][0], "[attendance-monthly-matrix] diagnostic");
+    assert.deepEqual(logged[0][1], {
+      phase: "export_page_1",
+      code: "ATTENDANCE_REPORT_UNAVAILABLE",
+      sqlstate: "57014",
+      request_id: "req-57014-check",
+    });
+    assert.doesNotMatch(JSON.stringify(logged), /sensitive_user|Nguyễn|19000000|29000000/);
+  } finally {
+    console.error = origConsoleError;
+  }
 });
