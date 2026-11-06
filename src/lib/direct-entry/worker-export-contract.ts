@@ -12,6 +12,7 @@
  * sai hinh => null (khong bao gio tao file rong tu du lieu khong ro nguon).
  */
 import { isRealCalendarDate } from "../analytics/identity/identity-shared.mjs";
+import { isCanonicalLaborTypeKey, type LaborType } from "../contracts/direct-entry-v1.ts";
 import { projectOptionalActionReason } from "./action-reason.ts";
 
 export const WORKER_EXPORT_SCOPES = ["recruited", "managed", "team", "all"] as const;
@@ -28,7 +29,7 @@ export const WORKER_EXPORT_ROW_LIMIT = 10000;
 /** Body allowlist. `scope` required; filters and action reason optional/null. */
 export const WORKER_EXPORT_BODY_KEYS = [
   "scope", "project_id", "recruiter_id", "employment_status",
-  "search", "first_work_date_from", "first_work_date_to", "provider_type",
+  "search", "first_work_date_from", "first_work_date_to", "provider_type", "labor_type",
   "reason",
 ] as const;
 
@@ -101,13 +102,14 @@ export type WorkerExportRequest = {
   first_work_date_from: string | null;
   first_work_date_to: string | null;
   provider_type: WorkerExportFilterProviderType | null;
+  labor_type: LaborType | null;
   reason: string | null;
 };
 
 /**
  * Strict request projection. Unknown keys, wrong value types or an invalid enum/filter are refused.
  * `project_id`/`recruiter_id`/`employment_status`/`search`/`first_work_date_from`/
- * `first_work_date_to`/`provider_type` and action `reason` may be absent or null. No idempotency key.
+ * `first_work_date_to`/`provider_type`/`labor_type` and action `reason` may be absent or null. No idempotency key.
  */
 export function projectWorkerExportRequest(body: unknown): WorkerExportRequest | null {
   if (!isRecord(body)) return null;
@@ -164,6 +166,10 @@ export function projectWorkerExportRequest(body: unknown): WorkerExportRequest |
        !(WORKER_EXPORT_FILTER_PROVIDER_TYPES as readonly string[]).includes(providerType))) {
     return null;
   }
+  const laborType = body.labor_type ?? null;
+  if (laborType !== null && !isCanonicalLaborTypeKey(laborType)) {
+    return null;
+  }
 
   return {
     scope: scope as WorkerExportScope,
@@ -174,6 +180,7 @@ export function projectWorkerExportRequest(body: unknown): WorkerExportRequest |
     first_work_date_from: firstWorkDateFrom,
     first_work_date_to: firstWorkDateTo,
     provider_type: providerType as WorkerExportFilterProviderType | null,
+    labor_type: laborType,
     reason: reason.value,
   };
 }

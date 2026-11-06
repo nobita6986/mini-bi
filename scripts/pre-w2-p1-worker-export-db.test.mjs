@@ -128,6 +128,7 @@ let entrySeq = 0;
 async function addWorker(db, {
   project = PROJ_A, recruiter = REC_A, workDate = "2026-10-01", state = "SUBMITTED",
   payment = null, employment = null, generalNote = undefined, providerType = "hrp",
+  laborType = "TEMPORARY",
 }) {
   entrySeq += 1;
   const n = entrySeq;
@@ -151,10 +152,10 @@ async function addWorker(db, {
       "insert into public.direct_entries (entry_id, submission_id, candidate_id, created_by_user_id," +
       " project_id, first_work_date, employee_code, worker_details, recruiter_id, team_id," +
       " provider_type, labor_type, general_note)" +
-      " values ($1,$2,$3,$4,$5,$6::date,$7,$8,$9,$10,$11,'TEMPORARY',$12)",
+      " values ($1,$2,$3,$4,$5,$6::date,$7,$8,$9,$10,$11,$12,$13)",
       [entry, submission, candidate, UPLOADER_APP, project, workDate,
         "hrp-" + year + "-" + String(300000 + n), JSON.stringify(workerDetails), recruiter, TEAM,
-        providerType, generalNote ?? null]);
+        providerType, laborType, generalNote ?? null]);
     if (state !== "DRAFT") {
       await seedLegacyReviewSubmission(db, submission);
     }
@@ -559,6 +560,7 @@ test("HF: worker directory and export filters support first_work_date range, pro
       project: PROJ_A,
       recruiter: REC_A,
       workDate: "2026-10-10",
+      laborType: "PERMANENT",
     });
     await db.query(
       "update public.recruiter_provider_memberships set provider_type = 'vendor' where recruiter_id = $1",
@@ -628,7 +630,35 @@ test("HF: worker directory and export filters support first_work_date range, pro
     assert.equal(expVendor.rows.length, 1);
     assert.equal(expVendor.rows[0].provider_type, "Vendor");
 
-    // 3. Invalid date range (from > to) or invalid provider_type raises 22023
+    // 2b. Labor type filter ('PERMANENT') returns only w2 and keeps summary + export in sync
+    const listPermanent = (await db.query(
+      "select public.direct_entry_list_workers(" +
+        "$1::uuid,$2::uuid,'all',null,null,null,null,25,null," +
+        "null,null,null,'PERMANENT'" +
+      ") as data",
+      [ADMIN_AUTH, ADMIN_APP],
+    )).rows[0].data;
+    assert.equal(listPermanent.items.length, 1);
+    assert.equal(listPermanent.items[0].entry_id, w2);
+    assert.equal(listPermanent.items[0].labor_type, "PERMANENT");
+    assert.deepEqual(listPermanent.summary, {
+      total_workers: 1,
+      project_count: 1,
+      recruiter_count: 1,
+    });
+
+    const expPermanent = (await db.query(
+      "select public.direct_entry_export_workers(" +
+        "$1::uuid,$2::uuid,'all',null,null,null,'permanent export',null," +
+        "null,null,null,'PERMANENT'" +
+      ") as data",
+      [ADMIN_AUTH, ADMIN_APP],
+    )).rows[0].data;
+    assert.equal(expPermanent.status, "ok");
+    assert.equal(expPermanent.rows.length, 1);
+    assert.equal(expPermanent.rows[0].employee_code, listPermanent.items[0].employee_code);
+
+    // 3. Invalid date range (from > to), invalid provider_type, or invalid labor_type raises 22023
     await assert.rejects(
       () => db.query(
         "select public.direct_entry_list_workers(" +
@@ -654,6 +684,26 @@ test("HF: worker directory and export filters support first_work_date range, pro
         "select public.direct_entry_list_workers(" +
           "$1::uuid,$2::uuid,'all',null,null,null,null,25,null," +
           "null,null,'invalid'" +
+        ")",
+        [ADMIN_AUTH, ADMIN_APP],
+      ),
+      (err) => err.code === "22023",
+    );
+    await assert.rejects(
+      () => db.query(
+        "select public.direct_entry_list_workers(" +
+          "$1::uuid,$2::uuid,'all',null,null,null,null,25,null," +
+          "null,null,null,'invalid-labor'" +
+        ")",
+        [ADMIN_AUTH, ADMIN_APP],
+      ),
+      (err) => err.code === "22023",
+    );
+    await assert.rejects(
+      () => db.query(
+        "select public.direct_entry_export_workers(" +
+          "$1::uuid,$2::uuid,'all',null,null,null,'bad labor',null," +
+          "null,null,null,'invalid-labor'" +
         ")",
         [ADMIN_AUTH, ADMIN_APP],
       ),

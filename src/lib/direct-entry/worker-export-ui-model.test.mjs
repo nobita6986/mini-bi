@@ -61,11 +61,12 @@ test("T1A: recruited gui dung body, filter rong => null", () => {
     first_work_date_from: null,
     first_work_date_to: null,
     provider_type: null,
+    labor_type: null,
     reason: "Kiểm tra định kỳ",
   });
   assert.deepEqual(Object.keys(built.body).sort(), [
     "employment_status", "first_work_date_from", "first_work_date_to",
-    "project_id", "provider_type", "reason", "recruiter_id", "scope", "search",
+    "labor_type", "project_id", "provider_type", "reason", "recruiter_id", "scope", "search",
   ]);
 });
 
@@ -75,6 +76,7 @@ test("action reason may be omitted and is canonicalized before export submission
       scope: "team", project_id: null, recruiter_id: null,
       employment_status: null, search: null,
       first_work_date_from: null, first_work_date_to: null, provider_type: null,
+      labor_type: null,
       reason: null,
     },
   });
@@ -91,6 +93,7 @@ test("T1A: managed gui dung body voi bo loc hien tai", () => {
       firstWorkDateFrom: "2026-10-01",
       firstWorkDateTo: "2026-10-31",
       providerType: "hrp",
+      laborType: "TEMPORARY",
     },
     reason: "Đối soát nhân sự dự án",
   });
@@ -104,6 +107,7 @@ test("T1A: managed gui dung body voi bo loc hien tai", () => {
     first_work_date_from: "2026-10-01",
     first_work_date_to: "2026-10-31",
     provider_type: "hrp",
+    labor_type: "TEMPORARY",
     reason: "Đối soát nhân sự dự án",
   });
 });
@@ -112,6 +116,7 @@ test("T1A: scope all/team duoc gui; invalid scope va reason bi tu choi fail-clos
   const nullFilterBody = {
     project_id: null, recruiter_id: null, employment_status: null,
     search: null, first_work_date_from: null, first_work_date_to: null, provider_type: null,
+    labor_type: null,
   };
   assert.deepEqual(buildWorkerExportRequest({ scope: "all", filters: EMPTY_FILTERS, reason: "x" }),
     { ok: true, body: { scope: "all", ...nullFilterBody, reason: "x" } });
@@ -138,6 +143,14 @@ test("T1A: scope all/team duoc gui; invalid scope va reason bi tu choi fail-clos
       ...EMPTY_FILTERS,
       firstWorkDateFrom: "2026-10-15",
       firstWorkDateTo: "2026-10-01",
+    },
+    reason: "x",
+  }), { ok: false, code: "FILTER_INVALID" });
+  assert.deepEqual(buildWorkerExportRequest({
+    scope: "recruited",
+    filters: {
+      ...EMPTY_FILTERS,
+      laborType: "bad-key",
     },
     reason: "x",
   }), { ok: false, code: "FILTER_INVALID" });

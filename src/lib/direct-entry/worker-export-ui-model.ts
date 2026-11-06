@@ -7,6 +7,7 @@
  */
 
 import { isRealCalendarDate } from "../analytics/identity/identity-shared.mjs";
+import { isCanonicalLaborTypeKey, type LaborType } from "../contracts/direct-entry-v1.ts";
 import {
   WORKER_DIRECTORY_SEARCH_MAX_LENGTH,
   WORKER_EMPLOYMENT_STATUSES,
@@ -44,6 +45,7 @@ export type WorkerExportRequestBody = {
   first_work_date_from: string | null;
   first_work_date_to: string | null;
   provider_type: WorkerProviderType | null;
+  labor_type: LaborType | null;
   reason: string | null;
 };
 
@@ -104,11 +106,12 @@ export type WorkerExportFilterInput = {
   firstWorkDateFrom?: string;
   firstWorkDateTo?: string;
   providerType?: string;
+  laborType?: string;
 };
 
 /**
  * Body theo dung allowlist cua contract: `scope | project_id | recruiter_id | employment_status |
- * search | first_work_date_from | first_work_date_to | provider_type | reason`.
+ * search | first_work_date_from | first_work_date_to | provider_type | labor_type | reason`.
  * `scope` la recruited|managed|team|all; action `reason` la tuy chon; filter rong => null.
  * Mot filter la bi tu choi fail-closed, KHONG bao gio bi am tham bo di (se xuat thua du lieu).
  */
@@ -151,6 +154,10 @@ export function buildWorkerExportRequest(input: {
       !(WORKER_PROVIDER_TYPES as readonly string[]).includes(providerType)) {
     return { ok: false, code: "FILTER_INVALID" };
   }
+  const laborType = (input.filters.laborType ?? "").trim();
+  if (laborType !== "" && !isCanonicalLaborTypeKey(laborType)) {
+    return { ok: false, code: "FILTER_INVALID" };
+  }
 
   return {
     ok: true,
@@ -163,6 +170,7 @@ export function buildWorkerExportRequest(input: {
       first_work_date_from: dateFrom === "" ? null : dateFrom,
       first_work_date_to: dateTo === "" ? null : dateTo,
       provider_type: providerType === "" ? null : (providerType as WorkerProviderType),
+      labor_type: laborType === "" ? null : laborType,
       reason: reason.value,
     },
   };

@@ -24,7 +24,7 @@ export const WORKER_DIRECTORY_DEFAULT_PAGE_SIZE = 25;
 export const WORKER_DIRECTORY_MAX_PAGE_SIZE = 100;
 export const WORKER_DIRECTORY_QUERY_KEYS = [
   "scope", "project_id", "recruiter_id", "employment_status", "search",
-  "first_work_date_from", "first_work_date_to", "provider_type",
+  "first_work_date_from", "first_work_date_to", "provider_type", "labor_type",
   "cursor", "page_size",
 ] as const;
 
@@ -83,6 +83,7 @@ export type WorkerDirectoryQuery = {
   first_work_date_from: string | null;
   first_work_date_to: string | null;
   provider_type: WorkerProviderType | null;
+  labor_type: LaborType | null;
   cursor: string | null;
   page_size: number;
 };
@@ -95,7 +96,7 @@ const QUERY_INVALID = { ok: false, code: "WORKER_QUERY_INVALID" } as const;
 
 /**
  * Query directory: chi nhan dung scope | project_id | recruiter_id | employment_status |
- * search | first_work_date_from | first_work_date_to | provider_type | cursor | page_size.
+ * search | first_work_date_from | first_work_date_to | provider_type | labor_type | cursor | page_size.
  * Tham so khac (order, offset, limit, column, sql...) bi tu choi de client khong dieu khien
  * duoc SQL/sort/paging.
  */
@@ -133,6 +134,10 @@ export function projectWorkerDirectoryQuery(
       !(WORKER_PROVIDER_TYPES as readonly string[]).includes(rawProviderType)) {
     return QUERY_INVALID;
   }
+  const rawLaborType = searchParams.get("labor_type");
+  if (rawLaborType !== null && !isCanonicalLaborTypeKey(rawLaborType)) {
+    return QUERY_INVALID;
+  }
   const rawCursor = searchParams.get("cursor");
   if (rawCursor !== null && !CURSOR.test(rawCursor)) return QUERY_INVALID;
   const rawSearch = searchParams.get("search");
@@ -163,6 +168,7 @@ export function projectWorkerDirectoryQuery(
       first_work_date_from: rawDateFrom,
       first_work_date_to: rawDateTo,
       provider_type: rawProviderType as WorkerProviderType | null,
+      labor_type: rawLaborType,
       cursor: rawCursor,
       page_size: pageSize,
     },

@@ -56,14 +56,14 @@ function query(search) {
 test("query accepts only the documented scope/filter/paging keys", () => {
   const parsed = query("scope=managed&project_id=proj_a&recruiter_id=" + recruiterId +
     "&employment_status=ON&search=hrp-2026-000021&first_work_date_from=2026-10-01" +
-    "&first_work_date_to=2026-10-31&provider_type=hrp&cursor=" + cursor + "&page_size=50");
+    "&first_work_date_to=2026-10-31&provider_type=hrp&labor_type=TEMPORARY&cursor=" + cursor + "&page_size=50");
   assert.deepEqual(parsed, {
     ok: true,
     value: {
       scope: "managed", project_id: "proj_a", recruiter_id: recruiterId,
       employment_status: "ON", search: "hrp-2026-000021",
       first_work_date_from: "2026-10-01", first_work_date_to: "2026-10-31",
-      provider_type: "hrp", cursor, page_size: 50,
+      provider_type: "hrp", labor_type: "TEMPORARY", cursor, page_size: 50,
     },
   });
 
@@ -72,7 +72,7 @@ test("query accepts only the documented scope/filter/paging keys", () => {
   assert.deepEqual(defaults.value, {
     scope: "recruited", project_id: null, recruiter_id: null,
     employment_status: null, search: null,
-    first_work_date_from: null, first_work_date_to: null, provider_type: null,
+    first_work_date_from: null, first_work_date_to: null, provider_type: null, labor_type: null,
     cursor: null,
     page_size: WORKER_DIRECTORY_DEFAULT_PAGE_SIZE,
   });
@@ -80,6 +80,7 @@ test("query accepts only the documented scope/filter/paging keys", () => {
   assert.equal(query("scope=team").value.scope, "team");
   assert.equal(query("scope=all&search=%20Nguy%E1%BB%85n%20").value.search, "Nguyễn");
   assert.equal(query("scope=all&provider_type=vendor").value.provider_type, "vendor");
+  assert.equal(query("scope=all&labor_type=SEASONAL_2").value.labor_type, "SEASONAL_2");
   assert.equal(query("scope=all&first_work_date_from=2026-10-01").value.first_work_date_from, "2026-10-01");
   assert.equal(query("scope=all&first_work_date_to=2026-10-31").value.first_work_date_to, "2026-10-31");
 
@@ -106,6 +107,10 @@ test("query accepts only the documented scope/filter/paging keys", () => {
     "scope=managed&first_work_date_from=2026-10-15&first_work_date_to=2026-10-01",
     "scope=managed&provider_type=other",
     "scope=managed&provider_type=HRP",
+    "scope=managed&labor_type=",
+    "scope=managed&labor_type=temporary",
+    "scope=managed&labor_type=1BAD",
+    "scope=managed&labor_type=" + "A".repeat(65),
   ]) {
     assert.deepEqual(query(invalid), { ok: false, code: "WORKER_QUERY_INVALID" }, invalid);
   }

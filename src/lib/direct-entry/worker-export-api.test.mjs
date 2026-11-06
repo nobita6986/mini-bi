@@ -184,7 +184,7 @@ test("the request is forwarded to the repository with the server actor only", as
   await callApi({
     scope: "managed", project_id: "proj_a", employment_status: "ON",
     search: "000021", first_work_date_from: "2026-10-01", first_work_date_to: "2026-10-31",
-    provider_type: "vendor", reason: "x",
+    provider_type: "vendor", labor_type: "TEMPORARY", reason: "x",
   }, { deps });
   assert.deepEqual(deps.calls, [{
     name: "exportWorkers",
@@ -199,6 +199,7 @@ test("the request is forwarded to the repository with the server actor only", as
       first_work_date_from: "2026-10-01",
       first_work_date_to: "2026-10-31",
       provider_type: "vendor",
+      labor_type: "TEMPORARY",
       reason: "x",
     },
   }]);
@@ -220,6 +221,7 @@ test("the all scope is accepted by the body allowlist (authority stays server-si
       first_work_date_from: null,
       first_work_date_to: null,
       provider_type: null,
+      labor_type: null,
       reason: "audit all",
     },
   }]);

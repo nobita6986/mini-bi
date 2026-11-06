@@ -241,6 +241,7 @@ export function WorkerOperations({
   const firstWorkDateToId = useId();
   const projectFilterId = useId();
   const recruiterFilterId = useId();
+  const laborTypeFilterId = useId();
   const searchId = useId();
   const workerQueryGeneration = useRef(0);
   const today = hcmTodayDate();
@@ -257,6 +258,10 @@ export function WorkerOperations({
       label: recruiter.label,
       keywords: `${recruiter.display_name} ${recruiter.personnel_code ?? ""}`,
     })),
+    [filterCatalog],
+  );
+  const laborTypeFilterOptions = useMemo(
+    () => sortedActiveLaborTypes(filterCatalog?.labor_types),
     [filterCatalog],
   );
 
@@ -762,7 +767,7 @@ export function WorkerOperations({
                 </div>
                 {filterCatalog ? (
                   <>
-                    <div className="lg:col-span-6">
+                    <div className="lg:col-span-4">
                       <CatalogFilterCombobox
                         id={projectFilterId}
                         label="Dự án"
@@ -776,7 +781,7 @@ export function WorkerOperations({
                         onChange={(nextValue) => changeFilter("projectId", nextValue)}
                       />
                     </div>
-                    <div className="lg:col-span-6">
+                    <div className="lg:col-span-4">
                       <CatalogFilterCombobox
                         id={recruiterFilterId}
                         label="Người tuyển"
@@ -789,6 +794,25 @@ export function WorkerOperations({
                         inputClassName={inputClass}
                         onChange={(nextValue) => changeFilter("recruiterId", nextValue)}
                       />
+                    </div>
+                    <div className="flex flex-col gap-1 sm:col-span-2 lg:col-span-4">
+                      <label htmlFor={laborTypeFilterId} className="text-xs font-medium text-muted">
+                        Loại hình lao động
+                      </label>
+                      <select
+                        id={laborTypeFilterId}
+                        data-testid="worker-filter-labor-type"
+                        className={inputClass}
+                        value={filters.laborType ?? ""}
+                        onChange={(event) => changeFilter("laborType", event.target.value)}
+                      >
+                        <option value="">Tất cả</option>
+                        {laborTypeFilterOptions.map((option) => (
+                          <option key={option.labor_type_key} value={option.labor_type_key}>
+                            {option.display_name}
+                          </option>
+                        ))}
+                      </select>
                     </div>
                   </>
                 ) : null}
