@@ -20,6 +20,7 @@ const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const YEAR_MONTH_PATTERN = /^(\d{4})-(0[1-9]|1[0-2])$/;
 const BRANCH_CODE_PATTERN = /^[A-Z0-9][A-Z0-9._:-]{0,63}$/;
+const SLOT_PROFILE_CODE_INPUT_PATTERN = /^[A-Z0-9][A-Z0-9._:-]{1,63}$/;
 export const SLOT_PROFILE_CODE_PATTERN = /^[A-Z0-9][A-Z0-9._:-]{0,63}$/;
 const CONTROL_CHAR_PATTERN = /[\x00-\x1f\x7f]/;
 const ADDRESS_CONTROL_CHAR_PATTERN = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/;
@@ -1656,7 +1657,7 @@ export function parseCreateSlotPolicyBody(
       return { ok: false, code: "ATTENDANCE_SLOT_POLICY_PROFILE_CODE_INVALID" };
     }
     const normalizedCode = body.profile_code.trim().toUpperCase();
-    if (!SLOT_PROFILE_CODE_PATTERN.test(normalizedCode)) {
+    if (!SLOT_PROFILE_CODE_INPUT_PATTERN.test(normalizedCode)) {
       return { ok: false, code: "ATTENDANCE_SLOT_POLICY_PROFILE_CODE_INVALID" };
     }
     profileCode = normalizedCode;
@@ -1856,7 +1857,7 @@ export function parseUpsertSlotPolicyProfileBody(
       return { ok: false, code: "ATTENDANCE_SLOT_POLICY_PROFILE_CODE_INVALID" };
     }
     const normalizedCode = body.profile_code.trim().toUpperCase();
-    if (!SLOT_PROFILE_CODE_PATTERN.test(normalizedCode)) {
+    if (!SLOT_PROFILE_CODE_INPUT_PATTERN.test(normalizedCode)) {
       return { ok: false, code: "ATTENDANCE_SLOT_POLICY_PROFILE_CODE_INVALID" };
     }
     profileCode = normalizedCode;

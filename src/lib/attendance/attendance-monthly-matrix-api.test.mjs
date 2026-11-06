@@ -2352,7 +2352,6 @@ test("exportAttendanceMonthlyMatrixXlsx falls back from page_size=100 to page_si
             page: input.page,
             page_size: input.page_size,
             phase: input.phase,
-            request_id: input.request_id,
           });
           if (input.page_size === ATTENDANCE_MONTHLY_MATRIX_EXPORT_PAGE_SIZE) {
             return { ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" };
@@ -2399,19 +2398,16 @@ test("exportAttendanceMonthlyMatrixXlsx falls back from page_size=100 to page_si
       page: 1,
       page_size: 100,
       phase: "export_page_1",
-      request_id: "req-export-2026-11-fallback",
     },
     {
       page: 1,
       page_size: 25,
       phase: "export_fallback_page_1",
-      request_id: "req-export-2026-11-fallback",
     },
     {
       page: 2,
       page_size: 25,
       phase: "export_fallback_page_n",
-      request_id: "req-export-2026-11-fallback",
     },
   ]);
   const bytes = new Uint8Array(await fallbackRes.arrayBuffer());
@@ -2458,7 +2454,7 @@ test("exportAttendanceMonthlyMatrixXlsx falls back from page_size=100 to page_si
   assert.equal((await driftRes.json()).code, "ATTENDANCE_MATRIX_EXPORT_PAGINATION_INCOMPLETE");
 });
 
-test("projectAttendanceMonthlyMatrixReport accepts 1-char slot policy profile codes and optional ok envelope, and repository logs only sanitized diagnostic fields", async () => {
+test("report projection accepts historical 1-char profile codes while write parsing stays strict, and RPC diagnostics are sanitized", async () => {
   const baseReport = projectAttendanceMonthlyMatrixReport(buildValidMonthlyMatrixReport());
   assert.ok(baseReport);
   const singleCharPolicy = {
@@ -2508,6 +2504,25 @@ test("projectAttendanceMonthlyMatrixReport accepts 1-char slot policy profile co
   assert.equal(projected.slot_policy.profiles?.[0]?.profile_code, "A");
   assert.equal(projected.items[0].days[0].policy_profile_code_used, "A");
 
+  const oneCharWriteBody = {
+    profile_code: "A",
+    display_name: "Ca A",
+    active: true,
+    effective_from_date: "2026-11-01",
+    slots: [
+      { slot_label: "Ca sáng", target_time: "08:00", grace_before_minutes: 15, grace_after_minutes: 15 },
+      { slot_label: "Ca chiều", target_time: "17:00", grace_before_minutes: 15, grace_after_minutes: 15 },
+    ],
+    idempotency_key: IDEMPOTENCY_KEY,
+  };
+  for (const parseWrite of [parseCreateSlotPolicyBody, parseUpsertSlotPolicyProfileBody]) {
+    const oneCharWrite = parseWrite(oneCharWriteBody);
+    assert.equal(oneCharWrite.ok, false);
+    if (!oneCharWrite.ok) {
+      assert.equal(oneCharWrite.code, "ATTENDANCE_SLOT_POLICY_PROFILE_CODE_INVALID");
+    }
+  }
+
   const logged = [];
   const origConsoleError = console.error;
   console.error = (...args) => {
@@ -2530,7 +2545,6 @@ test("projectAttendanceMonthlyMatrixReport accepts 1-char slot policy profile co
       search: "Nguyễn Văn Bí Mật",
       page: 1,
       page_size: 100,
-      request_id: "req-57014-check",
       phase: "export_page_1",
     });
     assert.deepEqual(res, { ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" });
@@ -2540,7 +2554,6 @@ test("projectAttendanceMonthlyMatrixReport accepts 1-char slot policy profile co
       phase: "export_page_1",
       code: "ATTENDANCE_REPORT_UNAVAILABLE",
       sqlstate: "57014",
-      request_id: "req-57014-check",
     });
     assert.doesNotMatch(JSON.stringify(logged), /sensitive_user|Nguyễn|19000000|29000000/);
   } finally {

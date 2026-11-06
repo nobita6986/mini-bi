@@ -36,7 +36,6 @@ import {
 } from "./attendance-monthly-matrix-contract.ts";
 import {
   logAttendanceMatrixDiagnostic,
-  sanitizeAttendanceDiagnosticRequestId,
   type AttendanceMonthlyMatrixRepository,
 } from "./attendance-monthly-matrix-repository.ts";
 import {
@@ -517,10 +516,6 @@ export async function getAttendanceMonthlyMatrixReport(
     return matrixError(parsedQuery.code);
   }
 
-  const requestId = sanitizeAttendanceDiagnosticRequestId(
-    request.headers.get("x-request-id"),
-  );
-
   const result = await dependencies.repository.getMonthlyMatrixReport({
     auth_subject: actorResult.auth_subject,
     app_user_id: actorResult.app_user_id,
@@ -530,7 +525,6 @@ export async function getAttendanceMonthlyMatrixReport(
     search: parsedQuery.value.search,
     page: parsedQuery.value.page,
     page_size: parsedQuery.value.page_size,
-    request_id: requestId,
     phase: "report_fetch",
   });
 
@@ -576,10 +570,6 @@ export async function exportAttendanceMonthlyMatrixXlsx(
     return matrixError(parsedQuery.code);
   }
 
-  const requestId = sanitizeAttendanceDiagnosticRequestId(
-    request.headers.get("x-request-id"),
-  );
-
   const collectExportPages = async (
     pageSize: number,
     phasePrefix: "export" | "export_fallback",
@@ -600,7 +590,6 @@ export async function exportAttendanceMonthlyMatrixXlsx(
       search: parsedQuery.value.search,
       page: 1,
       page_size: pageSize,
-      request_id: requestId,
       phase: `${phasePrefix}_page_1`,
     });
 
@@ -647,7 +636,6 @@ export async function exportAttendanceMonthlyMatrixXlsx(
           search: parsedQuery.value.search,
           page,
           page_size: pageSize,
-          request_id: requestId,
           phase: `${phasePrefix}_page_n`,
         });
 
@@ -698,7 +686,6 @@ export async function exportAttendanceMonthlyMatrixXlsx(
       fallback_phase: "export_page_size_fallback",
       code: collectionResult.code,
       sqlstate: null,
-      request_id: requestId,
     });
     collectionResult = await collectExportPages(
       ATTENDANCE_MONTHLY_MATRIX_EXPORT_FALLBACK_PAGE_SIZE,
@@ -742,7 +729,6 @@ export async function exportAttendanceMonthlyMatrixXlsx(
       fallback_phase: "workbook_build",
       code: "ATTENDANCE_REPORT_UNAVAILABLE",
       sqlstate: null,
-      request_id: requestId,
     });
     return matrixError("ATTENDANCE_REPORT_UNAVAILABLE");
   }

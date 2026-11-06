@@ -46,7 +46,6 @@ export type GetAttendanceMonthlyMatrixReportInput = {
   search: string | null;
   page: number;
   page_size: number;
-  request_id?: string | null;
   phase?: string | null;
 };
 
@@ -542,7 +541,6 @@ function classifyMatrixRpcError(
 }
 
 const DIAGNOSTIC_SQLSTATE_PATTERN = /^(?:[0-9A-Z]{5}|PGRST\d{3})$/;
-const DIAGNOSTIC_REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 const DIAGNOSTIC_PHASE_PATTERN = /^[a-z0-9_:-]{1,64}$/;
 
 export function sanitizeAttendanceDiagnosticSqlstate(rawCode: unknown): string | null {
@@ -551,14 +549,6 @@ export function sanitizeAttendanceDiagnosticSqlstate(rawCode: unknown): string |
   }
   const trimmed = rawCode.trim();
   return DIAGNOSTIC_SQLSTATE_PATTERN.test(trimmed) ? trimmed : null;
-}
-
-export function sanitizeAttendanceDiagnosticRequestId(rawRequestId: unknown): string | null {
-  if (typeof rawRequestId !== "string") {
-    return null;
-  }
-  const trimmed = rawRequestId.trim();
-  return DIAGNOSTIC_REQUEST_ID_PATTERN.test(trimmed) ? trimmed : null;
 }
 
 function sanitizeDiagnosticPhase(rawPhase: unknown, fallbackPhase: string): string {
@@ -574,13 +564,11 @@ export function logAttendanceMatrixDiagnostic(input: {
   fallback_phase: string;
   code: AttendanceMonthlyMatrixErrorCode;
   sqlstate?: unknown;
-  request_id?: unknown;
 }): void {
   console.error("[attendance-monthly-matrix] diagnostic", {
     phase: sanitizeDiagnosticPhase(input.phase, input.fallback_phase),
     code: input.code,
     sqlstate: sanitizeAttendanceDiagnosticSqlstate(input.sqlstate),
-    request_id: sanitizeAttendanceDiagnosticRequestId(input.request_id),
   });
 }
 
@@ -611,7 +599,6 @@ export function createServiceAttendanceMonthlyMatrixRepository(
             fallback_phase: "rpc_call",
             code,
             sqlstate: result.error.code,
-            request_id: input.request_id,
           });
           return { ok: false, code };
         }
@@ -623,7 +610,6 @@ export function createServiceAttendanceMonthlyMatrixRepository(
             fallback_phase: "projection",
             code: "ATTENDANCE_REPORT_UNAVAILABLE",
             sqlstate: null,
-            request_id: input.request_id,
           });
           return { ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" };
         }
@@ -635,7 +621,6 @@ export function createServiceAttendanceMonthlyMatrixRepository(
           fallback_phase: "rpc_exception",
           code: "ATTENDANCE_REPORT_UNAVAILABLE",
           sqlstate: null,
-          request_id: input.request_id,
         });
         return { ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" };
       }
