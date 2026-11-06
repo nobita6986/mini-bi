@@ -60,11 +60,9 @@ import {
   hasActiveWorkerDirectoryFilters,
   initialDirectEditBankQueryText,
   initialWorkerTab,
-  lastDecisionLabel,
   mergeVietQrBankCatalog,
   parseSubmissionPageResponse,
   parseWorkerPageResponse,
-  pendingRequestLabel,
   privilegedEditErrorMessage,
   proposeCta,
   relationDenialIsEmpty,
@@ -682,9 +680,19 @@ export function WorkerOperations({
                   className="text-sm sm:text-base font-bold text-foreground">
                   {workerSummary === null ? "Đang tính tổng theo bộ lọc…" : (
                     <>
-                      Tổng số NLĐ: {workerSummary.total_workers.toLocaleString("vi-VN")} — trong{" "}
-                      {workerSummary.project_count.toLocaleString("vi-VN")} dự án và{" "}
-                      {workerSummary.recruiter_count.toLocaleString("vi-VN")} người tuyển; trạng thái làm việc:{" "}
+                      Tổng số NLĐ:{" "}
+                      <span className="text-red-600 dark:text-red-400">
+                        {workerSummary.total_workers.toLocaleString("vi-VN")}
+                      </span>{" "}
+                      — trong{" "}
+                      <span className="text-red-600 dark:text-red-400">
+                        {workerSummary.project_count.toLocaleString("vi-VN")}
+                      </span>{" "}
+                      dự án và{" "}
+                      <span className="text-red-600 dark:text-red-400">
+                        {workerSummary.recruiter_count.toLocaleString("vi-VN")}
+                      </span>{" "}
+                      người tuyển; trạng thái làm việc:{" "}
                       {filters.status === "" ? "Tất cả" : workerStatusLabel(filters.status)}; nguồn tuyển:{" "}
                       {workerProviderTypeLabel(filters.providerType)}.
                       {(filters.firstWorkDateFrom ?? "") !== "" || (filters.firstWorkDateTo ?? "") !== "" ? (
@@ -1148,7 +1156,7 @@ function WorkerTable({
             <th scope="col" className={DATA_TABLE_TH_CLASS}>Ngày đầu tiên</th>
             <th scope="col" className={DATA_TABLE_TH_CLASS}>Người tuyển</th>
             <th scope="col" className={DATA_TABLE_TH_CLASS}>Trạng thái</th>
-            <th scope="col" className={DATA_TABLE_TH_CLASS}>Yêu cầu</th>
+            <th scope="col" className={DATA_TABLE_TH_CLASS}>Loại hình</th>
             <th scope="col" className={DATA_TABLE_TH_CLASS + " text-right"}>Thao tác</th>
           </tr>
         </thead>
@@ -1204,13 +1212,8 @@ function WorkerTable({
                     </div>
                   ) : null}
                 </td>
-                <td className={DATA_TABLE_TD_CLASS + " text-xs"} data-label="Yêu cầu">
-                  {pendingRequestLabel(row) ? (
-                    <StatusBadge tone="warning">{pendingRequestLabel(row)}</StatusBadge>
-                  ) : null}
-                  {lastDecisionLabel(row) ? (
-                    <div className="mt-1 text-muted">{lastDecisionLabel(row)}</div>
-                  ) : null}
+                <td className={DATA_TABLE_TD_CLASS} data-label="Loại hình">
+                  {row.labor_type_display}
                 </td>
                 <td className={DATA_TABLE_TD_CLASS + " text-right"} data-card-actions="true">
                   <RowActionCluster>
