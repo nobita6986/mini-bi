@@ -338,6 +338,12 @@ export const ATTENDANCE_MULTI_SLOT_POLICY_PROFILES_RPC_SIGNATURES = Object.freez
   "public.attendance_assign_employee_slot_policy_admin(uuid, uuid, uuid, uuid, date, integer, uuid, text)",
   "public.attendance_unassign_employee_slot_policy_admin(uuid, uuid, uuid, date, integer, uuid, text)",
 ]);
+export const WORKER_DIRECTORY_LABOR_TYPE_FILTER_MIGRATION_NAME =
+  "20261106230000_worker_directory_labor_type_filter.sql";
+export const WORKER_DIRECTORY_LABOR_TYPE_FILTER_RPC_SIGNATURES = Object.freeze([
+  "public.direct_entry_list_workers(uuid, uuid, text, text, uuid, text, text, integer, text, date, date, text, text)",
+  "public.direct_entry_export_workers(uuid, uuid, text, text, uuid, text, text, text, date, date, text, text)",
+]);
 export const F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES = Object.freeze([
   "public.work_report_list_templates(uuid, uuid)",
   "public.work_report_get_template(uuid, uuid, uuid)",
@@ -584,7 +590,8 @@ export async function verifyS0T1CHistoricalCompatibility(
     attendanceSlotPolicyAndFourSlotMatrixApplied = false,
     attendanceFlexibleSlotPolicyApplied = false,
     attendanceExplanationsWave2Applied = false,
-    attendanceMultiSlotPolicyProfilesApplied = false } = {},
+    attendanceMultiSlotPolicyProfilesApplied = false,
+    workerDirectoryLaborTypeFilterApplied = false } = {},
 ) {
   const baseAllowlist = extractS0T1CAllowlistSignatures(migrationSql);
   if (baseAllowlist.length === 0) {
@@ -682,6 +689,9 @@ export async function verifyS0T1CHistoricalCompatibility(
       : []),
     ...(attendanceMultiSlotPolicyProfilesApplied
       ? ATTENDANCE_MULTI_SLOT_POLICY_PROFILES_RPC_SIGNATURES
+      : []),
+    ...(workerDirectoryLaborTypeFilterApplied
+      ? WORKER_DIRECTORY_LABOR_TYPE_FILTER_RPC_SIGNATURES
       : []),
   ];
 
@@ -947,6 +957,8 @@ export async function verifyAppliedMigrationChecksum(
           appliedMap.has(ATTENDANCE_EXPLANATIONS_WAVE2_MIGRATION_NAME),
         attendanceMultiSlotPolicyProfilesApplied:
           appliedMap.has(ATTENDANCE_MULTI_SLOT_POLICY_PROFILES_MIGRATION_NAME),
+        workerDirectoryLaborTypeFilterApplied:
+          appliedMap.has(WORKER_DIRECTORY_LABOR_TYPE_FILTER_MIGRATION_NAME),
       },
     );
     if (postconditions.ok) {

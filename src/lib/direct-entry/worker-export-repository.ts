@@ -30,12 +30,13 @@ export type WorkerExportOutcome =
 export type WorkerExportInput = ActorRef &
   Omit<
     WorkerExportRequest,
-    "search" | "first_work_date_from" | "first_work_date_to" | "provider_type"
+    "search" | "first_work_date_from" | "first_work_date_to" | "provider_type" | "labor_type"
   > & {
     search?: string | null;
     first_work_date_from?: string | null;
     first_work_date_to?: string | null;
     provider_type?: WorkerExportRequest["provider_type"];
+    labor_type?: WorkerExportRequest["labor_type"];
   };
 
 export type WorkerExportRepository = {
@@ -90,6 +91,7 @@ export function createWorkerExportRepository(rpc?: Rpc): WorkerExportRepository 
           p_first_work_date_from: input.first_work_date_from ?? null,
           p_first_work_date_to: input.first_work_date_to ?? null,
           p_provider_type: input.provider_type ?? null,
+          p_labor_type: input.labor_type ?? null,
         });
         if (error) {
           const kind = classifyWorkerExportError(error);

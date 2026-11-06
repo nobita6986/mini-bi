@@ -229,9 +229,10 @@ test("W06-R2: query builder chi gui cursor khi co (khong mang cursor scope cu)",
   assert.equal(workersQuery({ scope: "managed", search: "  Nguyễn  ", status: "ON",
     projectId: "proj_a", recruiterId: RECRUITER,
     firstWorkDateFrom: "2026-10-01", firstWorkDateTo: "2026-10-31", providerType: "hrp",
+    laborType: "SEASONAL_ONCALL",
     cursor: null }),
   "?scope=managed&page_size=25&employment_status=ON&search=Nguy%E1%BB%85n&project_id=proj_a&recruiter_id=" +
-    RECRUITER + "&first_work_date_from=2026-10-01&first_work_date_to=2026-10-31&provider_type=hrp");
+    RECRUITER + "&first_work_date_from=2026-10-01&first_work_date_to=2026-10-31&provider_type=hrp&labor_type=SEASONAL_ONCALL");
   assert.equal(submissionsQuery(null), "?page_size=25");
   assert.equal(submissionsQuery("c2"), "?page_size=25&cursor=c2");
   assert.equal(requestsQuery(null), "?page_size=20&state=PENDING");
@@ -246,24 +247,25 @@ test("W06-R2: query builder chi gui cursor khi co (khong mang cursor scope cu)",
   );
   assert.equal(hasActiveWorkerDirectoryFilters(EMPTY_WORKER_DIRECTORY_FILTERS), false);
   assert.equal(hasActiveWorkerDirectoryFilters({ ...EMPTY_WORKER_DIRECTORY_FILTERS, providerType: "vendor" }), true);
+  assert.equal(hasActiveWorkerDirectoryFilters({ ...EMPTY_WORKER_DIRECTORY_FILTERS, laborType: "TEMPORARY" }), true);
   assert.equal(workerProviderTypeLabel("hrp"), "HRP");
   assert.equal(workerProviderTypeLabel("vendor"), "Vendor");
   assert.equal(workerProviderTypeLabel(""), "Tất cả");
 });
 
-test("HF-R4: project and recruiter filters stay server-side and reset the page cursor", () => {
+test("HF-R4: project, recruiter, and laborType filters stay server-side and reset the page cursor", () => {
   const loaded = applyPage(emptyTabPage(), {
     items: [row()], next_cursor: "2026-10-08T12:00:00.000000Z|11111111-1111-4111-8111-111111111111",
     has_more: true,
   }, workerRowKey, false);
   const changed = updateWorkerDirectoryFilter({
     page: loaded,
-    filters: { search: "000021", status: "ON", projectId: "old-project", recruiterId: RECRUITER },
+    filters: { search: "000021", status: "ON", projectId: "old-project", recruiterId: RECRUITER, laborType: "" },
     field: "projectId",
     value: "new-project",
   });
   assert.deepEqual(changed.filters, {
-    search: "000021", status: "ON", projectId: "new-project", recruiterId: RECRUITER,
+    search: "000021", status: "ON", projectId: "new-project", recruiterId: RECRUITER, laborType: "",
   });
   assert.deepEqual(changed.page, {
     items: [], cursor: null, hasMore: false, state: "loading", message: null,
@@ -273,9 +275,19 @@ test("HF-R4: project and recruiter filters stay server-side and reset the page c
   "?scope=managed&page_size=25&employment_status=ON&search=000021&project_id=new-project&recruiter_id=" +
     RECRUITER + "&cursor=next%3Acursor");
 
-  const searchChanged = updateWorkerDirectoryFilter({
+  const laborChanged = updateWorkerDirectoryFilter({
     page: loaded,
     filters: changed.filters,
+    field: "laborType",
+    value: "PERMANENT",
+  });
+  assert.equal(laborChanged.filters.laborType, "PERMANENT");
+  assert.equal(laborChanged.page.cursor, null, "laborType change resets the pagination cursor");
+  assert.deepEqual(laborChanged.page.items, []);
+
+  const searchChanged = updateWorkerDirectoryFilter({
+    page: loaded,
+    filters: laborChanged.filters,
     field: "search",
     value: "Nguyễn",
   });

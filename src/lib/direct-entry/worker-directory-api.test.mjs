@@ -90,6 +90,7 @@ test("query validation fails before session, and never accepts client identity",
     "/api/direct-entry/workers?scope=all&search=%0A",
     "/api/direct-entry/workers?scope=all&first_work_date_from=2026-10-10&first_work_date_to=2026-10-01",
     "/api/direct-entry/workers?scope=all&provider_type=other",
+    "/api/direct-entry/workers?scope=all&labor_type=bad-key",
     "/api/direct-entry/workers?scope=all&order=first_work_date",
     "/api/direct-entry/workers?scope=all&app_user_id=" + actor.app_user_id,
     "/api/direct-entry/workers?scope=all&auth_subject=" + actor.auth_subject,
@@ -141,7 +142,7 @@ test("success returns the exact page projection with no-store", async () => {
   const response = await listWorkers(
     request("/api/direct-entry/workers?scope=managed&project_id=proj_a&recruiter_id=" +
       recruiterId + "&employment_status=ON&search=hrp-2026-000021&first_work_date_from=2026-10-01" +
-      "&first_work_date_to=2026-10-31&provider_type=hrp&cursor=" + cursor + "&page_size=50"),
+      "&first_work_date_to=2026-10-31&provider_type=hrp&labor_type=TEMPORARY&cursor=" + cursor + "&page_size=50"),
     "true", deps);
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), {
@@ -163,6 +164,7 @@ test("success returns the exact page projection with no-store", async () => {
       first_work_date_from: "2026-10-01",
       first_work_date_to: "2026-10-31",
       provider_type: "hrp",
+      labor_type: "TEMPORARY",
       cursor,
       page_size: 50,
     },
@@ -181,6 +183,7 @@ test("success returns the exact page projection with no-store", async () => {
     first_work_date_from: null,
     first_work_date_to: null,
     provider_type: null,
+    labor_type: null,
     cursor: null,
     page_size: 25,
   });

@@ -46,7 +46,7 @@ const payload = {
 const query = {
   scope: "managed", project_id: null, recruiter_id: null,
   employment_status: null, search: null,
-  first_work_date_from: null, first_work_date_to: null, provider_type: null,
+  first_work_date_from: null, first_work_date_to: null, provider_type: null, labor_type: null,
   cursor: null, page_size: 25,
 };
 
@@ -76,7 +76,7 @@ test("listWorkers calls only its RPC with the server actor and exact query", asy
     ...actor, ...query, scope: "recruited", project_id: "proj_a",
     recruiter_id: recruiterId, employment_status: "ON", search: "000021",
     first_work_date_from: "2026-10-01", first_work_date_to: "2026-10-31",
-    provider_type: "hrp",
+    provider_type: "hrp", labor_type: "TEMPORARY",
     cursor: "2026-10-08T09:00:00.000000Z|" + entryId,
   };
   const result = await repository.listWorkers(requested);
@@ -97,6 +97,7 @@ test("listWorkers calls only its RPC with the server actor and exact query", asy
       p_first_work_date_from: "2026-10-01",
       p_first_work_date_to: "2026-10-31",
       p_provider_type: "hrp",
+      p_labor_type: "TEMPORARY",
     },
   }]);
 

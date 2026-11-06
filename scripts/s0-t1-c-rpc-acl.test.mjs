@@ -93,6 +93,8 @@ import {
   ATTENDANCE_EXPLANATIONS_WAVE2_RPC_SIGNATURES,
   ATTENDANCE_MULTI_SLOT_POLICY_PROFILES_MIGRATION_NAME,
   ATTENDANCE_MULTI_SLOT_POLICY_PROFILES_RPC_SIGNATURES,
+  WORKER_DIRECTORY_LABOR_TYPE_FILTER_MIGRATION_NAME,
+  WORKER_DIRECTORY_LABOR_TYPE_FILTER_RPC_SIGNATURES,
   OFFBOARDING_REPORT_MIGRATION_NAME,
   OFFBOARDING_REPORT_RPC_SIGNATURES,
   migrationChecksum,
@@ -1094,7 +1096,8 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
         ...ATTENDANCE_SLOT_POLICY_AND_FOUR_SLOT_MATRIX_RPC_SIGNATURES,
         ...ATTENDANCE_FLEXIBLE_SLOT_POLICY_RPC_SIGNATURES,
         ...ATTENDANCE_EXPLANATIONS_WAVE2_RPC_SIGNATURES,
-        ...ATTENDANCE_MULTI_SLOT_POLICY_PROFILES_RPC_SIGNATURES);
+        ...ATTENDANCE_MULTI_SLOT_POLICY_PROFILES_RPC_SIGNATURES,
+        ...WORKER_DIRECTORY_LABOR_TYPE_FILTER_RPC_SIGNATURES);
       assert.ok(expectedSignatures.length > 0, "the explicit server/invoker allowlist is not empty");
       assert.equal(new Set(expectedSignatures).size, expectedSignatures.length, "the allowlist has no duplicates");
       const { rows: resolvedExpected } = await client.query(
@@ -1146,7 +1149,8 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
           ...ATTENDANCE_SLOT_POLICY_AND_FOUR_SLOT_MATRIX_RPC_SIGNATURES,
           ...ATTENDANCE_FLEXIBLE_SLOT_POLICY_RPC_SIGNATURES,
           ...ATTENDANCE_EXPLANATIONS_WAVE2_RPC_SIGNATURES,
-          ...ATTENDANCE_MULTI_SLOT_POLICY_PROFILES_RPC_SIGNATURES].sort(),
+          ...ATTENDANCE_MULTI_SLOT_POLICY_PROFILES_RPC_SIGNATURES,
+          ...WORKER_DIRECTORY_LABOR_TYPE_FILTER_RPC_SIGNATURES].sort(),
         "only explicitly reviewed post-S0 RPCs add service_role grants after the S0 baseline",
       );
       const attendanceSlotPolicyFourSlotMigration = await readFile(
@@ -1306,6 +1310,28 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
         assert.ok(
           hfDuplicateCccdResignedWithdrawAndWorkerFiltersNormalized.includes(sigGrant),
           `duplicate CCCD resigned withdraw / worker filters RPC ${sig} grants RPC execution only to service_role`,
+        );
+      }
+      const workerDirectoryLaborTypeFilterMigration = await readFile(
+        path.join(MIGRATION_DIR, WORKER_DIRECTORY_LABOR_TYPE_FILTER_MIGRATION_NAME),
+        "utf8",
+      );
+      const workerDirectoryLaborTypeFilterNormalized =
+        workerDirectoryLaborTypeFilterMigration
+          .replace(/\s+/g, " ")
+          .replace(/\(\s+/g, "(")
+          .replace(/\s+\)/g, ")")
+          .toLowerCase();
+      for (const sig of WORKER_DIRECTORY_LABOR_TYPE_FILTER_RPC_SIGNATURES) {
+        const sigGrant = `grant execute on function ${sig.toLowerCase()} to service_role;`;
+        const sigRevoke = `revoke all on function ${sig.toLowerCase()} from public, anon, authenticated, service_role;`;
+        assert.ok(
+          workerDirectoryLaborTypeFilterNormalized.includes(sigRevoke),
+          `worker directory labor_type filter RPC ${sig} revokes inherited RPC grants before granting service_role`,
+        );
+        assert.ok(
+          workerDirectoryLaborTypeFilterNormalized.includes(sigGrant),
+          `worker directory labor_type filter RPC ${sig} grants RPC execution only to service_role`,
         );
       }
       const hfSalaryAdvancePmWorkerHistoryMigration = await readFile(

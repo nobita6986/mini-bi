@@ -98,12 +98,28 @@ test("worker directory displays server-filtered totals, not only the loaded page
   assert.match(source, /filters\.status === "" \? "Tất cả" : workerStatusLabel\(filters\.status\)/);
   assert.match(source, /workerProviderTypeLabel\(filters\.providerType\)/);
   assert.match(source, /data-testid="worker-filter-provider-type"/);
+  assert.match(source, /data-testid="worker-filter-labor-type"/);
   assert.match(source, /data-testid="worker-filter-date-from"/);
   assert.match(source, /data-testid="worker-filter-date-to"/);
   assert.match(source, /data-testid="worker-clear-filters"/);
   assert.match(source, /validateWorkerDirectoryDateRange/);
   assert.match(source, /setWorkerSummary\(null\)/,
     "filter/tab changes clear the previous query's summary while the next response loads");
+});
+
+test("labor_type filter shares the desktop row with Dự án and Người tuyển, reuses catalog options, and stays separate from provider_type", () => {
+  assert.match(source, /sortedActiveLaborTypes\(filterCatalog\?\.labor_types\)/);
+  assert.match(source, /label htmlFor=\{laborTypeFilterId\}[\s\S]{0,120}Loại hình lao động/);
+  assert.match(
+    source,
+    /data-testid="worker-filter-labor-type"[\s\S]{0,260}<option value="">Tất cả<\/option>[\s\S]{0,220}laborTypeFilterOptions\.map/,
+  );
+  assert.match(source, /changeFilter\("laborType", event\.target\.value\)/);
+  assert.match(source, /changeFilter\("providerType", event\.target\.value\)/);
+  assert.match(
+    source,
+    /className="lg:col-span-4"[\s\S]{0,1000}label="Dự án"[\s\S]{0,1000}className="lg:col-span-4"[\s\S]{0,1000}label="Người tuyển"[\s\S]{0,1000}sm:col-span-2 lg:col-span-4[\s\S]{0,500}Loại hình lao động/,
+  );
 });
 
 test("R1.2-B: search is bounded, server-filtered, resets paging and omits the export hint", () => {

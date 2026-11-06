@@ -393,6 +393,7 @@ export type WorkerDirectoryFilters = {
   firstWorkDateFrom?: string;
   firstWorkDateTo?: string;
   providerType?: string;
+  laborType?: string;
 };
 
 export const EMPTY_WORKER_DIRECTORY_FILTERS: Readonly<WorkerDirectoryFilters> = Object.freeze({
@@ -403,6 +404,7 @@ export const EMPTY_WORKER_DIRECTORY_FILTERS: Readonly<WorkerDirectoryFilters> = 
   firstWorkDateFrom: "",
   firstWorkDateTo: "",
   providerType: "",
+  laborType: "",
 });
 
 export const WORKER_DATE_RANGE_INVALID_MESSAGE =
@@ -434,7 +436,8 @@ export function hasActiveWorkerDirectoryFilters(filters: WorkerDirectoryFilters)
     filters.recruiterId !== "" ||
     (filters.firstWorkDateFrom ?? "").trim() !== "" ||
     (filters.firstWorkDateTo ?? "").trim() !== "" ||
-    (filters.providerType ?? "").trim() !== ""
+    (filters.providerType ?? "").trim() !== "" ||
+    (filters.laborType ?? "").trim() !== ""
   );
 }
 
@@ -507,6 +510,7 @@ export function workersQuery(input: {
   firstWorkDateFrom?: string;
   firstWorkDateTo?: string;
   providerType?: string;
+  laborType?: string;
   cursor: string | null;
 }): string {
   let query = "?scope=" + input.scope + "&page_size=" + String(WORKER_PAGE_SIZE);
@@ -522,6 +526,9 @@ export function workersQuery(input: {
   }
   if (input.providerType?.trim()) {
     query += "&provider_type=" + encodeURIComponent(input.providerType.trim());
+  }
+  if (input.laborType?.trim()) {
+    query += "&labor_type=" + encodeURIComponent(input.laborType.trim());
   }
   if (input.cursor !== null) query += "&cursor=" + encodeURIComponent(input.cursor);
   return query;
