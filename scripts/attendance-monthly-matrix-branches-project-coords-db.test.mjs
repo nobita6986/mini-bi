@@ -2546,6 +2546,114 @@ test("HRP Branches, Branch Check-In Distance Snapshot Immutability, Project Coor
     assert.equal(expHcSub.explanation.policy_version_used, 1);
     assert.equal(expHcSub.explanation.slot_label, "Ca chiều");
     assert.equal(expHcSub.explanation.target_time, "17:00");
+
+    // 9g. Verify 1-char slot policy profile code ("A") and page_size=25 vs page_size=100 parity
+    const oneCharSlots = [
+      {
+        slot_code: "SLOT_1",
+        slot_order: 1,
+        slot_label: "Ca A sáng",
+        target_time: "08:00",
+        grace_before_minutes: 30,
+        grace_after_minutes: 15,
+      },
+    ];
+    const oneCharBody = {
+      app_user_id: ACTORS.FULL_ADMIN.app,
+      profile_id: null,
+      profile_code: "A",
+      display_name: "Khung giờ A",
+      description: "Khung giờ mã 1 ký tự",
+      active: true,
+      expected_profile_version: 0,
+      effective_from_date: todayVn,
+      slots: oneCharSlots,
+      expected_version: 0,
+    };
+    const oneCharCreated = projectUpsertSlotPolicyProfileResult(
+      await callAsServiceRole(
+        db,
+        `select public.attendance_upsert_slot_policy_profile_admin(
+          $1::uuid, $2::uuid, null::uuid, $3::text, $4::text, $5::text, $6::boolean,
+          $7::date, $8::jsonb, $9::integer, $10::integer, $11::uuid, $12::text
+        ) as data`,
+        [
+          ACTORS.FULL_ADMIN.auth,
+          ACTORS.FULL_ADMIN.app,
+          oneCharBody.profile_code,
+          oneCharBody.display_name,
+          oneCharBody.description,
+          oneCharBody.active,
+          oneCharBody.effective_from_date,
+          JSON.stringify(oneCharBody.slots),
+          oneCharBody.expected_version,
+          oneCharBody.expected_profile_version,
+          nextUuid(),
+          computeSlotPolicyProfileUpsertRequestFingerprint(oneCharBody),
+        ],
+      ),
+    );
+    assert.ok(oneCharCreated);
+    assert.equal(oneCharCreated.profile.profile_code, "A");
+
+    const assignOneCharBody = {
+      app_user_id: ACTORS.FULL_ADMIN.app,
+      target_app_user_id: ACTORS.STAFF_B.app,
+      profile_id: oneCharCreated.profile.profile_id,
+      valid_from: todayVn,
+      expected_version: 0,
+    };
+    const assignedOneChar = projectAssignSlotPolicyResult(
+      await callAsServiceRole(
+        db,
+        `select public.attendance_assign_employee_slot_policy_admin(
+          $1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::date, $6::integer, $7::uuid, $8::text
+        ) as data`,
+        [
+          ACTORS.FULL_ADMIN.auth,
+          ACTORS.FULL_ADMIN.app,
+          assignOneCharBody.target_app_user_id,
+          assignOneCharBody.profile_id,
+          assignOneCharBody.valid_from,
+          assignOneCharBody.expected_version,
+          nextUuid(),
+          computeSlotPolicyAssignRequestFingerprint(assignOneCharBody),
+        ],
+      ),
+    );
+    assert.ok(assignedOneChar);
+
+    const currentYearMonth = todayVn.slice(0, 7);
+    const curReport25 = projectAttendanceMonthlyMatrixReport(
+      await callAsServiceRole(
+        db,
+        `select public.attendance_monthly_matrix_report(
+          $1::uuid, $2::uuid, $3::text, null, null, null, 1, 25
+        ) as data`,
+        [ACTORS.FULL_ADMIN.auth, ACTORS.FULL_ADMIN.app, currentYearMonth],
+      ),
+    );
+    const curReport100 = projectAttendanceMonthlyMatrixReport(
+      await callAsServiceRole(
+        db,
+        `select public.attendance_monthly_matrix_report(
+          $1::uuid, $2::uuid, $3::text, null, null, null, 1, 100
+        ) as data`,
+        [ACTORS.FULL_ADMIN.auth, ACTORS.FULL_ADMIN.app, currentYearMonth],
+      ),
+    );
+    assert.ok(curReport25);
+    assert.ok(curReport100);
+    assert.equal(
+      curReport25.pagination.snapshot_token,
+      curReport100.pagination.snapshot_token,
+    );
+    assert.deepEqual(curReport25.items, curReport100.items);
+    const staffBCur = curReport100.items.find((r) => r.app_user_id === ACTORS.STAFF_B.app);
+    assert.ok(staffBCur);
+    const staffBToday = staffBCur.days.find((d) => d.business_date === todayVn);
+    assert.ok(staffBToday);
+    assert.equal(staffBToday.policy_profile_code_used, "A");
   } finally {
     await db.close();
   }
