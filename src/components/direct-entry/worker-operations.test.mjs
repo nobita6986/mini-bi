@@ -16,6 +16,8 @@ const page = readFileSync(
   new URL("../../app/direct-entry/workers/page.tsx", import.meta.url), "utf8");
 const reviewer = readFileSync(
   new URL("./direct-entry-change-request-reviewer.tsx", import.meta.url), "utf8");
+const workerDetailDialog = readFileSync(
+  new URL("./worker-detail-dialog.tsx", import.meta.url), "utf8");
 const registry = readFileSync(
   new URL("../../lib/navigation/registry.ts", import.meta.url), "utf8");
 
@@ -94,7 +96,21 @@ test("worker directory displays server-filtered totals, not only the loaded page
   );
   for (const field of ["total_workers", "project_count", "recruiter_count"]) {
     assert.match(source, new RegExp("workerSummary\\." + field));
+    assert.match(
+      source,
+      new RegExp(
+        `<span className="text-red-600 dark:text-red-400">\\s*\\{workerSummary\\.${field}\\.toLocaleString\\("vi-VN"\\)\\}\\s*<\\/span>`,
+      ),
+      `summary count ${field} must be highlighted in red`,
+    );
   }
+  const summaryBlock =
+    source.match(/data-testid="worker-filter-summary"[\s\S]*?<\/p>/)?.[0] ?? "";
+  assert.equal(
+    (summaryBlock.match(/text-red-600 dark:text-red-400/g) ?? []).length,
+    3,
+    "only the three summary numbers (total_workers, project_count, recruiter_count) are highlighted in red",
+  );
   assert.match(source, /filters\.status === "" \? "Tất cả" : workerStatusLabel\(filters\.status\)/);
   assert.match(source, /workerProviderTypeLabel\(filters\.providerType\)/);
   assert.match(source, /data-testid="worker-filter-provider-type"/);
@@ -215,11 +231,26 @@ test("W06-R2: initial tab tu actor projection server-side", () => {
 });
 
 test("W06: pending/last decision + conflict/reload tu server version", () => {
-  assert.match(source, /pendingRequestLabel\(row\)/);
-  assert.match(source, /lastDecisionLabel\(row\)/);
+  assert.match(workerDetailDialog, /pendingRequestLabel\(row\)/);
+  assert.match(workerDetailDialog, /lastDecisionLabel\(row\)/);
   assert.match(source, /setConflict\(WORKER_CONFLICT_MESSAGE\)/);
   assert.match(source, /response\.status === 409/);
   assert.match(source, /Tải lại dữ liệu/);
+});
+
+test("HF WorkerTable: replaces Yêu cầu column with Loại hình displaying labor_type_display", () => {
+  const tableStart = source.indexOf("function WorkerTable(");
+  const tableEnd = source.indexOf("const DIRECT_EDIT_FILE_KINDS", tableStart);
+  assert.ok(tableStart >= 0 && tableEnd > tableStart);
+  const tableSource = source.slice(tableStart, tableEnd);
+
+  assert.match(tableSource, /<th scope="col" className=\{DATA_TABLE_TH_CLASS\}>Loại hình<\/th>/);
+  assert.match(
+    tableSource,
+    /<td className=\{DATA_TABLE_TD_CLASS\} data-label="Loại hình">\s*\{row\.labor_type_display\}\s*<\/td>/,
+  );
+  assert.doesNotMatch(tableSource, />Yêu cầu<\/th>|data-label="Yêu cầu"/);
+  assert.doesNotMatch(tableSource, /pendingRequestLabel|lastDecisionLabel/);
 });
 
 test("W06: khong hien UUID tho trong UI", () => {
