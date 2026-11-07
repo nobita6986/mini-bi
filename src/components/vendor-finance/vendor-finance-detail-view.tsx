@@ -34,7 +34,6 @@ import { FilterToolbar } from "@/components/ui/filter-toolbar";
 import { OffsetPager } from "@/components/ui/offset-pager";
 import { PageHeader, PageShell } from "@/components/ui/page-shell";
 import type {
-  NormalVendorFinanceEntryType,
   VendorFinanceActorContextOptionsResponse,
   VendorFinanceContractType,
   VendorFinanceDetailSubLedger,
@@ -79,6 +78,7 @@ import {
   VFIN_UI_REDACTED_FIELD_LABEL_VI,
   VFIN_UI_REFERENCE_TOTAL_LABEL_VI,
   VFIN_UI_SHARED_ADVANCE_MOVEMENT_TYPES,
+  type DialogRecordVendorFinanceEntryType,
 } from "@/lib/vendor-finance/ui-model";
 
 import {
@@ -219,7 +219,7 @@ export function VendorFinanceDetailView({
   // Dialog states
   const [recordDialogOpen, setRecordDialogOpen] = useState(false);
   const [recordInitialType, setRecordInitialType] =
-    useState<NormalVendorFinanceEntryType | undefined>(undefined);
+    useState<DialogRecordVendorFinanceEntryType | undefined>(undefined);
   const [reversingEntry, setReversingEntry] = useState<VendorFinanceEntryProjection | null>(null);
   const [reconcileDialogOpen, setReconcileDialogOpen] = useState(false);
   const [classifyingSubLedger, setClassifyingSubLedger] =
@@ -789,14 +789,22 @@ export function VendorFinanceDetailView({
   const sharedAdvanceBalanceMinor = vendor?.shared_advance_balance_minor ?? "0";
   const canApplySharedAdvanceOffset = Boolean(
     allowedActions?.can_apply_vendor_advance === true &&
-      selectedSubLedger !== null &&
-      selectedSubLedger.can_apply_vendor_advance === true &&
-      selectedSubLedger.project_id !== null &&
-      isCanonicalUiProjectId(selectedSubLedger.project_id) &&
-      (selectedSubLedger.contract_type === "SEASONAL" ||
-        selectedSubLedger.contract_type === "OFFICIAL") &&
-      BigInt(selectedSubLedger.current_balance_minor) > BigInt(0) &&
-      BigInt(sharedAdvanceBalanceMinor) > BigInt(0),
+      BigInt(sharedAdvanceBalanceMinor) > BigInt(0) &&
+      ((selectedSubLedger !== null &&
+        selectedSubLedger.can_apply_vendor_advance === true &&
+        selectedSubLedger.project_id !== null &&
+        isCanonicalUiProjectId(selectedSubLedger.project_id) &&
+        (selectedSubLedger.contract_type === "SEASONAL" ||
+          selectedSubLedger.contract_type === "OFFICIAL") &&
+        BigInt(selectedSubLedger.current_balance_minor) > BigInt(0)) ||
+        subLedgers.some(
+          (sub) =>
+            sub.can_apply_vendor_advance === true &&
+            sub.project_id !== null &&
+            isCanonicalUiProjectId(sub.project_id) &&
+            (sub.contract_type === "SEASONAL" || sub.contract_type === "OFFICIAL") &&
+            BigInt(sub.current_balance_minor) > BigInt(0),
+        )),
   );
 
   const vendorIsActive = (contextData?.vendors ?? []).some(
@@ -815,9 +823,22 @@ export function VendorFinanceDetailView({
             sub.project_id === p.project_id &&
             sub.accountant_ref === p.active_accountant_ref &&
             sub.entry_count > 0 &&
-            sub.can_record_entry,
+            (sub.can_record_entry || sub.can_apply_vendor_advance),
         )),
   );
+
+  const openUnifiedOffsetDialog = () => {
+    if (
+      selectedSubLedger &&
+      !selectedSubLedger.is_active_assignment &&
+      !recordableProjectsForVendor.some((p) => p.project_id === selectedSubLedger.project_id)
+    ) {
+      setApplyOffsetDialogOpen(true);
+      return;
+    }
+    setRecordInitialType("ADVANCE_OFFSET_RECORDED");
+    setRecordDialogOpen(true);
+  };
 
   // Sub-ledgers where current actor can reconcile
   const reconcilableSubLedgers = subLedgers.filter(
@@ -1028,7 +1049,7 @@ export function VendorFinanceDetailView({
                   variant="soft"
                   size="sm"
                   data-testid="vfin-open-apply-offset-btn"
-                  onClick={() => setApplyOffsetDialogOpen(true)}
+                  onClick={openUnifiedOffsetDialog}
                 >
                   Khấu trừ ứng
                 </Button>
@@ -1388,7 +1409,7 @@ export function VendorFinanceDetailView({
                     variant="secondary"
                     size="sm"
                     data-testid="vfin-quick-apply-offset-btn"
-                    onClick={() => setApplyOffsetDialogOpen(true)}
+                    onClick={openUnifiedOffsetDialog}
                   >
                     + Khấu trừ ứng
                   </Button>
@@ -1960,7 +1981,7 @@ export function VendorFinanceDetailView({
                     <Button
                       variant="soft"
                       size="sm"
-                      onClick={() => setApplyOffsetDialogOpen(true)}
+                      onClick={openUnifiedOffsetDialog}
                     >
                       + Khấu trừ ứng
                     </Button>
@@ -2213,6 +2234,9 @@ export function VendorFinanceDetailView({
           vendorDisplayName={vendor.display_name}
           vendorActive={vendor.active}
           recordableProjects={recordableProjectsForVendor}
+          subLedgers={subLedgers}
+          currentSharedAdvanceMinor={sharedAdvanceBalanceMinor}
+          canApplyVendorAdvance={allowedActions?.can_apply_vendor_advance === true}
           initialProjectId={selectedSubLedger?.project_id ?? scopeFilter.projectId}
           initialContractType={
             selectedSubLedger &&

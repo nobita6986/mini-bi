@@ -36,6 +36,7 @@ import type {
   OpeningBatchItemInput,
   OpeningVendorFinanceEntryType,
   PreviewOpeningBatchBody,
+  RecordPaymentWithOffsetBody,
   RecordVendorFinanceEntryBody,
   RecordVendorRefundBody,
   ReserveVendorFinanceEvidenceBody,
@@ -94,6 +95,7 @@ import type {
   VendorFinanceProjectAccountantsAdminProject,
   VendorFinanceReconciliationProjection,
   VendorFinanceReconciliationsPageResponse,
+  VendorFinanceRecordPaymentWithOffsetResponse,
   VendorFinanceRecordVendorRefundResponse,
   VendorFinanceReverseSharedAdvanceMovementResponse,
   VendorFinanceSharedAdvanceMovementProjection,
@@ -154,6 +156,19 @@ export const VFIN_UI_CREATOR_NORMAL_ENTRY_TYPES = [
   "ADJUSTMENT_INCREASE",
   "ADJUSTMENT_DECREASE",
 ] as const satisfies readonly NormalVendorFinanceEntryType[];
+
+export type DialogRecordVendorFinanceEntryType =
+  | NormalVendorFinanceEntryType
+  | "ADVANCE_OFFSET_RECORDED";
+
+export const VFIN_UI_DIALOG_RECORD_ENTRY_TYPES = [
+  "DEBT_RECORDED",
+  "PAYROLL_RECORDED",
+  "PAYMENT_RECORDED",
+  "ADVANCE_OFFSET_RECORDED",
+  "ADJUSTMENT_INCREASE",
+  "ADJUSTMENT_DECREASE",
+] as const satisfies readonly DialogRecordVendorFinanceEntryType[];
 
 export const VFIN_UI_OPENING_ENTRY_TYPES = [
   "OPENING_PAYABLE",
@@ -1133,6 +1148,10 @@ export function buildApplyVendorSharedAdvanceOffsetUrl(vendorId: string): string
   return `/api/vendor-finance/vendors/${encodeURIComponent(vendorId)}/shared-advances/apply-offset`;
 }
 
+export function buildRecordVendorPaymentWithOffsetUrl(vendorId: string): string {
+  return `/api/vendor-finance/vendors/${encodeURIComponent(vendorId)}/shared-advances/settle-with-offset`;
+}
+
 export function buildReverseVendorSharedAdvanceMovementUrl(movementId: string): string {
   return `/api/vendor-finance/shared-advances/${encodeURIComponent(movementId)}/reverse`;
 }
@@ -1222,6 +1241,7 @@ export function buildRecordEntryRequest(input: {
   reason: string;
   idempotency_key: string;
   allowed_entry_types?: readonly NormalVendorFinanceEntryType[];
+  current_subledger_payable_minor?: string | null;
 }):
   | { ok: true; request: BuiltJsonRequest<RecordVendorFinanceEntryBody> }
   | { ok: false; message: string } {
@@ -1249,6 +1269,20 @@ export function buildRecordEntryRequest(input: {
   const amount = normalizePositiveVndInput(input.amount_input);
   if (!amount.ok) {
     return { ok: false, message: amount.message };
+  }
+  if (
+    entryType === "PAYMENT_RECORDED" &&
+    typeof input.current_subledger_payable_minor === "string" &&
+    /^(?:0|-?[1-9][0-9]{0,18})$/.test(input.current_subledger_payable_minor)
+  ) {
+    const payable = BigInt(input.current_subledger_payable_minor);
+    if (payable <= ZERO_BIGINT || amount.value > payable) {
+      return {
+        ok: false,
+        message:
+          "Số tiền thanh toán vượt quá công nợ phải trả hiện tại của sổ dự án và loại hợp đồng đã chọn.",
+      };
+    }
   }
   const effectiveDate = validateUiCalendarDate(input.effective_date);
   if (!effectiveDate.ok) {
@@ -2004,6 +2038,102 @@ export function buildApplySharedAdvanceOffsetRequest(input: {
         project_id: trimmedProject,
         contract_type: contractType,
         amount_minor: amount.canonical,
+        effective_date: effectiveDate.date,
+        reason: reason.reason,
+        idempotency_key: idem,
+      },
+    },
+  };
+}
+
+export function buildRecordPaymentWithOffsetRequest(input: {
+  project_id: string;
+  contract_type: string;
+  payment_amount_input: string;
+  offset_amount_input: string;
+  effective_date: string;
+  reason: string;
+  idempotency_key: string;
+  available_shared_advance_minor?: string | null;
+  current_subledger_payable_minor?: string | null;
+}):
+  | { ok: true; request: BuiltJsonRequest<RecordPaymentWithOffsetBody> }
+  | { ok: false; message: string } {
+  const trimmedProject = input.project_id.trim();
+  if (!isCanonicalUiProjectId(trimmedProject)) {
+    return { ok: false, message: "Vui lòng chọn dự án hợp lệ để thanh toán và khấu trừ ứng." };
+  }
+  if (!(VFIN_UI_CLASSIFIED_CONTRACT_TYPES as readonly string[]).includes(input.contract_type)) {
+    return {
+      ok: false,
+      message: "Chỉ sổ đã phân loại hợp đồng (Thời vụ hoặc Chính thức) mới được thanh toán và khấu trừ ứng.",
+    };
+  }
+  const contractType = input.contract_type as ClassifiedVendorFinanceContractType;
+  const paymentAmount = normalizePositiveVndInput(input.payment_amount_input);
+  if (!paymentAmount.ok) {
+    return { ok: false, message: `Số tiền trả TM/CK: ${paymentAmount.message}` };
+  }
+  const offsetAmount = normalizePositiveVndInput(input.offset_amount_input);
+  if (!offsetAmount.ok) {
+    return { ok: false, message: `Số tiền khấu trừ ứng: ${offsetAmount.message}` };
+  }
+  const totalAmount = paymentAmount.value + offsetAmount.value;
+  if (totalAmount > VFIN_UI_PG_BIGINT_MAX) {
+    return {
+      ok: false,
+      message: "Tổng số tiền thanh toán và khấu trừ vượt quá giới hạn hệ thống.",
+    };
+  }
+  if (
+    typeof input.available_shared_advance_minor === "string" &&
+    /^(?:0|[1-9][0-9]{0,18})$/.test(input.available_shared_advance_minor)
+  ) {
+    const avail = BigInt(input.available_shared_advance_minor);
+    if (offsetAmount.value > avail) {
+      return {
+        ok: false,
+        message: "Số tiền khấu trừ vượt quá số dư ứng dùng chung hiện tại của Vendor.",
+      };
+    }
+  }
+  if (
+    typeof input.current_subledger_payable_minor === "string" &&
+    /^(?:0|-?[1-9][0-9]{0,18})$/.test(input.current_subledger_payable_minor)
+  ) {
+    const payable = BigInt(input.current_subledger_payable_minor);
+    if (payable <= ZERO_BIGINT || totalAmount > payable) {
+      return {
+        ok: false,
+        message:
+          "Tổng tiền trả TM/CK và khấu trừ ứng vượt quá công nợ phải trả hiện tại của sổ dự án và loại hợp đồng đã chọn.",
+      };
+    }
+  }
+  const effectiveDate = validateUiCalendarDate(input.effective_date);
+  if (!effectiveDate.ok) {
+    return { ok: false, message: effectiveDate.message };
+  }
+  const reason = validateUiReasonText(input.reason);
+  if (!reason.ok) {
+    return { ok: false, message: reason.message };
+  }
+  if (!isUuidString(input.idempotency_key)) {
+    return { ok: false, message: "Mã chống gửi trùng (Idempotency-Key) không hợp lệ." };
+  }
+  const idem = input.idempotency_key.toLowerCase();
+  return {
+    ok: true,
+    request: {
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": idem,
+      },
+      body: {
+        project_id: trimmedProject,
+        contract_type: contractType,
+        payment_amount_minor: paymentAmount.canonical,
+        offset_amount_minor: offsetAmount.canonical,
         effective_date: effectiveDate.date,
         reason: reason.reason,
         idempotency_key: idem,
@@ -4044,6 +4174,55 @@ export function parseApplySharedAdvanceOffsetEnvelope(
     return null;
   }
   return { movement, entry, shared_advance_balance_minor: balance, replayed };
+}
+
+export function parseRecordPaymentWithOffsetEnvelope(
+  envelope: unknown,
+): VendorFinanceRecordPaymentWithOffsetResponse | null {
+  const data = unwrapOkDataEnvelope(envelope);
+  if (
+    !isRecord(data) ||
+    !exactKeys(data, [
+      "payment_entry",
+      "offset_entry",
+      "movement",
+      "shared_advance_balance_minor",
+      "replayed",
+    ])
+  ) {
+    return null;
+  }
+  const paymentEntry = parseEntryProjection(data.payment_entry);
+  const offsetEntry = parseEntryProjection(data.offset_entry);
+  const movement = parseSharedAdvanceMovementProjection(data.movement);
+  const balance = nonNegativeMoneyStr(data.shared_advance_balance_minor);
+  const replayed = boolVal(data.replayed);
+  if (
+    !paymentEntry ||
+    !offsetEntry ||
+    !movement ||
+    balance === null ||
+    replayed === null ||
+    paymentEntry.vendor_id !== offsetEntry.vendor_id ||
+    offsetEntry.vendor_id !== movement.vendor_id ||
+    paymentEntry.entry_type !== "PAYMENT_RECORDED" ||
+    offsetEntry.entry_type !== "ADVANCE_OFFSET_RECORDED" ||
+    movement.movement_type !== "PROJECT_OFFSET_APPLIED" ||
+    movement.project_entry_id !== offsetEntry.entry_id ||
+    movement.amount_minor !== offsetEntry.amount_minor ||
+    paymentEntry.project_id !== offsetEntry.project_id ||
+    paymentEntry.contract_type !== offsetEntry.contract_type ||
+    offsetEntry.balance_before_minor !== paymentEntry.balance_after_minor
+  ) {
+    return null;
+  }
+  return {
+    payment_entry: paymentEntry,
+    offset_entry: offsetEntry,
+    movement,
+    shared_advance_balance_minor: balance,
+    replayed,
+  };
 }
 
 export function parseReverseSharedAdvanceMovementEnvelope(

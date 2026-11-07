@@ -21,6 +21,7 @@ import {
   projectOpeningApplyMutation,
   projectOpeningPreview,
   projectRecordEntryMutation,
+  projectRecordPaymentWithOffsetMutation,
   projectRecordVendorRefundMutation,
   projectReverseEntryMutation,
   projectReverseSharedAdvanceMovementMutation,
@@ -61,6 +62,7 @@ import {
   type VendorFinanceMonthlyReportResponse,
   type VendorFinanceOpeningApplyResponse,
   type VendorFinanceOpeningPreviewResponse,
+  type VendorFinanceRecordPaymentWithOffsetResponse,
   type VendorFinanceRecordVendorRefundResponse,
   type VendorFinanceReconciliationProjection,
   type VendorFinanceReconciliationsPageResponse,
@@ -267,6 +269,20 @@ export type VendorFinanceRepository = {
       request_fingerprint: string;
     },
   ): Promise<VendorFinanceRepoResult<VendorFinanceApplySharedAdvanceOffsetResponse>>;
+
+  recordPaymentWithOffset(
+    input: VendorFinanceActorRef & {
+      vendor_id: string;
+      project_id: string;
+      contract_type: ClassifiedVendorFinanceContractType;
+      payment_amount_minor: string;
+      offset_amount_minor: string;
+      effective_date: string;
+      reason: string;
+      idempotency_key: string;
+      request_fingerprint: string;
+    },
+  ): Promise<VendorFinanceRepoResult<VendorFinanceRecordPaymentWithOffsetResponse>>;
 
   reverseEntry(
     input: VendorFinanceActorRef & {
@@ -1098,6 +1114,28 @@ export function createVendorFinanceRepository(
           p_request_fingerprint: input.request_fingerprint,
         },
         projectApplySharedAdvanceOffsetMutation,
+      );
+    },
+
+    recordPaymentWithOffset(input) {
+      return callProjected(
+        "recordPaymentWithOffset",
+        "mutation",
+        "vendor_finance_record_payment_with_offset",
+        {
+          p_auth_subject: input.auth_subject,
+          p_app_user_id: input.app_user_id,
+          p_vendor_id: input.vendor_id,
+          p_project_id: input.project_id,
+          p_contract_type: input.contract_type,
+          p_payment_amount_minor: input.payment_amount_minor,
+          p_offset_amount_minor: input.offset_amount_minor,
+          p_effective_date: input.effective_date,
+          p_reason: input.reason,
+          p_idempotency_key: input.idempotency_key,
+          p_request_fingerprint: input.request_fingerprint,
+        },
+        projectRecordPaymentWithOffsetMutation,
       );
     },
 

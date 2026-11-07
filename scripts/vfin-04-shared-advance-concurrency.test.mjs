@@ -36,9 +36,13 @@ import {
   computeAssignProjectAccountantFingerprint,
   computeFundSharedAdvanceFingerprint,
   computeRecordEntryFingerprint,
+  computeRecordPaymentWithOffsetFingerprint,
   computeRecordVendorRefundFingerprint,
 } from "../src/lib/vendor-finance/vendor-finance-contract.ts";
-import { VFIN_04_SHARED_VENDOR_ADVANCE_MIGRATION_NAME } from "./lib/migration-validation.mjs";
+import {
+  VFIN_04_SHARED_VENDOR_ADVANCE_MIGRATION_NAME,
+  VFIN_05_COMBINED_PAYMENT_OFFSET_MIGRATION_NAME,
+} from "./lib/migration-validation.mjs";
 
 const ROOT = process.cwd();
 const MIGRATION_DIR = path.join(ROOT, "supabase", "migrations");
@@ -132,11 +136,12 @@ async function applyMigrations(client) {
       " create schema auth; create table auth.users (id uuid primary key, email text);",
   );
   const names = (await readdir(MIGRATION_DIR))
-    .filter((name) => name.endsWith(".sql") && name <= VFIN_04_SHARED_VENDOR_ADVANCE_MIGRATION_NAME)
+    .filter((name) => name.endsWith(".sql") && name <= VFIN_05_COMBINED_PAYMENT_OFFSET_MIGRATION_NAME)
     .sort();
   assert.ok(
-    names.includes(VFIN_04_SHARED_VENDOR_ADVANCE_MIGRATION_NAME),
-    `migration inventory must include ${VFIN_04_SHARED_VENDOR_ADVANCE_MIGRATION_NAME}`,
+    names.includes(VFIN_04_SHARED_VENDOR_ADVANCE_MIGRATION_NAME) &&
+      names.includes(VFIN_05_COMBINED_PAYMENT_OFFSET_MIGRATION_NAME),
+    `migration inventory must include ${VFIN_04_SHARED_VENDOR_ADVANCE_MIGRATION_NAME} and ${VFIN_05_COMBINED_PAYMENT_OFFSET_MIGRATION_NAME}`,
   );
   for (const name of names) {
     await client.query(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
@@ -151,6 +156,8 @@ const REFUND_ADVANCE_SQL =
   "select public.vendor_finance_record_vendor_refund($1::uuid, $2::uuid, $3::text, $4::text, $5::date, $6::text, $7::uuid, $8::text) as data";
 const APPLY_OFFSET_SQL =
   "select public.vendor_finance_apply_shared_advance_offset($1::uuid, $2::uuid, $3::text, $4::text, $5::text, $6::text, $7::date, $8::text, $9::uuid, $10::text) as data";
+const SETTLE_WITH_OFFSET_SQL =
+  "select public.vendor_finance_record_payment_with_offset($1::uuid, $2::uuid, $3::text, $4::text, $5::text, $6::text, $7::text, $8::date, $9::text, $10::uuid, $11::text) as data";
 const ASSIGN_ACCT_SQL =
   "select public.vendor_finance_assign_project_accountant_admin($1::uuid, $2::uuid, $3::text, $4::uuid, $5::integer, $6::date, $7::text, $8::uuid, $9::text) as data";
 const ASSIGN_GLOBAL_ROLE_SQL =
@@ -271,6 +278,7 @@ async function seedFixture(client) {
     ["VND_CONC_REFUND", "NCC Đua Hoàn Ứng Và Khấu Trừ"],
     ["VND_CONC_SUB", "NCC Đua Hai Lần Khấu Trừ Cùng Sổ"],
     ["VND_CONC_IDEM", "NCC Đua Idempotency"],
+    ["VND_CONC_SETTLE", "NCC Đua Thanh Toán Kèm Khấu Trừ"],
   ]) {
     await client.query(
       `select public.direct_entry_create_vendor(
@@ -768,6 +776,131 @@ test("VFIN-04 real PostgreSQL concurrency: cross-project offset race, refund vs 
         err?.code === "23505" &&
         typeof err?.message === "string" &&
         err.message.includes("VENDOR_FINANCE_IDEMPOTENCY_CONFLICT"),
+    );
+
+    // =========================================================================
+    // SCENARIO 5 (VFIN-05): Concurrent combined payment + advance offset race
+    // across PRJ_1 and PRJ_2 on VND_CONC_SETTLE (shared advance = 4,000,000;
+    // each project has 10,000,000 payable and submits 6,000,000 TM/CK + 4,000,000 offset).
+    // Strictly 1 succeeds, 1 fails with VENDOR_FINANCE_INSUFFICIENT_SHARED_ADVANCE,
+    // and the failed call rolls back its 6,000,000 PAYMENT_RECORDED entry atomically.
+    // =========================================================================
+    const fundSettleReason = "Ứng 4tr cho VND_CONC_SETTLE";
+    await observer.query(FUND_ADVANCE_SQL, [
+      CASH_BEHALF.auth,
+      CASH_BEHALF.app,
+      "VND_CONC_SETTLE",
+      "4000000",
+      "2026-10-19",
+      fundSettleReason,
+      nextUuid(),
+      computeFundSharedAdvanceFingerprint({
+        vendor_id: "VND_CONC_SETTLE",
+        amount_minor: "4000000",
+        effective_date: "2026-10-19",
+        reason: fundSettleReason,
+      }),
+    ]);
+
+    for (const [acct, prj] of [
+      [ACCT_1, PRJ_1],
+      [ACCT_2, PRJ_2],
+    ]) {
+      const debtBody = {
+        vendor_id: "VND_CONC_SETTLE",
+        project_id: prj,
+        contract_type: "SEASONAL",
+        entry_type: "DEBT_RECORDED",
+        amount_minor: "10000000",
+        effective_date: "2026-10-19",
+        reason: `Công nợ 10tr ${prj}`,
+        idempotency_key: nextUuid(),
+      };
+      await observer.query(RECORD_SQL, [
+        acct.auth,
+        acct.app,
+        "VND_CONC_SETTLE",
+        prj,
+        "SEASONAL",
+        "DEBT_RECORDED",
+        "10000000",
+        "2026-10-19",
+        debtBody.reason,
+        debtBody.idempotency_key,
+        computeRecordEntryFingerprint(debtBody),
+      ]);
+    }
+
+    const settleIdem1 = nextUuid();
+    const settleIdem2 = nextUuid();
+    const settleBody1 = {
+      vendor_id: "VND_CONC_SETTLE",
+      project_id: PRJ_1,
+      contract_type: "SEASONAL",
+      payment_amount_minor: "6000000",
+      offset_amount_minor: "4000000",
+      effective_date: "2026-10-20",
+      reason: "Tất toán PRJ_1 6tr TM/CK + 4tr ứng",
+      idempotency_key: settleIdem1,
+    };
+    const settleBody2 = {
+      vendor_id: "VND_CONC_SETTLE",
+      project_id: PRJ_2,
+      contract_type: "SEASONAL",
+      payment_amount_minor: "6000000",
+      offset_amount_minor: "4000000",
+      effective_date: "2026-10-20",
+      reason: "Tất toán PRJ_2 6tr TM/CK + 4tr ứng",
+      idempotency_key: settleIdem2,
+    };
+
+    const settleRaceOutcomes = await Promise.allSettled([
+      clients[0].query(SETTLE_WITH_OFFSET_SQL, [
+        ACCT_1.auth,
+        ACCT_1.app,
+        "VND_CONC_SETTLE",
+        PRJ_1,
+        "SEASONAL",
+        "6000000",
+        "4000000",
+        "2026-10-20",
+        settleBody1.reason,
+        settleIdem1,
+        computeRecordPaymentWithOffsetFingerprint(settleBody1),
+      ]),
+      clients[1].query(SETTLE_WITH_OFFSET_SQL, [
+        ACCT_2.auth,
+        ACCT_2.app,
+        "VND_CONC_SETTLE",
+        PRJ_2,
+        "SEASONAL",
+        "6000000",
+        "4000000",
+        "2026-10-20",
+        settleBody2.reason,
+        settleIdem2,
+        computeRecordPaymentWithOffsetFingerprint(settleBody2),
+      ]),
+    ]);
+
+    const settleFulfilled = settleRaceOutcomes.filter((o) => o.status === "fulfilled");
+    const settleRejected = settleRaceOutcomes.filter((o) => o.status === "rejected");
+    assert.equal(settleFulfilled.length, 1, "strictly 1 combined settlement succeeds");
+    assert.equal(settleRejected.length, 1, "strictly 1 combined settlement fails");
+    assert.equal(settleRejected[0].reason?.code, "23514");
+    assert.match(
+      settleRejected[0].reason?.message ?? "",
+      /VENDOR_FINANCE_INSUFFICIENT_SHARED_ADVANCE/,
+    );
+
+    // Verify atomic rollback: total entries for VND_CONC_SETTLE is 4 (2 DEBT_RECORDED + 1 PAYMENT_RECORDED + 1 ADVANCE_OFFSET_RECORDED)
+    const { rows: settleEntries } = await observer.query(
+      "select entry_type, project_id, balance_after_minor::text as bal from public.vendor_finance_entries where vendor_id = 'VND_CONC_SETTLE' order by vendor_sequence asc",
+    );
+    assert.equal(
+      settleEntries.length,
+      4,
+      "failed combined settlement rolled back its PAYMENT_RECORDED entry atomically",
     );
   } finally {
     for (const c of clients) {

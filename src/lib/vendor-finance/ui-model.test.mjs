@@ -35,6 +35,7 @@ import {
   parseListVendorReconciliationsQuery,
   parseMonthlyReportQuery,
   parsePreviewOpeningBatchBody,
+  parseRecordPaymentWithOffsetBody,
   parseRecordVendorFinanceEntryBody,
   parseRecordVendorRefundBody,
   parseReserveVendorFinanceEvidenceBody,
@@ -96,6 +97,8 @@ import {
   buildOpeningPreviewRequest,
   buildOpeningPreviewUrl,
   buildRecordEntryRequest,
+  buildRecordPaymentWithOffsetRequest,
+  buildRecordVendorPaymentWithOffsetUrl,
   buildRecordVendorRefundRequest,
   buildRecordVendorRefundUrl,
   buildReserveEvidenceRequest,
@@ -146,6 +149,7 @@ import {
   parseOpeningApplyEnvelope,
   parseOpeningPreviewEnvelope,
   parseRecordEntryEnvelope,
+  parseRecordPaymentWithOffsetEnvelope,
   parseRecordVendorRefundEnvelope,
   parseReverseEntryEnvelope,
   parseReverseSharedAdvanceMovementEnvelope,
@@ -2806,5 +2810,167 @@ test("VFIN-04: Shared advance URL/request builders, redaction-aware envelope par
   assert.equal(
     resolveVendorFinanceExportFilename(null, "2026-10-25"),
     "danh-sach-vendor-cong-no-2026-10-25.xlsx",
+  );
+
+  // 6. VFIN-05 Combined Payment + Shared Advance Offset request builder & envelope parser
+  assert.equal(
+    buildRecordVendorPaymentWithOffsetUrl("VND-001"),
+    "/api/vendor-finance/vendors/VND-001/shared-advances/settle-with-offset",
+  );
+
+  // PAYMENT_RECORDED client-side payable ceiling check vs ADJUSTMENT_DECREASE
+  assert.equal(
+    buildRecordEntryRequest({
+      project_id: "PRJ-01",
+      contract_type: "SEASONAL",
+      entry_type: "PAYMENT_RECORDED",
+      amount_input: "11000000",
+      effective_date: "2026-10-25",
+      reason: "Vượt công nợ",
+      idempotency_key: IDEMPOTENCY_KEY,
+      current_subledger_payable_minor: "10000000",
+    }).ok,
+    false,
+  );
+  assert.equal(
+    buildRecordEntryRequest({
+      project_id: "PRJ-01",
+      contract_type: "SEASONAL",
+      entry_type: "ADJUSTMENT_DECREASE",
+      amount_input: "11000000",
+      effective_date: "2026-10-25",
+      reason: "Điều chỉnh giảm được phép vượt",
+      idempotency_key: IDEMPOTENCY_KEY,
+      current_subledger_payable_minor: "10000000",
+    }).ok,
+    true,
+  );
+
+  const builtSettle = buildRecordPaymentWithOffsetRequest({
+    project_id: "PRJ-01",
+    contract_type: "SEASONAL",
+    payment_amount_input: "6.000.000",
+    offset_amount_input: "4.000.000",
+    effective_date: "2026-10-25",
+    reason: "  Thanh toán COASIA 6tr + khấu trừ ứng 4tr  ",
+    idempotency_key: IDEMPOTENCY_KEY,
+    available_shared_advance_minor: "4000000",
+    current_subledger_payable_minor: "10000000",
+  });
+  assert.equal(builtSettle.ok, true);
+  assert.deepEqual(
+    parseRecordPaymentWithOffsetBody(builtSettle.request.body, builtSettle.request.headers["Idempotency-Key"]),
+    {
+      ok: true,
+      value: {
+        project_id: "PRJ-01",
+        contract_type: "SEASONAL",
+        payment_amount_minor: "6000000",
+        offset_amount_minor: "4000000",
+        effective_date: "2026-10-25",
+        reason: "Thanh toán COASIA 6tr + khấu trừ ứng 4tr",
+        idempotency_key: IDEMPOTENCY_KEY,
+      },
+    },
+  );
+
+  // Exceeding payable (6M + 5M > 10M) or exceeding shared advance (5M > 4M)
+  assert.equal(
+    buildRecordPaymentWithOffsetRequest({
+      project_id: "PRJ-01",
+      contract_type: "SEASONAL",
+      payment_amount_input: "6000000",
+      offset_amount_input: "5000000",
+      effective_date: "2026-10-25",
+      reason: "Vượt dư ứng",
+      idempotency_key: IDEMPOTENCY_KEY,
+      available_shared_advance_minor: "4000000",
+      current_subledger_payable_minor: "15000000",
+    }).ok,
+    false,
+  );
+  assert.equal(
+    buildRecordPaymentWithOffsetRequest({
+      project_id: "PRJ-01",
+      contract_type: "SEASONAL",
+      payment_amount_input: "7000000",
+      offset_amount_input: "4000000",
+      effective_date: "2026-10-25",
+      reason: "Tổng vượt công nợ phải trả",
+      idempotency_key: IDEMPOTENCY_KEY,
+      available_shared_advance_minor: "4000000",
+      current_subledger_payable_minor: "10000000",
+    }).ok,
+    false,
+  );
+
+  const settlePaymentEntry = {
+    ...offsetEntry,
+    entry_id: ENTRY_ID,
+    vendor_sequence: 2,
+    cursor_sequence: 2,
+    document_no: "VFIN-2026-000002",
+    document_kind: "PAYMENT_VOUCHER",
+    document_title_vi: "Phiếu thanh toán cho Vendor",
+    entry_type: "PAYMENT_RECORDED",
+    amount_minor: "6000000",
+    balance_before_minor: "10000000",
+    balance_delta_minor: "-6000000",
+    balance_after_minor: "4000000",
+    can_attach_evidence: true,
+  };
+  const settleOffsetEntry = {
+    ...offsetEntry,
+    entry_id: offsetEntryId,
+    vendor_sequence: 3,
+    cursor_sequence: 3,
+    document_no: "VFIN-2026-000003",
+    document_kind: "ADVANCE_OFFSET_VOUCHER",
+    document_title_vi: "Phiếu khấu trừ ứng Vendor vào công nợ dự án",
+    entry_type: "ADVANCE_OFFSET_RECORDED",
+    amount_minor: "4000000",
+    balance_before_minor: "4000000",
+    balance_delta_minor: "-4000000",
+    balance_after_minor: "0",
+    can_attach_evidence: false,
+  };
+  const settleMovement = {
+    ...offsetMovement,
+    amount_minor: "4000000",
+    balance_before_minor: "4000000",
+    balance_delta_minor: "-4000000",
+    balance_after_minor: "0",
+    project_entry_id: offsetEntryId,
+  };
+
+  const parsedSettleEnv = parseRecordPaymentWithOffsetEnvelope({
+    ok: true,
+    data: {
+      payment_entry: settlePaymentEntry,
+      offset_entry: settleOffsetEntry,
+      movement: settleMovement,
+      shared_advance_balance_minor: "0",
+      replayed: false,
+    },
+  });
+  assert.ok(parsedSettleEnv);
+  assert.equal(parsedSettleEnv.payment_entry.amount_minor, "6000000");
+  assert.equal(parsedSettleEnv.offset_entry.amount_minor, "4000000");
+  assert.equal(parsedSettleEnv.offset_entry.balance_after_minor, "0");
+  assert.equal(parsedSettleEnv.shared_advance_balance_minor, "0");
+
+  // Fail-closed: broken balance chain between payment_entry and offset_entry returns null
+  assert.equal(
+    parseRecordPaymentWithOffsetEnvelope({
+      ok: true,
+      data: {
+        payment_entry: settlePaymentEntry,
+        offset_entry: { ...settleOffsetEntry, balance_before_minor: "5000000" },
+        movement: settleMovement,
+        shared_advance_balance_minor: "0",
+        replayed: false,
+      },
+    }),
+    null,
   );
 });

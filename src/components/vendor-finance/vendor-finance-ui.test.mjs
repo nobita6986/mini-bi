@@ -353,4 +353,13 @@ test("VFIN-04: Vendor shared advance balance, 4 shared advance dialogs, cross-pr
   assert.match(monthlyReportView, /totals\.advance_offset_in_month_minor/);
   assert.match(monthlyReportView, /sum\.advance_offset_in_month_minor/);
   assert.match(monthlyReportView, /row\.advance_offset_in_month_minor/);
+
+  // Target 5 (VFIN-05): Unified Payment + Advance Offset form in RecordVendorEntryDialog
+  assert.match(entryDialogs, /vfin-record-payment-amount-input/);
+  assert.match(entryDialogs, /vfin-record-offset-amount-input/);
+  assert.match(entryDialogs, /vfin-record-settlement-summary/);
+  assert.match(entryDialogs, /buildRecordPaymentWithOffsetRequest\(/);
+  assert.match(entryDialogs, /buildRecordVendorPaymentWithOffsetUrl\(/);
+  assert.match(entryDialogs, /parseRecordPaymentWithOffsetEnvelope\(/);
+  assert.match(detailView, /openUnifiedOffsetDialog/);
 });

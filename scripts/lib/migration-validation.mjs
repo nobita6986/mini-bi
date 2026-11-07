@@ -358,6 +358,15 @@ export const VFIN_04_SHARED_VENDOR_ADVANCE_RPC_SIGNATURES = Object.freeze([
   ...VFIN_03_CONTRACT_TYPE_LEDGERS_RPC_SIGNATURES,
   ...VFIN_04_SHARED_VENDOR_ADVANCE_NEW_RPC_SIGNATURES,
 ]);
+export const VFIN_05_COMBINED_PAYMENT_OFFSET_MIGRATION_NAME =
+  "20261108090000_vfin_05_combined_payment_and_offset.sql";
+export const VFIN_05_COMBINED_PAYMENT_OFFSET_NEW_RPC_SIGNATURES = Object.freeze([
+  "public.vendor_finance_record_payment_with_offset(uuid, uuid, text, text, text, text, text, date, text, uuid, text)",
+]);
+export const VFIN_05_COMBINED_PAYMENT_OFFSET_RPC_SIGNATURES = Object.freeze([
+  ...VFIN_04_SHARED_VENDOR_ADVANCE_RPC_SIGNATURES,
+  ...VFIN_05_COMBINED_PAYMENT_OFFSET_NEW_RPC_SIGNATURES,
+]);
 export const F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES = Object.freeze([
   "public.work_report_list_templates(uuid, uuid)",
   "public.work_report_get_template(uuid, uuid, uuid)",
@@ -606,7 +615,8 @@ export async function verifyS0T1CHistoricalCompatibility(
     attendanceExplanationsWave2Applied = false,
     attendanceMultiSlotPolicyProfilesApplied = false,
     workerDirectoryLaborTypeFilterApplied = false,
-    vfin04SharedVendorAdvanceApplied = false } = {},
+    vfin04SharedVendorAdvanceApplied = false,
+    vfin05CombinedPaymentOffsetApplied = false } = {},
 ) {
   const baseAllowlist = extractS0T1CAllowlistSignatures(migrationSql);
   if (baseAllowlist.length === 0) {
@@ -638,17 +648,19 @@ export async function verifyS0T1CHistoricalCompatibility(
       : []),
     ...(attendanceSelfHistoryApplied ? ATTENDANCE_SELF_HISTORY_RPC_SIGNATURES : []),
     ...(orgShell01DepartmentsApplied ? ORG_SHELL_01_DEPARTMENTS_RPC_SIGNATURES : []),
-    ...(vfin04SharedVendorAdvanceApplied
-      ? VFIN_04_SHARED_VENDOR_ADVANCE_RPC_SIGNATURES
-      : vfin03ContractTypeLedgersApplied
-        ? VFIN_03_CONTRACT_TYPE_LEDGERS_RPC_SIGNATURES
-        : hfVfin02ImplicitVendorProjectApplied
-          ? HF_VFIN_02_IMPLICIT_VENDOR_PROJECT_RPC_SIGNATURES
-          : vfin02ProjectLedgersApplied
-            ? VFIN_02_PROJECT_LEDGERS_RPC_SIGNATURES
-          : vfin01BackendApplied
-            ? VFIN_01_BACKEND_RPC_SIGNATURES
-            : []),
+    ...(vfin05CombinedPaymentOffsetApplied
+      ? VFIN_05_COMBINED_PAYMENT_OFFSET_RPC_SIGNATURES
+      : vfin04SharedVendorAdvanceApplied
+        ? VFIN_04_SHARED_VENDOR_ADVANCE_RPC_SIGNATURES
+        : vfin03ContractTypeLedgersApplied
+          ? VFIN_03_CONTRACT_TYPE_LEDGERS_RPC_SIGNATURES
+          : hfVfin02ImplicitVendorProjectApplied
+            ? HF_VFIN_02_IMPLICIT_VENDOR_PROJECT_RPC_SIGNATURES
+            : vfin02ProjectLedgersApplied
+              ? VFIN_02_PROJECT_LEDGERS_RPC_SIGNATURES
+            : vfin01BackendApplied
+              ? VFIN_01_BACKEND_RPC_SIGNATURES
+              : []),
     ...(hfWorkReportsGroupsAndAnalyticsOptionsApplied
       ? HF_WORK_REPORTS_GROUPS_AND_ANALYTICS_OPTIONS_RPC_SIGNATURES
       : []),
@@ -978,6 +990,8 @@ export async function verifyAppliedMigrationChecksum(
           appliedMap.has(WORKER_DIRECTORY_LABOR_TYPE_FILTER_MIGRATION_NAME),
         vfin04SharedVendorAdvanceApplied:
           appliedMap.has(VFIN_04_SHARED_VENDOR_ADVANCE_MIGRATION_NAME),
+        vfin05CombinedPaymentOffsetApplied:
+          appliedMap.has(VFIN_05_COMBINED_PAYMENT_OFFSET_MIGRATION_NAME),
       },
     );
     if (postconditions.ok) {
