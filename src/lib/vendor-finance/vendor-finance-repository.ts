@@ -6,6 +6,7 @@ import {
   VENDOR_FINANCE_EVIDENCE_UPLOAD_URL_TTL_SECONDS,
   projectActorAccess,
   projectActorContextOptions,
+  projectApplySharedAdvanceOffsetMutation,
   projectAssignGlobalRoleMutation,
   projectAssignProjectAccountantMutation,
   projectClassifySubLedgerMutation,
@@ -13,16 +14,21 @@ import {
   projectEndGlobalRoleMutation,
   projectEndProjectAccountantMutation,
   projectEvidenceSummary,
+  projectFundSharedAdvanceMutation,
   projectListGlobalRolesAdmin,
   projectListProjectAccountantsAdmin,
   projectMonthlyReport,
   projectOpeningApplyMutation,
   projectOpeningPreview,
   projectRecordEntryMutation,
+  projectRecordVendorRefundMutation,
   projectReverseEntryMutation,
+  projectReverseSharedAdvanceMovementMutation,
+  projectSharedAdvanceMovementsPage,
   projectVendorFinanceEntriesPage,
   projectVendorFinanceSingleEntry,
   projectVendorFinanceVendorDetail,
+  projectVendorFinanceVendorExport,
   projectVendorFinanceVendorList,
   projectVendorReconciliationsPage,
   type ClassifiedVendorFinanceContractType,
@@ -31,6 +37,7 @@ import {
   type VendorFinanceActiveFilter,
   type VendorFinanceActorAccessProjection,
   type VendorFinanceActorContextOptionsResponse,
+  type VendorFinanceApplySharedAdvanceOffsetResponse,
   type VendorFinanceAssignGlobalRoleResponse,
   type VendorFinanceAssignProjectAccountantResponse,
   type VendorFinanceBalanceFilter,
@@ -46,6 +53,7 @@ import {
   type VendorFinanceEvidenceFinalizeResponse,
   type VendorFinanceEvidenceMimeType,
   type VendorFinanceEvidenceTargetKind,
+  type VendorFinanceFundSharedAdvanceResponse,
   type VendorFinanceGlobalRoleCode,
   type VendorFinanceLedgerScope,
   type VendorFinanceListGlobalRolesAdminResponse,
@@ -53,10 +61,16 @@ import {
   type VendorFinanceMonthlyReportResponse,
   type VendorFinanceOpeningApplyResponse,
   type VendorFinanceOpeningPreviewResponse,
+  type VendorFinanceRecordVendorRefundResponse,
   type VendorFinanceReconciliationProjection,
   type VendorFinanceReconciliationsPageResponse,
+  type VendorFinanceReverseSharedAdvanceMovementResponse,
+  type VendorFinanceSharedAdvanceMovementProjection,
+  type VendorFinanceSharedAdvanceMovementType,
+  type VendorFinanceSharedAdvanceMovementsPageResponse,
   type VendorFinanceSingleEntryResponse,
   type VendorFinanceVendorDetailResponse,
+  type VendorFinanceVendorExportResponse,
   type VendorFinanceVendorListResponse,
 } from "./vendor-finance-contract.ts";
 
@@ -142,6 +156,18 @@ export type VendorFinanceRepository = {
     },
   ): Promise<VendorFinanceRepoResult<VendorFinanceVendorListResponse>>;
 
+  exportVendors(
+    input: VendorFinanceActorRef & {
+      search: string | null;
+      active: VendorFinanceActiveFilter;
+      balance_filter: VendorFinanceBalanceFilter;
+      project_id: string | null;
+      accountant_ref: string | null;
+      ledger_scope: VendorFinanceLedgerScope | null;
+      contract_type?: VendorFinanceContractTypeFilter;
+    },
+  ): Promise<VendorFinanceRepoResult<VendorFinanceVendorExportResponse>>;
+
   getVendor(
     input: VendorFinanceActorRef & {
       vendor_id: string;
@@ -165,6 +191,15 @@ export type VendorFinanceRepository = {
       month?: string | null;
     },
   ): Promise<VendorFinanceRepoResult<VendorFinanceEntriesPageResponse>>;
+
+  listSharedAdvanceMovements(
+    input: VendorFinanceActorRef & {
+      vendor_id: string;
+      before_sequence: number | null;
+      movement_type: VendorFinanceSharedAdvanceMovementType | null;
+      page_size: number;
+    },
+  ): Promise<VendorFinanceRepoResult<VendorFinanceSharedAdvanceMovementsPageResponse>>;
 
   getEntry(
     input: VendorFinanceActorRef & { entry_id: string },
@@ -198,6 +233,41 @@ export type VendorFinanceRepository = {
     VendorFinanceRepoResult<{ entry: VendorFinanceEntryProjection; replayed: boolean }>
   >;
 
+  fundSharedAdvance(
+    input: VendorFinanceActorRef & {
+      vendor_id: string;
+      amount_minor: string;
+      effective_date: string;
+      reason: string;
+      idempotency_key: string;
+      request_fingerprint: string;
+    },
+  ): Promise<VendorFinanceRepoResult<VendorFinanceFundSharedAdvanceResponse>>;
+
+  recordVendorRefund(
+    input: VendorFinanceActorRef & {
+      vendor_id: string;
+      amount_minor: string;
+      effective_date: string;
+      reason: string;
+      idempotency_key: string;
+      request_fingerprint: string;
+    },
+  ): Promise<VendorFinanceRepoResult<VendorFinanceRecordVendorRefundResponse>>;
+
+  applySharedAdvanceOffset(
+    input: VendorFinanceActorRef & {
+      vendor_id: string;
+      project_id: string;
+      contract_type: ClassifiedVendorFinanceContractType;
+      amount_minor: string;
+      effective_date: string;
+      reason: string;
+      idempotency_key: string;
+      request_fingerprint: string;
+    },
+  ): Promise<VendorFinanceRepoResult<VendorFinanceApplySharedAdvanceOffsetResponse>>;
+
   reverseEntry(
     input: VendorFinanceActorRef & {
       entry_id: string;
@@ -210,9 +280,22 @@ export type VendorFinanceRepository = {
     VendorFinanceRepoResult<{
       reversal_entry: VendorFinanceEntryProjection;
       reversed_entry: VendorFinanceEntryProjection;
+      reversal_movement?: VendorFinanceSharedAdvanceMovementProjection;
+      reversed_movement?: VendorFinanceSharedAdvanceMovementProjection;
+      shared_advance_balance_minor?: string;
       replayed: boolean;
     }>
   >;
+
+  reverseSharedAdvanceMovement(
+    input: VendorFinanceActorRef & {
+      movement_id: string;
+      effective_date: string | null;
+      reason: string;
+      idempotency_key: string;
+      request_fingerprint: string;
+    },
+  ): Promise<VendorFinanceRepoResult<VendorFinanceReverseSharedAdvanceMovementResponse>>;
 
   previewOpeningBatch(
     input: VendorFinanceActorRef & {
@@ -389,15 +472,23 @@ const UUID_REGEX =
 const SHA256_HEX_REGEX = /^[0-9a-f]{64}$/i;
 
 const KNOWN_RPC_TOKENS: ReadonlyArray<readonly [string, VendorFinanceErrorCode]> = [
+  ["VENDOR_FINANCE_SHARED_ADVANCE_MOVEMENT_TYPE_INVALID", "VENDOR_FINANCE_SHARED_ADVANCE_MOVEMENT_INVALID"],
   ["VENDOR_FINANCE_CONTRACT_TYPE_ALREADY_CLASSIFIED", "VENDOR_FINANCE_CONTRACT_TYPE_ALREADY_CLASSIFIED"],
+  ["VENDOR_FINANCE_SHARED_ADVANCE_MOVEMENT_NOT_FOUND", "VENDOR_FINANCE_SHARED_ADVANCE_MOVEMENT_NOT_FOUND"],
+  ["VENDOR_FINANCE_SHARED_ADVANCE_MOVEMENT_INVALID", "VENDOR_FINANCE_SHARED_ADVANCE_MOVEMENT_INVALID"],
   ["VENDOR_FINANCE_VENDOR_INACTIVE_ENTRY_FORBIDDEN", "VENDOR_FINANCE_VENDOR_INACTIVE_ENTRY_FORBIDDEN"],
+  ["VENDOR_FINANCE_INSUFFICIENT_SUBLEDGER_PAYABLE", "VENDOR_FINANCE_INSUFFICIENT_SUBLEDGER_PAYABLE"],
   ["VENDOR_FINANCE_OPENING_BATCH_DUPLICATE_VENDOR", "VENDOR_FINANCE_OPENING_BATCH_DUPLICATE_VENDOR"],
   ["VENDOR_FINANCE_CONTRACT_TYPE_TARGET_NOT_EMPTY", "VENDOR_FINANCE_CONTRACT_TYPE_TARGET_NOT_EMPTY"],
   ["VENDOR_FINANCE_GLOBAL_ROLE_ALREADY_ASSIGNED", "VENDOR_FINANCE_GLOBAL_ROLE_ALREADY_ASSIGNED"],
   ["VENDOR_FINANCE_GLOBAL_ROLE_VERSION_CONFLICT", "VENDOR_FINANCE_GLOBAL_ROLE_VERSION_CONFLICT"],
   ["VENDOR_FINANCE_EVIDENCE_RESERVATION_EXPIRED", "VENDOR_FINANCE_EVIDENCE_RESERVATION_EXPIRED"],
+  ["VENDOR_FINANCE_INSUFFICIENT_SHARED_ADVANCE", "VENDOR_FINANCE_INSUFFICIENT_SHARED_ADVANCE"],
+  ["VENDOR_FINANCE_RESET_EVIDENCE_NOT_CLEANED", "VENDOR_FINANCE_RESET_EVIDENCE_NOT_CLEANED"],
   ["VENDOR_FINANCE_PROJECT_ACCOUNTANT_INACTIVE", "VENDOR_FINANCE_PROJECT_ACCOUNTANT_INACTIVE"],
   ["VENDOR_FINANCE_ASSIGNMENT_VERSION_CONFLICT", "VENDOR_FINANCE_ASSIGNMENT_VERSION_CONFLICT"],
+  ["VENDOR_FINANCE_EXPORT_ROW_CAP_EXCEEDED", "VENDOR_FINANCE_EXPORT_ROW_CAP_EXCEEDED"],
+  ["VENDOR_FINANCE_MOVEMENT_ALREADY_REVERSED", "VENDOR_FINANCE_MOVEMENT_ALREADY_REVERSED"],
   ["VENDOR_FINANCE_VENDOR_ALREADY_INITIALIZED", "VENDOR_FINANCE_VENDOR_ALREADY_INITIALIZED"],
   ["VENDOR_FINANCE_PROJECT_ASSIGNMENT_OVERLAP", "VENDOR_FINANCE_PROJECT_ASSIGNMENT_OVERLAP"],
   ["VENDOR_FINANCE_OPENING_BATCH_SIZE_INVALID", "VENDOR_FINANCE_OPENING_BATCH_SIZE_INVALID"],
@@ -541,7 +632,9 @@ function projectEvidenceReservationRecord(value: unknown): EvidenceReservationRe
   if (
     typeof r.evidence_id !== "string" ||
     !UUID_REGEX.test(r.evidence_id) ||
-    (r.target_kind !== "ENTRY" && r.target_kind !== "RECONCILIATION") ||
+    (r.target_kind !== "ENTRY" &&
+      r.target_kind !== "RECONCILIATION" &&
+      r.target_kind !== "SHARED_ADVANCE_MOVEMENT") ||
     typeof r.target_id !== "string" ||
     !UUID_REGEX.test(r.target_id) ||
     r.status !== "RESERVED" ||
@@ -612,7 +705,9 @@ function projectEvidenceReservationInfoRecord(
   if (
     typeof value.evidence_id !== "string" ||
     !UUID_REGEX.test(value.evidence_id) ||
-    (value.target_kind !== "ENTRY" && value.target_kind !== "RECONCILIATION") ||
+    (value.target_kind !== "ENTRY" &&
+      value.target_kind !== "RECONCILIATION" &&
+      value.target_kind !== "SHARED_ADVANCE_MOVEMENT") ||
     typeof value.target_id !== "string" ||
     !UUID_REGEX.test(value.target_id) ||
     (value.status !== "RESERVED" &&
@@ -675,7 +770,9 @@ function projectEvidenceFinalizeRecord(
       "checksum_sha256",
       "finalized_at",
     ]) ||
-    (ev.target_kind !== "ENTRY" && ev.target_kind !== "RECONCILIATION") ||
+    (ev.target_kind !== "ENTRY" &&
+      ev.target_kind !== "RECONCILIATION" &&
+      ev.target_kind !== "SHARED_ADVANCE_MOVEMENT") ||
     typeof ev.target_id !== "string" ||
     !UUID_REGEX.test(ev.target_id)
   ) {
@@ -722,7 +819,9 @@ function projectEvidenceDownloadRecord(value: unknown): EvidenceDownloadRecord |
   if (
     typeof value.evidence_id !== "string" ||
     !UUID_REGEX.test(value.evidence_id) ||
-    (value.target_kind !== "ENTRY" && value.target_kind !== "RECONCILIATION") ||
+    (value.target_kind !== "ENTRY" &&
+      value.target_kind !== "RECONCILIATION" &&
+      value.target_kind !== "SHARED_ADVANCE_MOVEMENT") ||
     typeof value.target_id !== "string" ||
     !UUID_REGEX.test(value.target_id) ||
     !isOpaqueVfinEvidenceStorageKey(value.storage_key) ||
@@ -833,6 +932,26 @@ export function createVendorFinanceRepository(
       );
     },
 
+    exportVendors(input) {
+      return callProjected(
+        "exportVendors",
+        "read",
+        "vendor_finance_export_vendors",
+        {
+          p_auth_subject: input.auth_subject,
+          p_app_user_id: input.app_user_id,
+          p_search: input.search,
+          p_active_filter: input.active,
+          p_balance_filter: input.balance_filter,
+          p_project_id: input.project_id,
+          p_accountant_user_id: input.accountant_ref,
+          p_ledger_scope: input.ledger_scope ?? "all",
+          p_contract_type: input.contract_type ?? "all",
+        },
+        projectVendorFinanceVendorExport,
+      );
+    },
+
     getVendor(input) {
       return callProjected(
         "getVendor",
@@ -911,6 +1030,100 @@ export function createVendorFinanceRepository(
           p_contract_type: input.contract_type ?? null,
         },
         projectVendorReconciliationsPage,
+      );
+    },
+
+    listSharedAdvanceMovements(input) {
+      return callProjected(
+        "listSharedAdvanceMovements",
+        "read",
+        "vendor_finance_list_shared_advance_movements",
+        {
+          p_auth_subject: input.auth_subject,
+          p_app_user_id: input.app_user_id,
+          p_vendor_id: input.vendor_id,
+          p_before_sequence: input.before_sequence,
+          p_movement_type: input.movement_type,
+          p_page_size: input.page_size,
+        },
+        (raw) => projectSharedAdvanceMovementsPage(raw, input.movement_type),
+      );
+    },
+
+    fundSharedAdvance(input) {
+      return callProjected(
+        "fundSharedAdvance",
+        "mutation",
+        "vendor_finance_fund_shared_advance",
+        {
+          p_auth_subject: input.auth_subject,
+          p_app_user_id: input.app_user_id,
+          p_vendor_id: input.vendor_id,
+          p_amount_minor: input.amount_minor,
+          p_effective_date: input.effective_date,
+          p_reason: input.reason,
+          p_idempotency_key: input.idempotency_key,
+          p_request_fingerprint: input.request_fingerprint,
+        },
+        projectFundSharedAdvanceMutation,
+      );
+    },
+
+    recordVendorRefund(input) {
+      return callProjected(
+        "recordVendorRefund",
+        "mutation",
+        "vendor_finance_record_vendor_refund",
+        {
+          p_auth_subject: input.auth_subject,
+          p_app_user_id: input.app_user_id,
+          p_vendor_id: input.vendor_id,
+          p_amount_minor: input.amount_minor,
+          p_effective_date: input.effective_date,
+          p_reason: input.reason,
+          p_idempotency_key: input.idempotency_key,
+          p_request_fingerprint: input.request_fingerprint,
+        },
+        projectRecordVendorRefundMutation,
+      );
+    },
+
+    applySharedAdvanceOffset(input) {
+      return callProjected(
+        "applySharedAdvanceOffset",
+        "mutation",
+        "vendor_finance_apply_shared_advance_offset",
+        {
+          p_auth_subject: input.auth_subject,
+          p_app_user_id: input.app_user_id,
+          p_vendor_id: input.vendor_id,
+          p_project_id: input.project_id,
+          p_contract_type: input.contract_type,
+          p_amount_minor: input.amount_minor,
+          p_effective_date: input.effective_date,
+          p_reason: input.reason,
+          p_idempotency_key: input.idempotency_key,
+          p_request_fingerprint: input.request_fingerprint,
+        },
+        projectApplySharedAdvanceOffsetMutation,
+      );
+    },
+
+    reverseSharedAdvanceMovement(input) {
+      return callProjected(
+        "reverseSharedAdvanceMovement",
+        "mutation",
+        "vendor_finance_reverse_shared_advance_movement",
+        {
+          p_auth_subject: input.auth_subject,
+          p_app_user_id: input.app_user_id,
+          p_movement_id: input.movement_id,
+          p_effective_date: input.effective_date,
+          p_reason: input.reason,
+          p_idempotency_key: input.idempotency_key,
+          p_request_fingerprint: input.request_fingerprint,
+        },
+        projectReverseSharedAdvanceMovementMutation,
       );
     },
 

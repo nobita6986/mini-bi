@@ -120,6 +120,7 @@ export const VFIN_UI_ENTRY_TYPES = [
   "PAYROLL_RECORDED",
   "PAYMENT_RECORDED",
   "ADVANCE_RECORDED",
+  "ADVANCE_OFFSET_RECORDED",
   "ADJUSTMENT_INCREASE",
   "ADJUSTMENT_DECREASE",
   "REVERSAL",
@@ -143,6 +144,8 @@ export const VFIN_UI_DOCUMENT_KINDS = [
   "PAYROLL_VOUCHER",
   "PAYMENT_VOUCHER",
   "ADVANCE_VOUCHER",
+  "VENDOR_REFUND_VOUCHER",
+  "ADVANCE_OFFSET_VOUCHER",
   "DEBT_ADJUSTMENT_VOUCHER",
   "OPENING_BALANCE_VOUCHER",
 ] as const satisfies readonly VendorFinanceDocumentKind[];
@@ -155,6 +158,7 @@ export const VFIN_UI_EVIDENCE_MIME_TYPES = [
 export const VFIN_UI_EVIDENCE_TARGET_KINDS = [
   "ENTRY",
   "RECONCILIATION",
+  "SHARED_ADVANCE_MOVEMENT",
 ] as const satisfies readonly VendorFinanceEvidenceTargetKind[];
 
 export const VFIN_UI_ACTIVE_FILTERS = [
@@ -178,6 +182,7 @@ export const ENTRY_TYPE_LABELS_VI: Readonly<Record<VendorFinanceEntryType, strin
   PAYROLL_RECORDED: "Ghi nhận lương phải trả",
   PAYMENT_RECORDED: "Thanh toán cho Vendor",
   ADVANCE_RECORDED: "Tạm ứng cho Vendor",
+  ADVANCE_OFFSET_RECORDED: "Khấu trừ ứng Vendor",
   ADJUSTMENT_INCREASE: "Điều chỉnh tăng phải trả",
   ADJUSTMENT_DECREASE: "Điều chỉnh giảm phải trả",
   REVERSAL: "Hoàn tác bút toán",
@@ -1715,6 +1720,25 @@ function exactKeys(value: Record<string, unknown>, keys: readonly string[]): boo
   return actual.length === expected.length && actual.every((k, i) => k === expected[i]);
 }
 
+function requiredAndOptionalKeysOnly(
+  value: Record<string, unknown>,
+  required: readonly string[],
+  optional: readonly string[],
+): boolean {
+  const allowed = new Set<string>([...required, ...optional]);
+  for (const key of required) {
+    if (!(key in value)) {
+      return false;
+    }
+  }
+  for (const key of Object.keys(value)) {
+    if (!allowed.has(key)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function nonEmptyStr(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value : null;
 }
@@ -2000,15 +2024,24 @@ export function parseVendorFinanceContextEnvelope(
       "accountants",
     ]) ||
     !isRecord(data.allowed_actions) ||
-    !exactKeys(data.allowed_actions, [
-      "visibility_scope",
-      "record_scope",
-      "reconcile_scope",
-      "can_view",
-      "can_record",
-      "can_reconcile",
-      "can_manage_project_assignments",
-    ]) ||
+    !requiredAndOptionalKeysOnly(
+      data.allowed_actions,
+      [
+        "visibility_scope",
+        "record_scope",
+        "reconcile_scope",
+        "can_view",
+        "can_record",
+        "can_reconcile",
+        "can_manage_project_assignments",
+      ],
+      [
+        "can_view_shared_advance",
+        "can_fund_vendor_advance",
+        "can_record_vendor_refund",
+        "can_apply_vendor_advance",
+      ],
+    ) ||
     !Array.isArray(data.projects) ||
     !Array.isArray(data.vendors) ||
     !Array.isArray(data.accountants)
@@ -2024,6 +2057,22 @@ export function parseVendorFinanceContextEnvelope(
   const canRecord = boolVal(data.allowed_actions.can_record);
   const canReconcile = boolVal(data.allowed_actions.can_reconcile);
   const canManage = boolVal(data.allowed_actions.can_manage_project_assignments);
+  const canViewShared =
+    "can_view_shared_advance" in data.allowed_actions
+      ? boolVal(data.allowed_actions.can_view_shared_advance)
+      : true;
+  const canFund =
+    "can_fund_vendor_advance" in data.allowed_actions
+      ? boolVal(data.allowed_actions.can_fund_vendor_advance)
+      : recordScope === "ALL";
+  const canRefund =
+    "can_record_vendor_refund" in data.allowed_actions
+      ? boolVal(data.allowed_actions.can_record_vendor_refund)
+      : recordScope === "ALL";
+  const canApply =
+    "can_apply_vendor_advance" in data.allowed_actions
+      ? boolVal(data.allowed_actions.can_apply_vendor_advance)
+      : canRecord;
   const hasLegacy = boolVal(data.has_legacy_unallocated);
 
   if (
@@ -2035,6 +2084,10 @@ export function parseVendorFinanceContextEnvelope(
     canRecord === null ||
     canReconcile === null ||
     canManage === null ||
+    canViewShared === null ||
+    canFund === null ||
+    canRefund === null ||
+    canApply === null ||
     hasLegacy === null
   ) {
     return null;
@@ -2127,6 +2180,10 @@ export function parseVendorFinanceContextEnvelope(
       can_record: canRecord,
       can_reconcile: canReconcile,
       can_manage_project_assignments: canManage,
+      can_view_shared_advance: canViewShared,
+      can_fund_vendor_advance: canFund,
+      can_record_vendor_refund: canRefund,
+      can_apply_vendor_advance: canApply,
     },
     has_legacy_unallocated: hasLegacy,
     projects,
@@ -2513,26 +2570,39 @@ export function parseVendorListEnvelope(envelope: unknown): VendorFinanceVendorL
       "vendors",
     ]) ||
     !isRecord(data.allowed_actions) ||
-    !exactKeys(data.allowed_actions, [
-      "visibility_scope",
-      "can_view",
-      "can_record",
-      "can_reconcile",
-      "can_manage_project_assignments",
-      "active_assigned_project_count",
-    ]) ||
+    !requiredAndOptionalKeysOnly(
+      data.allowed_actions,
+      [
+        "visibility_scope",
+        "can_view",
+        "can_record",
+        "can_reconcile",
+        "can_manage_project_assignments",
+        "active_assigned_project_count",
+      ],
+      [
+        "can_view_shared_advance",
+        "can_fund_vendor_advance",
+        "can_record_vendor_refund",
+        "can_apply_vendor_advance",
+      ],
+    ) ||
     !isRecord(data.summary) ||
-    !exactKeys(data.summary, [
-      "total_payable_minor",
-      "total_advance_minor",
-      "net_balance_minor",
-      "vendors_with_payable_count",
-      "vendors_with_advance_count",
-      "vendors_with_nonzero_balance_count",
-      "total_vendor_count",
-      "uninitialized_vendor_count",
-      "sub_ledger_count",
-    ]) ||
+    !requiredAndOptionalKeysOnly(
+      data.summary,
+      [
+        "total_payable_minor",
+        "total_advance_minor",
+        "net_balance_minor",
+        "vendors_with_payable_count",
+        "vendors_with_advance_count",
+        "vendors_with_nonzero_balance_count",
+        "total_vendor_count",
+        "uninitialized_vendor_count",
+        "sub_ledger_count",
+      ],
+      ["total_shared_advance_minor"],
+    ) ||
     !isRecord(data.filters) ||
     !exactKeys(data.filters, [
       "search",
@@ -2554,10 +2624,30 @@ export function parseVendorListEnvelope(envelope: unknown): VendorFinanceVendorL
   const canRecord = boolVal(data.allowed_actions.can_record);
   const canReconcile = boolVal(data.allowed_actions.can_reconcile);
   const canManage = boolVal(data.allowed_actions.can_manage_project_assignments);
+  const canViewShared =
+    "can_view_shared_advance" in data.allowed_actions
+      ? boolVal(data.allowed_actions.can_view_shared_advance)
+      : true;
+  const canFund =
+    "can_fund_vendor_advance" in data.allowed_actions
+      ? boolVal(data.allowed_actions.can_fund_vendor_advance)
+      : visibilityScope === "ALL" && Boolean(canRecord);
+  const canRefund =
+    "can_record_vendor_refund" in data.allowed_actions
+      ? boolVal(data.allowed_actions.can_record_vendor_refund)
+      : visibilityScope === "ALL" && Boolean(canRecord);
+  const canApply =
+    "can_apply_vendor_advance" in data.allowed_actions
+      ? boolVal(data.allowed_actions.can_apply_vendor_advance)
+      : canRecord;
   const activeAssignedCount = nonNegInt(data.allowed_actions.active_assigned_project_count);
 
   const totalPayable = nonNegativeMoneyStr(data.summary.total_payable_minor);
   const totalAdvance = nonNegativeMoneyStr(data.summary.total_advance_minor);
+  const totalSharedAdvance =
+    "total_shared_advance_minor" in data.summary
+      ? nonNegativeMoneyStr(data.summary.total_shared_advance_minor)
+      : "0";
   const netBalance = signedMoneyStr(data.summary.net_balance_minor);
   const payableCount = nonNegInt(data.summary.vendors_with_payable_count);
   const advanceCount = nonNegInt(data.summary.vendors_with_advance_count);
@@ -2585,9 +2675,14 @@ export function parseVendorListEnvelope(envelope: unknown): VendorFinanceVendorL
     canRecord === null ||
     canReconcile === null ||
     canManage === null ||
+    canViewShared === null ||
+    canFund === null ||
+    canRefund === null ||
+    canApply === null ||
     activeAssignedCount === null ||
     totalPayable === null ||
     totalAdvance === null ||
+    totalSharedAdvance === null ||
     netBalance === null ||
     payableCount === null ||
     advanceCount === null ||
@@ -2623,23 +2718,27 @@ export function parseVendorListEnvelope(envelope: unknown): VendorFinanceVendorL
   for (const item of data.vendors) {
     if (
       !isRecord(item) ||
-      !exactKeys(item, [
-        "vendor_id",
-        "display_name",
-        "active",
-        "sub_ledger_count",
-        "payable_total_minor",
-        "advance_total_minor",
-        "current_balance_minor",
-        "balance_direction",
-        "entry_count",
-        "has_opening_entry",
-        "eligible_for_opening",
-        "last_effective_date",
-        "last_entry_at",
-        "last_reconciled_as_of_date",
-        "sub_ledgers",
-      ]) ||
+      !requiredAndOptionalKeysOnly(
+        item,
+        [
+          "vendor_id",
+          "display_name",
+          "active",
+          "sub_ledger_count",
+          "payable_total_minor",
+          "advance_total_minor",
+          "current_balance_minor",
+          "balance_direction",
+          "entry_count",
+          "has_opening_entry",
+          "eligible_for_opening",
+          "last_effective_date",
+          "last_entry_at",
+          "last_reconciled_as_of_date",
+          "sub_ledgers",
+        ],
+        ["shared_advance_balance_minor"],
+      ) ||
       !Array.isArray(item.sub_ledgers)
     ) {
       return null;
@@ -2650,6 +2749,10 @@ export function parseVendorListEnvelope(envelope: unknown): VendorFinanceVendorL
     const itemSubLedgerCount = nonNegInt(item.sub_ledger_count);
     const payableTotal = nonNegativeMoneyStr(item.payable_total_minor);
     const advanceTotal = nonNegativeMoneyStr(item.advance_total_minor);
+    const sharedAdvanceBalance =
+      "shared_advance_balance_minor" in item
+        ? nonNegativeMoneyStr(item.shared_advance_balance_minor)
+        : "0";
     const currentBalance = signedMoneyStr(item.current_balance_minor);
     const direction = listBalanceDirectionVal(item.balance_direction);
     const entryCount = nonNegInt(item.entry_count);
@@ -2666,6 +2769,7 @@ export function parseVendorListEnvelope(envelope: unknown): VendorFinanceVendorL
       itemSubLedgerCount === null ||
       payableTotal === null ||
       advanceTotal === null ||
+      sharedAdvanceBalance === null ||
       currentBalance === null ||
       direction === null ||
       entryCount === null ||
@@ -2692,6 +2796,7 @@ export function parseVendorListEnvelope(envelope: unknown): VendorFinanceVendorL
       sub_ledger_count: itemSubLedgerCount,
       payable_total_minor: payableTotal,
       advance_total_minor: advanceTotal,
+      shared_advance_balance_minor: sharedAdvanceBalance,
       current_balance_minor: currentBalance,
       balance_direction: direction,
       entry_count: entryCount,
@@ -2707,6 +2812,7 @@ export function parseVendorListEnvelope(envelope: unknown): VendorFinanceVendorL
   const summary: VendorFinanceCompanySummary = {
     total_payable_minor: totalPayable,
     total_advance_minor: totalAdvance,
+    total_shared_advance_minor: totalSharedAdvance,
     net_balance_minor: netBalance,
     vendors_with_payable_count: payableCount,
     vendors_with_advance_count: advanceCount,
@@ -2724,6 +2830,10 @@ export function parseVendorListEnvelope(envelope: unknown): VendorFinanceVendorL
       can_record: canRecord,
       can_reconcile: canReconcile,
       can_manage_project_assignments: canManage,
+      can_view_shared_advance: canViewShared,
+      can_fund_vendor_advance: canFund,
+      can_record_vendor_refund: canRefund,
+      can_apply_vendor_advance: canApply,
       active_assigned_project_count: activeAssignedCount,
     },
     summary,
@@ -2747,26 +2857,30 @@ export function parseVendorListEnvelope(envelope: unknown): VendorFinanceVendorL
 function parseDetailSubLedgerProjection(value: unknown): VendorFinanceDetailSubLedger | null {
   if (
     !isRecord(value) ||
-    !exactKeys(value, [
-      "ledger_scope",
-      "project_id",
-      "project_display_name",
-      "project_active",
-      "accountant_ref",
-      "responsible_accountant_display_name",
-      "contract_type",
-      "is_active_assignment",
-      "current_balance_minor",
-      "balance_direction",
-      "latest_sequence",
-      "entry_count",
-      "has_opening_entry",
-      "eligible_for_opening",
-      "can_record_entry",
-      "can_reconcile",
-      "can_classify_contract_type",
-      "classification",
-    ])
+    !requiredAndOptionalKeysOnly(
+      value,
+      [
+        "ledger_scope",
+        "project_id",
+        "project_display_name",
+        "project_active",
+        "accountant_ref",
+        "responsible_accountant_display_name",
+        "contract_type",
+        "is_active_assignment",
+        "current_balance_minor",
+        "balance_direction",
+        "latest_sequence",
+        "entry_count",
+        "has_opening_entry",
+        "eligible_for_opening",
+        "can_record_entry",
+        "can_reconcile",
+        "can_classify_contract_type",
+        "classification",
+      ],
+      ["can_apply_shared_advance_offset"],
+    )
   ) {
     return null;
   }
@@ -2787,6 +2901,13 @@ function parseDetailSubLedgerProjection(value: unknown): VendorFinanceDetailSubL
   const canRecordEntry = boolVal(value.can_record_entry);
   const canReconcile = boolVal(value.can_reconcile);
   const canClassify = boolVal(value.can_classify_contract_type);
+  const canApplyOffset =
+    "can_apply_shared_advance_offset" in value
+      ? boolVal(value.can_apply_shared_advance_offset)
+      : Boolean(canRecordEntry) &&
+        ledgerScope === "PROJECT_ACCOUNTANT" &&
+        (contractType === "SEASONAL" || contractType === "OFFICIAL") &&
+        direction === "PAYABLE";
   const classification =
     value.classification === null
       ? null
@@ -2810,6 +2931,7 @@ function parseDetailSubLedgerProjection(value: unknown): VendorFinanceDetailSubL
     canRecordEntry === null ||
     canReconcile === null ||
     canClassify === null ||
+    canApplyOffset === null ||
     (value.classification !== null && classification === null)
   ) {
     return null;
@@ -2833,6 +2955,7 @@ function parseDetailSubLedgerProjection(value: unknown): VendorFinanceDetailSubL
     can_record_entry: canRecordEntry,
     can_reconcile: canReconcile,
     can_classify_contract_type: canClassify,
+    can_apply_shared_advance_offset: canApplyOffset,
     classification,
   };
 }
@@ -2851,43 +2974,64 @@ export function parseVendorDetailEnvelope(
       "vendor",
     ]) ||
     !isRecord(data.allowed_actions) ||
-    !exactKeys(data.allowed_actions, [
-      "visibility_scope",
-      "can_view",
-      "can_record",
-      "can_reconcile",
-      "can_manage_project_assignments",
-      "allowed_entry_types",
-    ]) ||
+    !requiredAndOptionalKeysOnly(
+      data.allowed_actions,
+      [
+        "visibility_scope",
+        "can_view",
+        "can_record",
+        "can_reconcile",
+        "can_manage_project_assignments",
+        "allowed_entry_types",
+      ],
+      [
+        "can_view_shared_advance",
+        "can_fund_vendor_advance",
+        "can_record_vendor_refund",
+        "can_apply_vendor_advance",
+      ],
+    ) ||
     !Array.isArray(data.allowed_actions.allowed_entry_types) ||
     !Array.isArray(data.sub_ledgers) ||
     !isRecord(data.vendor) ||
-    !exactKeys(data.vendor, [
-      "vendor_id",
-      "display_name",
-      "active",
-      "current_balance_minor",
-      "balance_direction",
-      "latest_sequence",
-      "entry_count",
-      "has_opening_entry",
-      "eligible_for_opening",
-      "totals",
-      "latest_reconciliation",
-      "recent_reconciliations",
-    ]) ||
+    !requiredAndOptionalKeysOnly(
+      data.vendor,
+      [
+        "vendor_id",
+        "display_name",
+        "active",
+        "current_balance_minor",
+        "balance_direction",
+        "latest_sequence",
+        "entry_count",
+        "has_opening_entry",
+        "eligible_for_opening",
+        "totals",
+        "latest_reconciliation",
+        "recent_reconciliations",
+      ],
+      [
+        "shared_advance_balance_minor",
+        "shared_advance_latest_sequence",
+        "shared_advance_movement_count",
+      ],
+    ) ||
     !isRecord(data.vendor.totals) ||
-    !exactKeys(data.vendor.totals, [
-      "opening_payable_minor",
-      "opening_advance_minor",
-      "debt_recorded_minor",
-      "payroll_recorded_minor",
-      "payment_recorded_minor",
-      "advance_recorded_minor",
-      "adjustment_increase_minor",
-      "adjustment_decrease_minor",
-      "reversed_entry_count",
-    ]) ||
+    !requiredAndOptionalKeysOnly(
+      data.vendor.totals,
+      [
+        "opening_payable_minor",
+        "opening_advance_minor",
+        "debt_recorded_minor",
+        "payroll_recorded_minor",
+        "payment_recorded_minor",
+        "advance_recorded_minor",
+        "adjustment_increase_minor",
+        "adjustment_decrease_minor",
+        "reversed_entry_count",
+      ],
+      ["advance_offset_recorded_minor"],
+    ) ||
     !Array.isArray(data.vendor.recent_reconciliations)
   ) {
     return null;
@@ -2899,6 +3043,22 @@ export function parseVendorDetailEnvelope(
   const canRecord = boolVal(data.allowed_actions.can_record);
   const canReconcile = boolVal(data.allowed_actions.can_reconcile);
   const canManage = boolVal(data.allowed_actions.can_manage_project_assignments);
+  const canViewShared =
+    "can_view_shared_advance" in data.allowed_actions
+      ? boolVal(data.allowed_actions.can_view_shared_advance)
+      : true;
+  const canFund =
+    "can_fund_vendor_advance" in data.allowed_actions
+      ? boolVal(data.allowed_actions.can_fund_vendor_advance)
+      : visibilityScope === "ALL" && Boolean(canRecord);
+  const canRefund =
+    "can_record_vendor_refund" in data.allowed_actions
+      ? boolVal(data.allowed_actions.can_record_vendor_refund)
+      : visibilityScope === "ALL" && Boolean(canRecord);
+  const canApply =
+    "can_apply_vendor_advance" in data.allowed_actions
+      ? boolVal(data.allowed_actions.can_apply_vendor_advance)
+      : canRecord;
   const allowedEntryTypes: NormalVendorFinanceEntryType[] = [];
   for (const rawType of data.allowed_actions.allowed_entry_types) {
     if (
@@ -2929,6 +3089,18 @@ export function parseVendorDetailEnvelope(
   const vendorId = isCanonicalUiVendorId(v.vendor_id) ? v.vendor_id : null;
   const displayName = nonEmptyStr(v.display_name);
   const active = boolVal(v.active);
+  const sharedBalance =
+    "shared_advance_balance_minor" in v
+      ? nonNegativeMoneyStr(v.shared_advance_balance_minor)
+      : "0";
+  const sharedLatestSeq =
+    "shared_advance_latest_sequence" in v
+      ? nonNegInt(v.shared_advance_latest_sequence)
+      : 0;
+  const sharedMovementCount =
+    "shared_advance_movement_count" in v
+      ? nonNegInt(v.shared_advance_movement_count)
+      : 0;
   const currentBalance = signedMoneyStr(v.current_balance_minor);
   const direction = listBalanceDirectionVal(v.balance_direction);
   const latestSeq = nonNegInt(v.latest_sequence);
@@ -2943,6 +3115,10 @@ export function parseVendorDetailEnvelope(
   const payrollRecorded = nonNegativeMoneyStr(t.payroll_recorded_minor);
   const paymentRecorded = nonNegativeMoneyStr(t.payment_recorded_minor);
   const advanceRecorded = nonNegativeMoneyStr(t.advance_recorded_minor);
+  const advanceOffsetRecorded =
+    "advance_offset_recorded_minor" in t
+      ? nonNegativeMoneyStr(t.advance_offset_recorded_minor)
+      : "0";
   const adjustmentInc = nonNegativeMoneyStr(t.adjustment_increase_minor);
   const adjustmentDec = nonNegativeMoneyStr(t.adjustment_decrease_minor);
   const reversedCount = nonNegInt(t.reversed_entry_count);
@@ -2966,9 +3142,16 @@ export function parseVendorDetailEnvelope(
     canRecord === null ||
     canReconcile === null ||
     canManage === null ||
+    canViewShared === null ||
+    canFund === null ||
+    canRefund === null ||
+    canApply === null ||
     vendorId === null ||
     displayName === null ||
     active === null ||
+    sharedBalance === null ||
+    sharedLatestSeq === null ||
+    sharedMovementCount === null ||
     currentBalance === null ||
     direction === null ||
     latestSeq === null ||
@@ -2981,6 +3164,7 @@ export function parseVendorDetailEnvelope(
     payrollRecorded === null ||
     paymentRecorded === null ||
     advanceRecorded === null ||
+    advanceOffsetRecorded === null ||
     adjustmentInc === null ||
     adjustmentDec === null ||
     reversedCount === null ||
@@ -2996,6 +3180,7 @@ export function parseVendorDetailEnvelope(
     payroll_recorded_minor: payrollRecorded,
     payment_recorded_minor: paymentRecorded,
     advance_recorded_minor: advanceRecorded,
+    advance_offset_recorded_minor: advanceOffsetRecorded,
     adjustment_increase_minor: adjustmentInc,
     adjustment_decrease_minor: adjustmentDec,
     reversed_entry_count: reversedCount,
@@ -3009,6 +3194,10 @@ export function parseVendorDetailEnvelope(
       can_record: canRecord,
       can_reconcile: canReconcile,
       can_manage_project_assignments: canManage,
+      can_view_shared_advance: canViewShared,
+      can_fund_vendor_advance: canFund,
+      can_record_vendor_refund: canRefund,
+      can_apply_vendor_advance: canApply,
       allowed_entry_types: allowedEntryTypes,
     },
     selected_sub_ledger: selectedSubLedger,
@@ -3017,6 +3206,9 @@ export function parseVendorDetailEnvelope(
       vendor_id: vendorId,
       display_name: displayName,
       active,
+      shared_advance_balance_minor: sharedBalance,
+      shared_advance_latest_sequence: sharedLatestSeq,
+      shared_advance_movement_count: sharedMovementCount,
       current_balance_minor: currentBalance,
       balance_direction: direction,
       latest_sequence: latestSeq,
@@ -3481,18 +3673,22 @@ export function parseMonthlyReportEnvelope(
       "contract_type",
     ]) ||
     !isRecord(data.totals) ||
-    !exactKeys(data.totals, [
-      "project_revenue_status",
-      "project_revenue_minor",
-      "project_accountant_book_count",
-      "sub_ledger_count",
-      "obligations_in_month_minor",
-      "paid_in_month_minor",
-      "advanced_in_month_minor",
-      "paid_and_advanced_in_month_minor",
-      "closing_payable_minor",
-      "closing_advance_minor",
-    ]) ||
+    !requiredAndOptionalKeysOnly(
+      data.totals,
+      [
+        "project_revenue_status",
+        "project_revenue_minor",
+        "project_accountant_book_count",
+        "sub_ledger_count",
+        "obligations_in_month_minor",
+        "paid_in_month_minor",
+        "advanced_in_month_minor",
+        "paid_and_advanced_in_month_minor",
+        "closing_payable_minor",
+        "closing_advance_minor",
+      ],
+      ["advance_offset_in_month_minor", "paid_and_offset_in_month_minor"],
+    ) ||
     !Array.isArray(data.project_accountant_summaries) ||
     !Array.isArray(data.rows) ||
     !Array.isArray(data.legacy_unallocated_rows)
@@ -3525,6 +3721,16 @@ export function parseMonthlyReportEnvelope(
   const obligations = nonNegativeMoneyStr(t.obligations_in_month_minor);
   const paid = nonNegativeMoneyStr(t.paid_in_month_minor);
   const advanced = nonNegativeMoneyStr(t.advanced_in_month_minor);
+  const advanceOffset =
+    "advance_offset_in_month_minor" in t
+      ? nonNegativeMoneyStr(t.advance_offset_in_month_minor)
+      : "0";
+  const paidAndOffset =
+    "paid_and_offset_in_month_minor" in t
+      ? nonNegativeMoneyStr(t.paid_and_offset_in_month_minor)
+      : paid !== null && advanceOffset !== null
+        ? (BigInt(paid) + BigInt(advanceOffset)).toString()
+        : null;
   const paidAndAdvanced = nonNegativeMoneyStr(t.paid_and_advanced_in_month_minor);
   const closingPayable = nonNegativeMoneyStr(t.closing_payable_minor);
   const closingAdvance = nonNegativeMoneyStr(t.closing_advance_minor);
@@ -3552,6 +3758,8 @@ export function parseMonthlyReportEnvelope(
     obligations === null ||
     paid === null ||
     advanced === null ||
+    advanceOffset === null ||
+    paidAndOffset === null ||
     paidAndAdvanced === null ||
     closingPayable === null ||
     closingAdvance === null
@@ -3563,25 +3771,29 @@ export function parseMonthlyReportEnvelope(
   for (const rawSum of data.project_accountant_summaries) {
     if (
       !isRecord(rawSum) ||
-      !exactKeys(rawSum, [
-        "project_id",
-        "project_display_name",
-        "project_active",
-        "accountant_ref",
-        "responsible_accountant_display_name",
-        "contract_type",
-        "is_currently_assigned",
-        "project_revenue_status",
-        "project_revenue_minor",
-        "vendor_count",
-        "obligations_in_month_minor",
-        "paid_in_month_minor",
-        "advanced_in_month_minor",
-        "paid_and_advanced_in_month_minor",
-        "closing_payable_minor",
-        "closing_advance_minor",
-        "in_month_entry_count",
-      ])
+      !requiredAndOptionalKeysOnly(
+        rawSum,
+        [
+          "project_id",
+          "project_display_name",
+          "project_active",
+          "accountant_ref",
+          "responsible_accountant_display_name",
+          "contract_type",
+          "is_currently_assigned",
+          "project_revenue_status",
+          "project_revenue_minor",
+          "vendor_count",
+          "obligations_in_month_minor",
+          "paid_in_month_minor",
+          "advanced_in_month_minor",
+          "paid_and_advanced_in_month_minor",
+          "closing_payable_minor",
+          "closing_advance_minor",
+          "in_month_entry_count",
+        ],
+        ["advance_offset_in_month_minor", "paid_and_offset_in_month_minor"],
+      )
     ) {
       return null;
     }
@@ -3596,6 +3808,16 @@ export function parseMonthlyReportEnvelope(
     const sObl = nonNegativeMoneyStr(rawSum.obligations_in_month_minor);
     const sPaid = nonNegativeMoneyStr(rawSum.paid_in_month_minor);
     const sAdv = nonNegativeMoneyStr(rawSum.advanced_in_month_minor);
+    const sAdvOffset =
+      "advance_offset_in_month_minor" in rawSum
+        ? nonNegativeMoneyStr(rawSum.advance_offset_in_month_minor)
+        : "0";
+    const sPaidOffset =
+      "paid_and_offset_in_month_minor" in rawSum
+        ? nonNegativeMoneyStr(rawSum.paid_and_offset_in_month_minor)
+        : sPaid !== null && sAdvOffset !== null
+          ? (BigInt(sPaid) + BigInt(sAdvOffset)).toString()
+          : null;
     const sPaidAdv = nonNegativeMoneyStr(rawSum.paid_and_advanced_in_month_minor);
     const sClosePay = nonNegativeMoneyStr(rawSum.closing_payable_minor);
     const sCloseAdv = nonNegativeMoneyStr(rawSum.closing_advance_minor);
@@ -3615,6 +3837,8 @@ export function parseMonthlyReportEnvelope(
       sObl === null ||
       sPaid === null ||
       sAdv === null ||
+      sAdvOffset === null ||
+      sPaidOffset === null ||
       sPaidAdv === null ||
       sClosePay === null ||
       sCloseAdv === null ||
@@ -3636,6 +3860,8 @@ export function parseMonthlyReportEnvelope(
       obligations_in_month_minor: sObl,
       paid_in_month_minor: sPaid,
       advanced_in_month_minor: sAdv,
+      advance_offset_in_month_minor: sAdvOffset,
+      paid_and_offset_in_month_minor: sPaidOffset,
       paid_and_advanced_in_month_minor: sPaidAdv,
       closing_payable_minor: sClosePay,
       closing_advance_minor: sCloseAdv,
@@ -3647,35 +3873,39 @@ export function parseMonthlyReportEnvelope(
   for (const rawRow of data.rows) {
     if (
       !isRecord(rawRow) ||
-      !exactKeys(rawRow, [
-        "project_id",
-        "project_display_name",
-        "project_active",
-        "accountant_ref",
-        "responsible_accountant_display_name",
-        "is_currently_assigned",
-        "vendor_id",
-        "vendor_display_name",
-        "vendor_active",
-        "contract_type",
-        "project_revenue_status",
-        "project_revenue_minor",
-        "balance_before_month_minor",
-        "opening_payable_in_month_minor",
-        "opening_advance_in_month_minor",
-        "obligations_in_month_minor",
-        "paid_in_month_minor",
-        "advanced_in_month_minor",
-        "paid_and_advanced_in_month_minor",
-        "net_change_in_month_minor",
-        "closing_balance_minor",
-        "closing_direction",
-        "closing_payable_minor",
-        "closing_advance_minor",
-        "current_balance_minor",
-        "in_month_entry_count",
-        "total_entry_count",
-      ])
+      !requiredAndOptionalKeysOnly(
+        rawRow,
+        [
+          "project_id",
+          "project_display_name",
+          "project_active",
+          "accountant_ref",
+          "responsible_accountant_display_name",
+          "is_currently_assigned",
+          "vendor_id",
+          "vendor_display_name",
+          "vendor_active",
+          "contract_type",
+          "project_revenue_status",
+          "project_revenue_minor",
+          "balance_before_month_minor",
+          "opening_payable_in_month_minor",
+          "opening_advance_in_month_minor",
+          "obligations_in_month_minor",
+          "paid_in_month_minor",
+          "advanced_in_month_minor",
+          "paid_and_advanced_in_month_minor",
+          "net_change_in_month_minor",
+          "closing_balance_minor",
+          "closing_direction",
+          "closing_payable_minor",
+          "closing_advance_minor",
+          "current_balance_minor",
+          "in_month_entry_count",
+          "total_entry_count",
+        ],
+        ["advance_offset_in_month_minor", "paid_and_offset_in_month_minor"],
+      )
     ) {
       return null;
     }
@@ -3695,6 +3925,16 @@ export function parseMonthlyReportEnvelope(
     const rObl = nonNegativeMoneyStr(rawRow.obligations_in_month_minor);
     const rPaid = nonNegativeMoneyStr(rawRow.paid_in_month_minor);
     const rAdv = nonNegativeMoneyStr(rawRow.advanced_in_month_minor);
+    const rAdvOffset =
+      "advance_offset_in_month_minor" in rawRow
+        ? nonNegativeMoneyStr(rawRow.advance_offset_in_month_minor)
+        : "0";
+    const rPaidOffset =
+      "paid_and_offset_in_month_minor" in rawRow
+        ? nonNegativeMoneyStr(rawRow.paid_and_offset_in_month_minor)
+        : rPaid !== null && rAdvOffset !== null
+          ? (BigInt(rPaid) + BigInt(rAdvOffset)).toString()
+          : null;
     const rPaidAdv = nonNegativeMoneyStr(rawRow.paid_and_advanced_in_month_minor);
     const netChange = signedMoneyStr(rawRow.net_change_in_month_minor);
     const closingBal = signedMoneyStr(rawRow.closing_balance_minor);
@@ -3724,6 +3964,8 @@ export function parseMonthlyReportEnvelope(
       rObl === null ||
       rPaid === null ||
       rAdv === null ||
+      rAdvOffset === null ||
+      rPaidOffset === null ||
       rPaidAdv === null ||
       netChange === null ||
       closingBal === null ||
@@ -3760,6 +4002,8 @@ export function parseMonthlyReportEnvelope(
       obligations_in_month_minor: rObl,
       paid_in_month_minor: rPaid,
       advanced_in_month_minor: rAdv,
+      advance_offset_in_month_minor: rAdvOffset,
+      paid_and_offset_in_month_minor: rPaidOffset,
       paid_and_advanced_in_month_minor: rPaidAdv,
       net_change_in_month_minor: netChange,
       closing_balance_minor: closingBal,
@@ -3851,6 +4095,8 @@ export function parseMonthlyReportEnvelope(
       obligations_in_month_minor: obligations,
       paid_in_month_minor: paid,
       advanced_in_month_minor: advanced,
+      advance_offset_in_month_minor: advanceOffset,
+      paid_and_offset_in_month_minor: paidAndOffset,
       paid_and_advanced_in_month_minor: paidAndAdvanced,
       closing_payable_minor: closingPayable,
       closing_advance_minor: closingAdvance,
@@ -4311,7 +4557,9 @@ export function parseEvidenceReserveEnvelope(
 
   const evidenceId = uuidStr(data.evidence_id);
   const targetKind =
-    data.target_kind === "ENTRY" || data.target_kind === "RECONCILIATION"
+    data.target_kind === "ENTRY" ||
+    data.target_kind === "RECONCILIATION" ||
+    data.target_kind === "SHARED_ADVANCE_MOVEMENT"
       ? data.target_kind
       : null;
   const targetId = uuidStr(data.target_id);
@@ -4390,7 +4638,9 @@ export function parseEvidenceFinalizeEnvelope(
       "checksum_sha256",
       "finalized_at",
     ]) ||
-    (ev.target_kind !== "ENTRY" && ev.target_kind !== "RECONCILIATION") ||
+    (ev.target_kind !== "ENTRY" &&
+      ev.target_kind !== "RECONCILIATION" &&
+      ev.target_kind !== "SHARED_ADVANCE_MOVEMENT") ||
     !isUuidString(ev.target_id)
   ) {
     return null;
@@ -4437,7 +4687,9 @@ export function parseEvidenceDownloadEnvelope(
   }
   const evidenceId = uuidStr(data.evidence_id);
   const targetKind =
-    data.target_kind === "ENTRY" || data.target_kind === "RECONCILIATION"
+    data.target_kind === "ENTRY" ||
+    data.target_kind === "RECONCILIATION" ||
+    data.target_kind === "SHARED_ADVANCE_MOVEMENT"
       ? data.target_kind
       : null;
   const targetId = uuidStr(data.target_id);
@@ -4724,6 +4976,8 @@ export function classifyVendorFinanceError(
       };
     case "VENDOR_FINANCE_ENTRY_NOT_FOUND":
     case "VENDOR_FINANCE_ENTRY_INVALID":
+    case "VENDOR_FINANCE_SHARED_ADVANCE_MOVEMENT_NOT_FOUND":
+    case "VENDOR_FINANCE_SHARED_ADVANCE_MOVEMENT_INVALID":
       return {
         code,
         message: "Không tìm thấy bút toán hoặc chứng từ yêu cầu.",
@@ -4738,10 +4992,41 @@ export function classifyVendorFinanceError(
         isWholeBatchRollback: false,
       };
     case "VENDOR_FINANCE_ENTRY_ALREADY_REVERSED":
+    case "VENDOR_FINANCE_MOVEMENT_ALREADY_REVERSED":
       return {
         code,
         message: "Bút toán này đã được hoàn tác trước đó; mỗi bút toán chỉ được hoàn tác một lần.",
         shouldRotateIdempotencyKey: true,
+        isWholeBatchRollback: false,
+      };
+    case "VENDOR_FINANCE_INSUFFICIENT_SHARED_ADVANCE":
+      return {
+        code,
+        message: "Số dư ứng dùng chung hiện tại của Vendor không đủ để thực hiện thao tác này.",
+        shouldRotateIdempotencyKey: true,
+        isWholeBatchRollback: false,
+      };
+    case "VENDOR_FINANCE_INSUFFICIENT_SUBLEDGER_PAYABLE":
+      return {
+        code,
+        message:
+          "Số tiền khấu trừ ứng vượt quá công nợ phải trả hiện tại của sổ dự án và loại hợp đồng đã chọn.",
+        shouldRotateIdempotencyKey: true,
+        isWholeBatchRollback: false,
+      };
+    case "VENDOR_FINANCE_EXPORT_ROW_CAP_EXCEEDED":
+      return {
+        code,
+        message:
+          "Số lượng dòng xuất Excel vượt giới hạn an toàn (10.000 dòng). Vui lòng thu hẹp bộ lọc trước khi xuất.",
+        shouldRotateIdempotencyKey: false,
+        isWholeBatchRollback: false,
+      };
+    case "VENDOR_FINANCE_RESET_EVIDENCE_NOT_CLEANED":
+      return {
+        code,
+        message: "Cần dọn dẹp ảnh bằng chứng trên kho lưu trữ trước khi đặt lại dữ liệu giao dịch.",
+        shouldRotateIdempotencyKey: false,
         isWholeBatchRollback: false,
       };
     case "VENDOR_FINANCE_CANNOT_REVERSE_REVERSAL":

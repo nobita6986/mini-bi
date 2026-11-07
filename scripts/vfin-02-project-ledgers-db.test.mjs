@@ -127,7 +127,9 @@ function nextUuid() {
 }
 
 async function loadMigrations() {
-  const names = (await readdir(MIGRATION_DIR)).filter((n) => n.endsWith(".sql")).sort();
+  const names = (await readdir(MIGRATION_DIR))
+    .filter((n) => n.endsWith(".sql") && n <= VFIN_03_CONTRACT_TYPE_LEDGERS_MIGRATION_NAME)
+    .sort();
   return Promise.all(
     names.map(async (name) => ({
       name,

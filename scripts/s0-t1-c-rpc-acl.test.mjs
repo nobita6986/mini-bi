@@ -95,6 +95,9 @@ import {
   ATTENDANCE_MULTI_SLOT_POLICY_PROFILES_RPC_SIGNATURES,
   WORKER_DIRECTORY_LABOR_TYPE_FILTER_MIGRATION_NAME,
   WORKER_DIRECTORY_LABOR_TYPE_FILTER_RPC_SIGNATURES,
+  VFIN_04_SHARED_VENDOR_ADVANCE_MIGRATION_NAME,
+  VFIN_04_SHARED_VENDOR_ADVANCE_NEW_RPC_SIGNATURES,
+  VFIN_04_SHARED_VENDOR_ADVANCE_RPC_SIGNATURES,
   OFFBOARDING_REPORT_MIGRATION_NAME,
   OFFBOARDING_REPORT_RPC_SIGNATURES,
   migrationChecksum,
@@ -1076,7 +1079,7 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
         ...HF_OFFBOARDING_SUPPRESSION_AND_ATTENDANCE_FILTER_RPC_SIGNATURES,
         ...ATTENDANCE_SELF_HISTORY_RPC_SIGNATURES,
         ...ORG_SHELL_01_DEPARTMENTS_RPC_SIGNATURES,
-        ...VFIN_03_CONTRACT_TYPE_LEDGERS_RPC_SIGNATURES,
+        ...VFIN_04_SHARED_VENDOR_ADVANCE_RPC_SIGNATURES,
         ...HF_WORK_REPORTS_GROUPS_AND_ANALYTICS_OPTIONS_RPC_SIGNATURES,
         ...CCCD_QR_ASYNC_STAGE1_RPC_SIGNATURES,
         ...PRE_WAVE2_CCCD_REVIEW_RPC_SIGNATURES,
@@ -1129,7 +1132,7 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
           ...HF_OFFBOARDING_SUPPRESSION_AND_ATTENDANCE_FILTER_RPC_SIGNATURES,
           ...ATTENDANCE_SELF_HISTORY_RPC_SIGNATURES,
           ...ORG_SHELL_01_DEPARTMENTS_RPC_SIGNATURES,
-          ...VFIN_03_CONTRACT_TYPE_LEDGERS_RPC_SIGNATURES,
+          ...VFIN_04_SHARED_VENDOR_ADVANCE_RPC_SIGNATURES,
           ...HF_WORK_REPORTS_GROUPS_AND_ANALYTICS_OPTIONS_RPC_SIGNATURES,
           ...CCCD_QR_ASYNC_STAGE1_RPC_SIGNATURES,
           ...PRE_WAVE2_CCCD_REVIEW_RPC_SIGNATURES,
@@ -1332,6 +1335,28 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
         assert.ok(
           workerDirectoryLaborTypeFilterNormalized.includes(sigGrant),
           `worker directory labor_type filter RPC ${sig} grants RPC execution only to service_role`,
+        );
+      }
+      const vfin04SharedVendorAdvanceMigration = await readFile(
+        path.join(MIGRATION_DIR, VFIN_04_SHARED_VENDOR_ADVANCE_MIGRATION_NAME),
+        "utf8",
+      );
+      const vfin04SharedVendorAdvanceNormalized =
+        vfin04SharedVendorAdvanceMigration
+          .replace(/\s+/g, " ")
+          .replace(/\(\s+/g, "(")
+          .replace(/\s+\)/g, ")")
+          .toLowerCase();
+      for (const sig of VFIN_04_SHARED_VENDOR_ADVANCE_NEW_RPC_SIGNATURES) {
+        const sigGrant = `grant execute on function ${sig.toLowerCase()} to service_role;`;
+        const sigRevoke = `revoke all on function ${sig.toLowerCase()} from public, anon, authenticated, service_role;`;
+        assert.ok(
+          vfin04SharedVendorAdvanceNormalized.includes(sigRevoke),
+          `VFIN-04 shared advance RPC ${sig} revokes inherited RPC grants before granting service_role`,
+        );
+        assert.ok(
+          vfin04SharedVendorAdvanceNormalized.includes(sigGrant),
+          `VFIN-04 shared advance RPC ${sig} grants RPC execution only to service_role`,
         );
       }
       const hfSalaryAdvancePmWorkerHistoryMigration = await readFile(

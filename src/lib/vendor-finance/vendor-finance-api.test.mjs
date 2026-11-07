@@ -9,6 +9,7 @@ import {
   MAX_VENDOR_FINANCE_MUTATION_JSON_BYTES,
   MAX_VENDOR_FINANCE_OPENING_BATCH_JSON_BYTES,
   handleGetDownloadVendorFinanceEvidence,
+  handleGetExportVendorFinanceVendors,
   handleGetGlobalRolesAdmin,
   handleGetProjectAccountantsAdmin,
   handleGetVendorFinanceContext,
@@ -18,16 +19,22 @@ import {
   handleGetVendorFinanceVendorDetail,
   handleGetVendorFinanceVendors,
   handleGetVendorReconciliations,
+  handleGetVendorSharedAdvanceMovements,
   handlePostApplyOpeningBatch,
+  handlePostApplyVendorSharedAdvanceOffset,
   handlePostAssignGlobalRoleAdmin,
   handlePostAssignProjectAccountantAdmin,
   handlePostClassifyVendorSubLedger,
   handlePostEndGlobalRoleAdmin,
   handlePostEndProjectAccountantAdmin,
+  handlePostExportVendorFinanceVendors,
   handlePostFinalizeVendorFinanceEvidence,
+  handlePostFundVendorSharedAdvance,
   handlePostPreviewOpeningBatch,
+  handlePostRecordVendorRefund,
   handlePostReserveVendorFinanceEvidence,
   handlePostReverseVendorFinanceEntry,
+  handlePostReverseVendorSharedAdvanceMovement,
   handlePostVendorFinanceEntry,
   handlePostVendorReconciliation,
 } from "./vendor-finance-api.ts";
@@ -72,6 +79,10 @@ const EXPECTED_ROUTE_METHODS = Object.freeze({
   "src/app/api/vendor-finance/vendors/route.ts": {
     GET: "handleGetVendorFinanceVendors",
   },
+  "src/app/api/vendor-finance/vendors/export/route.ts": {
+    GET: "handleGetExportVendorFinanceVendors",
+    POST: "handlePostExportVendorFinanceVendors",
+  },
   "src/app/api/vendor-finance/vendors/[vendorId]/route.ts": {
     GET: "handleGetVendorFinanceVendorDetail",
   },
@@ -85,6 +96,21 @@ const EXPECTED_ROUTE_METHODS = Object.freeze({
   },
   "src/app/api/vendor-finance/vendors/[vendorId]/classify-contract-type/route.ts": {
     POST: "handlePostClassifyVendorSubLedger",
+  },
+  "src/app/api/vendor-finance/vendors/[vendorId]/shared-advances/route.ts": {
+    GET: "handleGetVendorSharedAdvanceMovements",
+  },
+  "src/app/api/vendor-finance/vendors/[vendorId]/shared-advances/fund/route.ts": {
+    POST: "handlePostFundVendorSharedAdvance",
+  },
+  "src/app/api/vendor-finance/vendors/[vendorId]/shared-advances/refund/route.ts": {
+    POST: "handlePostRecordVendorRefund",
+  },
+  "src/app/api/vendor-finance/vendors/[vendorId]/shared-advances/apply-offset/route.ts": {
+    POST: "handlePostApplyVendorSharedAdvanceOffset",
+  },
+  "src/app/api/vendor-finance/shared-advances/[movementId]/reverse/route.ts": {
+    POST: "handlePostReverseVendorSharedAdvanceMovement",
   },
   "src/app/api/vendor-finance/entries/[entryId]/route.ts": {
     GET: "handleGetVendorFinanceSingleEntry",
@@ -825,6 +851,258 @@ function makeMockRepository({
           data: { evidence_id: input.evidence_id, cleaned: true },
         };
       },
+      async exportVendors(input) {
+        calls.push(["exportVendors", input]);
+        return {
+          ok: true,
+          data: {
+            authorization_date: "2026-10-24",
+            filters: {
+              search: input.search ?? null,
+              active: input.active ?? "all",
+              balance_filter: input.balance_filter ?? "all",
+              project_id: input.project_id ?? null,
+              accountant_ref: input.accountant_ref ?? null,
+              ledger_scope: input.ledger_scope ?? "all",
+              contract_type: input.contract_type ?? "all",
+            },
+            row_cap: 10000,
+            total: 1,
+            vendors: [
+              {
+                vendor_id: "VND_ALPHA",
+                display_name: "Công ty TNHH Alpha",
+                active: true,
+                sub_ledger_count: 1,
+                payable_total_minor: "15000000",
+                shared_advance_balance_minor: "100000000",
+                last_effective_date: "2026-10-24",
+              },
+            ],
+          },
+        };
+      },
+      async listSharedAdvanceMovements(input) {
+        calls.push(["listSharedAdvanceMovements", input]);
+        return {
+          ok: true,
+          data: {
+            vendor_id: input.vendor_id,
+            vendor_display_name: "Công ty TNHH Alpha",
+            vendor_active: true,
+            shared_advance_balance_minor: "100000000",
+            last_movement_sequence: 1,
+            last_effective_date: "2026-10-24",
+            last_recorded_at: "2026-10-24T02:00:00.000Z",
+            allowed_actions: {
+              can_view_shared_advance: actorAccess.can_view_shared_advance ?? true,
+              can_fund_vendor_advance: actorAccess.can_fund_vendor_advance ?? false,
+              can_record_vendor_refund: actorAccess.can_record_vendor_refund ?? false,
+              can_apply_vendor_advance: actorAccess.can_apply_vendor_advance ?? actorAccess.can_record,
+            },
+            page_size: input.page_size,
+            has_more: false,
+            next_cursor: null,
+            items: [],
+            internal_disclaimer: VENDOR_FINANCE_INTERNAL_DISCLAIMER_VI,
+          },
+        };
+      },
+      async fundSharedAdvance(input) {
+        calls.push(["fundSharedAdvance", input]);
+        return {
+          ok: true,
+          data: {
+            movement: {
+              movement_id: ENTRY_ID,
+              vendor_id: input.vendor_id,
+              vendor_display_name_snapshot: "Công ty TNHH Alpha",
+              vendor_active: true,
+              movement_sequence: 1,
+              cursor_sequence: 1,
+              document_no: "VFIN-2026-000101",
+              document_kind: "SHARED_ADVANCE_VOUCHER",
+              document_title_vi: "Phiếu ứng tiền dùng chung cho Vendor",
+              movement_type: "ADVANCE_FUNDED",
+              amount_minor: input.amount_minor,
+              balance_before_minor: "0",
+              balance_delta_minor: input.amount_minor,
+              balance_after_minor: input.amount_minor,
+              effective_date: input.effective_date,
+              reason: input.reason,
+              project_id: null,
+              project_display_name_snapshot: null,
+              accountant_ref: null,
+              responsible_accountant_display_name: null,
+              contract_type: null,
+              linked_ledger_entry_id: null,
+              linked_ledger_document_no: null,
+              reverses_movement_id: null,
+              reverses_document_no: null,
+              reversed_by_movement_id: null,
+              reversed_by_document_no: null,
+              can_reverse: true,
+              can_attach_evidence: true,
+              evidence: null,
+              created_by_display_name: "Kế toán cầm tiền",
+              created_at: "2026-10-24T02:00:00.000Z",
+              internal_disclaimer: VENDOR_FINANCE_INTERNAL_DISCLAIMER_VI,
+            },
+            shared_advance_balance_minor: input.amount_minor,
+            replayed: false,
+          },
+        };
+      },
+      async recordVendorRefund(input) {
+        calls.push(["recordVendorRefund", input]);
+        return {
+          ok: true,
+          data: {
+            movement: {
+              movement_id: ENTRY_ID,
+              vendor_id: input.vendor_id,
+              vendor_display_name_snapshot: "Công ty TNHH Alpha",
+              vendor_active: true,
+              movement_sequence: 2,
+              cursor_sequence: 2,
+              document_no: "VFIN-2026-000102",
+              document_kind: "VENDOR_REFUND_VOUCHER",
+              document_title_vi: "Phiếu thu tiền Vendor hoàn ứng",
+              movement_type: "VENDOR_REFUND_RECORDED",
+              amount_minor: input.amount_minor,
+              balance_before_minor: "100000000",
+              balance_delta_minor: `-${input.amount_minor}`,
+              balance_after_minor: String(100000000n - BigInt(input.amount_minor)),
+              effective_date: input.effective_date,
+              reason: input.reason,
+              project_id: null,
+              project_display_name_snapshot: null,
+              accountant_ref: null,
+              responsible_accountant_display_name: null,
+              contract_type: null,
+              linked_ledger_entry_id: null,
+              linked_ledger_document_no: null,
+              reverses_movement_id: null,
+              reverses_document_no: null,
+              reversed_by_movement_id: null,
+              reversed_by_document_no: null,
+              can_reverse: true,
+              can_attach_evidence: true,
+              evidence: null,
+              created_by_display_name: "Kế toán cầm tiền",
+              created_at: "2026-10-24T02:00:00.000Z",
+              internal_disclaimer: VENDOR_FINANCE_INTERNAL_DISCLAIMER_VI,
+            },
+            shared_advance_balance_minor: String(100000000n - BigInt(input.amount_minor)),
+            replayed: false,
+          },
+        };
+      },
+      async applySharedAdvanceOffset(input) {
+        calls.push(["applySharedAdvanceOffset", input]);
+        return {
+          ok: true,
+          data: {
+            movement: {
+              movement_id: REC_ID,
+              vendor_id: input.vendor_id,
+              vendor_display_name_snapshot: "Công ty TNHH Alpha",
+              vendor_active: true,
+              movement_sequence: 3,
+              cursor_sequence: 3,
+              document_no: "VFIN-2026-000103",
+              document_kind: "ADVANCE_OFFSET_VOUCHER",
+              document_title_vi: "Phiếu khấu trừ số dư ứng dùng chung vào công nợ dự án",
+              movement_type: "PROJECT_OFFSET_APPLIED",
+              amount_minor: input.amount_minor,
+              balance_before_minor: "100000000",
+              balance_delta_minor: `-${input.amount_minor}`,
+              balance_after_minor: String(100000000n - BigInt(input.amount_minor)),
+              effective_date: input.effective_date,
+              reason: input.reason,
+              project_id: input.project_id,
+              project_display_name_snapshot: "Dự án Miền Bắc",
+              accountant_ref: ACC_A_ID,
+              responsible_accountant_display_name: "Trần Thị Kế Toán A",
+              contract_type: input.contract_type,
+              linked_ledger_entry_id: ENTRY_ID,
+              linked_ledger_document_no: "VFIN-2026-000104",
+              reverses_movement_id: null,
+              reverses_document_no: null,
+              reversed_by_movement_id: null,
+              reversed_by_document_no: null,
+              can_reverse: true,
+              can_attach_evidence: true,
+              evidence: null,
+              created_by_display_name: "Trần Thị Kế Toán A",
+              created_at: "2026-10-24T02:00:00.000Z",
+              internal_disclaimer: VENDOR_FINANCE_INTERNAL_DISCLAIMER_VI,
+            },
+            entry: sampleEntry({
+              document_no: "VFIN-2026-000104",
+              document_kind: "ADVANCE_OFFSET_VOUCHER",
+              document_title_vi: "Phiếu khấu trừ ứng dùng chung vào công nợ dự án",
+              entry_type: "ADVANCE_OFFSET_RECORDED",
+              contract_type: input.contract_type,
+              amount_minor: input.amount_minor,
+              balance_before_minor: "15000000",
+              balance_delta_minor: `-${input.amount_minor}`,
+              balance_after_minor: String(15000000n - BigInt(input.amount_minor)),
+              shared_advance_movement_id: REC_ID,
+            }),
+            shared_advance_balance_minor: String(100000000n - BigInt(input.amount_minor)),
+            subledger_balance_minor: String(15000000n - BigInt(input.amount_minor)),
+            replayed: false,
+          },
+        };
+      },
+      async reverseSharedAdvanceMovement(input) {
+        calls.push(["reverseSharedAdvanceMovement", input]);
+        return {
+          ok: true,
+          data: {
+            reversal_movement: {
+              movement_id: REV_ENTRY_ID,
+              vendor_id: "VND_ALPHA",
+              vendor_display_name_snapshot: "Công ty TNHH Alpha",
+              vendor_active: true,
+              movement_sequence: 4,
+              cursor_sequence: 4,
+              document_no: "VFIN-2026-000105",
+              document_kind: "SHARED_ADVANCE_REVERSAL_VOUCHER",
+              document_title_vi: "Phiếu đảo bút toán số dư ứng dùng chung",
+              movement_type: "REVERSAL",
+              amount_minor: "10000000",
+              balance_before_minor: "90000000",
+              balance_delta_minor: "10000000",
+              balance_after_minor: "100000000",
+              effective_date: input.effective_date ?? "2026-10-24",
+              reason: input.reason,
+              project_id: null,
+              project_display_name_snapshot: null,
+              accountant_ref: null,
+              responsible_accountant_display_name: null,
+              contract_type: null,
+              linked_ledger_entry_id: null,
+              linked_ledger_document_no: null,
+              reverses_movement_id: input.movement_id,
+              reverses_document_no: "VFIN-2026-000102",
+              reversed_by_movement_id: null,
+              reversed_by_document_no: null,
+              can_reverse: false,
+              can_attach_evidence: true,
+              evidence: null,
+              created_by_display_name: "Kế toán cầm tiền",
+              created_at: "2026-10-24T02:05:00.000Z",
+              internal_disclaimer: VENDOR_FINANCE_INTERNAL_DISCLAIMER_VI,
+            },
+            reversal_entry: null,
+            shared_advance_balance_minor: "100000000",
+            subledger_balance_minor: null,
+            replayed: false,
+          },
+        };
+      },
     },
   };
 }
@@ -947,12 +1225,19 @@ test("dynamic route discovery & DIRECT_ENTRY_API_ENABLED hidden 404 gate across 
     const responses = await Promise.all([
       handleGetVendorFinanceContext(new Request(`${ORIGIN}/api/vendor-finance/context`), disabledFlag, bombDeps),
       handleGetVendorFinanceVendors(new Request(`${ORIGIN}/api/vendor-finance/vendors`), disabledFlag, bombDeps),
+      handleGetExportVendorFinanceVendors(new Request(`${ORIGIN}/api/vendor-finance/vendors/export`), disabledFlag, bombDeps),
+      handlePostExportVendorFinanceVendors(new Request(`${ORIGIN}/api/vendor-finance/vendors/export`, { method: "POST", body: untouchedBody(), duplex: "half" }), disabledFlag, bombDeps),
       handleGetVendorFinanceVendorDetail(new Request(`${ORIGIN}/api/vendor-finance/vendors/VND_ALPHA`), "VND_ALPHA", disabledFlag, bombDeps),
       handleGetVendorFinanceEntries(new Request(`${ORIGIN}/api/vendor-finance/vendors/VND_ALPHA/entries`), "VND_ALPHA", disabledFlag, bombDeps),
       handlePostVendorFinanceEntry(new Request(`${ORIGIN}/api/vendor-finance/vendors/VND_ALPHA/entries`, { method: "POST", body: untouchedBody(), duplex: "half" }), "VND_ALPHA", disabledFlag, bombDeps),
       handleGetVendorReconciliations(new Request(`${ORIGIN}/api/vendor-finance/vendors/VND_ALPHA/reconciliations`), "VND_ALPHA", disabledFlag, bombDeps),
       handlePostVendorReconciliation(new Request(`${ORIGIN}/api/vendor-finance/vendors/VND_ALPHA/reconciliations`, { method: "POST", body: untouchedBody(), duplex: "half" }), "VND_ALPHA", disabledFlag, bombDeps),
       handlePostClassifyVendorSubLedger(new Request(`${ORIGIN}/api/vendor-finance/vendors/VND_ALPHA/classify-contract-type`, { method: "POST", body: untouchedBody(), duplex: "half" }), "VND_ALPHA", disabledFlag, bombDeps),
+      handleGetVendorSharedAdvanceMovements(new Request(`${ORIGIN}/api/vendor-finance/vendors/VND_ALPHA/shared-advances`), "VND_ALPHA", disabledFlag, bombDeps),
+      handlePostFundVendorSharedAdvance(new Request(`${ORIGIN}/api/vendor-finance/vendors/VND_ALPHA/shared-advances/fund`, { method: "POST", body: untouchedBody(), duplex: "half" }), "VND_ALPHA", disabledFlag, bombDeps),
+      handlePostRecordVendorRefund(new Request(`${ORIGIN}/api/vendor-finance/vendors/VND_ALPHA/shared-advances/refund`, { method: "POST", body: untouchedBody(), duplex: "half" }), "VND_ALPHA", disabledFlag, bombDeps),
+      handlePostApplyVendorSharedAdvanceOffset(new Request(`${ORIGIN}/api/vendor-finance/vendors/VND_ALPHA/shared-advances/apply-offset`, { method: "POST", body: untouchedBody(), duplex: "half" }), "VND_ALPHA", disabledFlag, bombDeps),
+      handlePostReverseVendorSharedAdvanceMovement(new Request(`${ORIGIN}/api/vendor-finance/shared-advances/${ENTRY_ID}/reverse`, { method: "POST", body: untouchedBody(), duplex: "half" }), ENTRY_ID, disabledFlag, bombDeps),
       handleGetVendorFinanceSingleEntry(new Request(`${ORIGIN}/api/vendor-finance/entries/${ENTRY_ID}`), ENTRY_ID, disabledFlag, bombDeps),
       handlePostReverseVendorFinanceEntry(new Request(`${ORIGIN}/api/vendor-finance/entries/${ENTRY_ID}/reverse`, { method: "POST", body: untouchedBody(), duplex: "half" }), ENTRY_ID, disabledFlag, bombDeps),
       handlePostPreviewOpeningBatch(new Request(`${ORIGIN}/api/vendor-finance/opening-batches/preview`, { method: "POST", body: untouchedBody(), duplex: "half" }), disabledFlag, bombDeps),
@@ -969,7 +1254,7 @@ test("dynamic route discovery & DIRECT_ENTRY_API_ENABLED hidden 404 gate across 
       handleGetDownloadVendorFinanceEvidence(new Request(`${ORIGIN}/api/vendor-finance/evidence/${EV_ID_1}/download`), EV_ID_1, disabledFlag, bombDeps),
     ]);
 
-    assert.equal(responses.length, 22);
+    assert.equal(responses.length, 29);
     for (const res of responses) {
       assert.equal(res.status, 404);
       assert.equal(res.headers.get("cache-control"), "private, no-store");
@@ -2017,4 +2302,257 @@ test("createVendorFinanceRepository maps known VFIN-01 & VFIN-02 SQL tokens & fa
   } finally {
     console.error = origError;
   }
+});
+
+test("VFIN-04 HTTP authority & shared advance / export routes: CASH_HOLDER vs Project Accountant vs Export Row Cap", async () => {
+  // 1. CASH_HOLDER (can_record=false, can_fund_vendor_advance=true, can_record_vendor_refund=true, can_apply_vendor_advance=false)
+  const cashHolderRepo = makeMockRepository({
+    actorAccess: {
+      authorization_date: "2026-10-24",
+      allowed: true,
+      can_view: true,
+      can_record: false,
+      can_reconcile: true,
+      can_manage_project_assignments: false,
+      can_view_shared_advance: true,
+      can_fund_vendor_advance: true,
+      can_record_vendor_refund: true,
+      can_apply_vendor_advance: false,
+      visibility_scope: "ALL",
+      record_scope: "NONE",
+      reconcile_scope: "ALL",
+      global_role_code: "CASH_HOLDER",
+      active_assigned_project_count: 0,
+      authority_source: "global_role",
+    },
+  });
+  const cashHolderDeps = {
+    resolveSession: async () => makeSession({ capabilities: [], scopes: [] }),
+    repository: cashHolderRepo.repository,
+  };
+
+  // CASH_HOLDER can fund shared advance
+  const fundRes = await handlePostFundVendorSharedAdvance(
+    new Request(`${ORIGIN}/api/vendor-finance/vendors/VND_ALPHA/shared-advances/fund`, {
+      method: "POST",
+      headers: SAME_ORIGIN_POST_HEADERS,
+      body: JSON.stringify({
+        amount_minor: "100000000",
+        effective_date: "2026-10-24",
+        reason: "Ứng tiền dùng chung cho Vendor Alpha",
+        idempotency_key: IDEM_1,
+      }),
+    }),
+    "VND_ALPHA",
+    "true",
+    cashHolderDeps,
+  );
+  assert.equal(fundRes.status, 201);
+  const fundJson = await fundRes.json();
+  assert.equal(fundJson.data.shared_advance_balance_minor, "100000000");
+
+  // Sending project_id to fund or refund is rejected with 400 CLIENT_AUTHORITY_FIELD_FORBIDDEN
+  const fundWithProjectRes = await handlePostFundVendorSharedAdvance(
+    new Request(`${ORIGIN}/api/vendor-finance/vendors/VND_ALPHA/shared-advances/fund`, {
+      method: "POST",
+      headers: SAME_ORIGIN_POST_HEADERS,
+      body: JSON.stringify({
+        project_id: PROJECT_ID,
+        amount_minor: "100000000",
+        effective_date: "2026-10-24",
+        reason: "Ứng tiền kèm project_id",
+        idempotency_key: IDEM_1,
+      }),
+    }),
+    "VND_ALPHA",
+    "true",
+    cashHolderDeps,
+  );
+  assert.equal(fundWithProjectRes.status, 400);
+  assert.deepEqual(await fundWithProjectRes.json(), {
+    ok: false,
+    code: "CLIENT_AUTHORITY_FIELD_FORBIDDEN",
+  });
+
+  // CASH_HOLDER can record vendor refund
+  const refundRes = await handlePostRecordVendorRefund(
+    new Request(`${ORIGIN}/api/vendor-finance/vendors/VND_ALPHA/shared-advances/refund`, {
+      method: "POST",
+      headers: SAME_ORIGIN_POST_HEADERS,
+      body: JSON.stringify({
+        amount_minor: "10000000",
+        effective_date: "2026-10-24",
+        reason: "Vendor hoàn ứng tiền mặt",
+        idempotency_key: IDEM_2,
+      }),
+    }),
+    "VND_ALPHA",
+    "true",
+    cashHolderDeps,
+  );
+  assert.equal(refundRes.status, 201);
+
+  // CASH_HOLDER can reverse shared advance movement
+  const revSharedRes = await handlePostReverseVendorSharedAdvanceMovement(
+    new Request(`${ORIGIN}/api/vendor-finance/shared-advances/${ENTRY_ID}/reverse`, {
+      method: "POST",
+      headers: SAME_ORIGIN_POST_HEADERS,
+      body: JSON.stringify({
+        effective_date: "2026-10-24",
+        reason: "Đảo bút toán hoàn ứng",
+        idempotency_key: IDEM_3,
+      }),
+    }),
+    ENTRY_ID,
+    "true",
+    cashHolderDeps,
+  );
+  assert.equal(revSharedRes.status, 201);
+
+  // CASH_HOLDER is denied on apply-offset and project sub-ledger entry
+  const cashApplyDenied = await handlePostApplyVendorSharedAdvanceOffset(
+    new Request(`${ORIGIN}/api/vendor-finance/vendors/VND_ALPHA/shared-advances/apply-offset`, {
+      method: "POST",
+      headers: SAME_ORIGIN_POST_HEADERS,
+      body: "{}",
+    }),
+    "VND_ALPHA",
+    "true",
+    cashHolderDeps,
+  );
+  assert.equal(cashApplyDenied.status, 403);
+  assert.deepEqual(await cashApplyDenied.json(), {
+    ok: false,
+    code: "VENDOR_FINANCE_RECORD_DENIED",
+  });
+
+  // 2. Project Accountant (can_record=true, can_fund_vendor_advance=false, can_record_vendor_refund=false, can_apply_vendor_advance=true)
+  const acctRepo = makeMockRepository({
+    actorAccess: {
+      authorization_date: "2026-10-24",
+      allowed: true,
+      can_view: true,
+      can_record: true,
+      can_reconcile: true,
+      can_manage_project_assignments: false,
+      can_view_shared_advance: true,
+      can_fund_vendor_advance: false,
+      can_record_vendor_refund: false,
+      can_apply_vendor_advance: true,
+      visibility_scope: "PROJECT_SCOPED",
+      record_scope: "ASSIGNED_PROJECTS",
+      reconcile_scope: "ASSIGNED_PROJECTS",
+      global_role_code: null,
+      active_assigned_project_count: 1,
+      authority_source: "accounting_department",
+    },
+  });
+  const acctDeps = {
+    resolveSession: async () => makeSession({ capabilities: [], scopes: [] }),
+    repository: acctRepo.repository,
+  };
+
+  // Project Accountant is denied on fund and refund
+  for (const deniedCall of [
+    () =>
+      handlePostFundVendorSharedAdvance(
+        new Request(`${ORIGIN}/api/vendor-finance/vendors/VND_ALPHA/shared-advances/fund`, {
+          method: "POST",
+          headers: SAME_ORIGIN_POST_HEADERS,
+          body: "{}",
+        }),
+        "VND_ALPHA",
+        "true",
+        acctDeps,
+      ),
+    () =>
+      handlePostRecordVendorRefund(
+        new Request(`${ORIGIN}/api/vendor-finance/vendors/VND_ALPHA/shared-advances/refund`, {
+          method: "POST",
+          headers: SAME_ORIGIN_POST_HEADERS,
+          body: "{}",
+        }),
+        "VND_ALPHA",
+        "true",
+        acctDeps,
+      ),
+  ]) {
+    const res = await deniedCall();
+    assert.equal(res.status, 403);
+    assert.deepEqual(await res.json(), { ok: false, code: "VENDOR_FINANCE_RECORD_DENIED" });
+  }
+
+  // Project Accountant can view shared advances, apply offset, and export vendors (GET & POST)
+  const listMovRes = await handleGetVendorSharedAdvanceMovements(
+    new Request(`${ORIGIN}/api/vendor-finance/vendors/VND_ALPHA/shared-advances`),
+    "VND_ALPHA",
+    "true",
+    acctDeps,
+  );
+  assert.equal(listMovRes.status, 200);
+
+  const applyOffsetRes = await handlePostApplyVendorSharedAdvanceOffset(
+    new Request(`${ORIGIN}/api/vendor-finance/vendors/VND_ALPHA/shared-advances/apply-offset`, {
+      method: "POST",
+      headers: SAME_ORIGIN_POST_HEADERS,
+      body: JSON.stringify({
+        project_id: PROJECT_ID,
+        contract_type: "SEASONAL",
+        amount_minor: "15000000",
+        effective_date: "2026-10-24",
+        reason: "Khấu trừ ứng vào công nợ thời vụ dự án Miền Bắc",
+        idempotency_key: IDEM_1,
+      }),
+    }),
+    "VND_ALPHA",
+    "true",
+    acctDeps,
+  );
+  assert.equal(applyOffsetRes.status, 201);
+  const applyOffsetJson = await applyOffsetRes.json();
+  assert.equal(applyOffsetJson.data.entry.entry_type, "ADVANCE_OFFSET_RECORDED");
+  assert.equal(applyOffsetJson.data.shared_advance_balance_minor, "85000000");
+  assert.equal(applyOffsetJson.data.subledger_balance_minor, "0");
+
+  const getExportRes = await handleGetExportVendorFinanceVendors(
+    new Request(`${ORIGIN}/api/vendor-finance/vendors/export?project_id=${PROJECT_ID}&contract_type=SEASONAL`),
+    "true",
+    acctDeps,
+  );
+  assert.equal(getExportRes.status, 200);
+
+  const postExportRes = await handlePostExportVendorFinanceVendors(
+    new Request(`${ORIGIN}/api/vendor-finance/vendors/export`, {
+      method: "POST",
+      headers: SAME_ORIGIN_POST_HEADERS,
+      body: JSON.stringify({
+        project_id: PROJECT_ID,
+        contract_type: "SEASONAL",
+      }),
+    }),
+    "true",
+    acctDeps,
+  );
+  assert.equal(postExportRes.status, 200);
+
+  // 3. Export row cap exceeded returns 422 VENDOR_FINANCE_EXPORT_ROW_CAP_EXCEEDED
+  const capExceededDeps = {
+    resolveSession: async () => makeSession({ capabilities: [], scopes: [] }),
+    repository: {
+      ...acctRepo.repository,
+      async exportVendors() {
+        return { ok: false, code: "VENDOR_FINANCE_EXPORT_ROW_CAP_EXCEEDED" };
+      },
+    },
+  };
+  const capExceededRes = await handleGetExportVendorFinanceVendors(
+    new Request(`${ORIGIN}/api/vendor-finance/vendors/export`),
+    "true",
+    capExceededDeps,
+  );
+  assert.equal(capExceededRes.status, 422);
+  assert.deepEqual(await capExceededRes.json(), {
+    ok: false,
+    code: "VENDOR_FINANCE_EXPORT_ROW_CAP_EXCEEDED",
+  });
 });

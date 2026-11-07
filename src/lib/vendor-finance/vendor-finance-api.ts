@@ -15,26 +15,35 @@ import {
 } from "./r2-evidence-storage.ts";
 import {
   computeApplyOpeningBatchFingerprint,
+  computeApplySharedAdvanceOffsetFingerprint,
   computeAssignGlobalRoleFingerprint,
   computeAssignProjectAccountantFingerprint,
   computeClassifySubLedgerFingerprint,
   computeCreateReconciliationFingerprint,
   computeEndGlobalRoleFingerprint,
   computeEndProjectAccountantFingerprint,
+  computeFundSharedAdvanceFingerprint,
   computeRecordEntryFingerprint,
+  computeRecordVendorRefundFingerprint,
   computeReserveEvidenceFingerprint,
   computeReverseEntryFingerprint,
+  computeReverseSharedAdvanceMovementFingerprint,
   parseApplyOpeningBatchBody,
+  parseApplySharedAdvanceOffsetBody,
   parseAssignGlobalRoleBody,
   parseAssignProjectAccountantBody,
   parseClassifyVendorSubLedgerBody,
   parseCreateVendorReconciliationBody,
   parseEndGlobalRoleBody,
   parseEndProjectAccountantBody,
+  parseExportVendorFinanceVendorsBody,
+  parseExportVendorFinanceVendorsQuery,
   parseFinalizeVendorFinanceEvidenceBody,
+  parseFundSharedAdvanceBody,
   parseGetVendorFinanceVendorDetailQuery,
   parseListGlobalRolesAdminQuery,
   parseListProjectAccountantsAdminQuery,
+  parseListSharedAdvanceMovementsQuery,
   parseListVendorFinanceEntriesQuery,
   parseListVendorFinanceVendorsQuery,
   parseListVendorReconciliationsQuery,
@@ -42,7 +51,9 @@ import {
   parseNoQueryParams,
   parsePreviewOpeningBatchBody,
   parseRecordVendorFinanceEntryBody,
+  parseRecordVendorRefundBody,
   parseReserveVendorFinanceEvidenceBody,
+  parseReverseSharedAdvanceMovementBody,
   parseReverseVendorFinanceEntryBody,
   parseUuidParam,
   parseVendorIdParam,
@@ -105,7 +116,17 @@ function parseRequestUrl(request: Request): URL | null {
 
 async function resolveVendorFinanceAuthority(
   dependencies: VendorFinanceApiDependencies,
-  requiredMode: "view" | "reconcile" | "record" | "evidence" | "admin",
+  requiredMode:
+    | "view"
+    | "reconcile"
+    | "record"
+    | "evidence"
+    | "admin"
+    | "shared_advance_view"
+    | "shared_advance_fund"
+    | "shared_advance_refund"
+    | "shared_advance_apply"
+    | "shared_advance_reverse",
 ): Promise<
   | {
       ok: true;
@@ -162,8 +183,11 @@ async function resolveVendorFinanceAuthority(
     return { ok: true, auth_subject: authSubject, app_user_id: appUserId };
   }
 
-  // Fast-path for `view` requests with direct `vendor_finance_view @ all`.
-  if (requiredMode === "view" && vendorFinanceNavPredicate(navActor)) {
+  // Fast-path for `view` / `shared_advance_view` requests with direct `vendor_finance_view @ all`.
+  if (
+    (requiredMode === "view" || requiredMode === "shared_advance_view") &&
+    vendorFinanceNavPredicate(navActor)
+  ) {
     return { ok: true, auth_subject: authSubject, app_user_id: appUserId };
   }
 
@@ -180,7 +204,39 @@ async function resolveVendorFinanceAuthority(
   if (!accessResult.data.can_view) {
     return { ok: false, response: vfinError("VENDOR_FINANCE_ACCESS_DENIED") };
   }
+  if (
+    requiredMode === "shared_advance_view" &&
+    !accessResult.data.can_view_shared_advance
+  ) {
+    return { ok: false, response: vfinError("VENDOR_FINANCE_ACCESS_DENIED") };
+  }
   if (requiredMode === "record" && !accessResult.data.can_record) {
+    return { ok: false, response: vfinError("VENDOR_FINANCE_RECORD_DENIED") };
+  }
+  if (
+    requiredMode === "shared_advance_fund" &&
+    !accessResult.data.can_fund_vendor_advance
+  ) {
+    return { ok: false, response: vfinError("VENDOR_FINANCE_RECORD_DENIED") };
+  }
+  if (
+    requiredMode === "shared_advance_refund" &&
+    !accessResult.data.can_record_vendor_refund
+  ) {
+    return { ok: false, response: vfinError("VENDOR_FINANCE_RECORD_DENIED") };
+  }
+  if (
+    requiredMode === "shared_advance_apply" &&
+    !accessResult.data.can_apply_vendor_advance
+  ) {
+    return { ok: false, response: vfinError("VENDOR_FINANCE_RECORD_DENIED") };
+  }
+  if (
+    requiredMode === "shared_advance_reverse" &&
+    !accessResult.data.can_fund_vendor_advance &&
+    !accessResult.data.can_apply_vendor_advance &&
+    !accessResult.data.can_record
+  ) {
     return { ok: false, response: vfinError("VENDOR_FINANCE_RECORD_DENIED") };
   }
   if (requiredMode === "reconcile" && !accessResult.data.can_reconcile) {
@@ -189,7 +245,8 @@ async function resolveVendorFinanceAuthority(
   if (
     requiredMode === "evidence" &&
     !accessResult.data.can_record &&
-    !accessResult.data.can_reconcile
+    !accessResult.data.can_reconcile &&
+    !accessResult.data.can_fund_vendor_advance
   ) {
     return { ok: false, response: vfinError("VENDOR_FINANCE_RECORD_DENIED") };
   }
@@ -1650,4 +1707,417 @@ export async function handleGetDownloadVendorFinanceEvidence(
   };
 
   return vfinOk(responsePayload, 200);
+}
+
+// -----------------------------------------------------------------------------
+// 16. GET & POST /api/vendor-finance/vendors/export
+// -----------------------------------------------------------------------------
+export async function handleGetExportVendorFinanceVendors(
+  request: Request,
+  enabledFlag: string | undefined,
+  dependencies: VendorFinanceApiDependencies,
+): Promise<Response> {
+  const gate = directEntryFeatureGate(enabledFlag);
+  if (gate) return gate;
+
+  if (hasDisallowedAuthorityHeaders(request)) {
+    return vfinError("CLIENT_AUTHORITY_FIELD_FORBIDDEN");
+  }
+
+  const url = parseRequestUrl(request);
+  if (!url) return vfinError("VENDOR_FINANCE_QUERY_INVALID");
+
+  const actor = await resolveVendorFinanceAuthority(dependencies, "view");
+  if (!actor.ok) return actor.response;
+
+  const query = parseExportVendorFinanceVendorsQuery(url);
+  if (!query.ok) return vfinError(query.code);
+
+  const result = await dependencies.repository.exportVendors({
+    auth_subject: actor.auth_subject,
+    app_user_id: actor.app_user_id,
+    search: query.value.search,
+    active: query.value.active,
+    balance_filter: query.value.balance_filter,
+    project_id: query.value.project_id,
+    accountant_ref: query.value.accountant_ref,
+    ledger_scope: query.value.ledger_scope,
+    contract_type: query.value.contract_type,
+  });
+  if (!result.ok) return vfinError(result.code);
+
+  return vfinOk(result.data, 200);
+}
+
+export async function handlePostExportVendorFinanceVendors(
+  request: Request,
+  enabledFlag: string | undefined,
+  dependencies: VendorFinanceApiDependencies,
+): Promise<Response> {
+  const gate = directEntryFeatureGate(enabledFlag);
+  if (gate) return gate;
+
+  if (!isSameOriginAuthRequest(request)) {
+    return vfinError("CSRF_ORIGIN_DENIED");
+  }
+
+  if (hasDisallowedAuthorityHeaders(request)) {
+    return vfinError("CLIENT_AUTHORITY_FIELD_FORBIDDEN");
+  }
+
+  const url = parseRequestUrl(request);
+  if (!url || !parseNoQueryParams(url).ok) {
+    return vfinError("VENDOR_FINANCE_QUERY_INVALID");
+  }
+
+  const actor = await resolveVendorFinanceAuthority(dependencies, "view");
+  if (!actor.ok) return actor.response;
+
+  const boundedBody = await readBoundedJsonBody(
+    request,
+    MAX_VENDOR_FINANCE_MUTATION_JSON_BYTES,
+  );
+  if (!boundedBody.ok) return vfinError(boundedBody.code);
+
+  const parsedBody = parseExportVendorFinanceVendorsBody(boundedBody.value);
+  if (!parsedBody.ok) return vfinError(parsedBody.code);
+
+  const result = await dependencies.repository.exportVendors({
+    auth_subject: actor.auth_subject,
+    app_user_id: actor.app_user_id,
+    search: parsedBody.value.search,
+    active: parsedBody.value.active,
+    balance_filter: parsedBody.value.balance_filter,
+    project_id: parsedBody.value.project_id,
+    accountant_ref: parsedBody.value.accountant_ref,
+    ledger_scope: parsedBody.value.ledger_scope,
+    contract_type: parsedBody.value.contract_type,
+  });
+  if (!result.ok) return vfinError(result.code);
+
+  return vfinOk(result.data, 200);
+}
+
+// -----------------------------------------------------------------------------
+// 17. GET /api/vendor-finance/vendors/[vendorId]/shared-advances
+// -----------------------------------------------------------------------------
+export async function handleGetVendorSharedAdvanceMovements(
+  request: Request,
+  vendorId: string,
+  enabledFlag: string | undefined,
+  dependencies: VendorFinanceApiDependencies,
+): Promise<Response> {
+  const gate = directEntryFeatureGate(enabledFlag);
+  if (gate) return gate;
+
+  if (hasDisallowedAuthorityHeaders(request)) {
+    return vfinError("CLIENT_AUTHORITY_FIELD_FORBIDDEN");
+  }
+
+  const url = parseRequestUrl(request);
+  if (!url) return vfinError("VENDOR_FINANCE_QUERY_INVALID");
+
+  const actor = await resolveVendorFinanceAuthority(
+    dependencies,
+    "shared_advance_view",
+  );
+  if (!actor.ok) return actor.response;
+
+  const parsedVendorId = parseVendorIdParam(vendorId);
+  if (!parsedVendorId.ok) return vfinError(parsedVendorId.code);
+
+  const query = parseListSharedAdvanceMovementsQuery(
+    url,
+    parsedVendorId.vendor_id,
+  );
+  if (!query.ok) return vfinError(query.code);
+
+  const result = await dependencies.repository.listSharedAdvanceMovements({
+    auth_subject: actor.auth_subject,
+    app_user_id: actor.app_user_id,
+    vendor_id: parsedVendorId.vendor_id,
+    before_sequence: query.value.before_sequence,
+    movement_type: query.value.movement_type,
+    page_size: query.value.page_size,
+  });
+  if (!result.ok) return vfinError(result.code);
+
+  return vfinOk(result.data, 200);
+}
+
+// -----------------------------------------------------------------------------
+// 18. POST /api/vendor-finance/vendors/[vendorId]/shared-advances/fund
+// -----------------------------------------------------------------------------
+export async function handlePostFundVendorSharedAdvance(
+  request: Request,
+  vendorId: string,
+  enabledFlag: string | undefined,
+  dependencies: VendorFinanceApiDependencies,
+): Promise<Response> {
+  const gate = directEntryFeatureGate(enabledFlag);
+  if (gate) return gate;
+
+  if (!isSameOriginAuthRequest(request)) {
+    return vfinError("CSRF_ORIGIN_DENIED");
+  }
+
+  if (hasDisallowedAuthorityHeaders(request)) {
+    return vfinError("CLIENT_AUTHORITY_FIELD_FORBIDDEN");
+  }
+
+  const url = parseRequestUrl(request);
+  if (!url || !parseNoQueryParams(url).ok) {
+    return vfinError("VENDOR_FINANCE_QUERY_INVALID");
+  }
+
+  const actor = await resolveVendorFinanceAuthority(
+    dependencies,
+    "shared_advance_fund",
+  );
+  if (!actor.ok) return actor.response;
+
+  const parsedVendorId = parseVendorIdParam(vendorId);
+  if (!parsedVendorId.ok) return vfinError(parsedVendorId.code);
+
+  const boundedBody = await readBoundedJsonBody(
+    request,
+    MAX_VENDOR_FINANCE_MUTATION_JSON_BYTES,
+  );
+  if (!boundedBody.ok) return vfinError(boundedBody.code);
+
+  const parsedBody = parseFundSharedAdvanceBody(
+    boundedBody.value,
+    request.headers.get("idempotency-key"),
+  );
+  if (!parsedBody.ok) return vfinError(parsedBody.code);
+
+  const fingerprint = computeFundSharedAdvanceFingerprint({
+    vendor_id: parsedVendorId.vendor_id,
+    amount_minor: parsedBody.value.amount_minor,
+    effective_date: parsedBody.value.effective_date,
+    reason: parsedBody.value.reason,
+  });
+
+  const saved = await dependencies.repository.fundSharedAdvance({
+    auth_subject: actor.auth_subject,
+    app_user_id: actor.app_user_id,
+    vendor_id: parsedVendorId.vendor_id,
+    amount_minor: parsedBody.value.amount_minor,
+    effective_date: parsedBody.value.effective_date,
+    reason: parsedBody.value.reason,
+    idempotency_key: parsedBody.value.idempotency_key,
+    request_fingerprint: fingerprint,
+  });
+  if (!saved.ok) return vfinError(saved.code);
+
+  return vfinOk(saved.data, saved.data.replayed ? 200 : 201);
+}
+
+// -----------------------------------------------------------------------------
+// 19. POST /api/vendor-finance/vendors/[vendorId]/shared-advances/refund
+// -----------------------------------------------------------------------------
+export async function handlePostRecordVendorRefund(
+  request: Request,
+  vendorId: string,
+  enabledFlag: string | undefined,
+  dependencies: VendorFinanceApiDependencies,
+): Promise<Response> {
+  const gate = directEntryFeatureGate(enabledFlag);
+  if (gate) return gate;
+
+  if (!isSameOriginAuthRequest(request)) {
+    return vfinError("CSRF_ORIGIN_DENIED");
+  }
+
+  if (hasDisallowedAuthorityHeaders(request)) {
+    return vfinError("CLIENT_AUTHORITY_FIELD_FORBIDDEN");
+  }
+
+  const url = parseRequestUrl(request);
+  if (!url || !parseNoQueryParams(url).ok) {
+    return vfinError("VENDOR_FINANCE_QUERY_INVALID");
+  }
+
+  const actor = await resolveVendorFinanceAuthority(
+    dependencies,
+    "shared_advance_refund",
+  );
+  if (!actor.ok) return actor.response;
+
+  const parsedVendorId = parseVendorIdParam(vendorId);
+  if (!parsedVendorId.ok) return vfinError(parsedVendorId.code);
+
+  const boundedBody = await readBoundedJsonBody(
+    request,
+    MAX_VENDOR_FINANCE_MUTATION_JSON_BYTES,
+  );
+  if (!boundedBody.ok) return vfinError(boundedBody.code);
+
+  const parsedBody = parseRecordVendorRefundBody(
+    boundedBody.value,
+    request.headers.get("idempotency-key"),
+  );
+  if (!parsedBody.ok) return vfinError(parsedBody.code);
+
+  const fingerprint = computeRecordVendorRefundFingerprint({
+    vendor_id: parsedVendorId.vendor_id,
+    amount_minor: parsedBody.value.amount_minor,
+    effective_date: parsedBody.value.effective_date,
+    reason: parsedBody.value.reason,
+  });
+
+  const saved = await dependencies.repository.recordVendorRefund({
+    auth_subject: actor.auth_subject,
+    app_user_id: actor.app_user_id,
+    vendor_id: parsedVendorId.vendor_id,
+    amount_minor: parsedBody.value.amount_minor,
+    effective_date: parsedBody.value.effective_date,
+    reason: parsedBody.value.reason,
+    idempotency_key: parsedBody.value.idempotency_key,
+    request_fingerprint: fingerprint,
+  });
+  if (!saved.ok) return vfinError(saved.code);
+
+  return vfinOk(saved.data, saved.data.replayed ? 200 : 201);
+}
+
+// -----------------------------------------------------------------------------
+// 20. POST /api/vendor-finance/vendors/[vendorId]/shared-advances/apply-offset
+// -----------------------------------------------------------------------------
+export async function handlePostApplyVendorSharedAdvanceOffset(
+  request: Request,
+  vendorId: string,
+  enabledFlag: string | undefined,
+  dependencies: VendorFinanceApiDependencies,
+): Promise<Response> {
+  const gate = directEntryFeatureGate(enabledFlag);
+  if (gate) return gate;
+
+  if (!isSameOriginAuthRequest(request)) {
+    return vfinError("CSRF_ORIGIN_DENIED");
+  }
+
+  if (hasDisallowedAuthorityHeaders(request)) {
+    return vfinError("CLIENT_AUTHORITY_FIELD_FORBIDDEN");
+  }
+
+  const url = parseRequestUrl(request);
+  if (!url || !parseNoQueryParams(url).ok) {
+    return vfinError("VENDOR_FINANCE_QUERY_INVALID");
+  }
+
+  const actor = await resolveVendorFinanceAuthority(
+    dependencies,
+    "shared_advance_apply",
+  );
+  if (!actor.ok) return actor.response;
+
+  const parsedVendorId = parseVendorIdParam(vendorId);
+  if (!parsedVendorId.ok) return vfinError(parsedVendorId.code);
+
+  const boundedBody = await readBoundedJsonBody(
+    request,
+    MAX_VENDOR_FINANCE_MUTATION_JSON_BYTES,
+  );
+  if (!boundedBody.ok) return vfinError(boundedBody.code);
+
+  const parsedBody = parseApplySharedAdvanceOffsetBody(
+    boundedBody.value,
+    request.headers.get("idempotency-key"),
+  );
+  if (!parsedBody.ok) return vfinError(parsedBody.code);
+
+  const fingerprint = computeApplySharedAdvanceOffsetFingerprint({
+    vendor_id: parsedVendorId.vendor_id,
+    project_id: parsedBody.value.project_id,
+    contract_type: parsedBody.value.contract_type,
+    amount_minor: parsedBody.value.amount_minor,
+    effective_date: parsedBody.value.effective_date,
+    reason: parsedBody.value.reason,
+  });
+
+  const saved = await dependencies.repository.applySharedAdvanceOffset({
+    auth_subject: actor.auth_subject,
+    app_user_id: actor.app_user_id,
+    vendor_id: parsedVendorId.vendor_id,
+    project_id: parsedBody.value.project_id,
+    contract_type: parsedBody.value.contract_type,
+    amount_minor: parsedBody.value.amount_minor,
+    effective_date: parsedBody.value.effective_date,
+    reason: parsedBody.value.reason,
+    idempotency_key: parsedBody.value.idempotency_key,
+    request_fingerprint: fingerprint,
+  });
+  if (!saved.ok) return vfinError(saved.code);
+
+  return vfinOk(saved.data, saved.data.replayed ? 200 : 201);
+}
+
+// -----------------------------------------------------------------------------
+// 21. POST /api/vendor-finance/shared-advances/[movementId]/reverse
+// -----------------------------------------------------------------------------
+export async function handlePostReverseVendorSharedAdvanceMovement(
+  request: Request,
+  movementId: string,
+  enabledFlag: string | undefined,
+  dependencies: VendorFinanceApiDependencies,
+): Promise<Response> {
+  const gate = directEntryFeatureGate(enabledFlag);
+  if (gate) return gate;
+
+  if (!isSameOriginAuthRequest(request)) {
+    return vfinError("CSRF_ORIGIN_DENIED");
+  }
+
+  if (hasDisallowedAuthorityHeaders(request)) {
+    return vfinError("CLIENT_AUTHORITY_FIELD_FORBIDDEN");
+  }
+
+  const url = parseRequestUrl(request);
+  if (!url || !parseNoQueryParams(url).ok) {
+    return vfinError("VENDOR_FINANCE_QUERY_INVALID");
+  }
+
+  const actor = await resolveVendorFinanceAuthority(
+    dependencies,
+    "shared_advance_reverse",
+  );
+  if (!actor.ok) return actor.response;
+
+  const parsedMovementId = parseUuidParam(
+    movementId,
+    "VENDOR_FINANCE_SHARED_ADVANCE_MOVEMENT_INVALID",
+  );
+  if (!parsedMovementId.ok) return vfinError(parsedMovementId.code);
+
+  const boundedBody = await readBoundedJsonBody(
+    request,
+    MAX_VENDOR_FINANCE_MUTATION_JSON_BYTES,
+  );
+  if (!boundedBody.ok) return vfinError(boundedBody.code);
+
+  const parsedBody = parseReverseSharedAdvanceMovementBody(
+    boundedBody.value,
+    request.headers.get("idempotency-key"),
+  );
+  if (!parsedBody.ok) return vfinError(parsedBody.code);
+
+  const fingerprint = computeReverseSharedAdvanceMovementFingerprint({
+    movement_id: parsedMovementId.id,
+    effective_date: parsedBody.value.effective_date,
+    reason: parsedBody.value.reason,
+  });
+
+  const saved = await dependencies.repository.reverseSharedAdvanceMovement({
+    auth_subject: actor.auth_subject,
+    app_user_id: actor.app_user_id,
+    movement_id: parsedMovementId.id,
+    effective_date: parsedBody.value.effective_date,
+    reason: parsedBody.value.reason,
+    idempotency_key: parsedBody.value.idempotency_key,
+    request_fingerprint: fingerprint,
+  });
+  if (!saved.ok) return vfinError(saved.code);
+
+  return vfinOk(saved.data, saved.data.replayed ? 200 : 201);
 }
