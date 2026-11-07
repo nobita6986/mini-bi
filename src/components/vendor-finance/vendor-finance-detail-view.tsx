@@ -66,12 +66,14 @@ import {
   formatVndMinor,
   isCanonicalUiProjectId,
   isUuidString,
+  mergeUniqueSharedAdvanceMovements,
   parseVendorDetailEnvelope,
   parseVendorEntriesPageEnvelope,
   parseVendorFinanceContextEnvelope,
   parseVendorReconciliationsPageEnvelope,
   parseVendorSharedAdvancesPageEnvelope,
   SHARED_ADVANCE_MOVEMENT_TYPE_LABELS_VI,
+  shouldCommitSharedAdvanceLoadMore,
   VFIN_UI_CONTRACT_TYPES,
   VFIN_UI_ENTRY_TYPES,
   VFIN_UI_REDACTED_FIELD_LABEL_VI,
@@ -205,9 +207,14 @@ export function VendorFinanceDetailView({
   >([]);
   const [sharedNextCursor, setSharedNextCursor] = useState<string | null>(null);
   const [hasMoreSharedMovements, setHasMoreSharedMovements] = useState(false);
-  const [sharedMovementsLoading, setSharedMovementsLoading] = useState(true);
+  const [sharedMovementsLoading, setSharedMovementsLoading] = useState(false);
   const [loadingMoreSharedMovements, setLoadingMoreSharedMovements] = useState(false);
   const [sharedMovementsError, setSharedMovementsError] = useState<string | null>(null);
+
+  const entriesRequestGenRef = useRef(0);
+  const entriesLoadMoreAbortRef = useRef<AbortController | null>(null);
+  const sharedMovementsRequestGenRef = useRef(0);
+  const sharedLoadMoreAbortRef = useRef<AbortController | null>(null);
 
   // Dialog states
   const [recordDialogOpen, setRecordDialogOpen] = useState(false);
@@ -330,12 +337,17 @@ export function VendorFinanceDetailView({
   // 2. Load First Page of Ledger Entries (strictly bound to current scopeFilter)
   useEffect(() => {
     let cancelled = false;
+    entriesRequestGenRef.current += 1;
+    const requestGen = entriesRequestGenRef.current;
+    entriesLoadMoreAbortRef.current?.abort();
+    entriesLoadMoreAbortRef.current = null;
     const controller = new AbortController();
 
     async function loadFirstEntriesPage() {
       await Promise.resolve();
-      if (cancelled) return;
+      if (cancelled || entriesRequestGenRef.current !== requestGen) return;
       setEntriesLoading(true);
+      setLoadingMoreEntries(false);
       setEntriesError(null);
 
       try {
@@ -353,7 +365,7 @@ export function VendorFinanceDetailView({
           cache: "no-store",
         });
         const json: unknown = await res.json().catch(() => null);
-        if (cancelled) return;
+        if (cancelled || entriesRequestGenRef.current !== requestGen) return;
 
         if (!res.ok) {
           const classified = classifyVendorFinanceError(json, res.status);
@@ -363,7 +375,7 @@ export function VendorFinanceDetailView({
         }
 
         const parsed = parseVendorEntriesPageEnvelope(json);
-        if (!parsed) {
+        if (!parsed || parsed.vendor_id !== vendorId) {
           setEntriesError("Dữ liệu sổ cái giao dịch từ máy chủ không hợp lệ.");
           setEntriesLoading(false);
           return;
@@ -374,7 +386,11 @@ export function VendorFinanceDetailView({
         setHasMoreEntries(parsed.has_more);
         setEntriesLoading(false);
       } catch (err) {
-        if (cancelled || (err instanceof DOMException && err.name === "AbortError")) {
+        if (
+          cancelled ||
+          entriesRequestGenRef.current !== requestGen ||
+          (err instanceof DOMException && err.name === "AbortError")
+        ) {
           return;
         }
         setEntriesError("Không thể tải sổ cái giao dịch do lỗi kết nối mạng.");
@@ -386,6 +402,7 @@ export function VendorFinanceDetailView({
     return () => {
       cancelled = true;
       controller.abort();
+      entriesLoadMoreAbortRef.current?.abort();
     };
   }, [vendorId, scopeFilter, entryTypeFilter, refreshNonce]);
 
@@ -449,24 +466,40 @@ export function VendorFinanceDetailView({
     };
   }, [vendorId, scopeFilter, recPage, refreshNonce]);
 
-  // 4. Load First Page of Shared Advance Movements (when allowed)
-  useEffect(() => {
-    if (detail && detail.allowed_actions.can_view_shared_advance === false) {
-      setSharedMovements([]);
-      setSharedNextCursor(null);
-      setHasMoreSharedMovements(false);
-      setSharedMovementsLoading(false);
-      setSharedMovementsError(null);
-      return;
-    }
+  const canViewSharedAdvance =
+    detail !== null &&
+    detail.vendor.vendor_id === vendorId &&
+    detail.allowed_actions.can_view_shared_advance === true;
 
+  const resolvedActiveTab: DetailTab =
+    activeTab === "shared_advances" && !canViewSharedAdvance ? "ledger" : activeTab;
+
+  // 4. Load First Page of Shared Advance Movements (strictly when can_view_shared_advance === true)
+  useEffect(() => {
     let cancelled = false;
+    sharedMovementsRequestGenRef.current += 1;
+    const requestGen = sharedMovementsRequestGenRef.current;
+    sharedLoadMoreAbortRef.current?.abort();
+    sharedLoadMoreAbortRef.current = null;
     const controller = new AbortController();
 
     async function loadFirstSharedAdvancesPage() {
       await Promise.resolve();
-      if (cancelled) return;
+      if (cancelled || sharedMovementsRequestGenRef.current !== requestGen) return;
+
+      if (!canViewSharedAdvance) {
+        setSharedMovements([]);
+        setSharedNextCursor(null);
+        setHasMoreSharedMovements(false);
+        setSharedMovementsLoading(false);
+        setLoadingMoreSharedMovements(false);
+        setSharedMovementsError(null);
+        setActiveTab((prev) => (prev === "shared_advances" ? "ledger" : prev));
+        return;
+      }
+
       setSharedMovementsLoading(true);
+      setLoadingMoreSharedMovements(false);
       setSharedMovementsError(null);
 
       try {
@@ -480,7 +513,7 @@ export function VendorFinanceDetailView({
           cache: "no-store",
         });
         const json: unknown = await res.json().catch(() => null);
-        if (cancelled) return;
+        if (cancelled || sharedMovementsRequestGenRef.current !== requestGen) return;
 
         if (!res.ok) {
           const classified = classifyVendorFinanceError(json, res.status);
@@ -490,7 +523,7 @@ export function VendorFinanceDetailView({
         }
 
         const parsed = parseVendorSharedAdvancesPageEnvelope(json);
-        if (!parsed) {
+        if (!parsed || parsed.vendor_id !== vendorId) {
           setSharedMovementsError("Dữ liệu lịch sử ứng dùng chung từ máy chủ không hợp lệ.");
           setSharedMovementsLoading(false);
           return;
@@ -501,7 +534,11 @@ export function VendorFinanceDetailView({
         setHasMoreSharedMovements(parsed.has_more);
         setSharedMovementsLoading(false);
       } catch (err) {
-        if (cancelled || (err instanceof DOMException && err.name === "AbortError")) {
+        if (
+          cancelled ||
+          sharedMovementsRequestGenRef.current !== requestGen ||
+          (err instanceof DOMException && err.name === "AbortError")
+        ) {
           return;
         }
         setSharedMovementsError("Không thể tải lịch sử ứng dùng chung do lỗi kết nối mạng.");
@@ -513,16 +550,23 @@ export function VendorFinanceDetailView({
     return () => {
       cancelled = true;
       controller.abort();
+      sharedLoadMoreAbortRef.current?.abort();
     };
-  }, [vendorId, detail, movementTypeFilter, refreshNonce]);
+  }, [vendorId, canViewSharedAdvance, movementTypeFilter, refreshNonce]);
 
   const handleLoadMoreEntries = async () => {
-    if (!nextCursor || loadingMoreEntries) return;
+    if (!nextCursor || entriesLoading || loadingMoreEntries) return;
+    const requestGen = entriesRequestGenRef.current;
+    const requestVendorId = vendorId;
+    entriesLoadMoreAbortRef.current?.abort();
+    const controller = new AbortController();
+    entriesLoadMoreAbortRef.current = controller;
+
     setLoadingMoreEntries(true);
     setEntriesError(null);
 
     try {
-      const url = buildVendorEntriesUrl(vendorId, {
+      const url = buildVendorEntriesUrl(requestVendorId, {
         cursor: nextCursor,
         entry_type: entryTypeFilter || null,
         page_size: ENTRIES_PAGE_SIZE,
@@ -531,8 +575,19 @@ export function VendorFinanceDetailView({
         accountant_ref: scopeFilter.accountantRef,
         contract_type: scopeFilter.contractType,
       });
-      const res = await fetch(url, { method: "GET", cache: "no-store" });
+      const res = await fetch(url, {
+        method: "GET",
+        signal: controller.signal,
+        cache: "no-store",
+      });
       const json: unknown = await res.json().catch(() => null);
+      if (
+        controller.signal.aborted ||
+        entriesRequestGenRef.current !== requestGen ||
+        vendorId !== requestVendorId
+      ) {
+        return;
+      }
 
       if (!res.ok) {
         const classified = classifyVendorFinanceError(json, res.status);
@@ -542,7 +597,7 @@ export function VendorFinanceDetailView({
       }
 
       const parsed = parseVendorEntriesPageEnvelope(json);
-      if (!parsed) {
+      if (!parsed || parsed.vendor_id !== requestVendorId) {
         setEntriesError("Phản hồi phân trang sổ cái từ máy chủ không hợp lệ.");
         setLoadingMoreEntries(false);
         return;
@@ -553,6 +608,7 @@ export function VendorFinanceDetailView({
         const merged = [...prev];
         for (const item of parsed.entries) {
           if (!existingIds.has(item.entry_id)) {
+            existingIds.add(item.entry_id);
             merged.push(item);
           }
         }
@@ -561,25 +617,62 @@ export function VendorFinanceDetailView({
       setNextCursor(parsed.next_cursor);
       setHasMoreEntries(parsed.has_more);
       setLoadingMoreEntries(false);
-    } catch {
+    } catch (err) {
+      if (
+        controller.signal.aborted ||
+        entriesRequestGenRef.current !== requestGen ||
+        (err instanceof DOMException && err.name === "AbortError")
+      ) {
+        return;
+      }
       setEntriesError("Mất kết nối mạng khi tải thêm bút toán sổ cái.");
       setLoadingMoreEntries(false);
     }
   };
 
   const handleLoadMoreSharedMovements = async () => {
-    if (!sharedNextCursor || loadingMoreSharedMovements) return;
+    if (
+      !canViewSharedAdvance ||
+      !sharedNextCursor ||
+      sharedMovementsLoading ||
+      loadingMoreSharedMovements
+    ) {
+      return;
+    }
+    const requestGen = sharedMovementsRequestGenRef.current;
+    const requestVendorId = vendorId;
+    sharedLoadMoreAbortRef.current?.abort();
+    const controller = new AbortController();
+    sharedLoadMoreAbortRef.current = controller;
+
     setLoadingMoreSharedMovements(true);
     setSharedMovementsError(null);
 
     try {
-      const url = buildVendorSharedAdvancesUrl(vendorId, {
+      const url = buildVendorSharedAdvancesUrl(requestVendorId, {
         cursor: sharedNextCursor,
         movement_type: movementTypeFilter || null,
         page_size: SHARED_ADVANCES_PAGE_SIZE,
       });
-      const res = await fetch(url, { method: "GET", cache: "no-store" });
+      const res = await fetch(url, {
+        method: "GET",
+        signal: controller.signal,
+        cache: "no-store",
+      });
       const json: unknown = await res.json().catch(() => null);
+      if (
+        !shouldCommitSharedAdvanceLoadMore({
+          requestGeneration: requestGen,
+          currentGeneration: sharedMovementsRequestGenRef.current,
+          aborted: controller.signal.aborted,
+          canViewSharedAdvance,
+          requestVendorId,
+          currentVendorId: vendorId,
+          responseVendorId: requestVendorId,
+        })
+      ) {
+        return;
+      }
 
       if (!res.ok) {
         const classified = classifyVendorFinanceError(json, res.status);
@@ -595,26 +688,36 @@ export function VendorFinanceDetailView({
         return;
       }
 
-      setSharedMovements((prev) => {
-        const existingIds = new Set(prev.map((item) => item.movement_id));
-        const merged = [...prev];
-        for (const item of parsed.movements) {
-          if (!existingIds.has(item.movement_id)) {
-            merged.push(item);
-          }
-        }
-        return merged;
-      });
+      if (
+        !shouldCommitSharedAdvanceLoadMore({
+          requestGeneration: requestGen,
+          currentGeneration: sharedMovementsRequestGenRef.current,
+          aborted: controller.signal.aborted,
+          canViewSharedAdvance,
+          requestVendorId,
+          currentVendorId: vendorId,
+          responseVendorId: parsed.vendor_id,
+        })
+      ) {
+        return;
+      }
+
+      setSharedMovements((prev) => mergeUniqueSharedAdvanceMovements(prev, parsed.movements));
       setSharedNextCursor(parsed.next_cursor);
       setHasMoreSharedMovements(parsed.has_more);
       setLoadingMoreSharedMovements(false);
-    } catch {
+    } catch (err) {
+      if (
+        controller.signal.aborted ||
+        sharedMovementsRequestGenRef.current !== requestGen ||
+        (err instanceof DOMException && err.name === "AbortError")
+      ) {
+        return;
+      }
       setSharedMovementsError("Mất kết nối mạng khi tải thêm giao dịch ứng dùng chung.");
       setLoadingMoreSharedMovements(false);
     }
   };
-
-  const canViewSharedAdvance = detail?.allowed_actions.can_view_shared_advance === true;
 
   const focusTabRef = (tab: DetailTab) => {
     if (tab === "ledger") {
@@ -630,7 +733,7 @@ export function VendorFinanceDetailView({
     const visibleTabs: DetailTab[] = canViewSharedAdvance
       ? ["ledger", "reconciliations", "shared_advances"]
       : ["ledger", "reconciliations"];
-    const currentIndex = Math.max(0, visibleTabs.indexOf(activeTab));
+    const currentIndex = Math.max(0, visibleTabs.indexOf(resolvedActiveTab));
 
     if (event.key === "ArrowRight") {
       event.preventDefault();
@@ -1193,13 +1296,13 @@ export function VendorFinanceDetailView({
           id={ledgerTabId}
           type="button"
           role="tab"
-          aria-selected={activeTab === "ledger"}
+          aria-selected={resolvedActiveTab === "ledger"}
           aria-controls={ledgerPanelId}
-          tabIndex={activeTab === "ledger" ? 0 : -1}
+          tabIndex={resolvedActiveTab === "ledger" ? 0 : -1}
           onKeyDown={handleTabKeyDown}
           onClick={() => setActiveTab("ledger")}
           className={buttonClasses({
-            variant: activeTab === "ledger" ? "soft" : "ghost",
+            variant: resolvedActiveTab === "ledger" ? "soft" : "ghost",
             size: "md",
           })}
         >
@@ -1211,13 +1314,13 @@ export function VendorFinanceDetailView({
           id={recTabId}
           type="button"
           role="tab"
-          aria-selected={activeTab === "reconciliations"}
+          aria-selected={resolvedActiveTab === "reconciliations"}
           aria-controls={recPanelId}
-          tabIndex={activeTab === "reconciliations" ? 0 : -1}
+          tabIndex={resolvedActiveTab === "reconciliations" ? 0 : -1}
           onKeyDown={handleTabKeyDown}
           onClick={() => setActiveTab("reconciliations")}
           className={buttonClasses({
-            variant: activeTab === "reconciliations" ? "soft" : "ghost",
+            variant: resolvedActiveTab === "reconciliations" ? "soft" : "ghost",
             size: "md",
           })}
         >
@@ -1231,13 +1334,13 @@ export function VendorFinanceDetailView({
             type="button"
             role="tab"
             data-testid="vfin-tab-shared-advances"
-            aria-selected={activeTab === "shared_advances"}
+            aria-selected={resolvedActiveTab === "shared_advances"}
             aria-controls={sharedAdvPanelId}
-            tabIndex={activeTab === "shared_advances" ? 0 : -1}
+            tabIndex={resolvedActiveTab === "shared_advances" ? 0 : -1}
             onKeyDown={handleTabKeyDown}
             onClick={() => setActiveTab("shared_advances")}
             className={buttonClasses({
-              variant: activeTab === "shared_advances" ? "soft" : "ghost",
+              variant: resolvedActiveTab === "shared_advances" ? "soft" : "ghost",
               size: "md",
             })}
           >
@@ -1253,7 +1356,7 @@ export function VendorFinanceDetailView({
         id={ledgerPanelId}
         role="tabpanel"
         aria-labelledby={ledgerTabId}
-        hidden={activeTab !== "ledger"}
+        hidden={resolvedActiveTab !== "ledger"}
         data-ui-panel-motion="true"
         className="space-y-4"
       >
@@ -1570,7 +1673,7 @@ export function VendorFinanceDetailView({
         id={recPanelId}
         role="tabpanel"
         aria-labelledby={recTabId}
-        hidden={activeTab !== "reconciliations"}
+        hidden={resolvedActiveTab !== "reconciliations"}
         data-ui-panel-motion="true"
         className="space-y-4"
       >
@@ -1818,7 +1921,7 @@ export function VendorFinanceDetailView({
           id={sharedAdvPanelId}
           role="tabpanel"
           aria-labelledby={sharedAdvTabId}
-          hidden={activeTab !== "shared_advances"}
+          hidden={resolvedActiveTab !== "shared_advances"}
           data-ui-panel-motion="true"
           className="space-y-4"
         >

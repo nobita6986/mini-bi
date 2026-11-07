@@ -3956,6 +3956,38 @@ export function parseVendorSharedAdvancesPageEnvelope(
   };
 }
 
+export function shouldCommitSharedAdvanceLoadMore(params: {
+  requestGeneration: number;
+  currentGeneration: number;
+  aborted: boolean;
+  canViewSharedAdvance: boolean;
+  requestVendorId: string;
+  currentVendorId: string;
+  responseVendorId: string;
+}): boolean {
+  if (params.aborted) return false;
+  if (!params.canViewSharedAdvance) return false;
+  if (params.requestGeneration !== params.currentGeneration) return false;
+  if (params.requestVendorId !== params.currentVendorId) return false;
+  if (params.responseVendorId !== params.requestVendorId) return false;
+  return true;
+}
+
+export function mergeUniqueSharedAdvanceMovements(
+  existing: readonly VendorFinanceSharedAdvanceMovementProjection[],
+  incoming: readonly VendorFinanceSharedAdvanceMovementProjection[],
+): VendorFinanceSharedAdvanceMovementProjection[] {
+  const existingIds = new Set(existing.map((item) => item.movement_id));
+  const merged = [...existing];
+  for (const item of incoming) {
+    if (!existingIds.has(item.movement_id)) {
+      existingIds.add(item.movement_id);
+      merged.push(item);
+    }
+  }
+  return merged;
+}
+
 export function parseFundSharedAdvanceEnvelope(
   envelope: unknown,
 ): VendorFinanceFundSharedAdvanceResponse | null {
@@ -3998,7 +4030,19 @@ export function parseApplySharedAdvanceOffsetEnvelope(
   const entry = parseEntryProjection(data.entry);
   const balance = nonNegativeMoneyStr(data.shared_advance_balance_minor);
   const replayed = boolVal(data.replayed);
-  if (!movement || !entry || balance === null || replayed === null) return null;
+  if (
+    !movement ||
+    !entry ||
+    balance === null ||
+    replayed === null ||
+    movement.vendor_id !== entry.vendor_id ||
+    movement.movement_type !== "PROJECT_OFFSET_APPLIED" ||
+    entry.entry_type !== "ADVANCE_OFFSET_RECORDED" ||
+    movement.project_entry_id !== entry.entry_id ||
+    movement.amount_minor !== entry.amount_minor
+  ) {
+    return null;
+  }
   return { movement, entry, shared_advance_balance_minor: balance, replayed };
 }
 
@@ -4025,13 +4069,34 @@ export function parseReverseSharedAdvanceMovementEnvelope(
   const origMov = parseSharedAdvanceMovementProjection(data.reversed_movement);
   const sharedBalance = nonNegativeMoneyStr(data.shared_advance_balance_minor);
   const replayed = boolVal(data.replayed);
-  if (!revMov || !origMov || sharedBalance === null || replayed === null) return null;
+  if (
+    !revMov ||
+    !origMov ||
+    sharedBalance === null ||
+    replayed === null ||
+    revMov.vendor_id !== origMov.vendor_id ||
+    revMov.movement_type !== "REVERSAL" ||
+    revMov.reverses_movement_id !== origMov.movement_id ||
+    origMov.reversed_by_movement_id !== revMov.movement_id
+  ) {
+    return null;
+  }
 
   const hasEntryFields = "reversal_entry" in data || "reversed_entry" in data;
   if (hasEntryFields) {
     const revEntry = parseEntryProjection(data.reversal_entry);
     const origEntry = parseEntryProjection(data.reversed_entry);
-    if (!revEntry || !origEntry) return null;
+    if (
+      !revEntry ||
+      !origEntry ||
+      revEntry.vendor_id !== revMov.vendor_id ||
+      origEntry.vendor_id !== origMov.vendor_id ||
+      revEntry.entry_type !== "REVERSAL" ||
+      revEntry.reverses_entry_id !== origEntry.entry_id ||
+      origEntry.reversed_by_entry_id !== revEntry.entry_id
+    ) {
+      return null;
+    }
     return {
       reversal_movement: revMov,
       reversed_movement: origMov,

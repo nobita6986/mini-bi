@@ -314,6 +314,24 @@ test("VFIN-04: Vendor shared advance balance, 4 shared advance dialogs, cross-pr
   assert.match(detailView, /vfin-reverse-shared-movement-btn/);
   assert.doesNotMatch(detailView, /\+ Tạm ứng/);
 
+  // Shared-advance effect & stale load-more regression guards
+  assert.match(
+    detailView,
+    /detail !== null &&\s*detail\.vendor\.vendor_id === vendorId &&\s*detail\.allowed_actions\.can_view_shared_advance === true/,
+  );
+  assert.match(
+    detailView,
+    /\[vendorId,\s*canViewSharedAdvance,\s*movementTypeFilter,\s*refreshNonce\]/,
+  );
+  assert.match(
+    detailView,
+    /resolvedActiveTab:\s*DetailTab\s*=\s*activeTab === "shared_advances" && !canViewSharedAdvance \? "ledger" : activeTab/,
+  );
+  assert.match(detailView, /sharedMovementsRequestGenRef/);
+  assert.match(detailView, /sharedLoadMoreAbortRef/);
+  assert.match(detailView, /shouldCommitSharedAdvanceLoadMore\(/);
+  assert.match(detailView, /mergeUniqueSharedAdvanceMovements\(/);
+
   // Target 3: 4 Shared advance mutation dialogs + balance-race reload + no ADVANCE_RECORDED / OPENING_ADVANCE creation paths
   assert.match(entryDialogs, /export function FundVendorSharedAdvanceDialog/);
   assert.match(entryDialogs, /vfin-fund-shared-advance-dialog/);

@@ -125,6 +125,7 @@ import {
   isCanonicalUiProjectId,
   isCanonicalUiVendorId,
   isUsableVendorFinanceExportBlob,
+  mergeUniqueSharedAdvanceMovements,
   normalizeNonNegativeVndInput,
   normalizePositiveVndInput,
   normalizeSignedVndInput,
@@ -157,6 +158,7 @@ import {
   parseVendorReconciliationsPageEnvelope,
   parseVendorSharedAdvancesPageEnvelope,
   resolveVendorFinanceExportFilename,
+  shouldCommitSharedAdvanceLoadMore,
   uploadEvidenceForCommittedTarget,
   validateEvidenceFilePreflight,
 } from "./ui-model.ts";
@@ -2401,7 +2403,11 @@ test("VFIN-04: Shared advance URL/request builders, redaction-aware envelope par
       data: {
         movement: {
           ...baseMovement,
+          movement_id: "30303030-3030-4030-8030-303030303030",
+          document_kind: "VENDOR_REFUND_VOUCHER",
+          document_title_vi: "Phiếu hoàn ứng tiền dùng chung Vendor",
           movement_type: "VENDOR_REFUND_RECORDED",
+          amount_minor: "10000000",
           balance_delta_minor: "-10000000",
           balance_before_minor: "50000000",
           balance_after_minor: "40000000",
@@ -2411,6 +2417,373 @@ test("VFIN-04: Shared advance URL/request builders, redaction-aware envelope par
       },
     }),
   );
+
+  // 4b. parseApplySharedAdvanceOffsetEnvelope: positive + fail-closed cases
+  const offsetEntryId = "40404040-4040-4040-8040-404040404040";
+  const offsetMovementId = "50505050-5050-4050-8050-505050505050";
+  const offsetEntry = makeEntryProjection({
+    entry_id: offsetEntryId,
+    vendor_id: "VND-001",
+    document_no: "VFIN-2026-000010",
+    document_kind: "ADVANCE_OFFSET_VOUCHER",
+    document_title_vi: "Phiếu khấu trừ ứng dùng chung vào công nợ dự án",
+    entry_type: "ADVANCE_OFFSET_RECORDED",
+    amount_minor: "10000000",
+    balance_before_minor: "25000000",
+    balance_delta_minor: "-10000000",
+    balance_after_minor: "15000000",
+    can_attach_evidence: false,
+  });
+  const offsetMovement = {
+    ...baseMovement,
+    movement_id: offsetMovementId,
+    vendor_advance_sequence: 2,
+    cursor_sequence: 2,
+    document_no: "VFIN-2026-000011",
+    document_kind: "ADVANCE_OFFSET_VOUCHER",
+    document_title_vi: "Phiếu khấu trừ ứng dùng chung vào công nợ dự án",
+    movement_type: "PROJECT_OFFSET_APPLIED",
+    amount_minor: "10000000",
+    balance_before_minor: "50000000",
+    balance_delta_minor: "-10000000",
+    balance_after_minor: "40000000",
+    project_entry_id: offsetEntryId,
+    project_id: PROJECT_ID,
+    project_display_name_snapshot: "Dự án Tuyển dụng Miền Bắc",
+    accountant_ref: ACCOUNTANT_A_REF,
+    responsible_accountant_display_name: "Nguyễn Thị Kế Toán A",
+    contract_type: "SEASONAL",
+  };
+
+  const parsedApplyOffset = parseApplySharedAdvanceOffsetEnvelope({
+    ok: true,
+    data: {
+      movement: offsetMovement,
+      entry: offsetEntry,
+      shared_advance_balance_minor: "40000000",
+      replayed: false,
+    },
+  });
+  assert.ok(parsedApplyOffset);
+  assert.equal(parsedApplyOffset.movement.movement_id, offsetMovementId);
+  assert.equal(parsedApplyOffset.entry.entry_id, offsetEntryId);
+  assert.equal(parsedApplyOffset.shared_advance_balance_minor, "40000000");
+
+  // Malformed / fail-closed cases for parseApplySharedAdvanceOffsetEnvelope
+  assert.equal(
+    parseApplySharedAdvanceOffsetEnvelope({
+      ok: true,
+      data: {
+        movement: offsetMovement,
+        shared_advance_balance_minor: "40000000",
+        replayed: false,
+      },
+    }),
+    null,
+  );
+  assert.equal(
+    parseApplySharedAdvanceOffsetEnvelope({
+      ok: true,
+      data: {
+        movement: offsetMovement,
+        entry: { ...offsetEntry, vendor_id: "VND-002" },
+        shared_advance_balance_minor: "40000000",
+        replayed: false,
+      },
+    }),
+    null,
+  );
+  assert.equal(
+    parseApplySharedAdvanceOffsetEnvelope({
+      ok: true,
+      data: {
+        movement: baseMovement,
+        entry: offsetEntry,
+        shared_advance_balance_minor: "40000000",
+        replayed: false,
+      },
+    }),
+    null,
+  );
+  assert.equal(
+    parseApplySharedAdvanceOffsetEnvelope({
+      ok: true,
+      data: {
+        movement: offsetMovement,
+        entry: { ...offsetEntry, entry_type: "PAYMENT_RECORDED" },
+        shared_advance_balance_minor: "40000000",
+        replayed: false,
+      },
+    }),
+    null,
+  );
+  assert.equal(
+    parseApplySharedAdvanceOffsetEnvelope({
+      ok: true,
+      data: {
+        movement: { ...offsetMovement, project_entry_id: ENTRY_ID },
+        entry: offsetEntry,
+        shared_advance_balance_minor: "40000000",
+        replayed: false,
+      },
+    }),
+    null,
+  );
+  assert.equal(
+    parseApplySharedAdvanceOffsetEnvelope({
+      ok: true,
+      data: {
+        movement: offsetMovement,
+        entry: {
+          ...offsetEntry,
+          amount_minor: "5000000",
+          balance_delta_minor: "-5000000",
+          balance_after_minor: "20000000",
+        },
+        shared_advance_balance_minor: "40000000",
+        replayed: false,
+      },
+    }),
+    null,
+  );
+  assert.equal(
+    parseApplySharedAdvanceOffsetEnvelope({
+      ok: true,
+      data: {
+        movement: offsetMovement,
+        entry: offsetEntry,
+        shared_advance_balance_minor: "-1",
+        replayed: false,
+      },
+    }),
+    null,
+  );
+
+  // 4c. parseReverseSharedAdvanceMovementEnvelope: positive (movement-only & coupled entry pair) + fail-closed one-sided entry pair
+  const reversalMovementId = "60606060-6060-4060-8060-606060606060";
+  const reversedFundMovement = {
+    ...baseMovement,
+    reversed_by_movement_id: reversalMovementId,
+    reversed_by_document_no: "VFIN-2026-000012",
+    can_reverse: false,
+  };
+  const reversalFundMovement = {
+    ...baseMovement,
+    movement_id: reversalMovementId,
+    vendor_advance_sequence: 3,
+    cursor_sequence: 3,
+    document_no: "VFIN-2026-000012",
+    document_kind: "ADVANCE_VOUCHER",
+    document_title_vi: "Phiếu điều chỉnh đảo giao dịch ứng dùng chung",
+    movement_type: "REVERSAL",
+    amount_minor: "50000000",
+    balance_before_minor: "50000000",
+    balance_delta_minor: "-50000000",
+    balance_after_minor: "0",
+    reverses_movement_id: baseMovement.movement_id,
+    reverses_document_no: baseMovement.document_no,
+    can_reverse: false,
+  };
+
+  const parsedReverseFund = parseReverseSharedAdvanceMovementEnvelope({
+    ok: true,
+    data: {
+      reversal_movement: reversalFundMovement,
+      reversed_movement: reversedFundMovement,
+      shared_advance_balance_minor: "0",
+      replayed: false,
+    },
+  });
+  assert.ok(parsedReverseFund);
+  assert.equal(parsedReverseFund.reversal_movement.movement_id, reversalMovementId);
+  assert.equal("reversal_entry" in parsedReverseFund, false);
+
+  const reversedOffsetMov = {
+    ...offsetMovement,
+    reversed_by_movement_id: reversalMovementId,
+    reversed_by_document_no: "VFIN-2026-000012",
+    can_reverse: false,
+  };
+  const reversalOffsetMov = {
+    ...offsetMovement,
+    movement_id: reversalMovementId,
+    vendor_advance_sequence: 3,
+    cursor_sequence: 3,
+    document_no: "VFIN-2026-000012",
+    document_kind: "ADVANCE_OFFSET_VOUCHER",
+    document_title_vi: "Phiếu điều chỉnh đảo giao dịch ứng dùng chung",
+    movement_type: "REVERSAL",
+    amount_minor: "10000000",
+    balance_before_minor: "40000000",
+    balance_delta_minor: "10000000",
+    balance_after_minor: "50000000",
+    project_entry_id: REVERSAL_ENTRY_ID,
+    reverses_movement_id: offsetMovement.movement_id,
+    reverses_document_no: offsetMovement.document_no,
+    can_reverse: false,
+  };
+  const reversedOffsetEntry = {
+    ...offsetEntry,
+    reversed_by_entry_id: REVERSAL_ENTRY_ID,
+    reversed_by_document_no: "VFIN-2026-000013",
+    can_reverse: false,
+  };
+  const reversalOffsetEntry = makeEntryProjection({
+    entry_id: REVERSAL_ENTRY_ID,
+    vendor_id: "VND-001",
+    vendor_sequence: 4,
+    cursor_sequence: 4,
+    document_no: "VFIN-2026-000013",
+    document_kind: "ADVANCE_OFFSET_VOUCHER",
+    document_title_vi: "Phiếu điều chỉnh đảo bút toán Vendor",
+    entry_type: "REVERSAL",
+    amount_minor: "10000000",
+    balance_before_minor: "15000000",
+    balance_delta_minor: "10000000",
+    balance_after_minor: "25000000",
+    reverses_entry_id: offsetEntryId,
+    reverses_document_no: offsetEntry.document_no,
+    can_reverse: false,
+    can_attach_evidence: false,
+  });
+
+  const parsedReverseOffset = parseReverseSharedAdvanceMovementEnvelope({
+    ok: true,
+    data: {
+      reversal_movement: reversalOffsetMov,
+      reversed_movement: reversedOffsetMov,
+      shared_advance_balance_minor: "50000000",
+      reversal_entry: reversalOffsetEntry,
+      reversed_entry: reversedOffsetEntry,
+      replayed: false,
+    },
+  });
+  assert.ok(parsedReverseOffset);
+  assert.equal(parsedReverseOffset.reversal_entry?.entry_id, REVERSAL_ENTRY_ID);
+  assert.equal(parsedReverseOffset.reversed_entry?.entry_id, offsetEntryId);
+
+  // Fail-closed: optional entry pair MUST NOT miss one side
+  assert.equal(
+    parseReverseSharedAdvanceMovementEnvelope({
+      ok: true,
+      data: {
+        reversal_movement: reversalOffsetMov,
+        reversed_movement: reversedOffsetMov,
+        shared_advance_balance_minor: "50000000",
+        reversal_entry: reversalOffsetEntry,
+        replayed: false,
+      },
+    }),
+    null,
+  );
+  assert.equal(
+    parseReverseSharedAdvanceMovementEnvelope({
+      ok: true,
+      data: {
+        reversal_movement: reversalOffsetMov,
+        reversed_movement: reversedOffsetMov,
+        shared_advance_balance_minor: "50000000",
+        reversed_entry: reversedOffsetEntry,
+        replayed: false,
+      },
+    }),
+    null,
+  );
+  assert.equal(
+    parseReverseSharedAdvanceMovementEnvelope({
+      ok: true,
+      data: {
+        reversal_movement: reversalOffsetMov,
+        reversed_movement: reversedOffsetMov,
+        shared_advance_balance_minor: "50000000",
+        reversal_entry: reversalOffsetEntry,
+        reversed_entry: null,
+        replayed: false,
+      },
+    }),
+    null,
+  );
+  assert.equal(
+    parseReverseSharedAdvanceMovementEnvelope({
+      ok: true,
+      data: {
+        reversal_movement: { ...reversalOffsetMov, reverses_movement_id: ENTRY_ID },
+        reversed_movement: reversedOffsetMov,
+        shared_advance_balance_minor: "50000000",
+        replayed: false,
+      },
+    }),
+    null,
+  );
+
+  // 4d. Stale "Tải thêm" request-generation guard & deduplicating merge regression tests
+  assert.equal(
+    shouldCommitSharedAdvanceLoadMore({
+      requestGeneration: 1,
+      currentGeneration: 2,
+      aborted: false,
+      canViewSharedAdvance: true,
+      requestVendorId: "VND-001",
+      currentVendorId: "VND-001",
+      responseVendorId: "VND-001",
+    }),
+    false,
+  );
+  assert.equal(
+    shouldCommitSharedAdvanceLoadMore({
+      requestGeneration: 2,
+      currentGeneration: 2,
+      aborted: true,
+      canViewSharedAdvance: true,
+      requestVendorId: "VND-001",
+      currentVendorId: "VND-001",
+      responseVendorId: "VND-001",
+    }),
+    false,
+  );
+  assert.equal(
+    shouldCommitSharedAdvanceLoadMore({
+      requestGeneration: 2,
+      currentGeneration: 2,
+      aborted: false,
+      canViewSharedAdvance: false,
+      requestVendorId: "VND-001",
+      currentVendorId: "VND-001",
+      responseVendorId: "VND-001",
+    }),
+    false,
+  );
+  assert.equal(
+    shouldCommitSharedAdvanceLoadMore({
+      requestGeneration: 2,
+      currentGeneration: 2,
+      aborted: false,
+      canViewSharedAdvance: true,
+      requestVendorId: "VND-001",
+      currentVendorId: "VND-002",
+      responseVendorId: "VND-001",
+    }),
+    false,
+  );
+  assert.equal(
+    shouldCommitSharedAdvanceLoadMore({
+      requestGeneration: 2,
+      currentGeneration: 2,
+      aborted: false,
+      canViewSharedAdvance: true,
+      requestVendorId: "VND-001",
+      currentVendorId: "VND-001",
+      responseVendorId: "VND-001",
+    }),
+    true,
+  );
+  const mergedMovements = mergeUniqueSharedAdvanceMovements(
+    [baseMovement],
+    [baseMovement, offsetMovement],
+  );
+  assert.equal(mergedMovements.length, 2);
+  assert.equal(mergedMovements[0].movement_id, baseMovement.movement_id);
+  assert.equal(mergedMovements[1].movement_id, offsetMovement.movement_id);
 
   // 5. XLSX zip signature & filename helpers
   const validZip = new Uint8Array([0x50, 0x4b, 0x03, 0x04, ...new Array(30).fill(0)]);
