@@ -60,8 +60,14 @@ import {
   type VendorFinanceErrorCode,
   type VendorFinanceEvidenceDownloadResponse,
   type VendorFinanceEvidenceReserveResponse,
+  type VendorFinanceExportVendorItem,
 } from "./vendor-finance-contract.ts";
 import type { VendorFinanceRepository } from "./vendor-finance-repository.ts";
+import {
+  buildVendorFinanceExportXlsx,
+  VENDOR_FINANCE_EXPORT_XLSX_CONTENT_TYPE,
+  vendorFinanceExportFilename,
+} from "./vendor-finance-xlsx.ts";
 
 export const MAX_VENDOR_FINANCE_MUTATION_JSON_BYTES = 8_192;
 export const MAX_VENDOR_FINANCE_OPENING_BATCH_JSON_BYTES = 65_536;
@@ -82,6 +88,7 @@ export type VendorFinanceApiDependencies = {
   resolveSession(): Promise<DirectEntrySessionResult>;
   repository: VendorFinanceRepository;
   storage?: VendorFinanceEvidenceStorage;
+  buildExportXlsx?(vendors: readonly VendorFinanceExportVendorItem[]): Promise<Uint8Array>;
 };
 
 function vfinError(code: VendorFinanceErrorCode): Response {
@@ -1745,7 +1752,29 @@ export async function handleGetExportVendorFinanceVendors(
   });
   if (!result.ok) return vfinError(result.code);
 
-  return vfinOk(result.data, 200);
+  const buildXlsx = dependencies.buildExportXlsx ?? buildVendorFinanceExportXlsx;
+  let xlsxBytes: Uint8Array;
+  try {
+    xlsxBytes = await buildXlsx(result.data.vendors);
+  } catch {
+    console.error("[vendor-finance] vendor export xlsx build failed");
+    return vfinError("VENDOR_FINANCE_UNAVAILABLE");
+  }
+
+  const xlsxBody = xlsxBytes.buffer.slice(
+    xlsxBytes.byteOffset,
+    xlsxBytes.byteOffset + xlsxBytes.byteLength,
+  );
+  return new Response(xlsxBody as ArrayBuffer, {
+    status: 200,
+    headers: {
+      "content-type": VENDOR_FINANCE_EXPORT_XLSX_CONTENT_TYPE,
+      "content-disposition": `attachment; filename="${vendorFinanceExportFilename(result.data.authorization_date)}"`,
+      "cache-control": "private, no-store",
+      "x-content-type-options": "nosniff",
+      "referrer-policy": "no-referrer",
+    },
+  });
 }
 
 // -----------------------------------------------------------------------------

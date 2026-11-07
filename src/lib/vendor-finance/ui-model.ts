@@ -22,6 +22,7 @@ import {
 } from "../navigation/registry-capability.ts";
 import type {
   ApplyOpeningBatchBody,
+  ApplySharedAdvanceOffsetBody,
   AssignGlobalRoleBody,
   AssignProjectAccountantBody,
   ClassifiedVendorFinanceContractType,
@@ -29,17 +30,22 @@ import type {
   CreateVendorReconciliationBody,
   EndGlobalRoleBody,
   EndProjectAccountantBody,
+  FundSharedAdvanceBody,
+  NormalSharedAdvanceMovementType,
   NormalVendorFinanceEntryType,
   OpeningBatchItemInput,
   OpeningVendorFinanceEntryType,
   PreviewOpeningBatchBody,
   RecordVendorFinanceEntryBody,
+  RecordVendorRefundBody,
   ReserveVendorFinanceEvidenceBody,
+  ReverseSharedAdvanceMovementBody,
   ReverseVendorFinanceEntryBody,
   VendorFinanceAccountSummary,
   VendorFinanceActiveFilter,
   VendorFinanceActorContextOptionsResponse,
   VendorFinanceAdminGrantState,
+  VendorFinanceApplySharedAdvanceOffsetResponse,
   VendorFinanceAssignGlobalRoleResponse,
   VendorFinanceAssignProjectAccountantResponse,
   VendorFinanceBalanceDirection,
@@ -66,6 +72,7 @@ import type {
   VendorFinanceEvidenceReserveResponse,
   VendorFinanceEvidenceSummary,
   VendorFinanceEvidenceTargetKind,
+  VendorFinanceFundSharedAdvanceResponse,
   VendorFinanceGlobalRoleCandidateItem,
   VendorFinanceGlobalRoleCode,
   VendorFinanceGlobalRoleGrantItem,
@@ -87,6 +94,11 @@ import type {
   VendorFinanceProjectAccountantsAdminProject,
   VendorFinanceReconciliationProjection,
   VendorFinanceReconciliationsPageResponse,
+  VendorFinanceRecordVendorRefundResponse,
+  VendorFinanceReverseSharedAdvanceMovementResponse,
+  VendorFinanceSharedAdvanceMovementProjection,
+  VendorFinanceSharedAdvanceMovementsPageResponse,
+  VendorFinanceSharedAdvanceMovementType,
   VendorFinanceSingleEntryResponse,
   VendorFinanceSubLedgerClassificationProjection,
   VendorFinanceVendorDetailResponse,
@@ -135,10 +147,49 @@ export const VFIN_UI_NORMAL_ENTRY_TYPES = [
   "ADJUSTMENT_DECREASE",
 ] as const satisfies readonly NormalVendorFinanceEntryType[];
 
+export const VFIN_UI_CREATOR_NORMAL_ENTRY_TYPES = [
+  "DEBT_RECORDED",
+  "PAYROLL_RECORDED",
+  "PAYMENT_RECORDED",
+  "ADJUSTMENT_INCREASE",
+  "ADJUSTMENT_DECREASE",
+] as const satisfies readonly NormalVendorFinanceEntryType[];
+
 export const VFIN_UI_OPENING_ENTRY_TYPES = [
   "OPENING_PAYABLE",
   "OPENING_ADVANCE",
 ] as const satisfies readonly OpeningVendorFinanceEntryType[];
+
+export const VFIN_UI_CREATOR_OPENING_ENTRY_TYPES = [
+  "OPENING_PAYABLE",
+] as const satisfies readonly OpeningVendorFinanceEntryType[];
+
+export const VFIN_UI_SHARED_ADVANCE_MOVEMENT_TYPES = [
+  "ADVANCE_FUNDED",
+  "VENDOR_REFUND_RECORDED",
+  "PROJECT_OFFSET_APPLIED",
+  "REVERSAL",
+] as const satisfies readonly VendorFinanceSharedAdvanceMovementType[];
+
+export const VFIN_UI_NORMAL_SHARED_ADVANCE_MOVEMENT_TYPES = [
+  "ADVANCE_FUNDED",
+  "VENDOR_REFUND_RECORDED",
+  "PROJECT_OFFSET_APPLIED",
+] as const satisfies readonly NormalSharedAdvanceMovementType[];
+
+export const VFIN_UI_REDACTED_FIELD_LABEL_VI = "Không hiển thị theo phạm vi quyền" as const;
+
+export const VENDOR_FINANCE_EXPORT_XLSX_MIME =
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" as const;
+
+export const SHARED_ADVANCE_MOVEMENT_TYPE_LABELS_VI: Readonly<
+  Record<VendorFinanceSharedAdvanceMovementType, string>
+> = {
+  ADVANCE_FUNDED: "Ứng tiền cho Vendor",
+  VENDOR_REFUND_RECORDED: "Vendor hoàn ứng",
+  PROJECT_OFFSET_APPLIED: "Khấu trừ vào công nợ dự án",
+  REVERSAL: "Hoàn tác bút toán ứng",
+};
 
 export const VFIN_UI_DOCUMENT_KINDS = [
   "PAYROLL_VOUCHER",
@@ -1009,6 +1060,83 @@ export function buildDownloadEvidenceUrl(evidenceId: string): string {
   return `/api/vendor-finance/evidence/${encodeURIComponent(evidenceId)}/download`;
 }
 
+export function buildVendorExportUrl(params?: {
+  search?: string | null;
+  active?: VendorFinanceActiveFilter;
+  balance_filter?: VendorFinanceBalanceFilter;
+  project_id?: string | null;
+  accountant_ref?: string | null;
+  ledger_scope?: VendorFinanceLedgerScopeFilter;
+  contract_type?: VendorFinanceContractTypeFilter;
+}): string {
+  const sp = new URLSearchParams();
+  if (params?.search !== undefined && params.search !== null) {
+    const trimmed = params.search.trim();
+    if (trimmed.length > 0) {
+      sp.set("search", trimmed.slice(0, VFIN_UI_MAX_SEARCH_LENGTH));
+    }
+  }
+  if (params?.active && params.active !== "all") {
+    sp.set("active", params.active);
+  }
+  if (params?.balance_filter && params.balance_filter !== "all") {
+    sp.set("balance_filter", params.balance_filter);
+  }
+  if (params?.project_id && isCanonicalUiProjectId(params.project_id)) {
+    sp.set("project_id", params.project_id);
+  }
+  if (params?.accountant_ref && isUuidString(params.accountant_ref)) {
+    sp.set("accountant_ref", params.accountant_ref.toLowerCase());
+  }
+  if (params?.ledger_scope && params.ledger_scope !== "all") {
+    sp.set("ledger_scope", params.ledger_scope);
+  }
+  if (params?.contract_type && params.contract_type !== "all") {
+    sp.set("contract_type", params.contract_type);
+  }
+  const qs = sp.toString();
+  return qs ? `/api/vendor-finance/vendors/export?${qs}` : "/api/vendor-finance/vendors/export";
+}
+
+export function buildVendorSharedAdvancesUrl(
+  vendorId: string,
+  params?: {
+    cursor?: string | null;
+    movement_type?: VendorFinanceSharedAdvanceMovementType | null;
+    page_size?: number;
+  },
+): string {
+  const sp = new URLSearchParams();
+  if (params?.cursor) {
+    sp.set("cursor", params.cursor);
+  }
+  if (params?.movement_type) {
+    sp.set("movement_type", params.movement_type);
+  }
+  if (params?.page_size && Number.isSafeInteger(params.page_size)) {
+    sp.set("page_size", String(params.page_size));
+  }
+  const qs = sp.toString();
+  const base = `/api/vendor-finance/vendors/${encodeURIComponent(vendorId)}/shared-advances`;
+  return qs ? `${base}?${qs}` : base;
+}
+
+export function buildFundVendorSharedAdvanceUrl(vendorId: string): string {
+  return `/api/vendor-finance/vendors/${encodeURIComponent(vendorId)}/shared-advances/fund`;
+}
+
+export function buildRecordVendorRefundUrl(vendorId: string): string {
+  return `/api/vendor-finance/vendors/${encodeURIComponent(vendorId)}/shared-advances/refund`;
+}
+
+export function buildApplyVendorSharedAdvanceOffsetUrl(vendorId: string): string {
+  return `/api/vendor-finance/vendors/${encodeURIComponent(vendorId)}/shared-advances/apply-offset`;
+}
+
+export function buildReverseVendorSharedAdvanceMovementUrl(movementId: string): string {
+  return `/api/vendor-finance/shared-advances/${encodeURIComponent(movementId)}/reverse`;
+}
+
 // -----------------------------------------------------------------------------
 // 5. Client Request Builders (Strict Contract Parity, Zero Authority Fields)
 // -----------------------------------------------------------------------------
@@ -1704,6 +1832,194 @@ export function buildFinalizeEvidenceRequest(): BuiltJsonRequest<Record<string, 
     headers: { "Content-Type": "application/json" },
     body: {},
   };
+}
+
+export function buildFundSharedAdvanceRequest(input: {
+  amount_input: string;
+  effective_date: string;
+  reason: string;
+  idempotency_key: string;
+}):
+  | { ok: true; request: BuiltJsonRequest<FundSharedAdvanceBody> }
+  | { ok: false; message: string } {
+  const amount = normalizePositiveVndInput(input.amount_input);
+  if (!amount.ok) {
+    return { ok: false, message: amount.message };
+  }
+  const effectiveDate = validateUiCalendarDate(input.effective_date);
+  if (!effectiveDate.ok) {
+    return { ok: false, message: effectiveDate.message };
+  }
+  const reason = validateUiReasonText(input.reason);
+  if (!reason.ok) {
+    return { ok: false, message: reason.message };
+  }
+  if (!isUuidString(input.idempotency_key)) {
+    return { ok: false, message: "Mã chống gửi trùng (Idempotency-Key) không hợp lệ." };
+  }
+  const idem = input.idempotency_key.toLowerCase();
+  return {
+    ok: true,
+    request: {
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": idem,
+      },
+      body: {
+        amount_minor: amount.canonical,
+        effective_date: effectiveDate.date,
+        reason: reason.reason,
+        idempotency_key: idem,
+      },
+    },
+  };
+}
+
+export function buildRecordVendorRefundRequest(input: {
+  amount_input: string;
+  effective_date: string;
+  reason: string;
+  idempotency_key: string;
+  available_shared_advance_minor?: string | null;
+}):
+  | { ok: true; request: BuiltJsonRequest<RecordVendorRefundBody> }
+  | { ok: false; message: string } {
+  const amount = normalizePositiveVndInput(input.amount_input);
+  if (!amount.ok) {
+    return { ok: false, message: amount.message };
+  }
+  if (
+    typeof input.available_shared_advance_minor === "string" &&
+    /^(?:0|[1-9][0-9]{0,18})$/.test(input.available_shared_advance_minor)
+  ) {
+    const avail = BigInt(input.available_shared_advance_minor);
+    if (amount.value > avail) {
+      return {
+        ok: false,
+        message: "Số tiền hoàn ứng vượt quá số dư ứng dùng chung hiện tại của Vendor.",
+      };
+    }
+  }
+  const effectiveDate = validateUiCalendarDate(input.effective_date);
+  if (!effectiveDate.ok) {
+    return { ok: false, message: effectiveDate.message };
+  }
+  const reason = validateUiReasonText(input.reason);
+  if (!reason.ok) {
+    return { ok: false, message: reason.message };
+  }
+  if (!isUuidString(input.idempotency_key)) {
+    return { ok: false, message: "Mã chống gửi trùng (Idempotency-Key) không hợp lệ." };
+  }
+  const idem = input.idempotency_key.toLowerCase();
+  return {
+    ok: true,
+    request: {
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": idem,
+      },
+      body: {
+        amount_minor: amount.canonical,
+        effective_date: effectiveDate.date,
+        reason: reason.reason,
+        idempotency_key: idem,
+      },
+    },
+  };
+}
+
+export function buildApplySharedAdvanceOffsetRequest(input: {
+  project_id: string;
+  contract_type: string;
+  amount_input: string;
+  effective_date: string;
+  reason: string;
+  idempotency_key: string;
+  available_shared_advance_minor?: string | null;
+  current_subledger_payable_minor?: string | null;
+}):
+  | { ok: true; request: BuiltJsonRequest<ApplySharedAdvanceOffsetBody> }
+  | { ok: false; message: string } {
+  const trimmedProject = input.project_id.trim();
+  if (!isCanonicalUiProjectId(trimmedProject)) {
+    return { ok: false, message: "Vui lòng chọn dự án hợp lệ để khấu trừ ứng." };
+  }
+  if (!(VFIN_UI_CLASSIFIED_CONTRACT_TYPES as readonly string[]).includes(input.contract_type)) {
+    return {
+      ok: false,
+      message: "Chỉ sổ đã phân loại hợp đồng (Thời vụ hoặc Chính thức) mới được khấu trừ ứng.",
+    };
+  }
+  const contractType = input.contract_type as ClassifiedVendorFinanceContractType;
+  const amount = normalizePositiveVndInput(input.amount_input);
+  if (!amount.ok) {
+    return { ok: false, message: amount.message };
+  }
+  if (
+    typeof input.available_shared_advance_minor === "string" &&
+    /^(?:0|[1-9][0-9]{0,18})$/.test(input.available_shared_advance_minor)
+  ) {
+    const avail = BigInt(input.available_shared_advance_minor);
+    if (amount.value > avail) {
+      return {
+        ok: false,
+        message: "Số tiền khấu trừ vượt quá số dư ứng dùng chung hiện tại của Vendor.",
+      };
+    }
+  }
+  if (
+    typeof input.current_subledger_payable_minor === "string" &&
+    /^(?:0|-?[1-9][0-9]{0,18})$/.test(input.current_subledger_payable_minor)
+  ) {
+    const payable = BigInt(input.current_subledger_payable_minor);
+    if (payable <= ZERO_BIGINT || amount.value > payable) {
+      return {
+        ok: false,
+        message:
+          "Số tiền khấu trừ vượt quá công nợ phải trả hiện tại của sổ dự án và loại hợp đồng đã chọn.",
+      };
+    }
+  }
+  const effectiveDate = validateUiCalendarDate(input.effective_date);
+  if (!effectiveDate.ok) {
+    return { ok: false, message: effectiveDate.message };
+  }
+  const reason = validateUiReasonText(input.reason);
+  if (!reason.ok) {
+    return { ok: false, message: reason.message };
+  }
+  if (!isUuidString(input.idempotency_key)) {
+    return { ok: false, message: "Mã chống gửi trùng (Idempotency-Key) không hợp lệ." };
+  }
+  const idem = input.idempotency_key.toLowerCase();
+  return {
+    ok: true,
+    request: {
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": idem,
+      },
+      body: {
+        project_id: trimmedProject,
+        contract_type: contractType,
+        amount_minor: amount.canonical,
+        effective_date: effectiveDate.date,
+        reason: reason.reason,
+        idempotency_key: idem,
+      },
+    },
+  };
+}
+
+export function buildReverseSharedAdvanceMovementRequest(input: {
+  effective_date: string | null | undefined;
+  reason: string;
+  idempotency_key: string;
+}):
+  | { ok: true; request: BuiltJsonRequest<ReverseSharedAdvanceMovementBody> }
+  | { ok: false; message: string } {
+  return buildReverseEntryRequest(input);
 }
 
 // -----------------------------------------------------------------------------
@@ -3333,17 +3649,470 @@ export function parseReverseEntryEnvelope(
 ): {
   reversal_entry: VendorFinanceEntryProjection;
   reversed_entry: VendorFinanceEntryProjection;
+  reversal_movement?: VendorFinanceSharedAdvanceMovementProjection;
+  reversed_movement?: VendorFinanceSharedAdvanceMovementProjection;
+  shared_advance_balance_minor?: string;
   replayed: boolean;
 } | null {
   const data = unwrapOkDataEnvelope(envelope);
-  if (!isRecord(data) || !exactKeys(data, ["reversal_entry", "reversed_entry", "replayed"])) {
+  if (
+    !isRecord(data) ||
+    !requiredAndOptionalKeysOnly(
+      data,
+      ["reversal_entry", "reversed_entry", "replayed"],
+      ["reversal_movement", "reversed_movement", "shared_advance_balance_minor"],
+    )
+  ) {
     return null;
   }
   const reversal = parseEntryProjection(data.reversal_entry);
   const reversed = parseEntryProjection(data.reversed_entry);
   const replayed = boolVal(data.replayed);
   if (!reversal || !reversed || replayed === null) return null;
+
+  const hasMovFields =
+    "reversal_movement" in data ||
+    "reversed_movement" in data ||
+    "shared_advance_balance_minor" in data;
+  if (hasMovFields) {
+    const revMov = parseSharedAdvanceMovementProjection(data.reversal_movement);
+    const origMov = parseSharedAdvanceMovementProjection(data.reversed_movement);
+    const sharedBalance = nonNegativeMoneyStr(data.shared_advance_balance_minor);
+    if (!revMov || !origMov || sharedBalance === null) return null;
+    return {
+      reversal_entry: reversal,
+      reversed_entry: reversed,
+      reversal_movement: revMov,
+      reversed_movement: origMov,
+      shared_advance_balance_minor: sharedBalance,
+      replayed,
+    };
+  }
+
   return { reversal_entry: reversal, reversed_entry: reversed, replayed };
+}
+
+export function parseSharedAdvanceMovementProjection(
+  value: unknown,
+): VendorFinanceSharedAdvanceMovementProjection | null {
+  if (
+    !isRecord(value) ||
+    !exactKeys(value, [
+      "movement_id",
+      "vendor_id",
+      "vendor_display_name_snapshot",
+      "vendor_active",
+      "vendor_advance_sequence",
+      "cursor_sequence",
+      "document_no",
+      "document_kind",
+      "document_title_vi",
+      "movement_type",
+      "amount_minor",
+      "balance_before_minor",
+      "balance_delta_minor",
+      "balance_after_minor",
+      "effective_date",
+      "reason",
+      "project_entry_id",
+      "project_id",
+      "project_display_name_snapshot",
+      "accountant_ref",
+      "responsible_accountant_display_name",
+      "contract_type",
+      "reverses_movement_id",
+      "reverses_document_no",
+      "reversed_by_movement_id",
+      "reversed_by_document_no",
+      "can_reverse",
+      "can_attach_evidence",
+      "evidence",
+      "created_by_display_name",
+      "created_at",
+      "internal_disclaimer",
+    ])
+  ) {
+    return null;
+  }
+
+  const movementId = uuidStr(value.movement_id);
+  const vendorId = isCanonicalUiVendorId(value.vendor_id) ? value.vendor_id : null;
+  const vendorDisplayNameSnapshot = nonEmptyStr(value.vendor_display_name_snapshot);
+  const vendorActive = boolVal(value.vendor_active);
+  const vendorAdvanceSequence = posInt(value.vendor_advance_sequence);
+  const cursorSequence = posInt(value.cursor_sequence);
+  const documentNo =
+    typeof value.document_no === "string" && DOCUMENT_NO_REGEX.test(value.document_no)
+      ? value.document_no
+      : null;
+  const documentKind =
+    typeof value.document_kind === "string" &&
+    (VFIN_UI_DOCUMENT_KINDS as readonly string[]).includes(value.document_kind)
+      ? (value.document_kind as VendorFinanceDocumentKind)
+      : null;
+  const documentTitleVi = nonEmptyStr(value.document_title_vi);
+  const movementType =
+    typeof value.movement_type === "string" &&
+    (VFIN_UI_SHARED_ADVANCE_MOVEMENT_TYPES as readonly string[]).includes(value.movement_type)
+      ? (value.movement_type as VendorFinanceSharedAdvanceMovementType)
+      : null;
+  const amountMinor = positiveMoneyStr(value.amount_minor);
+  const balanceBeforeMinor = nonNegativeMoneyStr(value.balance_before_minor);
+  const balanceDeltaMinor = signedMoneyStr(value.balance_delta_minor);
+  const balanceAfterMinor = nonNegativeMoneyStr(value.balance_after_minor);
+  const effectiveDate = dateStr(value.effective_date);
+  const reason = nullableStr(value.reason);
+  const projectEntryId = nullableUuidStr(value.project_entry_id);
+  const projectId = nullableProjectIdStr(value.project_id);
+  const projectDisplayNameSnapshot = nullableStr(value.project_display_name_snapshot);
+  const accountantRef = nullableUuidStr(value.accountant_ref);
+  const responsibleAccountantName = nullableStr(value.responsible_accountant_display_name);
+  const contractType =
+    value.contract_type === null
+      ? null
+      : (classifiedContractTypeVal(value.contract_type) ?? undefined);
+  const reversesMovementId = nullableUuidStr(value.reverses_movement_id);
+  const reversesDocNo = nullableStr(value.reverses_document_no);
+  const reversedByMovementId = nullableUuidStr(value.reversed_by_movement_id);
+  const reversedByDocNo = nullableStr(value.reversed_by_document_no);
+  const canReverse = boolVal(value.can_reverse);
+  const canAttachEvidence = value.can_attach_evidence === false ? false : null;
+  const evidence = value.evidence === null ? null : undefined;
+  const createdByDisplayName = nullableStr(value.created_by_display_name);
+  const createdAt = nonEmptyStr(value.created_at);
+  const disclaimer =
+    value.internal_disclaimer === VFIN_UI_INTERNAL_DISCLAIMER_VI
+      ? VFIN_UI_INTERNAL_DISCLAIMER_VI
+      : null;
+
+  if (
+    movementId === null ||
+    vendorId === null ||
+    vendorDisplayNameSnapshot === null ||
+    vendorActive === null ||
+    vendorAdvanceSequence === null ||
+    cursorSequence === null ||
+    documentNo === null ||
+    documentKind === null ||
+    documentTitleVi === null ||
+    movementType === null ||
+    amountMinor === null ||
+    balanceBeforeMinor === null ||
+    balanceDeltaMinor === null ||
+    balanceAfterMinor === null ||
+    effectiveDate === null ||
+    reason === undefined ||
+    projectEntryId === undefined ||
+    projectId === undefined ||
+    projectDisplayNameSnapshot === undefined ||
+    accountantRef === undefined ||
+    responsibleAccountantName === undefined ||
+    contractType === undefined ||
+    reversesMovementId === undefined ||
+    reversesDocNo === undefined ||
+    reversedByMovementId === undefined ||
+    reversedByDocNo === undefined ||
+    canReverse === null ||
+    canAttachEvidence !== false ||
+    evidence !== null ||
+    createdByDisplayName === undefined ||
+    (reason === null) !== (createdByDisplayName === null) ||
+    createdAt === null ||
+    disclaimer === null
+  ) {
+    return null;
+  }
+
+  if (BigInt(balanceBeforeMinor) + BigInt(balanceDeltaMinor) !== BigInt(balanceAfterMinor)) {
+    return null;
+  }
+
+  const projectFields = [
+    projectEntryId,
+    projectId,
+    projectDisplayNameSnapshot,
+    accountantRef,
+    responsibleAccountantName,
+    contractType,
+  ];
+  const allProjectFieldsNonNull = projectFields.every((f) => f !== null);
+  const allProjectFieldsNull = projectFields.every((f) => f === null);
+
+  if (allProjectFieldsNonNull && (reason === null || createdByDisplayName === null)) {
+    return null;
+  }
+
+  if (movementType === "PROJECT_OFFSET_APPLIED") {
+    if (!allProjectFieldsNonNull && !allProjectFieldsNull) {
+      return null;
+    }
+  } else if (
+    movementType === "ADVANCE_FUNDED" ||
+    movementType === "VENDOR_REFUND_RECORDED"
+  ) {
+    if (!allProjectFieldsNull) {
+      return null;
+    }
+  } else if (!allProjectFieldsNonNull && !allProjectFieldsNull) {
+    return null;
+  }
+
+  return {
+    movement_id: movementId,
+    vendor_id: vendorId,
+    vendor_display_name_snapshot: vendorDisplayNameSnapshot,
+    vendor_active: vendorActive,
+    vendor_advance_sequence: vendorAdvanceSequence,
+    cursor_sequence: cursorSequence,
+    document_no: documentNo,
+    document_kind: documentKind,
+    document_title_vi: documentTitleVi,
+    movement_type: movementType,
+    amount_minor: amountMinor,
+    balance_before_minor: balanceBeforeMinor,
+    balance_delta_minor: balanceDeltaMinor,
+    balance_after_minor: balanceAfterMinor,
+    effective_date: effectiveDate,
+    reason,
+    project_entry_id: projectEntryId,
+    project_id: projectId,
+    project_display_name_snapshot: projectDisplayNameSnapshot,
+    accountant_ref: accountantRef,
+    responsible_accountant_display_name: responsibleAccountantName,
+    contract_type: contractType,
+    reverses_movement_id: reversesMovementId,
+    reverses_document_no: reversesDocNo,
+    reversed_by_movement_id: reversedByMovementId,
+    reversed_by_document_no: reversedByDocNo,
+    can_reverse: canReverse,
+    can_attach_evidence: canAttachEvidence,
+    evidence,
+    created_by_display_name: createdByDisplayName,
+    created_at: createdAt,
+    internal_disclaimer: disclaimer,
+  };
+}
+
+export function parseVendorSharedAdvancesPageEnvelope(
+  envelope: unknown,
+): VendorFinanceSharedAdvanceMovementsPageResponse | null {
+  const data = unwrapOkDataEnvelope(envelope);
+  if (
+    !isRecord(data) ||
+    !exactKeys(data, [
+      "authorization_date",
+      "vendor_id",
+      "shared_advance_balance_minor",
+      "page_size",
+      "has_more",
+      "next_cursor",
+      "movements",
+    ]) ||
+    !Array.isArray(data.movements)
+  ) {
+    return null;
+  }
+
+  const authorizationDate = dateStr(data.authorization_date);
+  const vendorId = isCanonicalUiVendorId(data.vendor_id) ? data.vendor_id : null;
+  const sharedAdvanceBalance = nonNegativeMoneyStr(data.shared_advance_balance_minor);
+  const pageSize = posInt(data.page_size);
+  const hasMore = boolVal(data.has_more);
+  const nextCursor =
+    data.next_cursor === null
+      ? null
+      : typeof data.next_cursor === "string" && CURSOR_TOKEN_REGEX.test(data.next_cursor)
+        ? data.next_cursor
+        : undefined;
+
+  if (
+    authorizationDate === null ||
+    vendorId === null ||
+    sharedAdvanceBalance === null ||
+    pageSize === null ||
+    hasMore === null ||
+    nextCursor === undefined ||
+    (hasMore && nextCursor === null) ||
+    (!hasMore && nextCursor !== null)
+  ) {
+    return null;
+  }
+
+  const movements: VendorFinanceSharedAdvanceMovementProjection[] = [];
+  for (const item of data.movements) {
+    const projected = parseSharedAdvanceMovementProjection(item);
+    if (!projected || projected.vendor_id !== vendorId) return null;
+    movements.push(projected);
+  }
+
+  return {
+    authorization_date: authorizationDate,
+    vendor_id: vendorId,
+    shared_advance_balance_minor: sharedAdvanceBalance,
+    page_size: pageSize,
+    has_more: hasMore,
+    next_cursor: nextCursor,
+    movements,
+  };
+}
+
+export function shouldCommitSharedAdvanceLoadMore(params: {
+  requestGeneration: number;
+  currentGeneration: number;
+  aborted: boolean;
+  canViewSharedAdvance: boolean;
+  requestVendorId: string;
+  currentVendorId: string;
+  responseVendorId: string;
+}): boolean {
+  if (params.aborted) return false;
+  if (!params.canViewSharedAdvance) return false;
+  if (params.requestGeneration !== params.currentGeneration) return false;
+  if (params.requestVendorId !== params.currentVendorId) return false;
+  if (params.responseVendorId !== params.requestVendorId) return false;
+  return true;
+}
+
+export function mergeUniqueSharedAdvanceMovements(
+  existing: readonly VendorFinanceSharedAdvanceMovementProjection[],
+  incoming: readonly VendorFinanceSharedAdvanceMovementProjection[],
+): VendorFinanceSharedAdvanceMovementProjection[] {
+  const existingIds = new Set(existing.map((item) => item.movement_id));
+  const merged = [...existing];
+  for (const item of incoming) {
+    if (!existingIds.has(item.movement_id)) {
+      existingIds.add(item.movement_id);
+      merged.push(item);
+    }
+  }
+  return merged;
+}
+
+export function parseFundSharedAdvanceEnvelope(
+  envelope: unknown,
+): VendorFinanceFundSharedAdvanceResponse | null {
+  const data = unwrapOkDataEnvelope(envelope);
+  if (
+    !isRecord(data) ||
+    !exactKeys(data, ["movement", "shared_advance_balance_minor", "replayed"])
+  ) {
+    return null;
+  }
+  const movement = parseSharedAdvanceMovementProjection(data.movement);
+  const balance = nonNegativeMoneyStr(data.shared_advance_balance_minor);
+  const replayed = boolVal(data.replayed);
+  if (!movement || balance === null || replayed === null) return null;
+  return { movement, shared_advance_balance_minor: balance, replayed };
+}
+
+export function parseRecordVendorRefundEnvelope(
+  envelope: unknown,
+): VendorFinanceRecordVendorRefundResponse | null {
+  return parseFundSharedAdvanceEnvelope(envelope);
+}
+
+export function parseApplySharedAdvanceOffsetEnvelope(
+  envelope: unknown,
+): VendorFinanceApplySharedAdvanceOffsetResponse | null {
+  const data = unwrapOkDataEnvelope(envelope);
+  if (
+    !isRecord(data) ||
+    !exactKeys(data, [
+      "movement",
+      "entry",
+      "shared_advance_balance_minor",
+      "replayed",
+    ])
+  ) {
+    return null;
+  }
+  const movement = parseSharedAdvanceMovementProjection(data.movement);
+  const entry = parseEntryProjection(data.entry);
+  const balance = nonNegativeMoneyStr(data.shared_advance_balance_minor);
+  const replayed = boolVal(data.replayed);
+  if (
+    !movement ||
+    !entry ||
+    balance === null ||
+    replayed === null ||
+    movement.vendor_id !== entry.vendor_id ||
+    movement.movement_type !== "PROJECT_OFFSET_APPLIED" ||
+    entry.entry_type !== "ADVANCE_OFFSET_RECORDED" ||
+    movement.project_entry_id !== entry.entry_id ||
+    movement.amount_minor !== entry.amount_minor
+  ) {
+    return null;
+  }
+  return { movement, entry, shared_advance_balance_minor: balance, replayed };
+}
+
+export function parseReverseSharedAdvanceMovementEnvelope(
+  envelope: unknown,
+): VendorFinanceReverseSharedAdvanceMovementResponse | null {
+  const data = unwrapOkDataEnvelope(envelope);
+  if (
+    !isRecord(data) ||
+    !requiredAndOptionalKeysOnly(
+      data,
+      [
+        "reversal_movement",
+        "reversed_movement",
+        "shared_advance_balance_minor",
+        "replayed",
+      ],
+      ["reversal_entry", "reversed_entry"],
+    )
+  ) {
+    return null;
+  }
+  const revMov = parseSharedAdvanceMovementProjection(data.reversal_movement);
+  const origMov = parseSharedAdvanceMovementProjection(data.reversed_movement);
+  const sharedBalance = nonNegativeMoneyStr(data.shared_advance_balance_minor);
+  const replayed = boolVal(data.replayed);
+  if (
+    !revMov ||
+    !origMov ||
+    sharedBalance === null ||
+    replayed === null ||
+    revMov.vendor_id !== origMov.vendor_id ||
+    revMov.movement_type !== "REVERSAL" ||
+    revMov.reverses_movement_id !== origMov.movement_id ||
+    origMov.reversed_by_movement_id !== revMov.movement_id
+  ) {
+    return null;
+  }
+
+  const hasEntryFields = "reversal_entry" in data || "reversed_entry" in data;
+  if (hasEntryFields) {
+    const revEntry = parseEntryProjection(data.reversal_entry);
+    const origEntry = parseEntryProjection(data.reversed_entry);
+    if (
+      !revEntry ||
+      !origEntry ||
+      revEntry.vendor_id !== revMov.vendor_id ||
+      origEntry.vendor_id !== origMov.vendor_id ||
+      revEntry.entry_type !== "REVERSAL" ||
+      revEntry.reverses_entry_id !== origEntry.entry_id ||
+      origEntry.reversed_by_entry_id !== revEntry.entry_id
+    ) {
+      return null;
+    }
+    return {
+      reversal_movement: revMov,
+      reversed_movement: origMov,
+      shared_advance_balance_minor: sharedBalance,
+      reversal_entry: revEntry,
+      reversed_entry: origEntry,
+      replayed,
+    };
+  }
+
+  return {
+    reversal_movement: revMov,
+    reversed_movement: origMov,
+    shared_advance_balance_minor: sharedBalance,
+    replayed,
+  };
 }
 
 export function parseOpeningPreviewEnvelope(
@@ -4740,6 +5509,89 @@ export function parseEvidenceDownloadEnvelope(
       expires_at: expiresAt,
     },
   };
+}
+
+// -----------------------------------------------------------------------------
+// 6B. Browser XLSX Export Blob & Safe Filename Helpers
+// -----------------------------------------------------------------------------
+export const VENDOR_FINANCE_MIN_XLSX_ZIP_BYTES = 30;
+
+const NON_XLSX_MIME_TYPES = new Set([
+  "application/json",
+  "application/problem+json",
+  "text/plain",
+  "text/html",
+  "application/xhtml+xml",
+  "application/xml",
+  "text/xml",
+]);
+
+const ALLOWED_XLSX_MIME_TYPES = new Set([
+  "",
+  VENDOR_FINANCE_EXPORT_XLSX_MIME,
+  "application/octet-stream",
+]);
+
+export function hasVendorFinanceXlsxZipSignature(headerBytes: ArrayBuffer | Uint8Array): boolean {
+  const bytes = headerBytes instanceof Uint8Array ? headerBytes : new Uint8Array(headerBytes);
+  return (
+    bytes.byteLength >= 4 &&
+    bytes[0] === 0x50 &&
+    bytes[1] === 0x4b &&
+    bytes[2] === 0x03 &&
+    bytes[3] === 0x04
+  );
+}
+
+export async function isUsableVendorFinanceExportBlob(
+  blob: Pick<Blob, "size" | "type" | "slice"> | null | undefined,
+  contentTypeHeader?: string | null,
+): Promise<boolean> {
+  if (
+    !blob ||
+    typeof blob.size !== "number" ||
+    !Number.isFinite(blob.size) ||
+    blob.size < VENDOR_FINANCE_MIN_XLSX_ZIP_BYTES ||
+    typeof blob.slice !== "function"
+  ) {
+    return false;
+  }
+  const headerMime = (contentTypeHeader ?? "").toLowerCase().split(";")[0]?.trim() ?? "";
+  const blobMime = (blob.type ?? "").toLowerCase().split(";")[0]?.trim() ?? "";
+  if (headerMime && (NON_XLSX_MIME_TYPES.has(headerMime) || !ALLOWED_XLSX_MIME_TYPES.has(headerMime))) {
+    return false;
+  }
+  if (blobMime && (NON_XLSX_MIME_TYPES.has(blobMime) || !ALLOWED_XLSX_MIME_TYPES.has(blobMime))) {
+    return false;
+  }
+  try {
+    const headerSlice = blob.slice(0, 4);
+    if (!headerSlice || typeof headerSlice.arrayBuffer !== "function") {
+      return false;
+    }
+    const headerBuffer = await headerSlice.arrayBuffer();
+    return hasVendorFinanceXlsxZipSignature(headerBuffer);
+  } catch {
+    return false;
+  }
+}
+
+const XLSX_SAFE_FILENAME_REGEX = /^[A-Za-z0-9._-]+\.xlsx$/;
+
+export function resolveVendorFinanceExportFilename(
+  contentDisposition: string | null | undefined,
+  fallbackDate?: string | null,
+): string {
+  const match = contentDisposition?.match(/filename="([^"]+)"/);
+  const candidate = match?.[1] ?? "";
+  if (XLSX_SAFE_FILENAME_REGEX.test(candidate) && !candidate.includes("..")) {
+    return candidate;
+  }
+  const safeDate =
+    typeof fallbackDate === "string" && /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(fallbackDate)
+      ? fallbackDate
+      : new Date().toISOString().slice(0, 10);
+  return `danh-sach-vendor-cong-no-${safeDate}.xlsx`;
 }
 
 // -----------------------------------------------------------------------------

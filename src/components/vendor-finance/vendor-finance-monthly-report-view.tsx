@@ -494,7 +494,7 @@ export function VendorFinanceMonthlyReportView({
       {/* Non-Netted Monthly KPI Summary */}
       <section
         aria-label="Chỉ số tổng tham khảo công nợ tháng theo phạm vi lọc (không thay thế số dư riêng từng sổ)"
-        className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4"
+        className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5"
         data-testid="vfin-monthly-kpis"
       >
         <Card className="p-4">
@@ -535,6 +535,17 @@ export function VendorFinanceMonthlyReportView({
               ? `TT: ${formatVndMinor(totals.paid_in_month_minor)} · Ứng: ${formatVndMinor(totals.advanced_in_month_minor)}`
               : "Đang tải…"}
           </p>
+        </Card>
+
+        <Card className="p-4">
+          <p className="text-xs font-medium text-muted">Khấu trừ ứng trong tháng</p>
+          <p
+            data-testid="vfin-monthly-kpi-advance-offset"
+            className="mt-1.5 font-mono text-xl font-semibold tabular-nums text-foreground"
+          >
+            {totals ? formatVndMinor(totals.advance_offset_in_month_minor) : "—"}
+          </p>
+          <p className="mt-1 text-xs text-muted">Khấu trừ từ số dư ứng dùng chung (-)</p>
         </Card>
 
         <Card className="p-4">
@@ -742,6 +753,9 @@ export function VendorFinanceMonthlyReportView({
                         Đã TT & tạm ứng trong tháng
                       </th>
                       <th scope="col" className={`${DATA_TABLE_TH_CLASS} text-right`}>
+                        Khấu trừ ứng trong tháng
+                      </th>
+                      <th scope="col" className={`${DATA_TABLE_TH_CLASS} text-right`}>
                         Còn phải trả cuối tháng
                       </th>
                       <th scope="col" className={`${DATA_TABLE_TH_CLASS} text-right`}>
@@ -798,6 +812,13 @@ export function VendorFinanceMonthlyReportView({
                           {formatVndMinor(sum.paid_and_advanced_in_month_minor)}
                         </td>
                         <td
+                          data-label="Khấu trừ ứng"
+                          data-testid="vfin-monthly-summary-advance-offset"
+                          className={`${DATA_TABLE_TD_CLASS} text-right font-mono tabular-nums`}
+                        >
+                          {formatVndMinor(sum.advance_offset_in_month_minor)}
+                        </td>
+                        <td
                           data-label="Còn phải trả"
                           className={`${DATA_TABLE_TD_CLASS} text-right font-mono font-semibold tabular-nums`}
                         >
@@ -851,6 +872,9 @@ export function VendorFinanceMonthlyReportView({
                       </th>
                       <th scope="col" className={`${DATA_TABLE_TH_CLASS} text-right`}>
                         TT & Tạm ứng tháng (-)
+                      </th>
+                      <th scope="col" className={`${DATA_TABLE_TH_CLASS} text-right`}>
+                        Khấu trừ ứng tháng (-)
                       </th>
                       <th scope="col" className={`${DATA_TABLE_TH_CLASS} text-right`}>
                         Cuối tháng (Không bù trừ)
@@ -932,6 +956,14 @@ export function VendorFinanceMonthlyReportView({
                             </td>
 
                             <td
+                              data-label="Khấu trừ ứng tháng"
+                              data-testid="vfin-monthly-row-advance-offset"
+                              className={`${DATA_TABLE_TD_CLASS} text-right font-mono tabular-nums`}
+                            >
+                              {formatVndMinor(row.advance_offset_in_month_minor)}
+                            </td>
+
+                            <td
                               data-label="Cuối tháng"
                               className={`${DATA_TABLE_TD_CLASS} text-right font-mono tabular-nums`}
                             >
@@ -981,7 +1013,7 @@ export function VendorFinanceMonthlyReportView({
 
                           {isExpanded ? (
                             <tr className="bg-surface-muted/40">
-                              <td colSpan={7} className="px-4 py-4">
+                              <td colSpan={8} className="px-4 py-4">
                                 <div
                                   className="rounded-xl border border-border bg-surface p-4 space-y-3"
                                   data-testid="vfin-monthly-drilldown-panel"

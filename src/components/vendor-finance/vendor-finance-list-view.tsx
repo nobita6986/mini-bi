@@ -5,6 +5,7 @@ import Link from "next/link";
 import {
   ArrowRight,
   BarChart3,
+  Download,
   FileSpreadsheet,
   RefreshCw,
   Search,
@@ -40,6 +41,7 @@ import type {
 import {
   ACTIVE_FILTER_LABELS_VI,
   BALANCE_FILTER_LABELS_VI,
+  buildVendorExportUrl,
   buildVendorFinanceContextUrl,
   buildVendorListUrl,
   classifyVendorFinanceError,
@@ -50,9 +52,11 @@ import {
   formatVendorBalancePresentation,
   formatVietnamDateLabel,
   formatVndMinor,
+  isUsableVendorFinanceExportBlob,
   LEDGER_SCOPE_FILTER_LABELS_VI,
   parseVendorFinanceContextEnvelope,
   parseVendorListEnvelope,
+  resolveVendorFinanceExportFilename,
   validateUiSearchInput,
   VFIN_UI_ACTIVE_FILTERS,
   VFIN_UI_BALANCE_FILTERS,
@@ -112,6 +116,11 @@ export function VendorFinanceListView({
   const [data, setData] = useState<VendorFinanceVendorListResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const [exportBanner, setExportBanner] = useState<{
+    tone: "success" | "error";
+    message: string;
+  } | null>(null);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -238,6 +247,7 @@ export function VendorFinanceListView({
   const canManageProjectAssignments = data
     ? data.allowed_actions.can_manage_project_assignments
     : initialCanManageProjectAssignments;
+  const canViewSharedAdvance = data?.allowed_actions.can_view_shared_advance === true;
   const visibilityScope = data?.allowed_actions.visibility_scope ?? "PROJECT_SCOPED";
   const activeAssignedProjectCount = data?.allowed_actions.active_assigned_project_count ?? 0;
 
@@ -262,6 +272,85 @@ export function VendorFinanceListView({
     setActiveFilter("all");
     setBalanceFilter("all");
     setPage(1);
+  };
+
+  const handleExportExcel = async () => {
+    if (exporting) return;
+    const searchCheck = validateUiSearchInput(searchInput);
+    if (!searchCheck.ok) {
+      setExportBanner({ tone: "error", message: searchCheck.message });
+      return;
+    }
+
+    setExporting(true);
+    setExportBanner(null);
+
+    try {
+      const exportUrl = buildVendorExportUrl({
+        search: searchCheck.search,
+        project_id: projectFilter || null,
+        accountant_ref: accountantFilter || null,
+        ledger_scope: ledgerScopeFilter,
+        contract_type: contractTypeFilter,
+        active: activeFilter,
+        balance_filter: balanceFilter,
+      });
+
+      const res = await fetch(exportUrl, {
+        method: "GET",
+        cache: "no-store",
+      });
+
+      if (!res.ok) {
+        const json: unknown = await res.json().catch(() => null);
+        const classified = classifyVendorFinanceError(json, res.status);
+        setExportBanner({ tone: "error", message: classified.message });
+        setExporting(false);
+        return;
+      }
+
+      const contentType = res.headers.get("content-type");
+      const blob = await res.blob();
+      const usable = await isUsableVendorFinanceExportBlob(blob, contentType);
+      if (!usable) {
+        setExportBanner({
+          tone: "error",
+          message:
+            "Tệp Excel trả về không hợp lệ hoặc bị hỏng. Không có tệp nào được tải xuống; vui lòng thử lại.",
+        });
+        setExporting(false);
+        return;
+      }
+
+      const filename = resolveVendorFinanceExportFilename(
+        res.headers.get("content-disposition"),
+        data?.authorization_date,
+      );
+      const objectUrl = URL.createObjectURL(blob);
+      try {
+        const link = document.createElement("a");
+        link.href = objectUrl;
+        link.download = filename;
+        link.rel = "noopener";
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+      } finally {
+        URL.revokeObjectURL(objectUrl);
+      }
+
+      setExportBanner({
+        tone: "success",
+        message: `Đã xuất tệp Excel "${filename}" theo toàn bộ điều kiện lọc hiện hành.`,
+      });
+    } catch {
+      setExportBanner({
+        tone: "error",
+        message: "Không thể xuất danh sách Excel do lỗi kết nối mạng. Vui lòng thử lại.",
+      });
+    } finally {
+      setExporting(false);
+    }
   };
 
   return (
@@ -297,6 +386,16 @@ export function VendorFinanceListView({
             >
               <RefreshCw className="h-4 w-4" aria-hidden />
               Làm mới
+            </Button>
+            <Button
+              variant="secondary"
+              data-testid="vfin-export-excel-btn"
+              disabled={loading || exporting}
+              loading={exporting}
+              onClick={() => void handleExportExcel()}
+            >
+              <Download className="h-4 w-4" aria-hidden />
+              {exporting ? "Đang xuất Excel…" : "Xuất Excel"}
             </Button>
             <Link
               href="/finance/reports"
@@ -341,9 +440,24 @@ export function VendorFinanceListView({
       ) : null}
 
       {/* Non-Netted Sub-Ledger KPI Summary */}
+      {exportBanner ? (
+        <Alert
+          tone={exportBanner.tone === "error" ? "error" : "info"}
+          role={exportBanner.tone === "error" ? "alert" : "status"}
+          data-testid="vfin-export-feedback-banner"
+          title={
+            exportBanner.tone === "error"
+              ? "Không thể xuất danh sách Excel"
+              : "Xuất danh sách Excel thành công"
+          }
+        >
+          <p>{exportBanner.message}</p>
+        </Alert>
+      ) : null}
+
       <section
-        aria-label="Chỉ số tổng hợp công nợ Vendor (tách riêng phải trả và dư ứng từng sổ)"
-        className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4"
+        aria-label="Chỉ số tổng hợp công nợ Vendor (tách riêng phải trả, dư ứng từng sổ và số dư ứng dùng chung)"
+        className={`grid grid-cols-1 gap-3 sm:grid-cols-2 ${canViewSharedAdvance ? "xl:grid-cols-5" : "xl:grid-cols-4"}`}
         data-testid="vfin-company-kpis"
       >
         <Card className="p-4">
@@ -360,6 +474,21 @@ export function VendorFinanceListView({
               : "Đang tải dữ liệu…"}
           </p>
         </Card>
+
+        {canViewSharedAdvance ? (
+          <Card className="p-4 border-primary/30 bg-primary/5">
+            <p className="text-xs font-medium text-muted">Số dư ứng dùng chung</p>
+            <p
+              data-testid="vfin-kpi-shared-advance"
+              className="mt-1.5 font-mono text-xl font-semibold tabular-nums text-primary"
+            >
+              {summary ? formatVndMinor(summary.total_shared_advance_minor ?? "0") : "—"}
+            </p>
+            <p className="mt-1 text-xs text-muted">
+              Tổng số dư ứng cấp Vendor (tách biệt với công nợ sổ dự án)
+            </p>
+          </Card>
+        ) : null}
 
         <Card className="p-4">
           <p className="text-xs font-medium text-muted">Tổng dư ứng (cộng các sổ âm)</p>
@@ -651,6 +780,15 @@ export function VendorFinanceListView({
                 <th scope="col" className={`${DATA_TABLE_TH_CLASS} text-right`}>
                   Số dư theo sổ
                 </th>
+                {canViewSharedAdvance ? (
+                  <th
+                    scope="col"
+                    data-testid="vfin-th-shared-advance"
+                    className={`${DATA_TABLE_TH_CLASS} text-right`}
+                  >
+                    Dư ứng dùng chung
+                  </th>
+                ) : null}
                 <th scope="col" className={DATA_TABLE_TH_CLASS}>
                   Trạng thái công nợ
                 </th>
@@ -767,6 +905,24 @@ export function VendorFinanceListView({
                         <span className="font-semibold">{balanceInfo.signedText}</span>
                       )}
                     </td>
+
+                    {canViewSharedAdvance ? (
+                      <td
+                        data-label="Dư ứng dùng chung"
+                        data-testid="vfin-vendor-shared-advance"
+                        className={`${DATA_TABLE_TD_CLASS} text-right font-mono tabular-nums`}
+                      >
+                        <span
+                          className={
+                            BigInt(vendor.shared_advance_balance_minor ?? "0") > BigInt(0)
+                              ? "font-semibold text-primary"
+                              : "text-muted"
+                          }
+                        >
+                          {formatVndMinor(vendor.shared_advance_balance_minor ?? "0")}
+                        </span>
+                      </td>
+                    ) : null}
 
                     <td data-label="Trạng thái công nợ" className={DATA_TABLE_TD_CLASS}>
                       <StatusBadge tone={balanceInfo.tone}>{balanceInfo.statusLabel}</StatusBadge>
