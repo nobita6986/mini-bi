@@ -290,3 +290,49 @@ test("Client Vendor Finance modules contain zero browser Supabase calls, zero pe
     );
   }
 });
+
+test("VFIN-04: Vendor shared advance balance, 4 shared advance dialogs, cross-project redaction copy, monthly report offset column, and Excel (.xlsx) export", () => {
+  // Target 1: Vendor list view shared advance KPI + column + Excel export button
+  assert.match(listView, /vfin-kpi-shared-advance/);
+  assert.match(listView, /vfin-vendor-shared-advance/);
+  assert.match(listView, /canViewSharedAdvance/);
+  assert.match(listView, /vfin-export-excel-btn/);
+  assert.match(listView, /buildVendorExportUrl\(/);
+  assert.match(listView, /isUsableVendorFinanceExportBlob\(/);
+  assert.match(listView, /resolveVendorFinanceExportFilename\(/);
+  assert.match(listView, /URL\.revokeObjectURL\(/);
+
+  // Target 2: Vendor detail view shared advance card, 3rd tab, cross-project redaction copy, no evidence upload on shared advances, no legacy + Tạm ứng button
+  assert.match(detailView, /vfin-detail-shared-advance-card/);
+  assert.match(detailView, /vfin-detail-shared-advance-balance/);
+  assert.match(detailView, /vfin-open-fund-advance-btn/);
+  assert.match(detailView, /vfin-open-vendor-refund-btn/);
+  assert.match(detailView, /vfin-open-apply-offset-btn/);
+  assert.match(detailView, /vfin-tab-shared-advances/);
+  assert.match(detailView, /vfin-shared-advances-table/);
+  assert.match(detailView, /VFIN_UI_REDACTED_FIELD_LABEL_VI/);
+  assert.match(detailView, /vfin-reverse-shared-movement-btn/);
+  assert.doesNotMatch(detailView, /\+ Tạm ứng/);
+
+  // Target 3: 4 Shared advance mutation dialogs + balance-race reload + no ADVANCE_RECORDED / OPENING_ADVANCE creation paths
+  assert.match(entryDialogs, /export function FundVendorSharedAdvanceDialog/);
+  assert.match(entryDialogs, /vfin-fund-shared-advance-dialog/);
+  assert.match(entryDialogs, /export function RecordVendorRefundDialog/);
+  assert.match(entryDialogs, /vfin-record-vendor-refund-dialog/);
+  assert.match(entryDialogs, /export function ApplyVendorSharedAdvanceOffsetDialog/);
+  assert.match(entryDialogs, /vfin-apply-shared-advance-offset-dialog/);
+  assert.match(entryDialogs, /export function ReverseVendorSharedAdvanceMovementDialog/);
+  assert.match(entryDialogs, /vfin-reverse-shared-advance-dialog/);
+  assert.match(entryDialogs, /VENDOR_FINANCE_INSUFFICIENT_SHARED_ADVANCE/);
+  assert.match(entryDialogs, /VENDOR_FINANCE_INSUFFICIENT_SUBLEDGER_PAYABLE/);
+  assert.match(entryDialogs, /t !== "ADVANCE_RECORDED"/);
+  assert.match(openingWizard, /VFIN_UI_CREATOR_OPENING_ENTRY_TYPES/);
+
+  // Target 4: Monthly report separate advance_offset_in_month_minor KPI, summary column, and detail column
+  assert.match(monthlyReportView, /vfin-monthly-kpi-advance-offset/);
+  assert.match(monthlyReportView, /vfin-monthly-summary-advance-offset/);
+  assert.match(monthlyReportView, /vfin-monthly-row-advance-offset/);
+  assert.match(monthlyReportView, /totals\.advance_offset_in_month_minor/);
+  assert.match(monthlyReportView, /sum\.advance_offset_in_month_minor/);
+  assert.match(monthlyReportView, /row\.advance_offset_in_month_minor/);
+});

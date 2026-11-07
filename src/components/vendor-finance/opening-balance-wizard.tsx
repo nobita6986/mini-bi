@@ -65,10 +65,10 @@ import {
   parseVendorListEnvelope,
   validateUiSearchInput,
   VFIN_UI_CLASSIFIED_CONTRACT_TYPES,
+  VFIN_UI_CREATOR_OPENING_ENTRY_TYPES,
   VFIN_UI_MAX_OPENING_BATCH_ITEMS,
   VFIN_UI_MAX_REASON_LENGTH,
   VFIN_UI_MAX_SEARCH_LENGTH,
-  VFIN_UI_OPENING_ENTRY_TYPES,
   type OpeningDraftRowInput,
 } from "@/lib/vendor-finance/ui-model";
 
@@ -899,7 +899,7 @@ export function OpeningBalanceWizard() {
                                 }
                                 className="min-h-11 sm:min-h-9 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-xs sm:text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
                               >
-                                {VFIN_UI_OPENING_ENTRY_TYPES.map((type) => (
+                                {VFIN_UI_CREATOR_OPENING_ENTRY_TYPES.map((type) => (
                                   <option key={type} value={type}>
                                     {ENTRY_TYPE_LABELS_VI[type]}
                                   </option>

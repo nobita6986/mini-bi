@@ -16,14 +16,23 @@ import type {
   VendorFinanceDetailSubLedger,
   VendorFinanceEntryProjection,
   VendorFinanceReconciliationProjection,
+  VendorFinanceSharedAdvanceMovementProjection,
 } from "@/lib/vendor-finance/vendor-finance-contract";
 import {
+  buildApplySharedAdvanceOffsetRequest,
+  buildApplyVendorSharedAdvanceOffsetUrl,
   buildClassifySubLedgerRequest,
   buildClassifySubLedgerUrl,
   buildCreateReconciliationRequest,
+  buildFundSharedAdvanceRequest,
+  buildFundVendorSharedAdvanceUrl,
   buildRecordEntryRequest,
+  buildRecordVendorRefundRequest,
+  buildRecordVendorRefundUrl,
   buildReverseEntryRequest,
   buildReverseEntryUrl,
+  buildReverseSharedAdvanceMovementRequest,
+  buildReverseVendorSharedAdvanceMovementUrl,
   buildVendorEntriesUrl,
   buildVendorReconciliationsUrl,
   classifyVendorFinanceError,
@@ -39,14 +48,20 @@ import {
   formatVndMinor,
   normalizePositiveVndInput,
   normalizeSignedVndInput,
+  parseApplySharedAdvanceOffsetEnvelope,
   parseClassifySubLedgerEnvelope,
   parseCreateReconciliationEnvelope,
+  parseFundSharedAdvanceEnvelope,
   parseRecordEntryEnvelope,
+  parseRecordVendorRefundEnvelope,
   parseReverseEntryEnvelope,
+  parseReverseSharedAdvanceMovementEnvelope,
+  SHARED_ADVANCE_MOVEMENT_TYPE_LABELS_VI,
   uploadEvidenceForCommittedTarget,
   validateEvidenceFilePreflight,
   VFIN_UI_CLASSIFIED_CONTRACT_TYPES,
   VFIN_UI_MAX_REASON_LENGTH,
+  VFIN_UI_REDACTED_FIELD_LABEL_VI,
   type EvidenceUploadResumeState,
 } from "@/lib/vendor-finance/ui-model";
 
@@ -100,10 +115,13 @@ export function RecordVendorEntryDialog({
       ? initialContractType
       : "SEASONAL";
 
+  const creatorAllowedEntryTypes: readonly NormalVendorFinanceEntryType[] =
+    allowedEntryTypes.filter((t) => t !== "ADVANCE_RECORDED");
+
   const resolvedDefaultType: NormalVendorFinanceEntryType =
-    initialEntryType && allowedEntryTypes.includes(initialEntryType)
+    initialEntryType && creatorAllowedEntryTypes.includes(initialEntryType)
       ? initialEntryType
-      : (allowedEntryTypes[0] ?? "DEBT_RECORDED");
+      : (creatorAllowedEntryTypes[0] ?? "DEBT_RECORDED");
 
   const [projectId, setProjectId] = useState<string>(resolvedDefaultProject);
   const [contractType, setContractType] =
@@ -171,13 +189,13 @@ export function RecordVendorEntryDialog({
     recordableProjects.find((p) => p.project_id === projectId) ?? null;
   const effectiveAllowedEntryTypes: readonly NormalVendorFinanceEntryType[] =
     !vendorActive || (selectedProject && !selectedProject.active)
-      ? allowedEntryTypes.filter(
+      ? creatorAllowedEntryTypes.filter(
           (t) =>
             t === "PAYMENT_RECORDED" ||
             t === "ADJUSTMENT_INCREASE" ||
             t === "ADJUSTMENT_DECREASE",
         )
-      : allowedEntryTypes;
+      : creatorAllowedEntryTypes;
 
   const parsedAmountPreview = normalizePositiveVndInput(amountInput);
   const directionHint = ENTRY_TYPE_DIRECTION_HINTS_VI[entryType];
@@ -754,6 +772,9 @@ export function ReverseVendorEntryDialog({
         const classified = classifyVendorFinanceError(json, res.status);
         if (classified.shouldRotateIdempotencyKey) {
           rotateKey();
+        }
+        if (classified.code === "VENDOR_FINANCE_INSUFFICIENT_SHARED_ADVANCE") {
+          onReversed();
         }
         setErrorMsg(classified.message);
         setSubmitting(false);
@@ -1602,6 +1623,997 @@ export function ClassifyVendorSubLedgerDialog({
             >
               <Layers className="h-4 w-4" aria-hidden />
               Xác nhận phân loại sổ
+            </Button>
+          </div>
+        </form>
+      )}
+    </FormDialog>
+  );
+}
+
+// =============================================================================
+// 6. Fund Shared Vendor Advance Dialog (`POST /api/vendor-finance/vendors/[vendorId]/shared-advances/fund`)
+// =============================================================================
+export function FundVendorSharedAdvanceDialog({
+  open,
+  onOpenChange,
+  vendorId,
+  vendorDisplayName,
+  currentSharedAdvanceMinor,
+  defaultDate,
+  onDataChanged,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  vendorId: string;
+  vendorDisplayName: string;
+  currentSharedAdvanceMinor: string;
+  defaultDate: string;
+  onDataChanged: () => void;
+}) {
+  const descriptionId = useId();
+  const amountInputId = useId();
+  const dateInputId = useId();
+  const reasonInputId = useId();
+  const notify = useNotify();
+
+  const [amountInput, setAmountInput] = useState("");
+  const [effectiveDate, setEffectiveDate] = useState(defaultDate);
+  const [reason, setReason] = useState("");
+  const [idempotencyKey, setIdempotencyKey] = useState(() => createClientIdempotencyKey());
+  const [submitting, setSubmitting] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const rotateKey = () => setIdempotencyKey(createClientIdempotencyKey());
+
+  const handleClose = (nextOpen: boolean) => {
+    if (submitting) return;
+    if (!nextOpen) {
+      setAmountInput("");
+      setEffectiveDate(defaultDate);
+      setReason("");
+      setIdempotencyKey(createClientIdempotencyKey());
+      setErrorMsg(null);
+    }
+    onOpenChange(nextOpen);
+  };
+
+  const parsedAmountPreview = normalizePositiveVndInput(amountInput);
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setErrorMsg(null);
+
+    const built = buildFundSharedAdvanceRequest({
+      amount_input: amountInput,
+      effective_date: effectiveDate,
+      reason,
+      idempotency_key: idempotencyKey,
+    });
+    if (!built.ok) {
+      setErrorMsg(built.message);
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const res = await fetch(buildFundVendorSharedAdvanceUrl(vendorId), {
+        method: "POST",
+        headers: built.request.headers,
+        body: JSON.stringify(built.request.body),
+      });
+      const json: unknown = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        const classified = classifyVendorFinanceError(json, res.status);
+        if (classified.shouldRotateIdempotencyKey) {
+          rotateKey();
+        }
+        setErrorMsg(classified.message);
+        setSubmitting(false);
+        return;
+      }
+
+      const parsed = parseFundSharedAdvanceEnvelope(json);
+      if (!parsed) {
+        setErrorMsg("Phản hồi ứng tiền dùng chung từ máy chủ không hợp lệ.");
+        setSubmitting(false);
+        return;
+      }
+
+      setSubmitting(false);
+      notify.success({
+        title: `Đã ghi nhận ứng tiền ${parsed.movement.document_no}`,
+        description: `Số dư ứng dùng chung mới: ${formatVndMinor(parsed.shared_advance_balance_minor)}`,
+      });
+      onDataChanged();
+      handleClose(false);
+    } catch {
+      setErrorMsg("Mất kết nối mạng khi gửi yêu cầu ứng tiền. Bạn có thể bấm Xác nhận lại an toàn.");
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <FormDialog
+      open={open}
+      onOpenChange={handleClose}
+      closeDisabled={submitting}
+      title={`Ứng tiền cho Vendor — ${vendorDisplayName}`}
+      description="Ghi nhận khoản ứng dùng chung cấp Vendor (không gắn dự án ở bước chi ứng). Số dư này được theo dõi độc lập với công nợ các sổ dự án và có thể được kế toán dự án khấu trừ dần vào sổ phải trả."
+      descriptionId={descriptionId}
+      dataTestId="vfin-fund-shared-advance-dialog"
+    >
+      <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4" noValidate>
+        <div className="rounded-xl border border-border bg-surface-muted/60 p-3.5 text-xs space-y-1">
+          <p className="text-muted">
+            Vendor: <strong className="text-foreground">{vendorDisplayName}</strong> ({vendorId})
+          </p>
+          <p className="text-muted">
+            Số dư ứng dùng chung hiện tại:{" "}
+            <strong className="font-mono text-primary">
+              {formatVndMinor(currentSharedAdvanceMinor)}
+            </strong>
+          </p>
+        </div>
+
+        {errorMsg ? (
+          <Alert tone="error" role="alert" title="Không thể ghi nhận ứng tiền">
+            <p>{errorMsg}</p>
+          </Alert>
+        ) : null}
+
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <label htmlFor={amountInputId} className="block text-sm font-medium text-foreground">
+              Số tiền ứng (VND nguyên dương) <span className="text-rose-600">*</span>
+            </label>
+            <input
+              id={amountInputId}
+              data-testid="vfin-fund-advance-amount-input"
+              type="text"
+              inputMode="numeric"
+              autoComplete="off"
+              placeholder="Ví dụ: 50000000"
+              value={amountInput}
+              disabled={submitting}
+              onChange={(e) => {
+                setAmountInput(e.target.value);
+                setErrorMsg(null);
+                rotateKey();
+              }}
+              className="min-h-11 sm:min-h-10 w-full rounded-lg border border-border bg-surface px-3 py-2 font-mono text-sm tabular-nums text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+            />
+            <p aria-live="polite" className="text-xs text-muted">
+              {amountInput.trim().length === 0 ? (
+                "Nhập số nguyên VND dương."
+              ) : parsedAmountPreview.ok ? (
+                <>
+                  Sẽ cộng thêm:{" "}
+                  <strong className="font-mono text-foreground">
+                    +{formatVndMinor(parsedAmountPreview.canonical)}
+                  </strong>
+                </>
+              ) : (
+                <span className="text-rose-600 dark:text-rose-300">
+                  {parsedAmountPreview.message}
+                </span>
+              )}
+            </p>
+          </div>
+
+          <div className="space-y-1.5">
+            <label htmlFor={dateInputId} className="block text-sm font-medium text-foreground">
+              Ngày hiệu lực <span className="text-rose-600">*</span>
+            </label>
+            <input
+              id={dateInputId}
+              data-testid="vfin-fund-advance-date-input"
+              type="date"
+              value={effectiveDate}
+              disabled={submitting}
+              onChange={(e) => {
+                setEffectiveDate(e.target.value);
+                setErrorMsg(null);
+                rotateKey();
+              }}
+              className="min-h-11 sm:min-h-10 w-full rounded-lg border border-border bg-surface px-3 py-2 font-mono text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+            />
+          </div>
+        </div>
+
+        <div className="space-y-1.5">
+          <label htmlFor={reasonInputId} className="block text-sm font-medium text-foreground">
+            Lý do / Diễn giải chứng từ ứng <span className="text-rose-600">*</span>
+          </label>
+          <textarea
+            id={reasonInputId}
+            data-testid="vfin-fund-advance-reason-input"
+            rows={3}
+            maxLength={VFIN_UI_MAX_REASON_LENGTH}
+            placeholder="Ghi rõ căn cứ đề nghị tạm ứng, đợt chuyển tiền hoặc nội dung thỏa thuận với Vendor…"
+            value={reason}
+            disabled={submitting}
+            onChange={(e) => {
+              setReason(e.target.value);
+              setErrorMsg(null);
+              rotateKey();
+            }}
+            className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+          />
+        </div>
+
+        <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border pt-3">
+          <Button variant="secondary" disabled={submitting} onClick={() => handleClose(false)}>
+            Hủy
+          </Button>
+          <Button
+            type="submit"
+            variant="primary"
+            loading={submitting}
+            disabled={submitting}
+            data-testid="vfin-fund-advance-submit-btn"
+          >
+            Xác nhận ứng tiền
+          </Button>
+        </div>
+      </form>
+    </FormDialog>
+  );
+}
+
+// =============================================================================
+// 7. Record Vendor Refund Dialog (`POST /api/vendor-finance/vendors/[vendorId]/shared-advances/refund`)
+// =============================================================================
+export function RecordVendorRefundDialog({
+  open,
+  onOpenChange,
+  vendorId,
+  vendorDisplayName,
+  currentSharedAdvanceMinor,
+  defaultDate,
+  onDataChanged,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  vendorId: string;
+  vendorDisplayName: string;
+  currentSharedAdvanceMinor: string;
+  defaultDate: string;
+  onDataChanged: () => void;
+}) {
+  const descriptionId = useId();
+  const amountInputId = useId();
+  const dateInputId = useId();
+  const reasonInputId = useId();
+  const notify = useNotify();
+
+  const [amountInput, setAmountInput] = useState("");
+  const [effectiveDate, setEffectiveDate] = useState(defaultDate);
+  const [reason, setReason] = useState("");
+  const [idempotencyKey, setIdempotencyKey] = useState(() => createClientIdempotencyKey());
+  const [submitting, setSubmitting] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const rotateKey = () => setIdempotencyKey(createClientIdempotencyKey());
+
+  const handleClose = (nextOpen: boolean) => {
+    if (submitting) return;
+    if (!nextOpen) {
+      setAmountInput("");
+      setEffectiveDate(defaultDate);
+      setReason("");
+      setIdempotencyKey(createClientIdempotencyKey());
+      setErrorMsg(null);
+    }
+    onOpenChange(nextOpen);
+  };
+
+  const parsedAmountPreview = normalizePositiveVndInput(amountInput);
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setErrorMsg(null);
+
+    const built = buildRecordVendorRefundRequest({
+      amount_input: amountInput,
+      effective_date: effectiveDate,
+      reason,
+      idempotency_key: idempotencyKey,
+      available_shared_advance_minor: currentSharedAdvanceMinor,
+    });
+    if (!built.ok) {
+      setErrorMsg(built.message);
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const res = await fetch(buildRecordVendorRefundUrl(vendorId), {
+        method: "POST",
+        headers: built.request.headers,
+        body: JSON.stringify(built.request.body),
+      });
+      const json: unknown = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        const classified = classifyVendorFinanceError(json, res.status);
+        if (classified.shouldRotateIdempotencyKey) {
+          rotateKey();
+        }
+        if (classified.code === "VENDOR_FINANCE_INSUFFICIENT_SHARED_ADVANCE") {
+          onDataChanged();
+        }
+        setErrorMsg(classified.message);
+        setSubmitting(false);
+        return;
+      }
+
+      const parsed = parseRecordVendorRefundEnvelope(json);
+      if (!parsed) {
+        setErrorMsg("Phản hồi ghi nhận hoàn ứng từ máy chủ không hợp lệ.");
+        setSubmitting(false);
+        return;
+      }
+
+      setSubmitting(false);
+      notify.success({
+        title: `Đã ghi nhận Vendor hoàn ứng ${parsed.movement.document_no}`,
+        description: `Số dư ứng dùng chung còn lại: ${formatVndMinor(parsed.shared_advance_balance_minor)}`,
+      });
+      onDataChanged();
+      handleClose(false);
+    } catch {
+      setErrorMsg("Mất kết nối mạng khi gửi yêu cầu hoàn ứng. Bạn có thể bấm Xác nhận lại an toàn.");
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <FormDialog
+      open={open}
+      onOpenChange={handleClose}
+      closeDisabled={submitting}
+      title={`Vendor hoàn ứng — ${vendorDisplayName}`}
+      description="Ghi nhận Vendor hoàn trả lại tiền ứng dùng chung cho công ty (giảm số dư ứng dùng chung của Vendor; không thay đổi số dư công nợ trên các sổ dự án)."
+      descriptionId={descriptionId}
+      dataTestId="vfin-record-vendor-refund-dialog"
+    >
+      <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4" noValidate>
+        <div className="rounded-xl border border-border bg-surface-muted/60 p-3.5 text-xs space-y-1">
+          <p className="text-muted">
+            Vendor: <strong className="text-foreground">{vendorDisplayName}</strong> ({vendorId})
+          </p>
+          <p className="text-muted">
+            Số dư ứng dùng chung khả dụng để hoàn:{" "}
+            <strong className="font-mono text-primary" data-testid="vfin-refund-available-balance">
+              {formatVndMinor(currentSharedAdvanceMinor)}
+            </strong>
+          </p>
+        </div>
+
+        {errorMsg ? (
+          <Alert tone="error" role="alert" title="Không thể ghi nhận hoàn ứng">
+            <p>{errorMsg}</p>
+          </Alert>
+        ) : null}
+
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <label htmlFor={amountInputId} className="block text-sm font-medium text-foreground">
+              Số tiền hoàn ứng (VND nguyên dương) <span className="text-rose-600">*</span>
+            </label>
+            <input
+              id={amountInputId}
+              data-testid="vfin-refund-amount-input"
+              type="text"
+              inputMode="numeric"
+              autoComplete="off"
+              placeholder="Ví dụ: 10000000"
+              value={amountInput}
+              disabled={submitting}
+              onChange={(e) => {
+                setAmountInput(e.target.value);
+                setErrorMsg(null);
+                rotateKey();
+              }}
+              className="min-h-11 sm:min-h-10 w-full rounded-lg border border-border bg-surface px-3 py-2 font-mono text-sm tabular-nums text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+            />
+            <p aria-live="polite" className="text-xs text-muted">
+              {amountInput.trim().length === 0 ? (
+                `Tối đa: ${formatVndMinor(currentSharedAdvanceMinor)}`
+              ) : parsedAmountPreview.ok ? (
+                <>
+                  Sẽ giảm ứng:{" "}
+                  <strong className="font-mono text-foreground">
+                    -{formatVndMinor(parsedAmountPreview.canonical)}
+                  </strong>
+                </>
+              ) : (
+                <span className="text-rose-600 dark:text-rose-300">
+                  {parsedAmountPreview.message}
+                </span>
+              )}
+            </p>
+          </div>
+
+          <div className="space-y-1.5">
+            <label htmlFor={dateInputId} className="block text-sm font-medium text-foreground">
+              Ngày hiệu lực <span className="text-rose-600">*</span>
+            </label>
+            <input
+              id={dateInputId}
+              data-testid="vfin-refund-date-input"
+              type="date"
+              value={effectiveDate}
+              disabled={submitting}
+              onChange={(e) => {
+                setEffectiveDate(e.target.value);
+                setErrorMsg(null);
+                rotateKey();
+              }}
+              className="min-h-11 sm:min-h-10 w-full rounded-lg border border-border bg-surface px-3 py-2 font-mono text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+            />
+          </div>
+        </div>
+
+        <div className="space-y-1.5">
+          <label htmlFor={reasonInputId} className="block text-sm font-medium text-foreground">
+            Lý do / Diễn giải hoàn ứng <span className="text-rose-600">*</span>
+          </label>
+          <textarea
+            id={reasonInputId}
+            data-testid="vfin-refund-reason-input"
+            rows={3}
+            maxLength={VFIN_UI_MAX_REASON_LENGTH}
+            placeholder="Ghi rõ căn cứ phiếu thu / sao kê hoàn ứng từ Vendor…"
+            value={reason}
+            disabled={submitting}
+            onChange={(e) => {
+              setReason(e.target.value);
+              setErrorMsg(null);
+              rotateKey();
+            }}
+            className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+          />
+        </div>
+
+        <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border pt-3">
+          <Button variant="secondary" disabled={submitting} onClick={() => handleClose(false)}>
+            Hủy
+          </Button>
+          <Button
+            type="submit"
+            variant="primary"
+            loading={submitting}
+            disabled={submitting}
+            data-testid="vfin-refund-submit-btn"
+          >
+            Xác nhận hoàn ứng
+          </Button>
+        </div>
+      </form>
+    </FormDialog>
+  );
+}
+
+// =============================================================================
+// 8. Apply Shared Advance Offset Dialog (`POST /api/vendor-finance/vendors/[vendorId]/shared-advances/apply-offset`)
+// =============================================================================
+export function ApplyVendorSharedAdvanceOffsetDialog({
+  open,
+  onOpenChange,
+  vendorId,
+  vendorDisplayName,
+  subLedger,
+  currentSharedAdvanceMinor,
+  defaultDate,
+  onDataChanged,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  vendorId: string;
+  vendorDisplayName: string;
+  subLedger: VendorFinanceDetailSubLedger | null;
+  currentSharedAdvanceMinor: string;
+  defaultDate: string;
+  onDataChanged: () => void;
+}) {
+  const descriptionId = useId();
+  const amountInputId = useId();
+  const dateInputId = useId();
+  const reasonInputId = useId();
+  const notify = useNotify();
+
+  const [amountInput, setAmountInput] = useState("");
+  const [effectiveDate, setEffectiveDate] = useState(defaultDate);
+  const [reason, setReason] = useState("");
+  const [idempotencyKey, setIdempotencyKey] = useState(() => createClientIdempotencyKey());
+  const [submitting, setSubmitting] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const rotateKey = () => setIdempotencyKey(createClientIdempotencyKey());
+
+  const handleClose = (nextOpen: boolean) => {
+    if (submitting) return;
+    if (!nextOpen) {
+      setAmountInput("");
+      setEffectiveDate(defaultDate);
+      setReason("");
+      setIdempotencyKey(createClientIdempotencyKey());
+      setErrorMsg(null);
+    }
+    onOpenChange(nextOpen);
+  };
+
+  const sharedBalBig = BigInt(currentSharedAdvanceMinor || "0");
+  const subLedgerPayableBig = BigInt(subLedger?.current_balance_minor ?? "0");
+  const maxOffsetBig =
+    sharedBalBig > BigInt(0) && subLedgerPayableBig > BigInt(0)
+      ? sharedBalBig < subLedgerPayableBig
+        ? sharedBalBig
+        : subLedgerPayableBig
+      : BigInt(0);
+  const maxOffsetCanonical = maxOffsetBig.toString();
+
+  const parsedAmountPreview = normalizePositiveVndInput(amountInput);
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!subLedger || !subLedger.project_id) return;
+    setErrorMsg(null);
+
+    const built = buildApplySharedAdvanceOffsetRequest({
+      project_id: subLedger.project_id,
+      contract_type: subLedger.contract_type,
+      amount_input: amountInput,
+      effective_date: effectiveDate,
+      reason,
+      idempotency_key: idempotencyKey,
+      available_shared_advance_minor: currentSharedAdvanceMinor,
+      current_subledger_payable_minor: subLedger.current_balance_minor,
+    });
+    if (!built.ok) {
+      setErrorMsg(built.message);
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const res = await fetch(buildApplyVendorSharedAdvanceOffsetUrl(vendorId), {
+        method: "POST",
+        headers: built.request.headers,
+        body: JSON.stringify(built.request.body),
+      });
+      const json: unknown = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        const classified = classifyVendorFinanceError(json, res.status);
+        if (classified.shouldRotateIdempotencyKey) {
+          rotateKey();
+        }
+        if (
+          classified.code === "VENDOR_FINANCE_INSUFFICIENT_SHARED_ADVANCE" ||
+          classified.code === "VENDOR_FINANCE_INSUFFICIENT_SUBLEDGER_PAYABLE"
+        ) {
+          // Reload fresh server balances while keeping dialog open so user can adjust
+          onDataChanged();
+        }
+        setErrorMsg(classified.message);
+        setSubmitting(false);
+        return;
+      }
+
+      const parsed = parseApplySharedAdvanceOffsetEnvelope(json);
+      if (!parsed) {
+        setErrorMsg("Phản hồi khấu trừ ứng từ máy chủ không hợp lệ.");
+        setSubmitting(false);
+        return;
+      }
+
+      setSubmitting(false);
+      notify.success({
+        title: `Đã khấu trừ ứng ${parsed.entry.document_no}`,
+        description: `Số dư sổ dự án sau khấu trừ: ${formatVndMinor(parsed.entry.balance_after_minor)} · Dư ứng dùng chung còn: ${formatVndMinor(parsed.shared_advance_balance_minor)}`,
+      });
+      onDataChanged();
+      handleClose(false);
+    } catch {
+      setErrorMsg("Mất kết nối mạng khi gửi yêu cầu khấu trừ ứng. Bạn có thể bấm Xác nhận lại an toàn.");
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <FormDialog
+      open={open}
+      onOpenChange={handleClose}
+      closeDisabled={submitting}
+      title={`Khấu trừ ứng vào công nợ dự án — ${vendorDisplayName}`}
+      description="Khấu trừ nguyên tử một số tiền cụ thể từ Số dư ứng dùng chung của Vendor vào công nợ phải trả của sổ dự án đang chọn. Không chuyển thành thanh toán tiền mặt/ngân hàng."
+      descriptionId={descriptionId}
+      dataTestId="vfin-apply-shared-advance-offset-dialog"
+    >
+      {!subLedger ? null : (
+        <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4" noValidate>
+          <div className="rounded-xl border border-border bg-surface-muted/60 p-3.5 text-xs space-y-1.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="font-semibold text-foreground" data-testid="vfin-offset-fixed-project">
+                Dự án cố định: {subLedger.project_display_name ?? subLedger.project_id} ({subLedger.project_id})
+              </span>
+              <StatusBadge
+                tone={CONTRACT_TYPE_BADGE_TONES[subLedger.contract_type]}
+                dataTestId="vfin-offset-fixed-contract-type"
+              >
+                {CONTRACT_TYPE_LABELS_VI[subLedger.contract_type]}
+              </StatusBadge>
+            </div>
+            <p className="text-muted">
+              Kế toán phụ trách sổ:{" "}
+              <strong className="text-foreground">
+                {subLedger.responsible_accountant_display_name ?? "—"}
+              </strong>
+            </p>
+            <div className="grid grid-cols-1 gap-2 pt-1 sm:grid-cols-3">
+              <div className="rounded-lg border border-border bg-surface p-2">
+                <p className="text-[11px] text-muted">Phải trả hiện tại của sổ</p>
+                <p
+                  className="font-mono text-sm font-semibold text-foreground"
+                  data-testid="vfin-offset-subledger-payable"
+                >
+                  {formatVndMinor(subLedger.current_balance_minor)}
+                </p>
+              </div>
+              <div className="rounded-lg border border-border bg-surface p-2">
+                <p className="text-[11px] text-muted">Dư ứng dùng chung hiện tại</p>
+                <p
+                  className="font-mono text-sm font-semibold text-primary"
+                  data-testid="vfin-offset-shared-advance-available"
+                >
+                  {formatVndMinor(currentSharedAdvanceMinor)}
+                </p>
+              </div>
+              <div className="rounded-lg border border-primary/30 bg-primary/5 p-2">
+                <p className="text-[11px] text-muted">Trần khấu trừ tối đa</p>
+                <p
+                  className="font-mono text-sm font-semibold text-primary"
+                  data-testid="vfin-offset-max-ceiling"
+                >
+                  {formatVndMinor(maxOffsetCanonical)}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {errorMsg ? (
+            <Alert tone="error" role="alert" title="Không thể khấu trừ ứng">
+              <p>{errorMsg}</p>
+            </Alert>
+          ) : null}
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <label htmlFor={amountInputId} className="block text-sm font-medium text-foreground">
+                  Số tiền khấu trừ (VND) <span className="text-rose-600">*</span>
+                </label>
+                {maxOffsetBig > BigInt(0) ? (
+                  <button
+                    type="button"
+                    data-testid="vfin-fill-max-offset-btn"
+                    disabled={submitting}
+                    onClick={() => {
+                      setAmountInput(maxOffsetCanonical);
+                      setErrorMsg(null);
+                      rotateKey();
+                    }}
+                    className="text-xs font-semibold text-primary hover:underline"
+                  >
+                    Điền tối đa ({formatVndMinor(maxOffsetCanonical)})
+                  </button>
+                ) : null}
+              </div>
+              <input
+                id={amountInputId}
+                data-testid="vfin-offset-amount-input"
+                type="text"
+                inputMode="numeric"
+                autoComplete="off"
+                placeholder="Nhập số tiền muốn khấu trừ…"
+                value={amountInput}
+                disabled={submitting}
+                onChange={(e) => {
+                  setAmountInput(e.target.value);
+                  setErrorMsg(null);
+                  rotateKey();
+                }}
+                className="min-h-11 sm:min-h-10 w-full rounded-lg border border-border bg-surface px-3 py-2 font-mono text-sm tabular-nums text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+              />
+              <p aria-live="polite" className="text-xs text-muted">
+                {amountInput.trim().length === 0 ? (
+                  `Nhập số tiền dương ≤ ${formatVndMinor(maxOffsetCanonical)}`
+                ) : parsedAmountPreview.ok ? (
+                  <>
+                    Khấu trừ:{" "}
+                    <strong className="font-mono text-foreground">
+                      -{formatVndMinor(parsedAmountPreview.canonical)}
+                    </strong>{" "}
+                    (giảm đồng thời dư ứng dùng chung & phải trả sổ dự án)
+                  </>
+                ) : (
+                  <span className="text-rose-600 dark:text-rose-300">
+                    {parsedAmountPreview.message}
+                  </span>
+                )}
+              </p>
+            </div>
+
+            <div className="space-y-1.5">
+              <label htmlFor={dateInputId} className="block text-sm font-medium text-foreground">
+                Ngày hiệu lực <span className="text-rose-600">*</span>
+              </label>
+              <input
+                id={dateInputId}
+                data-testid="vfin-offset-date-input"
+                type="date"
+                value={effectiveDate}
+                disabled={submitting}
+                onChange={(e) => {
+                  setEffectiveDate(e.target.value);
+                  setErrorMsg(null);
+                  rotateKey();
+                }}
+                className="min-h-11 sm:min-h-10 w-full rounded-lg border border-border bg-surface px-3 py-2 font-mono text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <label htmlFor={reasonInputId} className="block text-sm font-medium text-foreground">
+              Lý do / Diễn giải khấu trừ ứng <span className="text-rose-600">*</span>
+            </label>
+            <textarea
+              id={reasonInputId}
+              data-testid="vfin-offset-reason-input"
+              rows={3}
+              maxLength={VFIN_UI_MAX_REASON_LENGTH}
+              placeholder="Ghi rõ đợt quyết toán, bảng lương hoặc chứng từ công nợ dự án áp dụng khấu trừ ứng…"
+              value={reason}
+              disabled={submitting}
+              onChange={(e) => {
+                setReason(e.target.value);
+                setErrorMsg(null);
+                rotateKey();
+              }}
+              className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+            />
+          </div>
+
+          <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border pt-3">
+            <Button variant="secondary" disabled={submitting} onClick={() => handleClose(false)}>
+              Hủy
+            </Button>
+            <Button
+              type="submit"
+              variant="primary"
+              loading={submitting}
+              disabled={submitting}
+              data-testid="vfin-offset-submit-btn"
+            >
+              Xác nhận khấu trừ ứng
+            </Button>
+          </div>
+        </form>
+      )}
+    </FormDialog>
+  );
+}
+
+// =============================================================================
+// 9. Reverse Shared Advance Movement Dialog (`POST /api/vendor-finance/shared-advances/[movementId]/reverse`)
+// =============================================================================
+export function ReverseVendorSharedAdvanceMovementDialog({
+  open,
+  onOpenChange,
+  movement,
+  defaultDate,
+  onReversed,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  movement: VendorFinanceSharedAdvanceMovementProjection | null;
+  defaultDate: string;
+  onReversed: () => void;
+}) {
+  const descriptionId = useId();
+  const dateInputId = useId();
+  const reasonInputId = useId();
+  const notify = useNotify();
+
+  const [effectiveDate, setEffectiveDate] = useState(defaultDate);
+  const [reason, setReason] = useState("");
+  const [idempotencyKey, setIdempotencyKey] = useState(() => createClientIdempotencyKey());
+  const [submitting, setSubmitting] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const rotateKey = () => setIdempotencyKey(createClientIdempotencyKey());
+
+  const handleClose = (nextOpen: boolean) => {
+    if (submitting) return;
+    if (!nextOpen) {
+      setEffectiveDate(defaultDate);
+      setReason("");
+      setIdempotencyKey(createClientIdempotencyKey());
+      setErrorMsg(null);
+    }
+    onOpenChange(nextOpen);
+  };
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!movement) return;
+    setErrorMsg(null);
+
+    const built = buildReverseSharedAdvanceMovementRequest({
+      effective_date: effectiveDate.trim().length > 0 ? effectiveDate : null,
+      reason,
+      idempotency_key: idempotencyKey,
+    });
+    if (!built.ok) {
+      setErrorMsg(built.message);
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const res = await fetch(buildReverseVendorSharedAdvanceMovementUrl(movement.movement_id), {
+        method: "POST",
+        headers: built.request.headers,
+        body: JSON.stringify(built.request.body),
+      });
+      const json: unknown = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        const classified = classifyVendorFinanceError(json, res.status);
+        if (classified.shouldRotateIdempotencyKey) {
+          rotateKey();
+        }
+        if (classified.code === "VENDOR_FINANCE_INSUFFICIENT_SHARED_ADVANCE") {
+          onReversed();
+        }
+        setErrorMsg(classified.message);
+        setSubmitting(false);
+        return;
+      }
+
+      const parsed = parseReverseSharedAdvanceMovementEnvelope(json);
+      if (!parsed) {
+        setErrorMsg("Phản hồi hoàn tác giao dịch ứng dùng chung từ máy chủ không hợp lệ.");
+        setSubmitting(false);
+        return;
+      }
+
+      setSubmitting(false);
+      notify.success({
+        title: `Đã tạo chứng từ hoàn tác ${parsed.reversal_movement.document_no}`,
+        description: `Số dư ứng dùng chung sau hoàn tác: ${formatVndMinor(parsed.shared_advance_balance_minor)}`,
+      });
+      onReversed();
+      handleClose(false);
+    } catch {
+      setErrorMsg(
+        "Mất kết nối mạng khi gửi yêu cầu hoàn tác. Bạn có thể bấm Xác nhận hoàn tác lại an toàn.",
+      );
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <FormDialog
+      open={open}
+      onOpenChange={handleClose}
+      closeDisabled={submitting}
+      title={movement ? `Hoàn tác giao dịch ứng ${movement.document_no}` : "Hoàn tác giao dịch ứng"}
+      description="Hệ thống sổ cái bất biến (append-only): thao tác này tạo bút toán REVERSAL ngược dấu trên sổ ứng dùng chung. Nếu hoàn tác giao dịch Khấu trừ ứng dự án, hệ thống đồng thời hoàn tác nguyên tử cả bút toán khấu trừ trên sổ dự án tương ứng."
+      descriptionId={descriptionId}
+      dataTestId="vfin-reverse-shared-advance-dialog"
+    >
+      {!movement ? null : (
+        <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4" noValidate>
+          <div className="rounded-xl border border-border bg-surface-muted/60 p-3.5 text-xs space-y-1.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="font-mono font-semibold text-foreground">{movement.document_no}</span>
+              <StatusBadge tone="neutral">
+                {SHARED_ADVANCE_MOVEMENT_TYPE_LABELS_VI[movement.movement_type]}
+              </StatusBadge>
+            </div>
+            {movement.movement_type === "PROJECT_OFFSET_APPLIED" ? (
+              <p className="text-muted">
+                Dự án liên kết:{" "}
+                <strong className="text-foreground">
+                  {movement.project_display_name_snapshot ??
+                    movement.project_id ??
+                    VFIN_UI_REDACTED_FIELD_LABEL_VI}
+                </strong>
+                {movement.contract_type ? (
+                  <>
+                    {" · "}Loại HĐ:{" "}
+                    <strong className="text-foreground">
+                      {CONTRACT_TYPE_LABELS_VI[movement.contract_type]}
+                    </strong>
+                  </>
+                ) : null}
+              </p>
+            ) : null}
+            <p className="text-muted">
+              Số tiền gốc:{" "}
+              <strong className="font-mono text-foreground">
+                {formatVndMinor(movement.amount_minor)}
+              </strong>{" "}
+              (Biến động ứng: {formatSignedVndDelta(movement.balance_delta_minor)}) · Ngày hiệu lực
+              gốc: <strong className="font-mono">{formatVietnamDateLabel(movement.effective_date)}</strong>
+            </p>
+          </div>
+
+          {errorMsg ? (
+            <Alert tone="error" role="alert" title="Không thể hoàn tác giao dịch ứng">
+              <p>{errorMsg}</p>
+            </Alert>
+          ) : null}
+
+          <div className="space-y-1.5">
+            <label htmlFor={dateInputId} className="block text-sm font-medium text-foreground">
+              Ngày hiệu lực hoàn tác (để trống sẽ lấy ngày hiện tại máy chủ)
+            </label>
+            <input
+              id={dateInputId}
+              data-testid="vfin-reverse-shared-advance-date-input"
+              type="date"
+              value={effectiveDate}
+              disabled={submitting}
+              onChange={(e) => {
+                setEffectiveDate(e.target.value);
+                setErrorMsg(null);
+                rotateKey();
+              }}
+              className="min-h-11 sm:min-h-10 w-full rounded-lg border border-border bg-surface px-3 py-2 font-mono text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <label htmlFor={reasonInputId} className="block text-sm font-medium text-foreground">
+              Lý do hoàn tác <span className="text-rose-600">*</span>
+            </label>
+            <textarea
+              id={reasonInputId}
+              data-testid="vfin-reverse-shared-advance-reason-input"
+              rows={3}
+              maxLength={VFIN_UI_MAX_REASON_LENGTH}
+              placeholder="Ghi rõ nguyên nhân hoàn tác giao dịch ứng dùng chung…"
+              value={reason}
+              disabled={submitting}
+              onChange={(e) => {
+                setReason(e.target.value);
+                setErrorMsg(null);
+                rotateKey();
+              }}
+              className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+            />
+          </div>
+
+          <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border pt-3">
+            <Button variant="secondary" disabled={submitting} onClick={() => handleClose(false)}>
+              Đóng
+            </Button>
+            <Button
+              type="submit"
+              variant="danger"
+              loading={submitting}
+              disabled={submitting}
+              data-testid="vfin-reverse-shared-advance-submit-btn"
+            >
+              <RotateCcw className="h-4 w-4" aria-hidden />
+              Xác nhận hoàn tác
             </Button>
           </div>
         </form>

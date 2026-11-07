@@ -36,14 +36,24 @@ import {
   parseMonthlyReportQuery,
   parsePreviewOpeningBatchBody,
   parseRecordVendorFinanceEntryBody,
+  parseRecordVendorRefundBody,
   parseReserveVendorFinanceEvidenceBody,
   parseReverseVendorFinanceEntryBody,
+  parseReverseSharedAdvanceMovementBody,
+  parseApplySharedAdvanceOffsetBody,
+  parseExportVendorFinanceVendorsQuery,
+  parseFundSharedAdvanceBody,
+  parseListSharedAdvanceMovementsQuery,
+  encodeSharedAdvanceMovementsCursor,
 } from "./vendor-finance-contract.ts";
 import {
   PROJECT_REVENUE_MISSING_SOURCE_LABEL_VI,
+  VENDOR_FINANCE_EXPORT_XLSX_MIME,
   VFIN_UI_ACTIVE_FILTERS,
   VFIN_UI_BALANCE_FILTERS,
   VFIN_UI_CONTRACT_VERSION,
+  VFIN_UI_CREATOR_NORMAL_ENTRY_TYPES,
+  VFIN_UI_CREATOR_OPENING_ENTRY_TYPES,
   VFIN_UI_DOCUMENT_KINDS,
   VFIN_UI_ENTRY_TYPES,
   VFIN_UI_EVIDENCE_MAX_BYTES,
@@ -56,13 +66,18 @@ import {
   VFIN_UI_MAX_REASON_LENGTH,
   VFIN_UI_MAX_SEARCH_LENGTH,
   VFIN_UI_NORMAL_ENTRY_TYPES,
+  VFIN_UI_NORMAL_SHARED_ADVANCE_MOVEMENT_TYPES,
   VFIN_UI_OPENING_ENTRY_TYPES,
   VFIN_UI_PG_BIGINT_MAX,
   VFIN_UI_PG_BIGINT_MIN,
+  VFIN_UI_REDACTED_FIELD_LABEL_VI,
+  VFIN_UI_SHARED_ADVANCE_MOVEMENT_TYPES,
   buildAdminEndGlobalRoleUrl,
   buildAdminEndProjectAccountantUrl,
   buildAdminGlobalRolesUrl,
   buildAdminProjectAccountantsUrl,
+  buildApplySharedAdvanceOffsetRequest,
+  buildApplyVendorSharedAdvanceOffsetUrl,
   buildAssignGlobalRoleRequest,
   buildAssignProjectAccountantRequest,
   buildClassifySubLedgerRequest,
@@ -73,22 +88,30 @@ import {
   buildEndProjectAccountantRequest,
   buildFinalizeEvidenceRequest,
   buildFinalizeEvidenceUrl,
+  buildFundSharedAdvanceRequest,
+  buildFundVendorSharedAdvanceUrl,
   buildMonthlyReportUrl,
   buildOpeningApplyRequest,
   buildOpeningApplyUrl,
   buildOpeningPreviewRequest,
   buildOpeningPreviewUrl,
   buildRecordEntryRequest,
+  buildRecordVendorRefundRequest,
+  buildRecordVendorRefundUrl,
   buildReserveEvidenceRequest,
   buildReserveEvidenceUrl,
   buildReverseEntryRequest,
   buildReverseEntryUrl,
+  buildReverseSharedAdvanceMovementRequest,
+  buildReverseVendorSharedAdvanceMovementUrl,
   buildSingleEntryUrl,
   buildVendorDetailUrl,
   buildVendorEntriesUrl,
+  buildVendorExportUrl,
   buildVendorFinanceContextUrl,
   buildVendorListUrl,
   buildVendorReconciliationsUrl,
+  buildVendorSharedAdvancesUrl,
   classifyVendorFinanceError,
   computeBrowserSha256Hex,
   computeReconciliationDifferencePreview,
@@ -98,13 +121,16 @@ import {
   formatVendorBalancePresentation,
   formatVietnamDateLabel,
   formatVndMinor,
+  hasVendorFinanceXlsxZipSignature,
   isCanonicalUiProjectId,
   isCanonicalUiVendorId,
+  isUsableVendorFinanceExportBlob,
   normalizeNonNegativeVndInput,
   normalizePositiveVndInput,
   normalizeSignedVndInput,
   parseAdminGlobalRolesEnvelope,
   parseAdminProjectAccountantsEnvelope,
+  parseApplySharedAdvanceOffsetEnvelope,
   parseAssignGlobalRoleEnvelope,
   parseAssignProjectAccountantEnvelope,
   parseClassifySubLedgerEnvelope,
@@ -114,17 +140,23 @@ import {
   parseEvidenceDownloadEnvelope,
   parseEvidenceFinalizeEnvelope,
   parseEvidenceReserveEnvelope,
+  parseFundSharedAdvanceEnvelope,
   parseMonthlyReportEnvelope,
   parseOpeningApplyEnvelope,
   parseOpeningPreviewEnvelope,
   parseRecordEntryEnvelope,
+  parseRecordVendorRefundEnvelope,
   parseReverseEntryEnvelope,
+  parseReverseSharedAdvanceMovementEnvelope,
+  parseSharedAdvanceMovementProjection,
   parseSingleEntryEnvelope,
   parseVendorDetailEnvelope,
   parseVendorEntriesPageEnvelope,
   parseVendorFinanceContextEnvelope,
   parseVendorListEnvelope,
   parseVendorReconciliationsPageEnvelope,
+  parseVendorSharedAdvancesPageEnvelope,
+  resolveVendorFinanceExportFilename,
   uploadEvidenceForCommittedTarget,
   validateEvidenceFilePreflight,
 } from "./ui-model.ts";
@@ -2110,4 +2142,296 @@ test("uploadEvidenceForCommittedTarget executes reserve -> PUT -> finalize and s
   for (const call of [...callsA, ...callsB]) {
     assert.doesNotMatch(call.url, /\/vendors\/.*\/(entries|reconciliations)/);
   }
+});
+
+test("VFIN-04: Shared advance URL/request builders, redaction-aware envelope parsers, and XLSX blob/filename helpers", async () => {
+  assert.equal(VFIN_UI_CREATOR_NORMAL_ENTRY_TYPES.includes("ADVANCE_RECORDED"), false);
+  assert.deepEqual(VFIN_UI_CREATOR_OPENING_ENTRY_TYPES, ["OPENING_PAYABLE"]);
+  assert.deepEqual(VFIN_UI_SHARED_ADVANCE_MOVEMENT_TYPES, [
+    "ADVANCE_FUNDED",
+    "VENDOR_REFUND_RECORDED",
+    "PROJECT_OFFSET_APPLIED",
+    "REVERSAL",
+  ]);
+  assert.deepEqual(VFIN_UI_NORMAL_SHARED_ADVANCE_MOVEMENT_TYPES, [
+    "ADVANCE_FUNDED",
+    "VENDOR_REFUND_RECORDED",
+    "PROJECT_OFFSET_APPLIED",
+  ]);
+  assert.equal(VFIN_UI_REDACTED_FIELD_LABEL_VI, "Không hiển thị theo phạm vi quyền");
+
+  // 1. Export URL carries active filters and never sends page / page_size
+  const exportUrl = buildVendorExportUrl({
+    search: "  Alpha  ",
+    active: "active",
+    balance_filter: "payable",
+    project_id: PROJECT_ID,
+    accountant_ref: ACCOUNTANT_A_REF.toUpperCase(),
+    ledger_scope: "PROJECT_ACCOUNTANT",
+    contract_type: "SEASONAL",
+  });
+  assert.doesNotMatch(exportUrl, /page=|page_size=/);
+  assert.deepEqual(parseExportVendorFinanceVendorsQuery(new URL(`http://localhost${exportUrl}`)), {
+    ok: true,
+    value: {
+      search: "Alpha",
+      active: "active",
+      balance_filter: "payable",
+      project_id: PROJECT_ID,
+      accountant_ref: ACCOUNTANT_A_REF,
+      ledger_scope: "PROJECT_ACCOUNTANT",
+      contract_type: "SEASONAL",
+    },
+  });
+
+  // 2. Shared advances URL & endpoints
+  const movCursor = encodeSharedAdvanceMovementsCursor({
+    vendor_id: "VND-001",
+    before_sequence: 7,
+    movement_type: "PROJECT_OFFSET_APPLIED",
+  });
+  const sharedAdvUrl = buildVendorSharedAdvancesUrl("VND-001", {
+    cursor: movCursor,
+    movement_type: "PROJECT_OFFSET_APPLIED",
+    page_size: 25,
+  });
+  assert.deepEqual(
+    parseListSharedAdvanceMovementsQuery(
+      new URL(`http://localhost${sharedAdvUrl}`),
+      "VND-001",
+    ),
+    {
+      ok: true,
+      value: {
+        before_sequence: 7,
+        movement_type: "PROJECT_OFFSET_APPLIED",
+        page_size: 25,
+      },
+    },
+  );
+  assert.equal(
+    buildFundVendorSharedAdvanceUrl("VND-001"),
+    "/api/vendor-finance/vendors/VND-001/shared-advances/fund",
+  );
+  assert.equal(
+    buildRecordVendorRefundUrl("VND-001"),
+    "/api/vendor-finance/vendors/VND-001/shared-advances/refund",
+  );
+  assert.equal(
+    buildApplyVendorSharedAdvanceOffsetUrl("VND-001"),
+    "/api/vendor-finance/vendors/VND-001/shared-advances/apply-offset",
+  );
+  assert.equal(
+    buildReverseVendorSharedAdvanceMovementUrl(ENTRY_ID),
+    `/api/vendor-finance/shared-advances/${ENTRY_ID}/reverse`,
+  );
+
+  // 3. Shared advance request builders round-trip through backend parsers
+  const fundReq = buildFundSharedAdvanceRequest({
+    amount_input: "50.000.000",
+    effective_date: "2026-10-25",
+    reason: "  Ứng tiền đợt 1 cho Vendor  ",
+    idempotency_key: IDEMPOTENCY_KEY,
+  });
+  assert.equal(fundReq.ok, true);
+  assert.equal("project_id" in fundReq.request.body, false);
+  assert.equal("contract_type" in fundReq.request.body, false);
+  assert.equal(
+    parseFundSharedAdvanceBody(
+      fundReq.request.body,
+      fundReq.request.headers["Idempotency-Key"],
+    ).ok,
+    true,
+  );
+
+  const refundOverCap = buildRecordVendorRefundRequest({
+    amount_input: "60.000.000",
+    effective_date: "2026-10-25",
+    reason: "Hoàn ứng vượt số dư",
+    idempotency_key: IDEMPOTENCY_KEY,
+    available_shared_advance_minor: "50000000",
+  });
+  assert.equal(refundOverCap.ok, false);
+  assert.match(refundOverCap.message, /vượt quá số dư ứng dùng chung/);
+
+  const refundReq = buildRecordVendorRefundRequest({
+    amount_input: "20.000.000",
+    effective_date: "2026-10-25",
+    reason: "Vendor hoàn ứng tiền mặt",
+    idempotency_key: IDEMPOTENCY_KEY,
+    available_shared_advance_minor: "50000000",
+  });
+  assert.equal(refundReq.ok, true);
+  assert.equal(
+    parseRecordVendorRefundBody(
+      refundReq.request.body,
+      refundReq.request.headers["Idempotency-Key"],
+    ).ok,
+    true,
+  );
+
+  const offsetOverPayable = buildApplySharedAdvanceOffsetRequest({
+    project_id: PROJECT_ID,
+    contract_type: "SEASONAL",
+    amount_input: "30.000.000",
+    effective_date: "2026-10-25",
+    reason: "Khấu trừ vượt công nợ phải trả",
+    idempotency_key: IDEMPOTENCY_KEY,
+    available_shared_advance_minor: "50000000",
+    current_subledger_payable_minor: "25000000",
+  });
+  assert.equal(offsetOverPayable.ok, false);
+  assert.match(offsetOverPayable.message, /vượt quá công nợ phải trả/);
+
+  const offsetReq = buildApplySharedAdvanceOffsetRequest({
+    project_id: PROJECT_ID,
+    contract_type: "SEASONAL",
+    amount_input: "25.000.000",
+    effective_date: "2026-10-25",
+    reason: "Khấu trừ ứng vào sổ thời vụ",
+    idempotency_key: IDEMPOTENCY_KEY,
+    available_shared_advance_minor: "50000000",
+    current_subledger_payable_minor: "25000000",
+  });
+  assert.equal(offsetReq.ok, true);
+  assert.equal(
+    parseApplySharedAdvanceOffsetBody(
+      offsetReq.request.body,
+      offsetReq.request.headers["Idempotency-Key"],
+    ).ok,
+    true,
+  );
+
+  const revMovReq = buildReverseSharedAdvanceMovementRequest({
+    effective_date: "2026-10-25",
+    reason: "Hoàn tác giao dịch ứng",
+    idempotency_key: IDEMPOTENCY_KEY,
+  });
+  assert.equal(revMovReq.ok, true);
+  assert.equal(
+    parseReverseSharedAdvanceMovementBody(
+      revMovReq.request.body,
+      revMovReq.request.headers["Idempotency-Key"],
+    ).ok,
+    true,
+  );
+
+  // 4. Shared advance movement projection parser (unredacted + cross-project redacted)
+  const baseMovement = {
+    movement_id: ENTRY_ID,
+    vendor_id: "VND-001",
+    vendor_display_name_snapshot: "Công ty Alpha",
+    vendor_active: true,
+    vendor_advance_sequence: 1,
+    cursor_sequence: 1,
+    document_no: "VFIN-2026-000001",
+    document_kind: "ADVANCE_VOUCHER",
+    document_title_vi: "Phiếu ứng tiền dùng chung Vendor",
+    movement_type: "ADVANCE_FUNDED",
+    amount_minor: "50000000",
+    balance_before_minor: "0",
+    balance_delta_minor: "50000000",
+    balance_after_minor: "50000000",
+    effective_date: "2026-10-25",
+    reason: "Ứng tiền đợt 1",
+    project_entry_id: null,
+    project_id: null,
+    project_display_name_snapshot: null,
+    accountant_ref: null,
+    responsible_accountant_display_name: null,
+    contract_type: null,
+    reverses_movement_id: null,
+    reverses_document_no: null,
+    reversed_by_movement_id: null,
+    reversed_by_document_no: null,
+    can_reverse: true,
+    can_attach_evidence: false,
+    evidence: null,
+    created_by_display_name: "Lê Thu Ngân",
+    created_at: "2026-10-25T08:00:00.000Z",
+    internal_disclaimer: VFIN_UI_INTERNAL_DISCLAIMER_VI,
+  };
+  assert.ok(parseSharedAdvanceMovementProjection(baseMovement));
+  // Rejects can_attach_evidence: true on shared advance movements
+  assert.equal(
+    parseSharedAdvanceMovementProjection({ ...baseMovement, can_attach_evidence: true }),
+    null,
+  );
+
+  // Redacted cross-project PROJECT_OFFSET_APPLIED movement (null project_id, reason, created_by_display_name)
+  const redactedOffsetMovement = {
+    ...baseMovement,
+    movement_type: "PROJECT_OFFSET_APPLIED",
+    balance_delta_minor: "-10000000",
+    balance_before_minor: "50000000",
+    balance_after_minor: "40000000",
+    reason: null,
+    created_by_display_name: null,
+    can_reverse: false,
+  };
+  assert.ok(parseSharedAdvanceMovementProjection(redactedOffsetMovement));
+
+  assert.ok(
+    parseVendorSharedAdvancesPageEnvelope({
+      ok: true,
+      data: {
+        authorization_date: "2026-10-25",
+        vendor_id: "VND-001",
+        shared_advance_balance_minor: "40000000",
+        page_size: 25,
+        next_cursor: null,
+        has_more: false,
+        movements: [baseMovement, redactedOffsetMovement],
+      },
+    }),
+  );
+  assert.ok(
+    parseFundSharedAdvanceEnvelope({
+      ok: true,
+      data: {
+        movement: baseMovement,
+        shared_advance_balance_minor: "50000000",
+        replayed: false,
+      },
+    }),
+  );
+  assert.ok(
+    parseRecordVendorRefundEnvelope({
+      ok: true,
+      data: {
+        movement: {
+          ...baseMovement,
+          movement_type: "VENDOR_REFUND_RECORDED",
+          balance_delta_minor: "-10000000",
+          balance_before_minor: "50000000",
+          balance_after_minor: "40000000",
+        },
+        shared_advance_balance_minor: "40000000",
+        replayed: false,
+      },
+    }),
+  );
+
+  // 5. XLSX zip signature & filename helpers
+  const validZip = new Uint8Array([0x50, 0x4b, 0x03, 0x04, ...new Array(30).fill(0)]);
+  assert.equal(hasVendorFinanceXlsxZipSignature(validZip), true);
+  assert.equal(hasVendorFinanceXlsxZipSignature(new Uint8Array([0x7b, 0x22])), false);
+  const validBlob = new Blob([validZip], { type: VENDOR_FINANCE_EXPORT_XLSX_MIME });
+  assert.equal(await isUsableVendorFinanceExportBlob(validBlob, VENDOR_FINANCE_EXPORT_XLSX_MIME), true);
+  const fakeJsonBlob = new Blob(['{"ok":false,"code":"VENDOR_FINANCE_UNAVAILABLE"}'], {
+    type: "application/json",
+  });
+  assert.equal(await isUsableVendorFinanceExportBlob(fakeJsonBlob, "application/json"), false);
+
+  assert.equal(
+    resolveVendorFinanceExportFilename(
+      'attachment; filename="danh-sach-vendor-cong-no-2026-10-25.xlsx"',
+      "2026-10-24",
+    ),
+    "danh-sach-vendor-cong-no-2026-10-25.xlsx",
+  );
+  assert.equal(
+    resolveVendorFinanceExportFilename(null, "2026-10-25"),
+    "danh-sach-vendor-cong-no-2026-10-25.xlsx",
+  );
 });

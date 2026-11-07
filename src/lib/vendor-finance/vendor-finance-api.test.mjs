@@ -4,7 +4,14 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 
+import ExcelJS from "exceljs";
 import { VENDOR_FINANCE_INTERNAL_DISCLAIMER_VI } from "./vendor-finance-contract.ts";
+import {
+  VENDOR_FINANCE_EXPORT_COLUMNS,
+  VENDOR_FINANCE_EXPORT_WORKSHEET_NAME,
+  VENDOR_FINANCE_EXPORT_XLSX_CONTENT_TYPE,
+  buildVendorFinanceExportXlsx,
+} from "./vendor-finance-xlsx.ts";
 import {
   MAX_VENDOR_FINANCE_MUTATION_JSON_BYTES,
   MAX_VENDOR_FINANCE_OPENING_BATCH_JSON_BYTES,
@@ -2517,6 +2524,22 @@ test("VFIN-04 HTTP authority & shared advance / export routes: CASH_HOLDER vs Pr
     acctDeps,
   );
   assert.equal(getExportRes.status, 200);
+  assert.equal(
+    getExportRes.headers.get("content-type"),
+    VENDOR_FINANCE_EXPORT_XLSX_CONTENT_TYPE,
+  );
+  assert.match(
+    getExportRes.headers.get("content-disposition") ?? "",
+    /attachment;\s*filename="danh-sach-vendor-cong-no-2026-10-24\.xlsx"/,
+  );
+  assert.equal(getExportRes.headers.get("cache-control"), "private, no-store");
+  assert.equal(getExportRes.headers.get("x-content-type-options"), "nosniff");
+  assert.equal(getExportRes.headers.get("referrer-policy"), "no-referrer");
+  const exportBytes = new Uint8Array(await getExportRes.arrayBuffer());
+  assert.equal(exportBytes[0], 0x50);
+  assert.equal(exportBytes[1], 0x4b);
+  assert.equal(exportBytes[2], 0x03);
+  assert.equal(exportBytes[3], 0x04);
 
   // 3. Export row cap exceeded returns 422 VENDOR_FINANCE_EXPORT_ROW_CAP_EXCEEDED
   const capExceededDeps = {
@@ -2538,4 +2561,166 @@ test("VFIN-04 HTTP authority & shared advance / export routes: CASH_HOLDER vs Pr
     ok: false,
     code: "VENDOR_FINANCE_EXPORT_ROW_CAP_EXCEEDED",
   });
+});
+
+test("VFIN-04 XLSX export builder & route: 8 canonical columns, exact BigInt text strings, formula neutralization, empty list, and sanitized 503 on builder failure", async () => {
+  const sampleData = {
+    authorization_date: "2026-10-24",
+    allowed_actions: {
+      can_view: true,
+      can_record: true,
+      can_reconcile: true,
+      can_manage_project_assignments: false,
+      can_view_shared_advance: true,
+      can_fund_vendor_advance: false,
+      can_record_vendor_refund: false,
+      can_apply_vendor_advance: true,
+      visibility_scope: "ALL",
+    },
+    filters: {
+      search: "",
+      active: "all",
+      balance_filter: "all",
+      project_id: null,
+      accountant_ref: null,
+      ledger_scope: "ALL",
+      contract_type: "all",
+    },
+    summary: {
+      total_payable_minor: "9007199254740993",
+      total_advance_minor: "0",
+      total_shared_advance_minor: "123456789012345678",
+      net_balance_minor: "9007199254740993",
+      vendors_with_balance_count: 1,
+    },
+    total: 4,
+    vendors: [
+      {
+        vendor_id: "=VND_FORMULA",
+        display_name: "+Công ty TNHH Tiếng Việt Đặc Biệt",
+        active: true,
+        payable_total_minor: "9007199254740993",
+        current_balance_minor: "9007199254740993",
+        balance_direction: "PAYABLE",
+        shared_advance_balance_minor: "123456789012345678",
+        entry_count: 3,
+        has_opening_entry: true,
+        last_effective_date: "2026-10-24",
+        sub_ledger_count: 2,
+        sub_ledgers: [],
+        latest_reconciliation: null,
+      },
+      {
+        vendor_id: "-VND_MINUS",
+        display_name: "@Vendor Inactive",
+        active: false,
+        payable_total_minor: "0",
+        current_balance_minor: "0",
+        balance_direction: "BALANCED",
+        shared_advance_balance_minor: "0",
+        entry_count: 0,
+        has_opening_entry: false,
+        last_effective_date: null,
+        sub_ledger_count: 0,
+        sub_ledgers: [],
+        latest_reconciliation: null,
+      },
+      {
+        vendor_id: "\t=VND_TAB_FORMULA",
+        display_name: "  +Leading Whitespace Formula",
+        active: true,
+        payable_total_minor: "500000",
+        current_balance_minor: "500000",
+        balance_direction: "PAYABLE",
+        shared_advance_balance_minor: "250000",
+        entry_count: 1,
+        has_opening_entry: true,
+        last_effective_date: "2026-10-20",
+        sub_ledger_count: 1,
+        sub_ledgers: [],
+        latest_reconciliation: null,
+      },
+    ],
+  };
+
+  const bytes = await buildVendorFinanceExportXlsx(sampleData.vendors);
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(Buffer.from(bytes));
+  const sheet = workbook.getWorksheet(VENDOR_FINANCE_EXPORT_WORKSHEET_NAME);
+  assert.ok(sheet);
+
+  const headerValues = VENDOR_FINANCE_EXPORT_COLUMNS.map((_, idx) =>
+    String(sheet.getRow(1).getCell(idx + 1).value ?? ""),
+  );
+  assert.deepEqual(headerValues, [
+    "STT",
+    "Mã Vendor",
+    "Tên Vendor",
+    "Trạng thái",
+    "Số sổ dự án",
+    "Công nợ phải trả (VND)",
+    "Số dư ứng dùng chung (VND)",
+    "Ngày giao dịch gần nhất",
+  ]);
+
+  // Row 2: Formula neutralized & BigInt preserved as exact string without precision loss
+  const row2 = sheet.getRow(2);
+  assert.equal(row2.getCell(1).value, "1");
+  assert.equal(row2.getCell(2).value, "'=VND_FORMULA");
+  assert.equal(row2.getCell(3).value, "'+Công ty TNHH Tiếng Việt Đặc Biệt");
+  assert.equal(row2.getCell(4).value, "Đang hoạt động");
+  assert.equal(row2.getCell(5).value, "2");
+  assert.equal(row2.getCell(6).value, "9007199254740993");
+  assert.equal(row2.getCell(7).value, "123456789012345678");
+  assert.equal(row2.getCell(8).value, "2026-10-24");
+
+  // Row 3: Zero amounts and inactive vendor
+  const row3 = sheet.getRow(3);
+  assert.equal(row3.getCell(2).value, "'-VND_MINUS");
+  assert.equal(row3.getCell(3).value, "'@Vendor Inactive");
+  assert.equal(row3.getCell(4).value, "Ngừng hoạt động");
+  assert.equal(row3.getCell(6).value, "0");
+  assert.equal(row3.getCell(7).value, "0");
+  assert.equal(row3.getCell(8).value, "");
+
+  // Row 4: Leading whitespace + formula trigger neutralized
+  const row4 = sheet.getRow(4);
+  assert.equal(row4.getCell(2).value, "'\t=VND_TAB_FORMULA");
+  assert.equal(row4.getCell(3).value, "'  +Leading Whitespace Formula");
+
+  // Empty vendor list produces valid 1-row (header-only) workbook
+  const emptyBytes = await buildVendorFinanceExportXlsx([]);
+  const emptyWb = new ExcelJS.Workbook();
+  await emptyWb.xlsx.load(Buffer.from(emptyBytes));
+  const emptySheet = emptyWb.getWorksheet(VENDOR_FINANCE_EXPORT_WORKSHEET_NAME);
+  assert.equal(emptySheet.rowCount, 1);
+
+  // Builder exception returns 503 VENDOR_FINANCE_UNAVAILABLE and never logs vendor names/amounts
+  const loggedErrors = [];
+  const origConsoleError = console.error;
+  console.error = (...args) => {
+    loggedErrors.push(args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" "));
+  };
+  try {
+    const baseMock = makeMockRepository();
+    const failBuilderRes = await handleGetExportVendorFinanceVendors(
+      new Request(`${ORIGIN}/api/vendor-finance/vendors/export`),
+      "true",
+      {
+        resolveSession: async () => makeSession(),
+        repository: baseMock.repository,
+        buildExportXlsx: async () => {
+          throw new Error("Sensitive failure for Vendor Alpha 9007199254740993");
+        },
+      },
+    );
+    assert.equal(failBuilderRes.status, 503);
+    assert.deepEqual(await failBuilderRes.json(), {
+      ok: false,
+      code: "VENDOR_FINANCE_UNAVAILABLE",
+    });
+    assert.equal(loggedErrors.some((line) => line.includes("Vendor Alpha") || line.includes("9007199254740993")), false);
+  } finally {
+    console.error = origConsoleError;
+  }
 });
