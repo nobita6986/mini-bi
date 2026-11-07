@@ -24,6 +24,7 @@ export const VENDOR_FINANCE_INTERNAL_DISCLAIMER_VI =
 export const VENDOR_FINANCE_MAX_REASON_LENGTH = 4000;
 export const VENDOR_FINANCE_MAX_SEARCH_LENGTH = 120;
 export const VENDOR_FINANCE_MAX_OPENING_BATCH_ITEMS = 200;
+export const VENDOR_FINANCE_EXPORT_ROW_CAP = 10_000;
 export const VENDOR_FINANCE_EVIDENCE_MAX_BYTES = 10 * 1024 * 1024; // 10 MiB = 10_485_760
 export const VENDOR_FINANCE_EVIDENCE_UPLOAD_URL_TTL_SECONDS = 300;
 export const VENDOR_FINANCE_EVIDENCE_DOWNLOAD_URL_TTL_SECONDS = 120;
@@ -40,12 +41,32 @@ export const VENDOR_FINANCE_ENTRY_TYPES = [
   "PAYROLL_RECORDED",
   "PAYMENT_RECORDED",
   "ADVANCE_RECORDED",
+  "ADVANCE_OFFSET_RECORDED",
   "ADJUSTMENT_INCREASE",
   "ADJUSTMENT_DECREASE",
   "REVERSAL",
 ] as const;
 
 export type VendorFinanceEntryType = (typeof VENDOR_FINANCE_ENTRY_TYPES)[number];
+
+export const VENDOR_FINANCE_SHARED_ADVANCE_MOVEMENT_TYPES = [
+  "ADVANCE_FUNDED",
+  "VENDOR_REFUND_RECORDED",
+  "PROJECT_OFFSET_APPLIED",
+  "REVERSAL",
+] as const;
+
+export type VendorFinanceSharedAdvanceMovementType =
+  (typeof VENDOR_FINANCE_SHARED_ADVANCE_MOVEMENT_TYPES)[number];
+
+export const NORMAL_SHARED_ADVANCE_MOVEMENT_TYPES = [
+  "ADVANCE_FUNDED",
+  "VENDOR_REFUND_RECORDED",
+  "PROJECT_OFFSET_APPLIED",
+] as const;
+
+export type NormalSharedAdvanceMovementType =
+  (typeof NORMAL_SHARED_ADVANCE_MOVEMENT_TYPES)[number];
 
 export const NORMAL_VENDOR_FINANCE_ENTRY_TYPES = [
   "DEBT_RECORDED",
@@ -69,6 +90,8 @@ export const VENDOR_FINANCE_DOCUMENT_KINDS = [
   "PAYROLL_VOUCHER",
   "PAYMENT_VOUCHER",
   "ADVANCE_VOUCHER",
+  "VENDOR_REFUND_VOUCHER",
+  "ADVANCE_OFFSET_VOUCHER",
   "DEBT_ADJUSTMENT_VOUCHER",
   "OPENING_BALANCE_VOUCHER",
 ] as const;
@@ -220,6 +243,13 @@ export type VendorFinanceErrorCode =
   | "VENDOR_FINANCE_ENTRY_NOT_FOUND"
   | "VENDOR_FINANCE_ENTRY_TYPE_INVALID"
   | "VENDOR_FINANCE_ENTRY_ALREADY_REVERSED"
+  | "VENDOR_FINANCE_SHARED_ADVANCE_MOVEMENT_INVALID"
+  | "VENDOR_FINANCE_SHARED_ADVANCE_MOVEMENT_NOT_FOUND"
+  | "VENDOR_FINANCE_MOVEMENT_ALREADY_REVERSED"
+  | "VENDOR_FINANCE_INSUFFICIENT_SHARED_ADVANCE"
+  | "VENDOR_FINANCE_INSUFFICIENT_SUBLEDGER_PAYABLE"
+  | "VENDOR_FINANCE_EXPORT_ROW_CAP_EXCEEDED"
+  | "VENDOR_FINANCE_RESET_EVIDENCE_NOT_CLEANED"
   | "VENDOR_FINANCE_CANNOT_REVERSE_REVERSAL"
   | "VENDOR_FINANCE_AMOUNT_INVALID"
   | "VENDOR_FINANCE_AMOUNT_OVERFLOW"
@@ -265,6 +295,7 @@ export function vendorFinanceHttpStatusForError(code: VendorFinanceErrorCode): n
     case "VENDOR_FINANCE_PROJECT_INVALID":
     case "VENDOR_FINANCE_VENDOR_INVALID":
     case "VENDOR_FINANCE_ENTRY_INVALID":
+    case "VENDOR_FINANCE_SHARED_ADVANCE_MOVEMENT_INVALID":
     case "VENDOR_FINANCE_EVIDENCE_TARGET_INVALID":
       return 400;
     case "VENDOR_FINANCE_PROJECT_NOT_FOUND":
@@ -273,6 +304,7 @@ export function vendorFinanceHttpStatusForError(code: VendorFinanceErrorCode): n
     case "VENDOR_FINANCE_GLOBAL_ROLE_NOT_FOUND":
     case "VENDOR_FINANCE_VENDOR_NOT_FOUND":
     case "VENDOR_FINANCE_ENTRY_NOT_FOUND":
+    case "VENDOR_FINANCE_SHARED_ADVANCE_MOVEMENT_NOT_FOUND":
     case "VENDOR_FINANCE_RECONCILIATION_NOT_FOUND":
     case "VENDOR_FINANCE_EVIDENCE_NOT_FOUND":
       return 404;
@@ -289,6 +321,8 @@ export function vendorFinanceHttpStatusForError(code: VendorFinanceErrorCode): n
     case "VENDOR_FINANCE_CONTRACT_TYPE_ALREADY_CLASSIFIED":
     case "VENDOR_FINANCE_CONTRACT_TYPE_TARGET_NOT_EMPTY":
     case "VENDOR_FINANCE_ENTRY_ALREADY_REVERSED":
+    case "VENDOR_FINANCE_MOVEMENT_ALREADY_REVERSED":
+    case "VENDOR_FINANCE_RESET_EVIDENCE_NOT_CLEANED":
     case "VENDOR_FINANCE_CANNOT_REVERSE_REVERSAL":
     case "VENDOR_FINANCE_IDEMPOTENCY_CONFLICT":
     case "VENDOR_FINANCE_EVIDENCE_ALREADY_ATTACHED":
@@ -303,6 +337,9 @@ export function vendorFinanceHttpStatusForError(code: VendorFinanceErrorCode): n
     case "VENDOR_FINANCE_GLOBAL_ROLE_INVALID":
     case "VENDOR_FINANCE_ACCOUNT_NOT_ELIGIBLE":
     case "VENDOR_FINANCE_ENTRY_TYPE_INVALID":
+    case "VENDOR_FINANCE_INSUFFICIENT_SHARED_ADVANCE":
+    case "VENDOR_FINANCE_INSUFFICIENT_SUBLEDGER_PAYABLE":
+    case "VENDOR_FINANCE_EXPORT_ROW_CAP_EXCEEDED":
     case "VENDOR_FINANCE_AMOUNT_INVALID":
     case "VENDOR_FINANCE_AMOUNT_OVERFLOW":
     case "VENDOR_FINANCE_DATE_INVALID":
@@ -370,6 +407,19 @@ const FORBIDDEN_COMPUTED_FINANCE_FIELDS = new Set([
   "classifiedreconciliationcount",
   "classifiedbydisplayname",
   "classifiedat",
+  "sharedadvancebalanceminor",
+  "sharedadvancebalance",
+  "vendoradvancesequence",
+  "movementcursorseq",
+  "projectentryid",
+  "reversesmovementid",
+  "reversedbymovementid",
+  "reversedbydocumentno",
+  "canviewsharedadvance",
+  "canfundvendoradvance",
+  "canrecordvendorrefund",
+  "canapplyvendoradvance",
+  "canapplysharedadvance",
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -380,6 +430,18 @@ function exactKeys(value: Record<string, unknown>, keys: readonly string[]): boo
   const actual = Object.keys(value).sort();
   const expected = [...keys].sort();
   return actual.length === expected.length && actual.every((k, i) => k === expected[i]);
+}
+
+function requiredAndOptionalKeysOnly(
+  value: Record<string, unknown>,
+  required: readonly string[],
+  optional: readonly string[],
+): boolean {
+  const allowed = new Set([...required, ...optional]);
+  return (
+    required.every((k) => k in value) &&
+    Object.keys(value).every((k) => allowed.has(k))
+  );
 }
 
 function allowedKeysOnly(value: Record<string, unknown>, allowed: readonly string[]): boolean {
@@ -678,6 +740,65 @@ export function decodeVendorEntriesCursor(
   }
 }
 
+export function encodeSharedAdvanceMovementsCursor(input: {
+  vendor_id: string;
+  before_sequence: number;
+  movement_type?: VendorFinanceSharedAdvanceMovementType | null;
+}): string {
+  const payload = JSON.stringify({
+    v: 1,
+    kind: "shared_advance",
+    vendor_id: input.vendor_id,
+    before_sequence: input.before_sequence,
+    movement_type: input.movement_type ?? null,
+  });
+  return Buffer.from(payload, "utf8").toString("base64url");
+}
+
+export function decodeSharedAdvanceMovementsCursor(
+  rawCursor: string,
+  expectedVendorId: string,
+  expectedMovementType?: VendorFinanceSharedAdvanceMovementType | null,
+):
+  | { ok: true; before_sequence: number }
+  | { ok: false; code: "VENDOR_FINANCE_CURSOR_INVALID" } {
+  if (
+    typeof rawCursor !== "string" ||
+    rawCursor.length < 4 ||
+    rawCursor.length > 768 ||
+    !/^[A-Za-z0-9_-]+$/.test(rawCursor)
+  ) {
+    return { ok: false, code: "VENDOR_FINANCE_CURSOR_INVALID" };
+  }
+  try {
+    const decodedText = Buffer.from(rawCursor, "base64url").toString("utf8");
+    const parsed: unknown = JSON.parse(decodedText);
+    const expMovType = expectedMovementType ?? null;
+    if (
+      !isRecord(parsed) ||
+      !exactKeys(parsed, [
+        "v",
+        "kind",
+        "vendor_id",
+        "before_sequence",
+        "movement_type",
+      ]) ||
+      parsed.v !== 1 ||
+      parsed.kind !== "shared_advance" ||
+      parsed.vendor_id !== expectedVendorId ||
+      parsed.movement_type !== expMovType ||
+      typeof parsed.before_sequence !== "number" ||
+      !Number.isSafeInteger(parsed.before_sequence) ||
+      parsed.before_sequence < 1
+    ) {
+      return { ok: false, code: "VENDOR_FINANCE_CURSOR_INVALID" };
+    }
+    return { ok: true, before_sequence: parsed.before_sequence };
+  } catch {
+    return { ok: false, code: "VENDOR_FINANCE_CURSOR_INVALID" };
+  }
+}
+
 // -----------------------------------------------------------------------------
 // Query & Mutation Request Parsers
 // -----------------------------------------------------------------------------
@@ -892,6 +1013,206 @@ export function parseListVendorFinanceVendorsQuery(
   };
 }
 
+export type ExportVendorFinanceVendorsQuery = {
+  search: string | null;
+  active: VendorFinanceActiveFilter;
+  balance_filter: VendorFinanceBalanceFilter;
+  project_id: string | null;
+  accountant_ref: string | null;
+  ledger_scope: VendorFinanceLedgerScope | null;
+  contract_type: VendorFinanceContractTypeFilter;
+};
+
+const EXPORT_VENDORS_QUERY_KEYS = [
+  "search",
+  "active",
+  "balance_filter",
+  "project_id",
+  "accountant_ref",
+  "ledger_scope",
+  "contract_type",
+] as const;
+
+export function parseExportVendorFinanceVendorsQuery(
+  url: URL,
+):
+  | { ok: true; value: ExportVendorFinanceVendorsQuery }
+  | {
+      ok: false;
+      code:
+        | "VENDOR_FINANCE_QUERY_INVALID"
+        | "VENDOR_FINANCE_SEARCH_INVALID"
+        | "VENDOR_FINANCE_PROJECT_INVALID"
+        | "VENDOR_FINANCE_CONTRACT_TYPE_INVALID";
+    } {
+  if (!parseUniqueAllowedQueryKeys(url, EXPORT_VENDORS_QUERY_KEYS)) {
+    return { ok: false, code: "VENDOR_FINANCE_QUERY_INVALID" };
+  }
+
+  const searchRes = parseOptionalSearchQuery(url);
+  if (!searchRes.ok) return searchRes;
+
+  const rawActive = url.searchParams.get("active") ?? "all";
+  if (rawActive !== "all" && rawActive !== "active" && rawActive !== "inactive") {
+    return { ok: false, code: "VENDOR_FINANCE_QUERY_INVALID" };
+  }
+
+  const rawBalance = url.searchParams.get("balance_filter") ?? "all";
+  if (
+    rawBalance !== "all" &&
+    rawBalance !== "payable" &&
+    rawBalance !== "advance" &&
+    rawBalance !== "nonzero" &&
+    rawBalance !== "uninitialized"
+  ) {
+    return { ok: false, code: "VENDOR_FINANCE_QUERY_INVALID" };
+  }
+
+  const projectRes = parseOptionalProjectQuery(url);
+  if (!projectRes.ok) return projectRes;
+
+  const accountantRes = parseOptionalAccountantRefQuery(url);
+  if (!accountantRes.ok) return accountantRes;
+
+  const scopeRes = parseOptionalLedgerScopeQuery(url, true);
+  if (!scopeRes.ok) return scopeRes;
+
+  const contractTypeRes = parseOptionalContractTypeFilterQuery(url);
+  if (!contractTypeRes.ok) return contractTypeRes;
+
+  return {
+    ok: true,
+    value: {
+      search: searchRes.search,
+      active: rawActive,
+      balance_filter: rawBalance,
+      project_id: projectRes.project_id,
+      accountant_ref: accountantRes.accountant_ref,
+      ledger_scope: scopeRes.ledger_scope,
+      contract_type: contractTypeRes.contract_type,
+    },
+  };
+}
+
+export function parseExportVendorFinanceVendorsBody(
+  body: unknown,
+):
+  | { ok: true; value: ExportVendorFinanceVendorsQuery }
+  | {
+      ok: false;
+      code:
+        | "CLIENT_AUTHORITY_FIELD_FORBIDDEN"
+        | "VENDOR_FINANCE_PAYLOAD_INVALID"
+        | "VENDOR_FINANCE_QUERY_INVALID"
+        | "VENDOR_FINANCE_SEARCH_INVALID"
+        | "VENDOR_FINANCE_PROJECT_INVALID"
+        | "VENDOR_FINANCE_CONTRACT_TYPE_INVALID";
+    } {
+  const forbidden = checkForbiddenVendorFinanceClientFields(body);
+  if (!forbidden.ok) return forbidden;
+  if (!isRecord(body) || !allowedKeysOnly(body, EXPORT_VENDORS_QUERY_KEYS)) {
+    return { ok: false, code: "VENDOR_FINANCE_PAYLOAD_INVALID" };
+  }
+
+  let search: string | null = null;
+  if (body.search !== undefined && body.search !== null) {
+    if (typeof body.search !== "string") {
+      return { ok: false, code: "VENDOR_FINANCE_SEARCH_INVALID" };
+    }
+    const trimmed = body.search.trim();
+    if (trimmed.length > 0) {
+      if (
+        trimmed.length > VENDOR_FINANCE_MAX_SEARCH_LENGTH ||
+        FORBIDDEN_SINGLE_LINE_CONTROL_CHARS.test(trimmed)
+      ) {
+        return { ok: false, code: "VENDOR_FINANCE_SEARCH_INVALID" };
+      }
+      search = trimmed;
+    }
+  }
+
+  const rawActive = body.active ?? "all";
+  if (rawActive !== "all" && rawActive !== "active" && rawActive !== "inactive") {
+    return { ok: false, code: "VENDOR_FINANCE_QUERY_INVALID" };
+  }
+
+  const rawBalance = body.balance_filter ?? "all";
+  if (
+    rawBalance !== "all" &&
+    rawBalance !== "payable" &&
+    rawBalance !== "advance" &&
+    rawBalance !== "nonzero" &&
+    rawBalance !== "uninitialized"
+  ) {
+    return { ok: false, code: "VENDOR_FINANCE_QUERY_INVALID" };
+  }
+
+  let projectId: string | null = null;
+  if (body.project_id !== undefined && body.project_id !== null && body.project_id !== "") {
+    const parsedProject = parseProjectIdParam(body.project_id);
+    if (!parsedProject.ok) return parsedProject;
+    projectId = parsedProject.project_id;
+  }
+
+  let accountantRef: string | null = null;
+  if (
+    body.accountant_ref !== undefined &&
+    body.accountant_ref !== null &&
+    body.accountant_ref !== ""
+  ) {
+    if (typeof body.accountant_ref !== "string" || !UUID_REGEX.test(body.accountant_ref)) {
+      return { ok: false, code: "VENDOR_FINANCE_QUERY_INVALID" };
+    }
+    accountantRef = body.accountant_ref.toLowerCase();
+  }
+
+  let ledgerScope: VendorFinanceLedgerScope | null = null;
+  if (
+    body.ledger_scope !== undefined &&
+    body.ledger_scope !== null &&
+    body.ledger_scope !== "" &&
+    body.ledger_scope !== "all"
+  ) {
+    if (
+      typeof body.ledger_scope !== "string" ||
+      !(VENDOR_FINANCE_LEDGER_SCOPES as readonly string[]).includes(body.ledger_scope)
+    ) {
+      return { ok: false, code: "VENDOR_FINANCE_QUERY_INVALID" };
+    }
+    ledgerScope = body.ledger_scope as VendorFinanceLedgerScope;
+  }
+
+  let contractType: VendorFinanceContractTypeFilter = "all";
+  if (
+    body.contract_type !== undefined &&
+    body.contract_type !== null &&
+    body.contract_type !== ""
+  ) {
+    if (
+      typeof body.contract_type !== "string" ||
+      !(VENDOR_FINANCE_CONTRACT_TYPE_FILTERS as readonly string[]).includes(
+        body.contract_type,
+      )
+    ) {
+      return { ok: false, code: "VENDOR_FINANCE_CONTRACT_TYPE_INVALID" };
+    }
+    contractType = body.contract_type as VendorFinanceContractTypeFilter;
+  }
+
+  return {
+    ok: true,
+    value: {
+      search,
+      active: rawActive,
+      balance_filter: rawBalance,
+      project_id: projectId,
+      accountant_ref: accountantRef,
+      ledger_scope: ledgerScope,
+      contract_type: contractType,
+    },
+  };
+}
+
 export function parseNoQueryParams(
   url: URL,
 ): { ok: true } | { ok: false; code: "VENDOR_FINANCE_QUERY_INVALID" } {
@@ -1063,6 +1384,68 @@ export function parseListVendorFinanceEntriesQuery(
       ledger_scope: scopeRes.ledger_scope,
       contract_type: contractTypeRes.contract_type,
       month,
+    },
+  };
+}
+
+export type ListSharedAdvanceMovementsQuery = {
+  before_sequence: number | null;
+  movement_type: VendorFinanceSharedAdvanceMovementType | null;
+  page_size: number;
+};
+
+export function parseListSharedAdvanceMovementsQuery(
+  url: URL,
+  vendorId: string,
+):
+  | { ok: true; value: ListSharedAdvanceMovementsQuery }
+  | {
+      ok: false;
+      code:
+        | "VENDOR_FINANCE_QUERY_INVALID"
+        | "VENDOR_FINANCE_CURSOR_INVALID"
+        | "VENDOR_FINANCE_SHARED_ADVANCE_MOVEMENT_INVALID";
+    } {
+  if (!parseUniqueAllowedQueryKeys(url, ["cursor", "movement_type", "page_size"])) {
+    return { ok: false, code: "VENDOR_FINANCE_QUERY_INVALID" };
+  }
+
+  let movementType: VendorFinanceSharedAdvanceMovementType | null = null;
+  const rawMovementType = url.searchParams.get("movement_type");
+  if (rawMovementType !== null && rawMovementType !== "") {
+    if (
+      !(VENDOR_FINANCE_SHARED_ADVANCE_MOVEMENT_TYPES as readonly string[]).includes(
+        rawMovementType,
+      )
+    ) {
+      return { ok: false, code: "VENDOR_FINANCE_SHARED_ADVANCE_MOVEMENT_INVALID" };
+    }
+    movementType = rawMovementType as VendorFinanceSharedAdvanceMovementType;
+  }
+
+  let beforeSequence: number | null = null;
+  const rawCursor = url.searchParams.get("cursor");
+  if (rawCursor !== null && rawCursor !== "") {
+    const decoded = decodeSharedAdvanceMovementsCursor(
+      rawCursor,
+      vendorId,
+      movementType,
+    );
+    if (!decoded.ok) return decoded;
+    beforeSequence = decoded.before_sequence;
+  }
+
+  const pageSize = parseBoundedIntParam(url.searchParams.get("page_size"), 25, 1, 100);
+  if (pageSize === null) {
+    return { ok: false, code: "VENDOR_FINANCE_QUERY_INVALID" };
+  }
+
+  return {
+    ok: true,
+    value: {
+      before_sequence: beforeSequence,
+      movement_type: movementType,
+      page_size: pageSize,
     },
   };
 }
@@ -2063,6 +2446,153 @@ export function parseEndGlobalRoleBody(
   return parsed;
 }
 
+// 7. VFIN-04 Shared Vendor Advance & Offset Mutation Bodies
+export type FundSharedAdvanceBody = {
+  amount_minor: string;
+  effective_date: string;
+  reason: string;
+  idempotency_key: string;
+};
+
+export function parseFundSharedAdvanceBody(
+  body: unknown,
+  idempotencyHeader: string | null,
+):
+  | { ok: true; value: FundSharedAdvanceBody }
+  | { ok: false; code: VendorFinanceErrorCode } {
+  const forbidden = checkForbiddenVendorFinanceClientFields(body);
+  if (!forbidden.ok) return forbidden;
+  if (
+    isRecord(body) &&
+    ("project_id" in body || "accountant_ref" in body || "contract_type" in body)
+  ) {
+    return { ok: false, code: "CLIENT_AUTHORITY_FIELD_FORBIDDEN" };
+  }
+  if (
+    !isRecord(body) ||
+    !exactKeys(body, ["amount_minor", "effective_date", "reason", "idempotency_key"])
+  ) {
+    return { ok: false, code: "VENDOR_FINANCE_PAYLOAD_INVALID" };
+  }
+
+  const amount = parsePositiveMinorAmount(body.amount_minor);
+  if (!amount.ok) return amount;
+
+  const effectiveDate = parseBusinessCalendarDate(body.effective_date);
+  if (!effectiveDate.ok) return effectiveDate;
+
+  const reason = parseReasonText(body.reason);
+  if (!reason.ok) return reason;
+
+  const idem = resolveIdempotencyKey(idempotencyHeader, body.idempotency_key);
+  if (!idem.ok) return idem;
+
+  return {
+    ok: true,
+    value: {
+      amount_minor: amount.canonical,
+      effective_date: effectiveDate.date,
+      reason: reason.reason,
+      idempotency_key: idem.idempotency_key,
+    },
+  };
+}
+
+export type RecordVendorRefundBody = {
+  amount_minor: string;
+  effective_date: string;
+  reason: string;
+  idempotency_key: string;
+};
+
+export function parseRecordVendorRefundBody(
+  body: unknown,
+  idempotencyHeader: string | null,
+):
+  | { ok: true; value: RecordVendorRefundBody }
+  | { ok: false; code: VendorFinanceErrorCode } {
+  return parseFundSharedAdvanceBody(body, idempotencyHeader);
+}
+
+export type ApplySharedAdvanceOffsetBody = {
+  project_id: string;
+  contract_type: ClassifiedVendorFinanceContractType;
+  amount_minor: string;
+  effective_date: string;
+  reason: string;
+  idempotency_key: string;
+};
+
+export function parseApplySharedAdvanceOffsetBody(
+  body: unknown,
+  idempotencyHeader: string | null,
+):
+  | { ok: true; value: ApplySharedAdvanceOffsetBody }
+  | { ok: false; code: VendorFinanceErrorCode } {
+  const forbidden = checkForbiddenVendorFinanceClientFields(body);
+  if (!forbidden.ok) return forbidden;
+  if (
+    !isRecord(body) ||
+    !exactKeys(body, [
+      "project_id",
+      "contract_type",
+      "amount_minor",
+      "effective_date",
+      "reason",
+      "idempotency_key",
+    ])
+  ) {
+    return { ok: false, code: "VENDOR_FINANCE_PAYLOAD_INVALID" };
+  }
+
+  const projectId = parseProjectIdParam(body.project_id);
+  if (!projectId.ok) return projectId;
+
+  if (
+    typeof body.contract_type !== "string" ||
+    !(CLASSIFIED_VENDOR_FINANCE_CONTRACT_TYPES as readonly string[]).includes(
+      body.contract_type,
+    )
+  ) {
+    return { ok: false, code: "VENDOR_FINANCE_CONTRACT_TYPE_INVALID" };
+  }
+
+  const amount = parsePositiveMinorAmount(body.amount_minor);
+  if (!amount.ok) return amount;
+
+  const effectiveDate = parseBusinessCalendarDate(body.effective_date);
+  if (!effectiveDate.ok) return effectiveDate;
+
+  const reason = parseReasonText(body.reason);
+  if (!reason.ok) return reason;
+
+  const idem = resolveIdempotencyKey(idempotencyHeader, body.idempotency_key);
+  if (!idem.ok) return idem;
+
+  return {
+    ok: true,
+    value: {
+      project_id: projectId.project_id,
+      contract_type: body.contract_type as ClassifiedVendorFinanceContractType,
+      amount_minor: amount.canonical,
+      effective_date: effectiveDate.date,
+      reason: reason.reason,
+      idempotency_key: idem.idempotency_key,
+    },
+  };
+}
+
+export type ReverseSharedAdvanceMovementBody = ReverseVendorFinanceEntryBody;
+
+export function parseReverseSharedAdvanceMovementBody(
+  body: unknown,
+  idempotencyHeader: string | null,
+):
+  | { ok: true; value: ReverseSharedAdvanceMovementBody }
+  | { ok: false; code: VendorFinanceErrorCode } {
+  return parseReverseVendorFinanceEntryBody(body, idempotencyHeader);
+}
+
 // -----------------------------------------------------------------------------
 // Deterministic SHA-256 Request Fingerprints
 // -----------------------------------------------------------------------------
@@ -2252,6 +2782,68 @@ export function computeEndGlobalRoleFingerprint(input: {
   });
 }
 
+export function computeFundSharedAdvanceFingerprint(input: {
+  vendor_id: string;
+  amount_minor: string;
+  effective_date: string;
+  reason: string;
+}): string {
+  return sha256Json({
+    op: "FUND_SHARED_ADVANCE",
+    vendor_id: input.vendor_id,
+    amount_minor: input.amount_minor,
+    effective_date: input.effective_date,
+    reason: input.reason,
+  });
+}
+
+export function computeRecordVendorRefundFingerprint(input: {
+  vendor_id: string;
+  amount_minor: string;
+  effective_date: string;
+  reason: string;
+}): string {
+  return sha256Json({
+    op: "RECORD_VENDOR_REFUND",
+    vendor_id: input.vendor_id,
+    amount_minor: input.amount_minor,
+    effective_date: input.effective_date,
+    reason: input.reason,
+  });
+}
+
+export function computeApplySharedAdvanceOffsetFingerprint(input: {
+  vendor_id: string;
+  project_id: string;
+  contract_type: ClassifiedVendorFinanceContractType;
+  amount_minor: string;
+  effective_date: string;
+  reason: string;
+}): string {
+  return sha256Json({
+    op: "APPLY_SHARED_ADVANCE_OFFSET",
+    vendor_id: input.vendor_id,
+    project_id: input.project_id,
+    contract_type: input.contract_type,
+    amount_minor: input.amount_minor,
+    effective_date: input.effective_date,
+    reason: input.reason,
+  });
+}
+
+export function computeReverseSharedAdvanceMovementFingerprint(input: {
+  movement_id: string;
+  effective_date: string | null;
+  reason: string;
+}): string {
+  return sha256Json({
+    op: "REVERSE_SHARED_ADVANCE",
+    movement_id: input.movement_id,
+    effective_date: input.effective_date,
+    reason: input.reason,
+  });
+}
+
 // -----------------------------------------------------------------------------
 // Fail-Closed Response Projections (Server -> Client Contract)
 // -----------------------------------------------------------------------------
@@ -2262,6 +2854,10 @@ export type VendorFinanceActorAccessProjection = {
   can_record: boolean;
   can_reconcile: boolean;
   can_manage_project_assignments: boolean;
+  can_view_shared_advance: boolean;
+  can_fund_vendor_advance: boolean;
+  can_record_vendor_refund: boolean;
+  can_apply_vendor_advance: boolean;
   visibility_scope: VendorFinanceVisibilityScope;
   record_scope: VendorFinanceWriteScope;
   reconcile_scope: VendorFinanceWriteScope;
@@ -2310,6 +2906,10 @@ export type VendorFinanceActorContextOptionsResponse = {
     can_record: boolean;
     can_reconcile: boolean;
     can_manage_project_assignments: boolean;
+    can_view_shared_advance: boolean;
+    can_fund_vendor_advance: boolean;
+    can_record_vendor_refund: boolean;
+    can_apply_vendor_advance: boolean;
   };
   has_legacy_unallocated: boolean;
   projects: readonly VendorFinanceContextProjectOption[];
@@ -2362,6 +2962,41 @@ export type VendorFinanceEntryProjection = {
   internal_disclaimer: string;
 };
 
+export type VendorFinanceSharedAdvanceMovementProjection = {
+  movement_id: string;
+  vendor_id: string;
+  vendor_display_name_snapshot: string;
+  vendor_active: boolean;
+  vendor_advance_sequence: number;
+  cursor_sequence: number;
+  document_no: string;
+  document_kind: VendorFinanceDocumentKind;
+  document_title_vi: string;
+  movement_type: VendorFinanceSharedAdvanceMovementType;
+  amount_minor: string;
+  balance_before_minor: string;
+  balance_delta_minor: string;
+  balance_after_minor: string;
+  effective_date: string;
+  reason: string | null;
+  project_entry_id: string | null;
+  project_id: string | null;
+  project_display_name_snapshot: string | null;
+  accountant_ref: string | null;
+  responsible_accountant_display_name: string | null;
+  contract_type: ClassifiedVendorFinanceContractType | null;
+  reverses_movement_id: string | null;
+  reverses_document_no: string | null;
+  reversed_by_movement_id: string | null;
+  reversed_by_document_no: string | null;
+  can_reverse: boolean;
+  can_attach_evidence: boolean;
+  evidence: VendorFinanceEvidenceSummary | null;
+  created_by_display_name: string | null;
+  created_at: string;
+  internal_disclaimer: string;
+};
+
 export type VendorFinanceReconciliationProjection = {
   reconciliation_id: string;
   vendor_id: string;
@@ -2403,6 +3038,7 @@ export type VendorFinanceSubLedgerClassificationProjection = {
 export type VendorFinanceCompanySummary = {
   total_payable_minor: string;
   total_advance_minor: string;
+  total_shared_advance_minor: string;
   net_balance_minor: string;
   vendors_with_payable_count: number;
   vendors_with_advance_count: number;
@@ -2434,6 +3070,7 @@ export type VendorFinanceListItem = {
   sub_ledger_count: number;
   payable_total_minor: string;
   advance_total_minor: string;
+  shared_advance_balance_minor: string;
   current_balance_minor: string;
   balance_direction: VendorFinanceListBalanceDirection;
   entry_count: number;
@@ -2453,6 +3090,10 @@ export type VendorFinanceVendorListResponse = {
     can_record: boolean;
     can_reconcile: boolean;
     can_manage_project_assignments: boolean;
+    can_view_shared_advance: boolean;
+    can_fund_vendor_advance: boolean;
+    can_record_vendor_refund: boolean;
+    can_apply_vendor_advance: boolean;
     active_assigned_project_count: number;
   };
   summary: VendorFinanceCompanySummary;
@@ -2472,6 +3113,32 @@ export type VendorFinanceVendorListResponse = {
   vendors: readonly VendorFinanceListItem[];
 };
 
+export type VendorFinanceExportVendorItem = {
+  vendor_id: string;
+  display_name: string;
+  active: boolean;
+  sub_ledger_count: number;
+  payable_total_minor: string;
+  shared_advance_balance_minor: string;
+  last_effective_date: string | null;
+};
+
+export type VendorFinanceVendorExportResponse = {
+  authorization_date: string;
+  filters: {
+    search: string | null;
+    active: VendorFinanceActiveFilter;
+    balance_filter: VendorFinanceBalanceFilter;
+    project_id: string | null;
+    accountant_ref: string | null;
+    ledger_scope: VendorFinanceLedgerScopeFilter;
+    contract_type: VendorFinanceContractTypeFilter;
+  };
+  row_cap: number;
+  total: number;
+  vendors: readonly VendorFinanceExportVendorItem[];
+};
+
 export type VendorFinanceCategoryTotals = {
   opening_payable_minor: string;
   opening_advance_minor: string;
@@ -2479,6 +3146,7 @@ export type VendorFinanceCategoryTotals = {
   payroll_recorded_minor: string;
   payment_recorded_minor: string;
   advance_recorded_minor: string;
+  advance_offset_recorded_minor: string;
   adjustment_increase_minor: string;
   adjustment_decrease_minor: string;
   reversed_entry_count: number;
@@ -2500,6 +3168,7 @@ export type VendorFinanceDetailSubLedger = {
   has_opening_entry: boolean;
   eligible_for_opening: boolean;
   can_record_entry: boolean;
+  can_apply_vendor_advance: boolean;
   can_reconcile: boolean;
   can_classify_contract_type: boolean;
   classification: VendorFinanceSubLedgerClassificationProjection | null;
@@ -2513,6 +3182,10 @@ export type VendorFinanceVendorDetailResponse = {
     can_record: boolean;
     can_reconcile: boolean;
     can_manage_project_assignments: boolean;
+    can_view_shared_advance: boolean;
+    can_fund_vendor_advance: boolean;
+    can_record_vendor_refund: boolean;
+    can_apply_vendor_advance: boolean;
     allowed_entry_types: readonly NormalVendorFinanceEntryType[];
   };
   selected_sub_ledger: VendorFinanceDetailSubLedger | null;
@@ -2521,6 +3194,9 @@ export type VendorFinanceVendorDetailResponse = {
     vendor_id: string;
     display_name: string;
     active: boolean;
+    shared_advance_balance_minor: string;
+    shared_advance_latest_sequence: number;
+    shared_advance_movement_count: number;
     current_balance_minor: string;
     balance_direction: VendorFinanceListBalanceDirection;
     latest_sequence: number;
@@ -2540,6 +3216,44 @@ export type VendorFinanceEntriesPageResponse = {
   has_more: boolean;
   next_cursor: string | null;
   entries: readonly VendorFinanceEntryProjection[];
+};
+
+export type VendorFinanceSharedAdvanceMovementsPageResponse = {
+  authorization_date: string;
+  vendor_id: string;
+  shared_advance_balance_minor: string;
+  page_size: number;
+  has_more: boolean;
+  next_cursor: string | null;
+  movements: readonly VendorFinanceSharedAdvanceMovementProjection[];
+};
+
+export type VendorFinanceFundSharedAdvanceResponse = {
+  movement: VendorFinanceSharedAdvanceMovementProjection;
+  shared_advance_balance_minor: string;
+  replayed: boolean;
+};
+
+export type VendorFinanceRecordVendorRefundResponse = {
+  movement: VendorFinanceSharedAdvanceMovementProjection;
+  shared_advance_balance_minor: string;
+  replayed: boolean;
+};
+
+export type VendorFinanceApplySharedAdvanceOffsetResponse = {
+  movement: VendorFinanceSharedAdvanceMovementProjection;
+  entry: VendorFinanceEntryProjection;
+  shared_advance_balance_minor: string;
+  replayed: boolean;
+};
+
+export type VendorFinanceReverseSharedAdvanceMovementResponse = {
+  reversal_movement: VendorFinanceSharedAdvanceMovementProjection;
+  reversed_movement: VendorFinanceSharedAdvanceMovementProjection;
+  shared_advance_balance_minor: string;
+  reversal_entry?: VendorFinanceEntryProjection;
+  reversed_entry?: VendorFinanceEntryProjection;
+  replayed: boolean;
 };
 
 export type VendorFinanceSingleEntryResponse = {
@@ -2631,6 +3345,7 @@ export type VendorFinanceMonthlyReportAccountantSummary = {
   obligations_in_month_minor: string;
   paid_in_month_minor: string;
   advanced_in_month_minor: string;
+  advance_offset_in_month_minor: string;
   paid_and_advanced_in_month_minor: string;
   closing_payable_minor: string;
   closing_advance_minor: string;
@@ -2656,6 +3371,7 @@ export type VendorFinanceMonthlyReportRow = {
   obligations_in_month_minor: string;
   paid_in_month_minor: string;
   advanced_in_month_minor: string;
+  advance_offset_in_month_minor: string;
   paid_and_advanced_in_month_minor: string;
   net_change_in_month_minor: string;
   closing_balance_minor: string;
@@ -2687,6 +3403,11 @@ export type VendorFinanceMonthlyReportResponse = {
     can_record: boolean;
     can_reconcile: boolean;
     can_manage_project_assignments: boolean;
+    can_view_shared_advance: boolean;
+    can_fund_vendor_advance: boolean;
+    can_record_vendor_refund: boolean;
+    can_apply_vendor_advance: boolean;
+    active_assigned_project_count?: number;
   };
   filters: {
     month: string;
@@ -2703,6 +3424,7 @@ export type VendorFinanceMonthlyReportResponse = {
     obligations_in_month_minor: string;
     paid_in_month_minor: string;
     advanced_in_month_minor: string;
+    advance_offset_in_month_minor: string;
     paid_and_advanced_in_month_minor: string;
     closing_payable_minor: string;
     closing_advance_minor: string;
@@ -3006,20 +3728,29 @@ function projectAccountSummary(value: unknown): VendorFinanceAccountSummary | nu
 export function projectActorAccess(value: unknown): VendorFinanceActorAccessProjection | null {
   if (
     !isRecord(value) ||
-    !exactKeys(value, [
-      "allowed",
-      "authority_source",
-      "visibility_scope",
-      "record_scope",
-      "reconcile_scope",
-      "global_role_code",
-      "can_view",
-      "can_record",
-      "can_reconcile",
-      "can_manage_project_assignments",
-      "active_assigned_project_count",
-      "authorization_date",
-    ])
+    !requiredAndOptionalKeysOnly(
+      value,
+      [
+        "allowed",
+        "authority_source",
+        "visibility_scope",
+        "record_scope",
+        "reconcile_scope",
+        "global_role_code",
+        "can_view",
+        "can_record",
+        "can_reconcile",
+        "can_manage_project_assignments",
+        "active_assigned_project_count",
+        "authorization_date",
+      ],
+      [
+        "can_view_shared_advance",
+        "can_fund_vendor_advance",
+        "can_record_vendor_refund",
+        "can_apply_vendor_advance",
+      ],
+    )
   ) {
     return null;
   }
@@ -3052,7 +3783,38 @@ export function projectActorAccess(value: unknown): VendorFinanceActorAccessProj
   ) {
     return null;
   }
-  if ((canRecord || canReconcile || canManage) && !canView) return null;
+  const defaultFund =
+    source === "full_admin" ||
+    source === "direct_grant_record" ||
+    source === "cash_holder" ||
+    source === "cash_holder_record_behalf";
+  const canViewShared =
+    "can_view_shared_advance" in value
+      ? boolVal(value.can_view_shared_advance)
+      : canView;
+  const canFund =
+    "can_fund_vendor_advance" in value
+      ? boolVal(value.can_fund_vendor_advance)
+      : defaultFund;
+  const canRefund =
+    "can_record_vendor_refund" in value
+      ? boolVal(value.can_record_vendor_refund)
+      : defaultFund;
+  const canApply =
+    "can_apply_vendor_advance" in value
+      ? boolVal(value.can_apply_vendor_advance)
+      : canRecord;
+  if (
+    canViewShared === null ||
+    canFund === null ||
+    canRefund === null ||
+    canApply === null
+  ) {
+    return null;
+  }
+  if ((canRecord || canReconcile || canManage || canFund || canRefund || canApply) && !canView) {
+    return null;
+  }
   if (allowed !== canView) return null;
   return {
     authorization_date: authorizationDate,
@@ -3061,6 +3823,10 @@ export function projectActorAccess(value: unknown): VendorFinanceActorAccessProj
     can_record: canRecord,
     can_reconcile: canReconcile,
     can_manage_project_assignments: canManage,
+    can_view_shared_advance: canViewShared,
+    can_fund_vendor_advance: canFund,
+    can_record_vendor_refund: canRefund,
+    can_apply_vendor_advance: canApply,
     visibility_scope: visScope,
     record_scope: recScope,
     reconcile_scope: reconScope,
@@ -3084,15 +3850,24 @@ export function projectActorContextOptions(
       "accountants",
     ]) ||
     !isRecord(value.allowed_actions) ||
-    !exactKeys(value.allowed_actions, [
-      "visibility_scope",
-      "record_scope",
-      "reconcile_scope",
-      "can_view",
-      "can_record",
-      "can_reconcile",
-      "can_manage_project_assignments",
-    ]) ||
+    !requiredAndOptionalKeysOnly(
+      value.allowed_actions,
+      [
+        "visibility_scope",
+        "record_scope",
+        "reconcile_scope",
+        "can_view",
+        "can_record",
+        "can_reconcile",
+        "can_manage_project_assignments",
+      ],
+      [
+        "can_view_shared_advance",
+        "can_fund_vendor_advance",
+        "can_record_vendor_refund",
+        "can_apply_vendor_advance",
+      ],
+    ) ||
     !Array.isArray(value.projects) ||
     !Array.isArray(value.vendors) ||
     !Array.isArray(value.accountants)
@@ -3107,6 +3882,22 @@ export function projectActorContextOptions(
   const canRecord = boolVal(value.allowed_actions.can_record);
   const canReconcile = boolVal(value.allowed_actions.can_reconcile);
   const canManage = boolVal(value.allowed_actions.can_manage_project_assignments);
+  const canViewShared =
+    "can_view_shared_advance" in value.allowed_actions
+      ? boolVal(value.allowed_actions.can_view_shared_advance)
+      : true;
+  const canFund =
+    "can_fund_vendor_advance" in value.allowed_actions
+      ? boolVal(value.allowed_actions.can_fund_vendor_advance)
+      : recScope === "ALL";
+  const canRefund =
+    "can_record_vendor_refund" in value.allowed_actions
+      ? boolVal(value.allowed_actions.can_record_vendor_refund)
+      : recScope === "ALL";
+  const canApply =
+    "can_apply_vendor_advance" in value.allowed_actions
+      ? boolVal(value.allowed_actions.can_apply_vendor_advance)
+      : canRecord;
   const hasLegacy = boolVal(value.has_legacy_unallocated);
   if (
     authorizationDate === null ||
@@ -3117,6 +3908,10 @@ export function projectActorContextOptions(
     canRecord === null ||
     canReconcile === null ||
     canManage === null ||
+    canViewShared === null ||
+    canFund === null ||
+    canRefund === null ||
+    canApply === null ||
     hasLegacy === null
   ) {
     return null;
@@ -3202,6 +3997,10 @@ export function projectActorContextOptions(
       can_record: canRecord,
       can_reconcile: canReconcile,
       can_manage_project_assignments: canManage,
+      can_view_shared_advance: canViewShared,
+      can_fund_vendor_advance: canFund,
+      can_record_vendor_refund: canRefund,
+      can_apply_vendor_advance: canApply,
     },
     has_legacy_unallocated: hasLegacy,
     projects,
@@ -3447,6 +4246,214 @@ export function projectVendorFinanceEntry(value: unknown): VendorFinanceEntryPro
   };
 }
 
+export function projectSharedAdvanceMovement(
+  value: unknown,
+): VendorFinanceSharedAdvanceMovementProjection | null {
+  if (
+    !isRecord(value) ||
+    !exactKeys(value, [
+      "movement_id",
+      "vendor_id",
+      "vendor_display_name_snapshot",
+      "vendor_active",
+      "vendor_advance_sequence",
+      "cursor_sequence",
+      "document_no",
+      "document_kind",
+      "document_title_vi",
+      "movement_type",
+      "amount_minor",
+      "balance_before_minor",
+      "balance_delta_minor",
+      "balance_after_minor",
+      "effective_date",
+      "reason",
+      "project_entry_id",
+      "project_id",
+      "project_display_name_snapshot",
+      "accountant_ref",
+      "responsible_accountant_display_name",
+      "contract_type",
+      "reverses_movement_id",
+      "reverses_document_no",
+      "reversed_by_movement_id",
+      "reversed_by_document_no",
+      "can_reverse",
+      "can_attach_evidence",
+      "evidence",
+      "created_by_display_name",
+      "created_at",
+      "internal_disclaimer",
+    ])
+  ) {
+    return null;
+  }
+
+  const movementId = uuidStr(value.movement_id);
+  const vendorId = isCanonicalVendorId(value.vendor_id) ? value.vendor_id : null;
+  const vendorDisplayNameSnapshot = nonEmptyStr(value.vendor_display_name_snapshot);
+  const vendorActive = boolVal(value.vendor_active);
+  const vendorAdvanceSequence = posInt(value.vendor_advance_sequence);
+  const cursorSequence = posInt(value.cursor_sequence);
+  const documentNo =
+    typeof value.document_no === "string" && DOCUMENT_NO_REGEX.test(value.document_no)
+      ? value.document_no
+      : null;
+  const documentKind =
+    typeof value.document_kind === "string" &&
+    (VENDOR_FINANCE_DOCUMENT_KINDS as readonly string[]).includes(value.document_kind)
+      ? (value.document_kind as VendorFinanceDocumentKind)
+      : null;
+  const documentTitleVi = nonEmptyStr(value.document_title_vi);
+  const movementType =
+    typeof value.movement_type === "string" &&
+    (VENDOR_FINANCE_SHARED_ADVANCE_MOVEMENT_TYPES as readonly string[]).includes(
+      value.movement_type,
+    )
+      ? (value.movement_type as VendorFinanceSharedAdvanceMovementType)
+      : null;
+  const amountMinor = positiveMoneyStr(value.amount_minor);
+  const balanceBeforeMinor = nonNegativeMoneyStr(value.balance_before_minor);
+  const balanceDeltaMinor = signedMoneyStr(value.balance_delta_minor);
+  const balanceAfterMinor = nonNegativeMoneyStr(value.balance_after_minor);
+  const effectiveDate = dateStr(value.effective_date);
+  const reason = nullableStr(value.reason);
+  const projectEntryId = nullableUuidStr(value.project_entry_id);
+  const projectId =
+    value.project_id === null
+      ? null
+      : isCanonicalProjectId(value.project_id)
+        ? value.project_id
+        : undefined;
+  const projectDisplayNameSnapshot = nullableStr(value.project_display_name_snapshot);
+  const accountantRef = nullableUuidStr(value.accountant_ref);
+  const responsibleAccountantName = nullableStr(value.responsible_accountant_display_name);
+  const contractType =
+    value.contract_type === null
+      ? null
+      : classifiedContractTypeVal(value.contract_type) ?? undefined;
+  const reversesMovementId = nullableUuidStr(value.reverses_movement_id);
+  const reversesDocNo = nullableStr(value.reverses_document_no);
+  const reversedByMovementId = nullableUuidStr(value.reversed_by_movement_id);
+  const reversedByDocNo = nullableStr(value.reversed_by_document_no);
+  const canReverse = boolVal(value.can_reverse);
+  const canAttachEvidence = value.can_attach_evidence === false ? false : null;
+  const evidence = value.evidence === null ? null : undefined;
+  const createdByDisplayName = nullableStr(value.created_by_display_name);
+  const createdAt = nonEmptyStr(value.created_at);
+  const disclaimer =
+    value.internal_disclaimer === VENDOR_FINANCE_INTERNAL_DISCLAIMER_VI
+      ? VENDOR_FINANCE_INTERNAL_DISCLAIMER_VI
+      : null;
+
+  if (
+    movementId === null ||
+    vendorId === null ||
+    vendorDisplayNameSnapshot === null ||
+    vendorActive === null ||
+    vendorAdvanceSequence === null ||
+    cursorSequence === null ||
+    documentNo === null ||
+    documentKind === null ||
+    documentTitleVi === null ||
+    movementType === null ||
+    amountMinor === null ||
+    balanceBeforeMinor === null ||
+    balanceDeltaMinor === null ||
+    balanceAfterMinor === null ||
+    effectiveDate === null ||
+    reason === undefined ||
+    projectEntryId === undefined ||
+    projectId === undefined ||
+    projectDisplayNameSnapshot === undefined ||
+    accountantRef === undefined ||
+    responsibleAccountantName === undefined ||
+    contractType === undefined ||
+    reversesMovementId === undefined ||
+    reversesDocNo === undefined ||
+    reversedByMovementId === undefined ||
+    reversedByDocNo === undefined ||
+    canReverse === null ||
+    canAttachEvidence !== false ||
+    evidence !== null ||
+    createdByDisplayName === undefined ||
+    (reason === null) !== (createdByDisplayName === null) ||
+    createdAt === null ||
+    disclaimer === null
+  ) {
+    return null;
+  }
+
+  if (BigInt(balanceBeforeMinor) + BigInt(balanceDeltaMinor) !== BigInt(balanceAfterMinor)) {
+    return null;
+  }
+
+  const projectFields = [
+    projectEntryId,
+    projectId,
+    projectDisplayNameSnapshot,
+    accountantRef,
+    responsibleAccountantName,
+    contractType,
+  ];
+  const allProjectFieldsNonNull = projectFields.every((f) => f !== null);
+  const allProjectFieldsNull = projectFields.every((f) => f === null);
+
+  if (allProjectFieldsNonNull && (reason === null || createdByDisplayName === null)) {
+    return null;
+  }
+
+  if (movementType === "PROJECT_OFFSET_APPLIED") {
+    if (!allProjectFieldsNonNull && !allProjectFieldsNull) {
+      return null;
+    }
+  } else if (
+    movementType === "ADVANCE_FUNDED" ||
+    movementType === "VENDOR_REFUND_RECORDED"
+  ) {
+    if (!allProjectFieldsNull) {
+      return null;
+    }
+  } else if (!allProjectFieldsNonNull && !allProjectFieldsNull) {
+    return null;
+  }
+
+  return {
+    movement_id: movementId,
+    vendor_id: vendorId,
+    vendor_display_name_snapshot: vendorDisplayNameSnapshot,
+    vendor_active: vendorActive,
+    vendor_advance_sequence: vendorAdvanceSequence,
+    cursor_sequence: cursorSequence,
+    document_no: documentNo,
+    document_kind: documentKind,
+    document_title_vi: documentTitleVi,
+    movement_type: movementType,
+    amount_minor: amountMinor,
+    balance_before_minor: balanceBeforeMinor,
+    balance_delta_minor: balanceDeltaMinor,
+    balance_after_minor: balanceAfterMinor,
+    effective_date: effectiveDate,
+    reason,
+    project_entry_id: projectEntryId,
+    project_id: projectId,
+    project_display_name_snapshot: projectDisplayNameSnapshot,
+    accountant_ref: accountantRef,
+    responsible_accountant_display_name: responsibleAccountantName,
+    contract_type: contractType,
+    reverses_movement_id: reversesMovementId,
+    reverses_document_no: reversesDocNo,
+    reversed_by_movement_id: reversedByMovementId,
+    reversed_by_document_no: reversedByDocNo,
+    can_reverse: canReverse,
+    can_attach_evidence: canAttachEvidence,
+    evidence,
+    created_by_display_name: createdByDisplayName,
+    created_at: createdAt,
+    internal_disclaimer: disclaimer,
+  };
+}
+
 export function projectVendorReconciliation(
   value: unknown,
 ): VendorFinanceReconciliationProjection | null {
@@ -3667,26 +4674,39 @@ export function projectVendorFinanceVendorList(
   const authorizationDate = dateStr(value.authorization_date);
   if (
     !isRecord(value.allowed_actions) ||
-    !exactKeys(value.allowed_actions, [
-      "visibility_scope",
-      "can_view",
-      "can_record",
-      "can_reconcile",
-      "can_manage_project_assignments",
-      "active_assigned_project_count",
-    ]) ||
+    !requiredAndOptionalKeysOnly(
+      value.allowed_actions,
+      [
+        "visibility_scope",
+        "can_view",
+        "can_record",
+        "can_reconcile",
+        "can_manage_project_assignments",
+        "active_assigned_project_count",
+      ],
+      [
+        "can_view_shared_advance",
+        "can_fund_vendor_advance",
+        "can_record_vendor_refund",
+        "can_apply_vendor_advance",
+      ],
+    ) ||
     !isRecord(value.summary) ||
-    !exactKeys(value.summary, [
-      "total_payable_minor",
-      "total_advance_minor",
-      "net_balance_minor",
-      "vendors_with_payable_count",
-      "vendors_with_advance_count",
-      "vendors_with_nonzero_balance_count",
-      "total_vendor_count",
-      "uninitialized_vendor_count",
-      "sub_ledger_count",
-    ]) ||
+    !requiredAndOptionalKeysOnly(
+      value.summary,
+      [
+        "total_payable_minor",
+        "total_advance_minor",
+        "net_balance_minor",
+        "vendors_with_payable_count",
+        "vendors_with_advance_count",
+        "vendors_with_nonzero_balance_count",
+        "total_vendor_count",
+        "uninitialized_vendor_count",
+        "sub_ledger_count",
+      ],
+      ["total_shared_advance_minor"],
+    ) ||
     !isRecord(value.filters) ||
     !exactKeys(value.filters, [
       "search",
@@ -3707,10 +4727,30 @@ export function projectVendorFinanceVendorList(
   const canRecord = boolVal(value.allowed_actions.can_record);
   const canReconcile = boolVal(value.allowed_actions.can_reconcile);
   const canManage = boolVal(value.allowed_actions.can_manage_project_assignments);
+  const canViewShared =
+    "can_view_shared_advance" in value.allowed_actions
+      ? boolVal(value.allowed_actions.can_view_shared_advance)
+      : true;
+  const canFund =
+    "can_fund_vendor_advance" in value.allowed_actions
+      ? boolVal(value.allowed_actions.can_fund_vendor_advance)
+      : false;
+  const canRefund =
+    "can_record_vendor_refund" in value.allowed_actions
+      ? boolVal(value.allowed_actions.can_record_vendor_refund)
+      : false;
+  const canApply =
+    "can_apply_vendor_advance" in value.allowed_actions
+      ? boolVal(value.allowed_actions.can_apply_vendor_advance)
+      : canRecord;
   const assignedCount = nonNegInt(value.allowed_actions.active_assigned_project_count);
 
   const totalPayable = nonNegativeMoneyStr(value.summary.total_payable_minor);
   const totalAdvance = nonNegativeMoneyStr(value.summary.total_advance_minor);
+  const totalSharedAdvance =
+    "total_shared_advance_minor" in value.summary
+      ? nonNegativeMoneyStr(value.summary.total_shared_advance_minor)
+      : "0";
   const netBalance = signedMoneyStr(value.summary.net_balance_minor);
   const payableCount = nonNegInt(value.summary.vendors_with_payable_count);
   const advanceCount = nonNegInt(value.summary.vendors_with_advance_count);
@@ -3743,9 +4783,14 @@ export function projectVendorFinanceVendorList(
     canRecord === null ||
     canReconcile === null ||
     canManage === null ||
+    canViewShared === null ||
+    canFund === null ||
+    canRefund === null ||
+    canApply === null ||
     assignedCount === null ||
     totalPayable === null ||
     totalAdvance === null ||
+    totalSharedAdvance === null ||
     netBalance === null ||
     payableCount === null ||
     advanceCount === null ||
@@ -3778,23 +4823,27 @@ export function projectVendorFinanceVendorList(
   for (const item of value.vendors) {
     if (
       !isRecord(item) ||
-      !exactKeys(item, [
-        "vendor_id",
-        "display_name",
-        "active",
-        "sub_ledger_count",
-        "payable_total_minor",
-        "advance_total_minor",
-        "current_balance_minor",
-        "balance_direction",
-        "entry_count",
-        "has_opening_entry",
-        "eligible_for_opening",
-        "last_effective_date",
-        "last_entry_at",
-        "last_reconciled_as_of_date",
-        "sub_ledgers",
-      ]) ||
+      !requiredAndOptionalKeysOnly(
+        item,
+        [
+          "vendor_id",
+          "display_name",
+          "active",
+          "sub_ledger_count",
+          "payable_total_minor",
+          "advance_total_minor",
+          "current_balance_minor",
+          "balance_direction",
+          "entry_count",
+          "has_opening_entry",
+          "eligible_for_opening",
+          "last_effective_date",
+          "last_entry_at",
+          "last_reconciled_as_of_date",
+          "sub_ledgers",
+        ],
+        ["shared_advance_balance_minor"],
+      ) ||
       !Array.isArray(item.sub_ledgers)
     ) {
       return null;
@@ -3805,6 +4854,10 @@ export function projectVendorFinanceVendorList(
     const itemSubLedgerCount = nonNegInt(item.sub_ledger_count);
     const itemPayableTotal = nonNegativeMoneyStr(item.payable_total_minor);
     const itemAdvanceTotal = nonNegativeMoneyStr(item.advance_total_minor);
+    const itemSharedAdvance =
+      "shared_advance_balance_minor" in item
+        ? nonNegativeMoneyStr(item.shared_advance_balance_minor)
+        : "0";
     const currentBalance = signedMoneyStr(item.current_balance_minor);
     const direction = listBalanceDirectionVal(item.balance_direction);
     const entryCount = nonNegInt(item.entry_count);
@@ -3821,6 +4874,7 @@ export function projectVendorFinanceVendorList(
       itemSubLedgerCount === null ||
       itemPayableTotal === null ||
       itemAdvanceTotal === null ||
+      itemSharedAdvance === null ||
       currentBalance === null ||
       direction === null ||
       entryCount === null ||
@@ -3910,6 +4964,7 @@ export function projectVendorFinanceVendorList(
       sub_ledger_count: itemSubLedgerCount,
       payable_total_minor: itemPayableTotal,
       advance_total_minor: itemAdvanceTotal,
+      shared_advance_balance_minor: itemSharedAdvance,
       current_balance_minor: currentBalance,
       balance_direction: direction,
       entry_count: entryCount,
@@ -3930,11 +4985,16 @@ export function projectVendorFinanceVendorList(
       can_record: canRecord,
       can_reconcile: canReconcile,
       can_manage_project_assignments: canManage,
+      can_view_shared_advance: canViewShared,
+      can_fund_vendor_advance: canFund,
+      can_record_vendor_refund: canRefund,
+      can_apply_vendor_advance: canApply,
       active_assigned_project_count: assignedCount,
     },
     summary: {
       total_payable_minor: totalPayable,
       total_advance_minor: totalAdvance,
+      total_shared_advance_minor: totalSharedAdvance,
       net_balance_minor: netBalance,
       vendors_with_payable_count: payableCount,
       vendors_with_advance_count: advanceCount,
@@ -3960,29 +5020,155 @@ export function projectVendorFinanceVendorList(
   };
 }
 
+export function projectVendorFinanceVendorExport(
+  value: unknown,
+): VendorFinanceVendorExportResponse | null {
+  if (
+    !isRecord(value) ||
+    !exactKeys(value, ["authorization_date", "filters", "row_cap", "total", "vendors"]) ||
+    !isRecord(value.filters) ||
+    !exactKeys(value.filters, [
+      "search",
+      "active",
+      "balance_filter",
+      "project_id",
+      "accountant_ref",
+      "ledger_scope",
+      "contract_type",
+    ]) ||
+    !Array.isArray(value.vendors)
+  ) {
+    return null;
+  }
+
+  const authorizationDate = dateStr(value.authorization_date);
+  const search = nullableStr(value.filters.search);
+  const active = value.filters.active;
+  const balanceFilter = value.filters.balance_filter;
+  const filterProjectId =
+    value.filters.project_id === null
+      ? null
+      : isCanonicalProjectId(value.filters.project_id)
+        ? value.filters.project_id
+        : undefined;
+  const filterAccountantRef = nullableUuidStr(value.filters.accountant_ref);
+  const filterLedgerScope = value.filters.ledger_scope;
+  const filterContractType = contractTypeFilterVal(value.filters.contract_type);
+  const rowCap = posInt(value.row_cap);
+  const total = nonNegInt(value.total);
+
+  if (
+    authorizationDate === null ||
+    search === undefined ||
+    (active !== "all" && active !== "active" && active !== "inactive") ||
+    (balanceFilter !== "all" &&
+      balanceFilter !== "payable" &&
+      balanceFilter !== "advance" &&
+      balanceFilter !== "nonzero" &&
+      balanceFilter !== "uninitialized") ||
+    filterProjectId === undefined ||
+    filterAccountantRef === undefined ||
+    (filterLedgerScope !== "all" &&
+      filterLedgerScope !== "PROJECT_ACCOUNTANT" &&
+      filterLedgerScope !== "LEGACY_UNALLOCATED") ||
+    filterContractType === null ||
+    rowCap !== VENDOR_FINANCE_EXPORT_ROW_CAP ||
+    total === null ||
+    total > VENDOR_FINANCE_EXPORT_ROW_CAP ||
+    value.vendors.length !== total
+  ) {
+    return null;
+  }
+
+  const vendors: VendorFinanceExportVendorItem[] = [];
+  for (const item of value.vendors) {
+    if (
+      !isRecord(item) ||
+      !exactKeys(item, [
+        "vendor_id",
+        "display_name",
+        "active",
+        "sub_ledger_count",
+        "payable_total_minor",
+        "shared_advance_balance_minor",
+        "last_effective_date",
+      ])
+    ) {
+      return null;
+    }
+    const vendorId = isCanonicalVendorId(item.vendor_id) ? item.vendor_id : null;
+    const displayName = nonEmptyStr(item.display_name);
+    const itemActive = boolVal(item.active);
+    const subLedgerCount = nonNegInt(item.sub_ledger_count);
+    const payableTotal = nonNegativeMoneyStr(item.payable_total_minor);
+    const sharedAdvance = nonNegativeMoneyStr(item.shared_advance_balance_minor);
+    const lastEffectiveDate = nullableDateStr(item.last_effective_date);
+    if (
+      vendorId === null ||
+      displayName === null ||
+      itemActive === null ||
+      subLedgerCount === null ||
+      payableTotal === null ||
+      sharedAdvance === null ||
+      lastEffectiveDate === undefined
+    ) {
+      return null;
+    }
+    vendors.push({
+      vendor_id: vendorId,
+      display_name: displayName,
+      active: itemActive,
+      sub_ledger_count: subLedgerCount,
+      payable_total_minor: payableTotal,
+      shared_advance_balance_minor: sharedAdvance,
+      last_effective_date: lastEffectiveDate,
+    });
+  }
+
+  return {
+    authorization_date: authorizationDate,
+    filters: {
+      search,
+      active,
+      balance_filter: balanceFilter,
+      project_id: filterProjectId,
+      accountant_ref: filterAccountantRef,
+      ledger_scope: filterLedgerScope,
+      contract_type: filterContractType,
+    },
+    row_cap: rowCap,
+    total,
+    vendors,
+  };
+}
+
 function projectDetailSubLedger(value: unknown): VendorFinanceDetailSubLedger | null {
   if (
     !isRecord(value) ||
-    !exactKeys(value, [
-      "ledger_scope",
-      "project_id",
-      "project_display_name",
-      "project_active",
-      "accountant_ref",
-      "responsible_accountant_display_name",
-      "contract_type",
-      "is_active_assignment",
-      "current_balance_minor",
-      "balance_direction",
-      "latest_sequence",
-      "entry_count",
-      "has_opening_entry",
-      "eligible_for_opening",
-      "can_record_entry",
-      "can_reconcile",
-      "can_classify_contract_type",
-      "classification",
-    ])
+    !requiredAndOptionalKeysOnly(
+      value,
+      [
+        "ledger_scope",
+        "project_id",
+        "project_display_name",
+        "project_active",
+        "accountant_ref",
+        "responsible_accountant_display_name",
+        "contract_type",
+        "is_active_assignment",
+        "current_balance_minor",
+        "balance_direction",
+        "latest_sequence",
+        "entry_count",
+        "has_opening_entry",
+        "eligible_for_opening",
+        "can_record_entry",
+        "can_reconcile",
+        "can_classify_contract_type",
+        "classification",
+      ],
+      ["can_apply_vendor_advance"],
+    )
   ) {
     return null;
   }
@@ -4007,6 +5193,10 @@ function projectDetailSubLedger(value: unknown): VendorFinanceDetailSubLedger | 
   const hasOpening = boolVal(value.has_opening_entry);
   const eligible = boolVal(value.eligible_for_opening);
   const canRecordEntry = boolVal(value.can_record_entry);
+  const canApplyVendorAdvance =
+    "can_apply_vendor_advance" in value
+      ? boolVal(value.can_apply_vendor_advance)
+      : Boolean(canRecordEntry && direction === "PAYABLE" && contractType !== "UNCLASSIFIED");
   const canReconcile = boolVal(value.can_reconcile);
   const canClassify = boolVal(value.can_classify_contract_type);
   const classification =
@@ -4029,6 +5219,7 @@ function projectDetailSubLedger(value: unknown): VendorFinanceDetailSubLedger | 
     hasOpening === null ||
     eligible === null ||
     canRecordEntry === null ||
+    canApplyVendorAdvance === null ||
     canReconcile === null ||
     canClassify === null ||
     (value.classification !== null && classification === null)
@@ -4051,6 +5242,7 @@ function projectDetailSubLedger(value: unknown): VendorFinanceDetailSubLedger | 
     has_opening_entry: hasOpening,
     eligible_for_opening: eligible,
     can_record_entry: canRecordEntry,
+    can_apply_vendor_advance: canApplyVendorAdvance,
     can_reconcile: canReconcile,
     can_classify_contract_type: canClassify,
     classification,
@@ -4070,43 +5262,64 @@ export function projectVendorFinanceVendorDetail(
       "vendor",
     ]) ||
     !isRecord(value.allowed_actions) ||
-    !exactKeys(value.allowed_actions, [
-      "visibility_scope",
-      "can_view",
-      "can_record",
-      "can_reconcile",
-      "can_manage_project_assignments",
-      "allowed_entry_types",
-    ]) ||
+    !requiredAndOptionalKeysOnly(
+      value.allowed_actions,
+      [
+        "visibility_scope",
+        "can_view",
+        "can_record",
+        "can_reconcile",
+        "can_manage_project_assignments",
+        "allowed_entry_types",
+      ],
+      [
+        "can_view_shared_advance",
+        "can_fund_vendor_advance",
+        "can_record_vendor_refund",
+        "can_apply_vendor_advance",
+      ],
+    ) ||
     !Array.isArray(value.allowed_actions.allowed_entry_types) ||
     !Array.isArray(value.sub_ledgers) ||
     !isRecord(value.vendor) ||
-    !exactKeys(value.vendor, [
-      "vendor_id",
-      "display_name",
-      "active",
-      "current_balance_minor",
-      "balance_direction",
-      "latest_sequence",
-      "entry_count",
-      "has_opening_entry",
-      "eligible_for_opening",
-      "totals",
-      "latest_reconciliation",
-      "recent_reconciliations",
-    ]) ||
+    !requiredAndOptionalKeysOnly(
+      value.vendor,
+      [
+        "vendor_id",
+        "display_name",
+        "active",
+        "current_balance_minor",
+        "balance_direction",
+        "latest_sequence",
+        "entry_count",
+        "has_opening_entry",
+        "eligible_for_opening",
+        "totals",
+        "latest_reconciliation",
+        "recent_reconciliations",
+      ],
+      [
+        "shared_advance_balance_minor",
+        "shared_advance_latest_sequence",
+        "shared_advance_movement_count",
+      ],
+    ) ||
     !isRecord(value.vendor.totals) ||
-    !exactKeys(value.vendor.totals, [
-      "opening_payable_minor",
-      "opening_advance_minor",
-      "debt_recorded_minor",
-      "payroll_recorded_minor",
-      "payment_recorded_minor",
-      "advance_recorded_minor",
-      "adjustment_increase_minor",
-      "adjustment_decrease_minor",
-      "reversed_entry_count",
-    ]) ||
+    !requiredAndOptionalKeysOnly(
+      value.vendor.totals,
+      [
+        "opening_payable_minor",
+        "opening_advance_minor",
+        "debt_recorded_minor",
+        "payroll_recorded_minor",
+        "payment_recorded_minor",
+        "advance_recorded_minor",
+        "adjustment_increase_minor",
+        "adjustment_decrease_minor",
+        "reversed_entry_count",
+      ],
+      ["advance_offset_recorded_minor"],
+    ) ||
     !Array.isArray(value.vendor.recent_reconciliations)
   ) {
     return null;
@@ -4118,6 +5331,22 @@ export function projectVendorFinanceVendorDetail(
   const canRecord = boolVal(value.allowed_actions.can_record);
   const canReconcile = boolVal(value.allowed_actions.can_reconcile);
   const canManage = boolVal(value.allowed_actions.can_manage_project_assignments);
+  const canViewShared =
+    "can_view_shared_advance" in value.allowed_actions
+      ? boolVal(value.allowed_actions.can_view_shared_advance)
+      : true;
+  const canFund =
+    "can_fund_vendor_advance" in value.allowed_actions
+      ? boolVal(value.allowed_actions.can_fund_vendor_advance)
+      : false;
+  const canRefund =
+    "can_record_vendor_refund" in value.allowed_actions
+      ? boolVal(value.allowed_actions.can_record_vendor_refund)
+      : false;
+  const canApply =
+    "can_apply_vendor_advance" in value.allowed_actions
+      ? boolVal(value.allowed_actions.can_apply_vendor_advance)
+      : canRecord;
   const allowedEntryTypes: NormalVendorFinanceEntryType[] = [];
   for (const rawType of value.allowed_actions.allowed_entry_types) {
     if (
@@ -4149,6 +5378,18 @@ export function projectVendorFinanceVendorDetail(
   const vendorId = isCanonicalVendorId(v.vendor_id) ? v.vendor_id : null;
   const displayName = nonEmptyStr(v.display_name);
   const active = boolVal(v.active);
+  const sharedAdvanceBalance =
+    "shared_advance_balance_minor" in v
+      ? nonNegativeMoneyStr(v.shared_advance_balance_minor)
+      : "0";
+  const sharedAdvanceLatestSeq =
+    "shared_advance_latest_sequence" in v
+      ? nonNegInt(v.shared_advance_latest_sequence)
+      : 0;
+  const sharedAdvanceMovCount =
+    "shared_advance_movement_count" in v
+      ? nonNegInt(v.shared_advance_movement_count)
+      : 0;
   const currentBalance = signedMoneyStr(v.current_balance_minor);
   const direction = listBalanceDirectionVal(v.balance_direction);
   const latestSeq = nonNegInt(v.latest_sequence);
@@ -4163,6 +5404,10 @@ export function projectVendorFinanceVendorDetail(
   const payrollRecorded = nonNegativeMoneyStr(t.payroll_recorded_minor);
   const paymentRecorded = nonNegativeMoneyStr(t.payment_recorded_minor);
   const advanceRecorded = nonNegativeMoneyStr(t.advance_recorded_minor);
+  const advanceOffsetRecorded =
+    "advance_offset_recorded_minor" in t
+      ? nonNegativeMoneyStr(t.advance_offset_recorded_minor)
+      : "0";
   const adjustmentInc = nonNegativeMoneyStr(t.adjustment_increase_minor);
   const adjustmentDec = nonNegativeMoneyStr(t.adjustment_decrease_minor);
   const reversedCount = nonNegInt(t.reversed_entry_count);
@@ -4186,9 +5431,16 @@ export function projectVendorFinanceVendorDetail(
     canRecord === null ||
     canReconcile === null ||
     canManage === null ||
+    canViewShared === null ||
+    canFund === null ||
+    canRefund === null ||
+    canApply === null ||
     vendorId === null ||
     displayName === null ||
     active === null ||
+    sharedAdvanceBalance === null ||
+    sharedAdvanceLatestSeq === null ||
+    sharedAdvanceMovCount === null ||
     currentBalance === null ||
     direction === null ||
     latestSeq === null ||
@@ -4201,6 +5453,7 @@ export function projectVendorFinanceVendorDetail(
     payrollRecorded === null ||
     paymentRecorded === null ||
     advanceRecorded === null ||
+    advanceOffsetRecorded === null ||
     adjustmentInc === null ||
     adjustmentDec === null ||
     reversedCount === null ||
@@ -4217,6 +5470,10 @@ export function projectVendorFinanceVendorDetail(
       can_record: canRecord,
       can_reconcile: canReconcile,
       can_manage_project_assignments: canManage,
+      can_view_shared_advance: canViewShared,
+      can_fund_vendor_advance: canFund,
+      can_record_vendor_refund: canRefund,
+      can_apply_vendor_advance: canApply,
       allowed_entry_types: allowedEntryTypes,
     },
     selected_sub_ledger: selectedSubLedger,
@@ -4225,6 +5482,9 @@ export function projectVendorFinanceVendorDetail(
       vendor_id: vendorId,
       display_name: displayName,
       active,
+      shared_advance_balance_minor: sharedAdvanceBalance,
+      shared_advance_latest_sequence: sharedAdvanceLatestSeq,
+      shared_advance_movement_count: sharedAdvanceMovCount,
       current_balance_minor: currentBalance,
       balance_direction: direction,
       latest_sequence: latestSeq,
@@ -4238,6 +5498,7 @@ export function projectVendorFinanceVendorDetail(
         payroll_recorded_minor: payrollRecorded,
         payment_recorded_minor: paymentRecorded,
         advance_recorded_minor: advanceRecorded,
+        advance_offset_recorded_minor: advanceOffsetRecorded,
         adjustment_increase_minor: adjustmentInc,
         adjustment_decrease_minor: adjustmentDec,
         reversed_entry_count: reversedCount,
@@ -4407,16 +5668,137 @@ export function projectRecordEntryMutation(
   return { entry, replayed };
 }
 
+export function projectSharedAdvanceMovementsPage(
+  value: unknown,
+  movementType?: VendorFinanceSharedAdvanceMovementType | null,
+): VendorFinanceSharedAdvanceMovementsPageResponse | null {
+  if (
+    !isRecord(value) ||
+    !requiredAndOptionalKeysOnly(
+      value,
+      [
+        "authorization_date",
+        "vendor_id",
+        "shared_advance_balance_minor",
+        "page_size",
+        "has_more",
+        "next_before_sequence",
+        "movements",
+      ],
+      ["shared_advance_latest_sequence"],
+    ) ||
+    !Array.isArray(value.movements)
+  ) {
+    return null;
+  }
+
+  const authorizationDate = dateStr(value.authorization_date);
+  const vendorId = isCanonicalVendorId(value.vendor_id) ? value.vendor_id : null;
+  const sharedAdvanceBalance = nonNegativeMoneyStr(value.shared_advance_balance_minor);
+  const pageSize = posInt(value.page_size);
+  const hasMore = boolVal(value.has_more);
+  const nextBeforeSeq =
+    value.next_before_sequence === null ? null : posInt(value.next_before_sequence);
+
+  if (
+    authorizationDate === null ||
+    vendorId === null ||
+    sharedAdvanceBalance === null ||
+    pageSize === null ||
+    hasMore === null ||
+    (value.next_before_sequence !== null && nextBeforeSeq === null) ||
+    (hasMore && nextBeforeSeq === null) ||
+    (!hasMore && nextBeforeSeq !== null)
+  ) {
+    return null;
+  }
+
+  const movements: VendorFinanceSharedAdvanceMovementProjection[] = [];
+  for (const item of value.movements) {
+    const projected = projectSharedAdvanceMovement(item);
+    if (!projected || projected.vendor_id !== vendorId) return null;
+    movements.push(projected);
+  }
+
+  return {
+    authorization_date: authorizationDate,
+    vendor_id: vendorId,
+    shared_advance_balance_minor: sharedAdvanceBalance,
+    page_size: pageSize,
+    has_more: hasMore,
+    next_cursor:
+      hasMore && nextBeforeSeq !== null
+        ? encodeSharedAdvanceMovementsCursor({
+            vendor_id: vendorId,
+            before_sequence: nextBeforeSeq,
+            movement_type: movementType ?? null,
+          })
+        : null,
+    movements,
+  };
+}
+
+export function projectFundSharedAdvanceMutation(
+  value: unknown,
+): VendorFinanceFundSharedAdvanceResponse | null {
+  if (
+    !isRecord(value) ||
+    !exactKeys(value, ["movement", "shared_advance_balance_minor", "replayed"])
+  ) {
+    return null;
+  }
+  const movement = projectSharedAdvanceMovement(value.movement);
+  const balance = nonNegativeMoneyStr(value.shared_advance_balance_minor);
+  const replayed = boolVal(value.replayed);
+  if (!movement || balance === null || replayed === null) return null;
+  return { movement, shared_advance_balance_minor: balance, replayed };
+}
+
+export function projectRecordVendorRefundMutation(
+  value: unknown,
+): VendorFinanceRecordVendorRefundResponse | null {
+  return projectFundSharedAdvanceMutation(value);
+}
+
+export function projectApplySharedAdvanceOffsetMutation(
+  value: unknown,
+): VendorFinanceApplySharedAdvanceOffsetResponse | null {
+  if (
+    !isRecord(value) ||
+    !exactKeys(value, [
+      "movement",
+      "entry",
+      "shared_advance_balance_minor",
+      "replayed",
+    ])
+  ) {
+    return null;
+  }
+  const movement = projectSharedAdvanceMovement(value.movement);
+  const entry = projectVendorFinanceEntry(value.entry);
+  const balance = nonNegativeMoneyStr(value.shared_advance_balance_minor);
+  const replayed = boolVal(value.replayed);
+  if (!movement || !entry || balance === null || replayed === null) return null;
+  return { movement, entry, shared_advance_balance_minor: balance, replayed };
+}
+
 export function projectReverseEntryMutation(
   value: unknown,
 ): {
   reversal_entry: VendorFinanceEntryProjection;
   reversed_entry: VendorFinanceEntryProjection;
+  reversal_movement?: VendorFinanceSharedAdvanceMovementProjection;
+  reversed_movement?: VendorFinanceSharedAdvanceMovementProjection;
+  shared_advance_balance_minor?: string;
   replayed: boolean;
 } | null {
   if (
     !isRecord(value) ||
-    !exactKeys(value, ["reversal_entry", "reversed_entry", "replayed"])
+    !requiredAndOptionalKeysOnly(
+      value,
+      ["reversal_entry", "reversed_entry", "replayed"],
+      ["reversal_movement", "reversed_movement", "shared_advance_balance_minor"],
+    )
   ) {
     return null;
   }
@@ -4424,7 +5806,74 @@ export function projectReverseEntryMutation(
   const reversed = projectVendorFinanceEntry(value.reversed_entry);
   const replayed = boolVal(value.replayed);
   if (!reversal || !reversed || replayed === null) return null;
+
+  const hasMovFields =
+    "reversal_movement" in value ||
+    "reversed_movement" in value ||
+    "shared_advance_balance_minor" in value;
+  if (hasMovFields) {
+    const revMov = projectSharedAdvanceMovement(value.reversal_movement);
+    const origMov = projectSharedAdvanceMovement(value.reversed_movement);
+    const sharedBalance = nonNegativeMoneyStr(value.shared_advance_balance_minor);
+    if (!revMov || !origMov || sharedBalance === null) return null;
+    return {
+      reversal_entry: reversal,
+      reversed_entry: reversed,
+      reversal_movement: revMov,
+      reversed_movement: origMov,
+      shared_advance_balance_minor: sharedBalance,
+      replayed,
+    };
+  }
+
   return { reversal_entry: reversal, reversed_entry: reversed, replayed };
+}
+
+export function projectReverseSharedAdvanceMovementMutation(
+  value: unknown,
+): VendorFinanceReverseSharedAdvanceMovementResponse | null {
+  if (
+    !isRecord(value) ||
+    !requiredAndOptionalKeysOnly(
+      value,
+      [
+        "reversal_movement",
+        "reversed_movement",
+        "shared_advance_balance_minor",
+        "replayed",
+      ],
+      ["reversal_entry", "reversed_entry"],
+    )
+  ) {
+    return null;
+  }
+  const revMov = projectSharedAdvanceMovement(value.reversal_movement);
+  const origMov = projectSharedAdvanceMovement(value.reversed_movement);
+  const sharedBalance = nonNegativeMoneyStr(value.shared_advance_balance_minor);
+  const replayed = boolVal(value.replayed);
+  if (!revMov || !origMov || sharedBalance === null || replayed === null) return null;
+
+  const hasEntryFields = "reversal_entry" in value || "reversed_entry" in value;
+  if (hasEntryFields) {
+    const revEntry = projectVendorFinanceEntry(value.reversal_entry);
+    const origEntry = projectVendorFinanceEntry(value.reversed_entry);
+    if (!revEntry || !origEntry) return null;
+    return {
+      reversal_movement: revMov,
+      reversed_movement: origMov,
+      shared_advance_balance_minor: sharedBalance,
+      reversal_entry: revEntry,
+      reversed_entry: origEntry,
+      replayed,
+    };
+  }
+
+  return {
+    reversal_movement: revMov,
+    reversed_movement: origMov,
+    shared_advance_balance_minor: sharedBalance,
+    replayed,
+  };
 }
 
 export function projectOpeningPreview(
@@ -4681,13 +6130,23 @@ export function projectMonthlyReport(value: unknown): VendorFinanceMonthlyReport
       "legacy_unallocated_rows",
     ]) ||
     !isRecord(value.allowed_actions) ||
-    !exactKeys(value.allowed_actions, [
-      "visibility_scope",
-      "can_view",
-      "can_record",
-      "can_reconcile",
-      "can_manage_project_assignments",
-    ]) ||
+    !requiredAndOptionalKeysOnly(
+      value.allowed_actions,
+      [
+        "visibility_scope",
+        "can_view",
+        "can_record",
+        "can_reconcile",
+        "can_manage_project_assignments",
+      ],
+      [
+        "can_view_shared_advance",
+        "can_fund_vendor_advance",
+        "can_record_vendor_refund",
+        "can_apply_vendor_advance",
+        "active_assigned_project_count",
+      ],
+    ) ||
     !isRecord(value.filters) ||
     !exactKeys(value.filters, [
       "month",
@@ -4697,18 +6156,22 @@ export function projectMonthlyReport(value: unknown): VendorFinanceMonthlyReport
       "contract_type",
     ]) ||
     !isRecord(value.totals) ||
-    !exactKeys(value.totals, [
-      "project_revenue_status",
-      "project_revenue_minor",
-      "project_accountant_book_count",
-      "sub_ledger_count",
-      "obligations_in_month_minor",
-      "paid_in_month_minor",
-      "advanced_in_month_minor",
-      "paid_and_advanced_in_month_minor",
-      "closing_payable_minor",
-      "closing_advance_minor",
-    ]) ||
+    !requiredAndOptionalKeysOnly(
+      value.totals,
+      [
+        "project_revenue_status",
+        "project_revenue_minor",
+        "project_accountant_book_count",
+        "sub_ledger_count",
+        "obligations_in_month_minor",
+        "paid_in_month_minor",
+        "advanced_in_month_minor",
+        "paid_and_advanced_in_month_minor",
+        "closing_payable_minor",
+        "closing_advance_minor",
+      ],
+      ["advance_offset_in_month_minor"],
+    ) ||
     !Array.isArray(value.project_accountant_summaries) ||
     !Array.isArray(value.rows) ||
     !Array.isArray(value.legacy_unallocated_rows)
@@ -4722,6 +6185,26 @@ export function projectMonthlyReport(value: unknown): VendorFinanceMonthlyReport
   const canRecord = boolVal(value.allowed_actions.can_record);
   const canReconcile = boolVal(value.allowed_actions.can_reconcile);
   const canManage = boolVal(value.allowed_actions.can_manage_project_assignments);
+  const canViewShared =
+    "can_view_shared_advance" in value.allowed_actions
+      ? boolVal(value.allowed_actions.can_view_shared_advance)
+      : true;
+  const canFund =
+    "can_fund_vendor_advance" in value.allowed_actions
+      ? boolVal(value.allowed_actions.can_fund_vendor_advance)
+      : false;
+  const canRefund =
+    "can_record_vendor_refund" in value.allowed_actions
+      ? boolVal(value.allowed_actions.can_record_vendor_refund)
+      : false;
+  const canApply =
+    "can_apply_vendor_advance" in value.allowed_actions
+      ? boolVal(value.allowed_actions.can_apply_vendor_advance)
+      : canRecord;
+  const assignedCount =
+    "active_assigned_project_count" in value.allowed_actions
+      ? nonNegInt(value.allowed_actions.active_assigned_project_count)
+      : undefined;
 
   const monthParsed = parseCalendarMonthParam(value.filters.month);
   const filterProjectId =
@@ -4745,6 +6228,10 @@ export function projectMonthlyReport(value: unknown): VendorFinanceMonthlyReport
   const obligationsMinor = nonNegativeMoneyStr(t.obligations_in_month_minor);
   const paidMinor = nonNegativeMoneyStr(t.paid_in_month_minor);
   const advancedMinor = nonNegativeMoneyStr(t.advanced_in_month_minor);
+  const advanceOffsetMinor =
+    "advance_offset_in_month_minor" in t
+      ? nonNegativeMoneyStr(t.advance_offset_in_month_minor)
+      : "0";
   const paidAndAdvMinor = nonNegativeMoneyStr(t.paid_and_advanced_in_month_minor);
   const closingPayableMinor = nonNegativeMoneyStr(t.closing_payable_minor);
   const closingAdvanceMinor = nonNegativeMoneyStr(t.closing_advance_minor);
@@ -4756,6 +6243,11 @@ export function projectMonthlyReport(value: unknown): VendorFinanceMonthlyReport
     canRecord === null ||
     canReconcile === null ||
     canManage === null ||
+    canViewShared === null ||
+    canFund === null ||
+    canRefund === null ||
+    canApply === null ||
+    assignedCount === null ||
     !monthParsed.ok ||
     filterProjectId === undefined ||
     filterAccountantRef === undefined ||
@@ -4768,6 +6260,7 @@ export function projectMonthlyReport(value: unknown): VendorFinanceMonthlyReport
     obligationsMinor === null ||
     paidMinor === null ||
     advancedMinor === null ||
+    advanceOffsetMinor === null ||
     paidAndAdvMinor === null ||
     closingPayableMinor === null ||
     closingAdvanceMinor === null
@@ -4779,25 +6272,29 @@ export function projectMonthlyReport(value: unknown): VendorFinanceMonthlyReport
   for (const rawSum of value.project_accountant_summaries) {
     if (
       !isRecord(rawSum) ||
-      !exactKeys(rawSum, [
-        "project_id",
-        "project_display_name",
-        "project_active",
-        "accountant_ref",
-        "responsible_accountant_display_name",
-        "contract_type",
-        "is_currently_assigned",
-        "project_revenue_status",
-        "project_revenue_minor",
-        "vendor_count",
-        "obligations_in_month_minor",
-        "paid_in_month_minor",
-        "advanced_in_month_minor",
-        "paid_and_advanced_in_month_minor",
-        "closing_payable_minor",
-        "closing_advance_minor",
-        "in_month_entry_count",
-      ])
+      !requiredAndOptionalKeysOnly(
+        rawSum,
+        [
+          "project_id",
+          "project_display_name",
+          "project_active",
+          "accountant_ref",
+          "responsible_accountant_display_name",
+          "contract_type",
+          "is_currently_assigned",
+          "project_revenue_status",
+          "project_revenue_minor",
+          "vendor_count",
+          "obligations_in_month_minor",
+          "paid_in_month_minor",
+          "advanced_in_month_minor",
+          "paid_and_advanced_in_month_minor",
+          "closing_payable_minor",
+          "closing_advance_minor",
+          "in_month_entry_count",
+        ],
+        ["advance_offset_in_month_minor"],
+      )
     ) {
       return null;
     }
@@ -4812,6 +6309,10 @@ export function projectMonthlyReport(value: unknown): VendorFinanceMonthlyReport
     const sObligations = nonNegativeMoneyStr(rawSum.obligations_in_month_minor);
     const sPaid = nonNegativeMoneyStr(rawSum.paid_in_month_minor);
     const sAdv = nonNegativeMoneyStr(rawSum.advanced_in_month_minor);
+    const sAdvOffset =
+      "advance_offset_in_month_minor" in rawSum
+        ? nonNegativeMoneyStr(rawSum.advance_offset_in_month_minor)
+        : "0";
     const sPaidAdv = nonNegativeMoneyStr(rawSum.paid_and_advanced_in_month_minor);
     const sClosingPayable = nonNegativeMoneyStr(rawSum.closing_payable_minor);
     const sClosingAdvance = nonNegativeMoneyStr(rawSum.closing_advance_minor);
@@ -4830,6 +6331,7 @@ export function projectMonthlyReport(value: unknown): VendorFinanceMonthlyReport
       sObligations === null ||
       sPaid === null ||
       sAdv === null ||
+      sAdvOffset === null ||
       sPaidAdv === null ||
       sClosingPayable === null ||
       sClosingAdvance === null ||
@@ -4851,6 +6353,7 @@ export function projectMonthlyReport(value: unknown): VendorFinanceMonthlyReport
       obligations_in_month_minor: sObligations,
       paid_in_month_minor: sPaid,
       advanced_in_month_minor: sAdv,
+      advance_offset_in_month_minor: sAdvOffset,
       paid_and_advanced_in_month_minor: sPaidAdv,
       closing_payable_minor: sClosingPayable,
       closing_advance_minor: sClosingAdvance,
@@ -4862,35 +6365,39 @@ export function projectMonthlyReport(value: unknown): VendorFinanceMonthlyReport
   for (const rawRow of value.rows) {
     if (
       !isRecord(rawRow) ||
-      !exactKeys(rawRow, [
-        "project_id",
-        "project_display_name",
-        "project_active",
-        "accountant_ref",
-        "responsible_accountant_display_name",
-        "contract_type",
-        "is_currently_assigned",
-        "vendor_id",
-        "vendor_display_name",
-        "vendor_active",
-        "project_revenue_status",
-        "project_revenue_minor",
-        "balance_before_month_minor",
-        "opening_payable_in_month_minor",
-        "opening_advance_in_month_minor",
-        "obligations_in_month_minor",
-        "paid_in_month_minor",
-        "advanced_in_month_minor",
-        "paid_and_advanced_in_month_minor",
-        "net_change_in_month_minor",
-        "closing_balance_minor",
-        "closing_direction",
-        "closing_payable_minor",
-        "closing_advance_minor",
-        "current_balance_minor",
-        "in_month_entry_count",
-        "total_entry_count",
-      ])
+      !requiredAndOptionalKeysOnly(
+        rawRow,
+        [
+          "project_id",
+          "project_display_name",
+          "project_active",
+          "accountant_ref",
+          "responsible_accountant_display_name",
+          "contract_type",
+          "is_currently_assigned",
+          "vendor_id",
+          "vendor_display_name",
+          "vendor_active",
+          "project_revenue_status",
+          "project_revenue_minor",
+          "balance_before_month_minor",
+          "opening_payable_in_month_minor",
+          "opening_advance_in_month_minor",
+          "obligations_in_month_minor",
+          "paid_in_month_minor",
+          "advanced_in_month_minor",
+          "paid_and_advanced_in_month_minor",
+          "net_change_in_month_minor",
+          "closing_balance_minor",
+          "closing_direction",
+          "closing_payable_minor",
+          "closing_advance_minor",
+          "current_balance_minor",
+          "in_month_entry_count",
+          "total_entry_count",
+        ],
+        ["advance_offset_in_month_minor"],
+      )
     ) {
       return null;
     }
@@ -4910,6 +6417,10 @@ export function projectMonthlyReport(value: unknown): VendorFinanceMonthlyReport
     const rObligations = nonNegativeMoneyStr(rawRow.obligations_in_month_minor);
     const rPaid = nonNegativeMoneyStr(rawRow.paid_in_month_minor);
     const rAdv = nonNegativeMoneyStr(rawRow.advanced_in_month_minor);
+    const rAdvOffset =
+      "advance_offset_in_month_minor" in rawRow
+        ? nonNegativeMoneyStr(rawRow.advance_offset_in_month_minor)
+        : "0";
     const rPaidAdv = nonNegativeMoneyStr(rawRow.paid_and_advanced_in_month_minor);
     const netChange = signedMoneyStr(rawRow.net_change_in_month_minor);
     const closingBal = signedMoneyStr(rawRow.closing_balance_minor);
@@ -4939,6 +6450,7 @@ export function projectMonthlyReport(value: unknown): VendorFinanceMonthlyReport
       rObligations === null ||
       rPaid === null ||
       rAdv === null ||
+      rAdvOffset === null ||
       rPaidAdv === null ||
       netChange === null ||
       closingBal === null ||
@@ -4971,6 +6483,7 @@ export function projectMonthlyReport(value: unknown): VendorFinanceMonthlyReport
       obligations_in_month_minor: rObligations,
       paid_in_month_minor: rPaid,
       advanced_in_month_minor: rAdv,
+      advance_offset_in_month_minor: rAdvOffset,
       paid_and_advanced_in_month_minor: rPaidAdv,
       net_change_in_month_minor: netChange,
       closing_balance_minor: closingBal,
@@ -5044,6 +6557,13 @@ export function projectMonthlyReport(value: unknown): VendorFinanceMonthlyReport
       can_record: canRecord,
       can_reconcile: canReconcile,
       can_manage_project_assignments: canManage,
+      can_view_shared_advance: canViewShared,
+      can_fund_vendor_advance: canFund,
+      can_record_vendor_refund: canRefund,
+      can_apply_vendor_advance: canApply,
+      ...(assignedCount !== undefined
+        ? { active_assigned_project_count: assignedCount }
+        : {}),
     },
     filters: {
       month: monthParsed.month,
@@ -5060,6 +6580,7 @@ export function projectMonthlyReport(value: unknown): VendorFinanceMonthlyReport
       obligations_in_month_minor: obligationsMinor,
       paid_in_month_minor: paidMinor,
       advanced_in_month_minor: advancedMinor,
+      advance_offset_in_month_minor: advanceOffsetMinor,
       paid_and_advanced_in_month_minor: paidAndAdvMinor,
       closing_payable_minor: closingPayableMinor,
       closing_advance_minor: closingAdvanceMinor,

@@ -19,6 +19,7 @@ const POSTGRES_TEST_FILES = new Set([
   "scripts/org-shell-01-departments-concurrency.test.mjs",
   "scripts/vfin-01-concurrency.test.mjs",
   "scripts/vfin-02-project-ledgers-concurrency.test.mjs",
+  "scripts/vfin-04-shared-advance-concurrency.test.mjs",
   "scripts/leave-management-wp1-concurrency.test.mjs",
   "scripts/w2s2-salary-advance-wp1-concurrency.test.mjs",
   "scripts/offboarding-report-performance-pg.test.mjs",
