@@ -24,6 +24,7 @@ import {
   computeEndProjectAccountantFingerprint,
   computeFundSharedAdvanceFingerprint,
   computeRecordEntryFingerprint,
+  computeRecordPaymentWithOffsetFingerprint,
   computeRecordVendorRefundFingerprint,
   computeReserveEvidenceFingerprint,
   computeReverseEntryFingerprint,
@@ -49,6 +50,7 @@ import {
   parseMonthlyReportQuery,
   parseNoQueryParams,
   parsePreviewOpeningBatchBody,
+  parseRecordPaymentWithOffsetBody,
   parseRecordVendorFinanceEntryBody,
   parseRecordVendorRefundBody,
   parseReserveVendorFinanceEvidenceBody,
@@ -2100,3 +2102,78 @@ export async function handlePostReverseVendorSharedAdvanceMovement(
 
   return vfinOk(saved.data, saved.data.replayed ? 200 : 201);
 }
+
+// -----------------------------------------------------------------------------
+// 22. POST /api/vendor-finance/vendors/[vendorId]/shared-advances/settle-with-offset
+// -----------------------------------------------------------------------------
+export async function handlePostRecordVendorPaymentWithOffset(
+  request: Request,
+  vendorId: string,
+  enabledFlag: string | undefined,
+  dependencies: VendorFinanceApiDependencies,
+): Promise<Response> {
+  const gate = directEntryFeatureGate(enabledFlag);
+  if (gate) return gate;
+
+  if (!isSameOriginAuthRequest(request)) {
+    return vfinError("CSRF_ORIGIN_DENIED");
+  }
+
+  if (hasDisallowedAuthorityHeaders(request)) {
+    return vfinError("CLIENT_AUTHORITY_FIELD_FORBIDDEN");
+  }
+
+  const url = parseRequestUrl(request);
+  if (!url || !parseNoQueryParams(url).ok) {
+    return vfinError("VENDOR_FINANCE_QUERY_INVALID");
+  }
+
+  const actor = await resolveVendorFinanceAuthority(
+    dependencies,
+    "shared_advance_apply",
+  );
+  if (!actor.ok) return actor.response;
+
+  const parsedVendorId = parseVendorIdParam(vendorId);
+  if (!parsedVendorId.ok) return vfinError(parsedVendorId.code);
+
+  const boundedBody = await readBoundedJsonBody(
+    request,
+    MAX_VENDOR_FINANCE_MUTATION_JSON_BYTES,
+  );
+  if (!boundedBody.ok) return vfinError(boundedBody.code);
+
+  const parsedBody = parseRecordPaymentWithOffsetBody(
+    boundedBody.value,
+    request.headers.get("idempotency-key"),
+  );
+  if (!parsedBody.ok) return vfinError(parsedBody.code);
+
+  const fingerprint = computeRecordPaymentWithOffsetFingerprint({
+    vendor_id: parsedVendorId.vendor_id,
+    project_id: parsedBody.value.project_id,
+    contract_type: parsedBody.value.contract_type,
+    payment_amount_minor: parsedBody.value.payment_amount_minor,
+    offset_amount_minor: parsedBody.value.offset_amount_minor,
+    effective_date: parsedBody.value.effective_date,
+    reason: parsedBody.value.reason,
+  });
+
+  const saved = await dependencies.repository.recordPaymentWithOffset({
+    auth_subject: actor.auth_subject,
+    app_user_id: actor.app_user_id,
+    vendor_id: parsedVendorId.vendor_id,
+    project_id: parsedBody.value.project_id,
+    contract_type: parsedBody.value.contract_type,
+    payment_amount_minor: parsedBody.value.payment_amount_minor,
+    offset_amount_minor: parsedBody.value.offset_amount_minor,
+    effective_date: parsedBody.value.effective_date,
+    reason: parsedBody.value.reason,
+    idempotency_key: parsedBody.value.idempotency_key,
+    request_fingerprint: fingerprint,
+  });
+  if (!saved.ok) return vfinError(saved.code);
+
+  return vfinOk(saved.data, saved.data.replayed ? 200 : 201);
+}
+

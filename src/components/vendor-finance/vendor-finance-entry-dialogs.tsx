@@ -19,6 +19,9 @@ import type {
   VendorFinanceSharedAdvanceMovementProjection,
 } from "@/lib/vendor-finance/vendor-finance-contract";
 import {
+  applyRecordEntryDialogDraftEdit,
+  applyRecordEntryMutationOutcome,
+  attemptCloseRecordEntryDialog,
   buildApplySharedAdvanceOffsetRequest,
   buildApplyVendorSharedAdvanceOffsetUrl,
   buildClassifySubLedgerRequest,
@@ -27,6 +30,8 @@ import {
   buildFundSharedAdvanceRequest,
   buildFundVendorSharedAdvanceUrl,
   buildRecordEntryRequest,
+  buildRecordPaymentWithOffsetRequest,
+  buildRecordVendorPaymentWithOffsetUrl,
   buildRecordVendorRefundRequest,
   buildRecordVendorRefundUrl,
   buildReverseEntryRequest,
@@ -35,6 +40,7 @@ import {
   buildReverseVendorSharedAdvanceMovementUrl,
   buildVendorEntriesUrl,
   buildVendorReconciliationsUrl,
+  canDismissRecordEntryDialog,
   classifyVendorFinanceError,
   computeReconciliationDifferencePreview,
   CONTRACT_TYPE_BADGE_TONES,
@@ -53,16 +59,23 @@ import {
   parseCreateReconciliationEnvelope,
   parseFundSharedAdvanceEnvelope,
   parseRecordEntryEnvelope,
+  parseRecordPaymentWithOffsetEnvelope,
   parseRecordVendorRefundEnvelope,
   parseReverseEntryEnvelope,
   parseReverseSharedAdvanceMovementEnvelope,
+  reloadLedgerForAmbiguousRetryVerification,
+  resolveActiveProjectSubLedgerForRecord,
   SHARED_ADVANCE_MOVEMENT_TYPE_LABELS_VI,
+  unlockRecordEntryDialogAfterLedgerReconciliation,
   uploadEvidenceForCommittedTarget,
   validateEvidenceFilePreflight,
   VFIN_UI_CLASSIFIED_CONTRACT_TYPES,
   VFIN_UI_MAX_REASON_LENGTH,
   VFIN_UI_REDACTED_FIELD_LABEL_VI,
+  type DialogRecordVendorFinanceEntryType,
   type EvidenceUploadResumeState,
+  type ReconciledLedgerSnapshotForAmbiguousRetry,
+  type RecordEntryDialogDraftState,
 } from "@/lib/vendor-finance/ui-model";
 
 // =============================================================================
@@ -75,6 +88,9 @@ export function RecordVendorEntryDialog({
   vendorDisplayName,
   vendorActive,
   recordableProjects,
+  subLedgers = [],
+  currentSharedAdvanceMinor = "0",
+  canApplyVendorAdvance = false,
   initialProjectId,
   initialContractType,
   defaultDate,
@@ -88,11 +104,14 @@ export function RecordVendorEntryDialog({
   vendorDisplayName: string;
   vendorActive: boolean;
   recordableProjects: readonly VendorFinanceContextProjectOption[];
+  subLedgers?: readonly VendorFinanceDetailSubLedger[];
+  currentSharedAdvanceMinor?: string;
+  canApplyVendorAdvance?: boolean;
   initialProjectId?: string | null;
   initialContractType?: VendorFinanceClassifiedContractType | null;
   defaultDate: string;
   allowedEntryTypes: readonly NormalVendorFinanceEntryType[];
-  initialEntryType?: NormalVendorFinanceEntryType;
+  initialEntryType?: DialogRecordVendorFinanceEntryType;
   onDataChanged: () => void;
 }) {
   const descriptionId = useId();
@@ -100,6 +119,7 @@ export function RecordVendorEntryDialog({
   const contractTypeSelectId = useId();
   const typeSelectId = useId();
   const amountInputId = useId();
+  const offsetAmountInputId = useId();
   const dateInputId = useId();
   const reasonInputId = useId();
   const fileInputId = useId();
@@ -118,19 +138,41 @@ export function RecordVendorEntryDialog({
   const creatorAllowedEntryTypes: readonly NormalVendorFinanceEntryType[] =
     allowedEntryTypes.filter((t) => t !== "ADVANCE_RECORDED");
 
-  const resolvedDefaultType: NormalVendorFinanceEntryType =
-    initialEntryType && creatorAllowedEntryTypes.includes(initialEntryType)
+  const dialogAllowedEntryTypes: readonly DialogRecordVendorFinanceEntryType[] = (() => {
+    const list: DialogRecordVendorFinanceEntryType[] = [...creatorAllowedEntryTypes];
+    if (
+      (canApplyVendorAdvance || initialEntryType === "ADVANCE_OFFSET_RECORDED") &&
+      !list.includes("ADVANCE_OFFSET_RECORDED")
+    ) {
+      const paymentIdx = list.indexOf("PAYMENT_RECORDED");
+      if (paymentIdx >= 0) {
+        list.splice(paymentIdx + 1, 0, "ADVANCE_OFFSET_RECORDED");
+      } else {
+        list.push("ADVANCE_OFFSET_RECORDED");
+      }
+    }
+    return list;
+  })();
+
+  const resolvedDefaultType: DialogRecordVendorFinanceEntryType =
+    initialEntryType && dialogAllowedEntryTypes.includes(initialEntryType)
       ? initialEntryType
-      : (creatorAllowedEntryTypes[0] ?? "DEBT_RECORDED");
+      : (dialogAllowedEntryTypes[0] ?? "DEBT_RECORDED");
 
   const [projectId, setProjectId] = useState<string>(resolvedDefaultProject);
   const [contractType, setContractType] =
     useState<VendorFinanceClassifiedContractType>(resolvedDefaultContractType);
-  const [entryType, setEntryType] = useState<NormalVendorFinanceEntryType>(resolvedDefaultType);
+  const [entryType, setEntryType] =
+    useState<DialogRecordVendorFinanceEntryType>(resolvedDefaultType);
   const [amountInput, setAmountInput] = useState("");
+  const [offsetAmountInput, setOffsetAmountInput] = useState("");
   const [effectiveDate, setEffectiveDate] = useState(defaultDate);
   const [reason, setReason] = useState("");
   const [idempotencyKey, setIdempotencyKey] = useState(() => createClientIdempotencyKey());
+  const [ambiguousRetryLocked, setAmbiguousRetryLocked] = useState(false);
+  const [reloadingLedger, setReloadingLedger] = useState(false);
+  const [reconciledLedgerSnapshot, setReconciledLedgerSnapshot] =
+    useState<ReconciledLedgerSnapshotForAmbiguousRetry | null>(null);
 
   const [evidenceFile, setEvidenceFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -139,37 +181,160 @@ export function RecordVendorEntryDialog({
   // Locked post-commit state if entry succeeded on server, but optional evidence upload failed.
   // In this state, retrying ONLY uploads evidence to `committedEntry.entry_id` — NEVER re-POSTs the entry!
   const [committedEntry, setCommittedEntry] = useState<VendorFinanceEntryProjection | null>(null);
+  const [committedOffsetEntry, setCommittedOffsetEntry] =
+    useState<VendorFinanceEntryProjection | null>(null);
   const [evidenceResumeState, setEvidenceResumeState] =
     useState<EvidenceUploadResumeState | null>(null);
   const [retryingEvidence, setRetryingEvidence] = useState(false);
 
-  const rotateKey = () => setIdempotencyKey(createClientIdempotencyKey());
+  const currentDraftState: RecordEntryDialogDraftState = {
+    project_id: projectId,
+    contract_type: contractType,
+    entry_type: entryType,
+    amount_input: amountInput,
+    offset_amount_input: offsetAmountInput,
+    effective_date: effectiveDate,
+    reason,
+    idempotency_key: idempotencyKey,
+    ambiguous_retry_locked: ambiguousRetryLocked,
+  };
+
+  const syncDraftState = (nextState: RecordEntryDialogDraftState) => {
+    setProjectId(nextState.project_id);
+    setContractType(nextState.contract_type);
+    setEntryType(nextState.entry_type);
+    setAmountInput(nextState.amount_input);
+    setOffsetAmountInput(nextState.offset_amount_input);
+    setEffectiveDate(nextState.effective_date);
+    setReason(nextState.reason);
+    setIdempotencyKey(nextState.idempotency_key);
+    setAmbiguousRetryLocked(nextState.ambiguous_retry_locked);
+  };
+
+  const applyDraftEdit = (
+    patch: Partial<
+      Pick<
+        RecordEntryDialogDraftState,
+        | "project_id"
+        | "contract_type"
+        | "entry_type"
+        | "amount_input"
+        | "offset_amount_input"
+        | "effective_date"
+        | "reason"
+      >
+    >,
+  ) => {
+    const nextState = applyRecordEntryDialogDraftEdit(currentDraftState, patch);
+    if (nextState.ambiguous_retry_locked) {
+      return;
+    }
+    syncDraftState(nextState);
+    setErrorMsg(null);
+  };
 
   const resetAll = () => {
     setProjectId(resolvedDefaultProject);
     setContractType(resolvedDefaultContractType);
     setEntryType(resolvedDefaultType);
     setAmountInput("");
+    setOffsetAmountInput("");
     setEffectiveDate(defaultDate);
     setReason("");
     setIdempotencyKey(createClientIdempotencyKey());
+    setAmbiguousRetryLocked(false);
+    setReloadingLedger(false);
+    setReconciledLedgerSnapshot(null);
     setEvidenceFile(null);
     setSubmitting(false);
     setErrorMsg(null);
     setCommittedEntry(null);
+    setCommittedOffsetEntry(null);
     setEvidenceResumeState(null);
     setRetryingEvidence(false);
   };
 
+  const selectedProject =
+    recordableProjects.find((p) => p.project_id === projectId) ?? null;
+
+  const handleReloadLedgerToVerify = async () => {
+    if (submitting || retryingEvidence || reloadingLedger) return;
+    setReloadingLedger(true);
+    setErrorMsg(null);
+    const res = await reloadLedgerForAmbiguousRetryVerification({
+      vendor_id: vendorId,
+      project_id: projectId,
+      contract_type: contractType,
+      active_accountant_ref: selectedProject?.active_accountant_ref ?? null,
+    });
+    setReloadingLedger(false);
+    if (!res.ok) {
+      setErrorMsg(res.message);
+      return;
+    }
+    setReconciledLedgerSnapshot(res.snapshot);
+    onDataChanged();
+  };
+
+  const handleUnlockAfterLedgerReconcile = () => {
+    if (submitting || retryingEvidence || reloadingLedger) return;
+    const unlockDecision = unlockRecordEntryDialogAfterLedgerReconciliation(
+      currentDraftState,
+      reconciledLedgerSnapshot,
+      {
+        project_id: resolvedDefaultProject,
+        contract_type: resolvedDefaultContractType,
+        entry_type: resolvedDefaultType,
+        effective_date: defaultDate,
+      },
+    );
+    if (!unlockDecision.unlocked) {
+      return;
+    }
+    syncDraftState(unlockDecision.next_state);
+    setReconciledLedgerSnapshot(null);
+    setEvidenceFile(null);
+    setErrorMsg(null);
+  };
+
   const handleOpenChange = (nextOpen: boolean) => {
-    if (submitting || retryingEvidence) return;
     if (!nextOpen) {
+      if (
+        !canDismissRecordEntryDialog({
+          submitting,
+          retrying_evidence: retryingEvidence,
+          reloading_ledger: reloadingLedger,
+          ambiguous_retry_locked: ambiguousRetryLocked,
+        })
+      ) {
+        return;
+      }
+      const closeDecision = attemptCloseRecordEntryDialog(
+        currentDraftState,
+        {
+          project_id: resolvedDefaultProject,
+          contract_type: resolvedDefaultContractType,
+          entry_type: resolvedDefaultType,
+          effective_date: defaultDate,
+        },
+        {
+          submitting,
+          retrying_evidence: retryingEvidence,
+          reloading_ledger: reloadingLedger,
+        },
+      );
+      if (!closeDecision.allow_close) {
+        return;
+      }
       resetAll();
     }
     onOpenChange(nextOpen);
   };
 
   const handleEvidencePick = (file: File | null) => {
+    if (!committedEntry && ambiguousRetryLocked) {
+      return;
+    }
     setErrorMsg(null);
     setEvidenceResumeState(null);
     if (!file) {
@@ -185,9 +350,7 @@ export function RecordVendorEntryDialog({
     setEvidenceFile(file);
   };
 
-  const selectedProject =
-    recordableProjects.find((p) => p.project_id === projectId) ?? null;
-  const effectiveAllowedEntryTypes: readonly NormalVendorFinanceEntryType[] =
+  const effectiveNormalAllowedEntryTypes: readonly NormalVendorFinanceEntryType[] =
     !vendorActive || (selectedProject && !selectedProject.active)
       ? creatorAllowedEntryTypes.filter(
           (t) =>
@@ -196,17 +359,416 @@ export function RecordVendorEntryDialog({
             t === "ADJUSTMENT_DECREASE",
         )
       : creatorAllowedEntryTypes;
+  const effectiveAllowedEntryTypes: readonly DialogRecordVendorFinanceEntryType[] =
+    !vendorActive || (selectedProject && !selectedProject.active)
+      ? dialogAllowedEntryTypes.filter(
+          (t) =>
+            t === "PAYMENT_RECORDED" ||
+            t === "ADVANCE_OFFSET_RECORDED" ||
+            t === "ADJUSTMENT_INCREASE" ||
+            t === "ADJUSTMENT_DECREASE",
+        )
+      : dialogAllowedEntryTypes;
+
+  const isSettlementMode =
+    entryType === "PAYMENT_RECORDED" || entryType === "ADVANCE_OFFSET_RECORDED";
+
+  const {
+    sub_ledger: activeSubLedger,
+    current_payable_minor: currentSubLedgerPayableMinor,
+  } = resolveActiveProjectSubLedgerForRecord({
+    sub_ledgers: subLedgers,
+    project_id: projectId,
+    contract_type: contractType,
+    active_accountant_ref: selectedProject?.active_accountant_ref ?? null,
+  });
 
   const parsedAmountPreview = normalizePositiveVndInput(amountInput);
-  const directionHint = ENTRY_TYPE_DIRECTION_HINTS_VI[entryType];
+  const parsedOffsetAmountPreview = normalizePositiveVndInput(offsetAmountInput);
+  const directionHint =
+    entryType === "ADVANCE_OFFSET_RECORDED"
+      ? {
+          deltaSign: "-" as const,
+          description:
+            "Khấu trừ số dư ứng dùng chung cấp Vendor vào công nợ phải trả của sổ dự án (-).",
+        }
+      : ENTRY_TYPE_DIRECTION_HINTS_VI[entryType];
+
+  const isOffsetOnlySettlement =
+    isSettlementMode &&
+    amountInput.trim().length === 0 &&
+    offsetAmountInput.trim().length > 0;
 
   const handleSubmitEntry = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (committedEntry) {
+    if (committedEntry || reloadingLedger) {
       return;
     }
     setErrorMsg(null);
 
+    const preflightPayableMinor = ambiguousRetryLocked
+      ? null
+      : currentSubLedgerPayableMinor;
+    const preflightSharedAdvanceMinor = ambiguousRetryLocked
+      ? null
+      : currentSharedAdvanceMinor;
+
+    if (!isSettlementMode) {
+      if (evidenceFile) {
+        const check = validateEvidenceFilePreflight(evidenceFile);
+        if (!check.ok) {
+          setErrorMsg(check.message);
+          return;
+        }
+      }
+
+      const built = buildRecordEntryRequest({
+        project_id: projectId,
+        contract_type: contractType,
+        entry_type: entryType,
+        amount_input: amountInput,
+        effective_date: effectiveDate,
+        reason,
+        idempotency_key: idempotencyKey,
+        allowed_entry_types: effectiveNormalAllowedEntryTypes,
+        current_subledger_payable_minor: preflightPayableMinor,
+      });
+      if (!built.ok) {
+        setErrorMsg(built.message);
+        return;
+      }
+
+      setSubmitting(true);
+      let savedEntry: VendorFinanceEntryProjection;
+      try {
+        const res = await fetch(buildVendorEntriesUrl(vendorId), {
+          method: "POST",
+          headers: built.request.headers,
+          body: JSON.stringify(built.request.body),
+        });
+        const json: unknown = await res.json().catch(() => null);
+
+        if (!res.ok) {
+          const classified = classifyVendorFinanceError(json, res.status);
+          const nextState = applyRecordEntryMutationOutcome(currentDraftState, {
+            kind: "http_error",
+            http_status: res.status,
+            classified,
+          });
+          syncDraftState(nextState);
+          if (nextState.ambiguous_retry_locked) {
+            setReconciledLedgerSnapshot(null);
+          }
+          if (classified.code === "VENDOR_FINANCE_INSUFFICIENT_SUBLEDGER_PAYABLE") {
+            onDataChanged();
+          }
+          setErrorMsg(classified.message);
+          setSubmitting(false);
+          return;
+        }
+
+        const parsed = parseRecordEntryEnvelope(json);
+        if (!parsed) {
+          syncDraftState(
+            applyRecordEntryMutationOutcome(currentDraftState, {
+              kind: "invalid_ok_envelope",
+            }),
+          );
+          setReconciledLedgerSnapshot(null);
+          setErrorMsg(
+            "Phản hồi ghi nhận bút toán từ máy chủ không hợp lệ nên chưa rõ kết quả. Dữ liệu và Idempotency-Key đã được giữ nguyên: hãy bấm Thử gửi lại yêu cầu này hoặc Tải lại sổ để đối chiếu trước khi tạo yêu cầu mới.",
+          );
+          setSubmitting(false);
+          return;
+        }
+        syncDraftState(
+          applyRecordEntryMutationOutcome(currentDraftState, { kind: "ok" }),
+        );
+        setReconciledLedgerSnapshot(null);
+        savedEntry = parsed.entry;
+      } catch {
+        syncDraftState(
+          applyRecordEntryMutationOutcome(currentDraftState, {
+            kind: "network_error",
+          }),
+        );
+        setReconciledLedgerSnapshot(null);
+        setErrorMsg(
+          "Mất kết nối mạng hoặc mất phản hồi khi ghi nhận bút toán. Dữ liệu và Idempotency-Key đã được giữ nguyên: hãy bấm Thử gửi lại yêu cầu này hoặc Tải lại sổ để đối chiếu trước khi tạo yêu cầu mới.",
+        );
+        setSubmitting(false);
+        return;
+      }
+
+      onDataChanged();
+
+      if (!evidenceFile) {
+        setSubmitting(false);
+        notify.success({
+          title: `Đã ghi nhận ${savedEntry.document_no}`,
+          description: `${savedEntry.project_display_name_snapshot ?? savedEntry.project_id} · ${CONTRACT_TYPE_LABELS_VI[savedEntry.contract_type]} · ${ENTRY_TYPE_LABELS_VI[savedEntry.entry_type]} · ${formatVndMinor(savedEntry.amount_minor)}`,
+        });
+        resetAll();
+        onOpenChange(false);
+        return;
+      }
+
+      const uploadRes = await uploadEvidenceForCommittedTarget({
+        target_kind: "ENTRY",
+        target_id: savedEntry.entry_id,
+        file: evidenceFile,
+      });
+
+      setSubmitting(false);
+
+      if (!uploadRes.ok) {
+        setCommittedEntry(savedEntry);
+        setCommittedOffsetEntry(null);
+        setEvidenceResumeState(uploadRes.resumeState);
+        setErrorMsg(uploadRes.message);
+        return;
+      }
+
+      onDataChanged();
+      notify.success({
+        title: `Đã ghi nhận ${savedEntry.document_no} kèm ảnh bằng chứng`,
+        description: `${savedEntry.project_display_name_snapshot ?? savedEntry.project_id} · ${CONTRACT_TYPE_LABELS_VI[savedEntry.contract_type]} · ${ENTRY_TYPE_LABELS_VI[savedEntry.entry_type]} · ${formatVndMinor(savedEntry.amount_minor)}`,
+      });
+      resetAll();
+      onOpenChange(false);
+      return;
+    }
+
+    // Settlement mode (`PAYMENT_RECORDED` or `ADVANCE_OFFSET_RECORDED`):
+    // Two optional money inputs: `amountInput` (Trả tiền TM/CK) and `offsetAmountInput` (Khấu trừ ứng).
+    // At least one must be non-empty.
+    const hasPayment = amountInput.trim().length > 0;
+    const hasOffset = offsetAmountInput.trim().length > 0;
+    if (!hasPayment && !hasOffset) {
+      setErrorMsg(
+        "Vui lòng nhập ít nhất một khoản tiền: Trả tiền TM/CK hoặc Khấu trừ ứng (> 0 ₫).",
+      );
+      return;
+    }
+
+    // Case 1: Only Trả tiền TM/CK entered -> PAYMENT_RECORDED
+    if (hasPayment && !hasOffset) {
+      if (evidenceFile) {
+        const check = validateEvidenceFilePreflight(evidenceFile);
+        if (!check.ok) {
+          setErrorMsg(check.message);
+          return;
+        }
+      }
+
+      const built = buildRecordEntryRequest({
+        project_id: projectId,
+        contract_type: contractType,
+        entry_type: "PAYMENT_RECORDED",
+        amount_input: amountInput,
+        effective_date: effectiveDate,
+        reason,
+        idempotency_key: idempotencyKey,
+        allowed_entry_types: effectiveNormalAllowedEntryTypes,
+        current_subledger_payable_minor: preflightPayableMinor,
+      });
+      if (!built.ok) {
+        setErrorMsg(built.message);
+        return;
+      }
+
+      setSubmitting(true);
+      let savedEntry: VendorFinanceEntryProjection;
+      try {
+        const res = await fetch(buildVendorEntriesUrl(vendorId), {
+          method: "POST",
+          headers: built.request.headers,
+          body: JSON.stringify(built.request.body),
+        });
+        const json: unknown = await res.json().catch(() => null);
+
+        if (!res.ok) {
+          const classified = classifyVendorFinanceError(json, res.status);
+          const nextState = applyRecordEntryMutationOutcome(currentDraftState, {
+            kind: "http_error",
+            http_status: res.status,
+            classified,
+          });
+          syncDraftState(nextState);
+          if (nextState.ambiguous_retry_locked) {
+            setReconciledLedgerSnapshot(null);
+          }
+          if (classified.code === "VENDOR_FINANCE_INSUFFICIENT_SUBLEDGER_PAYABLE") {
+            onDataChanged();
+          }
+          setErrorMsg(classified.message);
+          setSubmitting(false);
+          return;
+        }
+
+        const parsed = parseRecordEntryEnvelope(json);
+        if (!parsed) {
+          syncDraftState(
+            applyRecordEntryMutationOutcome(currentDraftState, {
+              kind: "invalid_ok_envelope",
+            }),
+          );
+          setReconciledLedgerSnapshot(null);
+          setErrorMsg(
+            "Phản hồi ghi nhận thanh toán từ máy chủ không hợp lệ nên chưa rõ kết quả. Dữ liệu và Idempotency-Key đã được giữ nguyên: hãy bấm Thử gửi lại yêu cầu này hoặc Tải lại sổ để đối chiếu trước khi tạo yêu cầu mới.",
+          );
+          setSubmitting(false);
+          return;
+        }
+        syncDraftState(
+          applyRecordEntryMutationOutcome(currentDraftState, { kind: "ok" }),
+        );
+        setReconciledLedgerSnapshot(null);
+        savedEntry = parsed.entry;
+      } catch {
+        syncDraftState(
+          applyRecordEntryMutationOutcome(currentDraftState, {
+            kind: "network_error",
+          }),
+        );
+        setReconciledLedgerSnapshot(null);
+        setErrorMsg(
+          "Mất kết nối mạng hoặc mất phản hồi khi ghi nhận thanh toán. Dữ liệu và Idempotency-Key đã được giữ nguyên: hãy bấm Thử gửi lại yêu cầu này hoặc Tải lại sổ để đối chiếu trước khi tạo yêu cầu mới.",
+        );
+        setSubmitting(false);
+        return;
+      }
+
+      onDataChanged();
+
+      if (!evidenceFile) {
+        setSubmitting(false);
+        notify.success({
+          title: `Đã ghi nhận ${savedEntry.document_no}`,
+          description: `${savedEntry.project_display_name_snapshot ?? savedEntry.project_id} · ${CONTRACT_TYPE_LABELS_VI[savedEntry.contract_type]} · ${ENTRY_TYPE_LABELS_VI[savedEntry.entry_type]} · ${formatVndMinor(savedEntry.amount_minor)}`,
+        });
+        resetAll();
+        onOpenChange(false);
+        return;
+      }
+
+      const uploadRes = await uploadEvidenceForCommittedTarget({
+        target_kind: "ENTRY",
+        target_id: savedEntry.entry_id,
+        file: evidenceFile,
+      });
+
+      setSubmitting(false);
+
+      if (!uploadRes.ok) {
+        setCommittedEntry(savedEntry);
+        setCommittedOffsetEntry(null);
+        setEvidenceResumeState(uploadRes.resumeState);
+        setErrorMsg(uploadRes.message);
+        return;
+      }
+
+      onDataChanged();
+      notify.success({
+        title: `Đã ghi nhận ${savedEntry.document_no} kèm ảnh bằng chứng`,
+        description: `${savedEntry.project_display_name_snapshot ?? savedEntry.project_id} · ${CONTRACT_TYPE_LABELS_VI[savedEntry.contract_type]} · ${ENTRY_TYPE_LABELS_VI[savedEntry.entry_type]} · ${formatVndMinor(savedEntry.amount_minor)}`,
+      });
+      resetAll();
+      onOpenChange(false);
+      return;
+    }
+
+    // Case 2: Only Khấu trừ ứng entered -> ADVANCE_OFFSET_RECORDED + PROJECT_OFFSET_APPLIED
+    if (!hasPayment && hasOffset) {
+      const built = buildApplySharedAdvanceOffsetRequest({
+        project_id: projectId,
+        contract_type: contractType,
+        amount_input: offsetAmountInput,
+        effective_date: effectiveDate,
+        reason,
+        idempotency_key: idempotencyKey,
+        available_shared_advance_minor: preflightSharedAdvanceMinor,
+        current_subledger_payable_minor: preflightPayableMinor,
+      });
+      if (!built.ok) {
+        setErrorMsg(built.message);
+        return;
+      }
+
+      setSubmitting(true);
+      try {
+        const res = await fetch(buildApplyVendorSharedAdvanceOffsetUrl(vendorId), {
+          method: "POST",
+          headers: built.request.headers,
+          body: JSON.stringify(built.request.body),
+        });
+        const json: unknown = await res.json().catch(() => null);
+
+        if (!res.ok) {
+          const classified = classifyVendorFinanceError(json, res.status);
+          const nextState = applyRecordEntryMutationOutcome(currentDraftState, {
+            kind: "http_error",
+            http_status: res.status,
+            classified,
+          });
+          syncDraftState(nextState);
+          if (nextState.ambiguous_retry_locked) {
+            setReconciledLedgerSnapshot(null);
+          }
+          if (
+            classified.code === "VENDOR_FINANCE_INSUFFICIENT_SHARED_ADVANCE" ||
+            classified.code === "VENDOR_FINANCE_INSUFFICIENT_SUBLEDGER_PAYABLE"
+          ) {
+            onDataChanged();
+          }
+          setErrorMsg(classified.message);
+          setSubmitting(false);
+          return;
+        }
+
+        const parsed = parseApplySharedAdvanceOffsetEnvelope(json);
+        if (!parsed) {
+          syncDraftState(
+            applyRecordEntryMutationOutcome(currentDraftState, {
+              kind: "invalid_ok_envelope",
+            }),
+          );
+          setReconciledLedgerSnapshot(null);
+          setErrorMsg(
+            "Phản hồi khấu trừ ứng từ máy chủ không hợp lệ nên chưa rõ kết quả. Dữ liệu và Idempotency-Key đã được giữ nguyên: hãy bấm Thử gửi lại yêu cầu này hoặc Tải lại sổ để đối chiếu trước khi tạo yêu cầu mới.",
+          );
+          setSubmitting(false);
+          return;
+        }
+
+        syncDraftState(
+          applyRecordEntryMutationOutcome(currentDraftState, { kind: "ok" }),
+        );
+        setReconciledLedgerSnapshot(null);
+        onDataChanged();
+        setSubmitting(false);
+        notify.success({
+          title: `Đã khấu trừ ứng ${parsed.entry.document_no}`,
+          description: `${parsed.entry.project_display_name_snapshot ?? parsed.entry.project_id} · ${CONTRACT_TYPE_LABELS_VI[parsed.entry.contract_type]} · -${formatVndMinor(parsed.entry.amount_minor)} · Dư ứng Vendor còn: ${formatVndMinor(parsed.shared_advance_balance_minor)}`,
+        });
+        resetAll();
+        onOpenChange(false);
+      } catch {
+        syncDraftState(
+          applyRecordEntryMutationOutcome(currentDraftState, {
+            kind: "network_error",
+          }),
+        );
+        setReconciledLedgerSnapshot(null);
+        setErrorMsg(
+          "Mất kết nối mạng hoặc mất phản hồi khi khấu trừ ứng. Dữ liệu và Idempotency-Key đã được giữ nguyên: hãy bấm Thử gửi lại yêu cầu này hoặc Tải lại sổ để đối chiếu trước khi tạo yêu cầu mới.",
+        );
+        setSubmitting(false);
+      }
+      return;
+    }
+
+    // Case 3: Both Trả tiền TM/CK and Khấu trừ ứng entered -> Combined atomic settlement (`settle-with-offset`)
     if (evidenceFile) {
       const check = validateEvidenceFilePreflight(evidenceFile);
       if (!check.ok) {
@@ -215,15 +777,16 @@ export function RecordVendorEntryDialog({
       }
     }
 
-    const built = buildRecordEntryRequest({
+    const built = buildRecordPaymentWithOffsetRequest({
       project_id: projectId,
       contract_type: contractType,
-      entry_type: entryType,
-      amount_input: amountInput,
+      payment_amount_input: amountInput,
+      offset_amount_input: offsetAmountInput,
       effective_date: effectiveDate,
       reason,
       idempotency_key: idempotencyKey,
-      allowed_entry_types: effectiveAllowedEntryTypes,
+      available_shared_advance_minor: preflightSharedAdvanceMinor,
+      current_subledger_payable_minor: preflightPayableMinor,
     });
     if (!built.ok) {
       setErrorMsg(built.message);
@@ -231,9 +794,11 @@ export function RecordVendorEntryDialog({
     }
 
     setSubmitting(true);
-    let savedEntry: VendorFinanceEntryProjection;
+    let savedPaymentEntry: VendorFinanceEntryProjection;
+    let savedOffsetEntry: VendorFinanceEntryProjection;
+    let savedSharedAdvanceBalanceMinor: string;
     try {
-      const res = await fetch(buildVendorEntriesUrl(vendorId), {
+      const res = await fetch(buildRecordVendorPaymentWithOffsetUrl(vendorId), {
         method: "POST",
         headers: built.request.headers,
         body: JSON.stringify(built.request.body),
@@ -242,56 +807,88 @@ export function RecordVendorEntryDialog({
 
       if (!res.ok) {
         const classified = classifyVendorFinanceError(json, res.status);
-        if (classified.shouldRotateIdempotencyKey) {
-          rotateKey();
+        const nextState = applyRecordEntryMutationOutcome(currentDraftState, {
+          kind: "http_error",
+          http_status: res.status,
+          classified,
+        });
+        syncDraftState(nextState);
+        if (nextState.ambiguous_retry_locked) {
+          setReconciledLedgerSnapshot(null);
+        }
+        if (
+          classified.code === "VENDOR_FINANCE_INSUFFICIENT_SHARED_ADVANCE" ||
+          classified.code === "VENDOR_FINANCE_INSUFFICIENT_SUBLEDGER_PAYABLE"
+        ) {
+          onDataChanged();
         }
         setErrorMsg(classified.message);
         setSubmitting(false);
         return;
       }
 
-      const parsed = parseRecordEntryEnvelope(json);
+      const parsed = parseRecordPaymentWithOffsetEnvelope(json);
       if (!parsed) {
+        syncDraftState(
+          applyRecordEntryMutationOutcome(currentDraftState, {
+            kind: "invalid_ok_envelope",
+          }),
+        );
+        setReconciledLedgerSnapshot(null);
         setErrorMsg(
-          "Phản hồi ghi nhận bút toán từ máy chủ không hợp lệ. Vui lòng tải lại sổ cái để kiểm tra trước khi nhập lại.",
+          "Phản hồi thanh toán kết hợp khấu trừ ứng từ máy chủ không hợp lệ nên chưa rõ kết quả. Dữ liệu và Idempotency-Key đã được giữ nguyên: hãy bấm Thử gửi lại yêu cầu này hoặc Tải lại sổ để đối chiếu trước khi tạo yêu cầu mới.",
         );
         setSubmitting(false);
         return;
       }
-      savedEntry = parsed.entry;
+      syncDraftState(
+        applyRecordEntryMutationOutcome(currentDraftState, { kind: "ok" }),
+      );
+      setReconciledLedgerSnapshot(null);
+      savedPaymentEntry = parsed.payment_entry;
+      savedOffsetEntry = parsed.offset_entry;
+      savedSharedAdvanceBalanceMinor = parsed.shared_advance_balance_minor;
     } catch {
+      syncDraftState(
+        applyRecordEntryMutationOutcome(currentDraftState, {
+          kind: "network_error",
+        }),
+      );
+      setReconciledLedgerSnapshot(null);
       setErrorMsg(
-        "Mất kết nối mạng khi ghi nhận bút toán. Bạn có thể bấm Lưu bút toán lại (hệ thống giữ nguyên Idempotency-Key chống tạo trùng).",
+        "Mất kết nối mạng hoặc mất phản hồi khi thanh toán và khấu trừ ứng. Dữ liệu và Idempotency-Key đã được giữ nguyên: hãy bấm Thử gửi lại yêu cầu này hoặc Tải lại sổ để đối chiếu trước khi tạo yêu cầu mới.",
       );
       setSubmitting(false);
       return;
     }
 
-    // Server has authoritatively committed the ledger entry -> refresh parent balances & ledger!
+    // Server has authoritatively committed both ledger entries & shared advance movement atomically
     onDataChanged();
 
     if (!evidenceFile) {
       setSubmitting(false);
       notify.success({
-        title: `Đã ghi nhận ${savedEntry.document_no}`,
-        description: `${savedEntry.project_display_name_snapshot ?? savedEntry.project_id} · ${CONTRACT_TYPE_LABELS_VI[savedEntry.contract_type]} · ${ENTRY_TYPE_LABELS_VI[savedEntry.entry_type]} · ${formatVndMinor(savedEntry.amount_minor)}`,
+        title: `Đã ghi nhận ${savedPaymentEntry.document_no} & ${savedOffsetEntry.document_no}`,
+        description: `Trả tiền TM/CK: -${formatVndMinor(savedPaymentEntry.amount_minor)} · Khấu trừ ứng: -${formatVndMinor(savedOffsetEntry.amount_minor)} · Công nợ sổ sau GD: ${formatVndMinor(savedOffsetEntry.balance_after_minor)} · Dư ứng Vendor còn: ${formatVndMinor(savedSharedAdvanceBalanceMinor)}`,
       });
       resetAll();
       onOpenChange(false);
       return;
     }
 
-    // Phase 2: Upload optional evidence strictly against committed `savedEntry.entry_id`
+    // Phase 2 (Confirmed Decision #3): Attach evidence image to the PAYMENT_RECORDED entry (`savedPaymentEntry.entry_id`).
+    // If upload fails, lock into post-commit recovery so retrying ONLY uploads the image and NEVER re-submits the money mutation.
     const uploadRes = await uploadEvidenceForCommittedTarget({
       target_kind: "ENTRY",
-      target_id: savedEntry.entry_id,
+      target_id: savedPaymentEntry.entry_id,
       file: evidenceFile,
     });
 
     setSubmitting(false);
 
     if (!uploadRes.ok) {
-      setCommittedEntry(savedEntry);
+      setCommittedEntry(savedPaymentEntry);
+      setCommittedOffsetEntry(savedOffsetEntry);
       setEvidenceResumeState(uploadRes.resumeState);
       setErrorMsg(uploadRes.message);
       return;
@@ -299,8 +896,8 @@ export function RecordVendorEntryDialog({
 
     onDataChanged();
     notify.success({
-      title: `Đã ghi nhận ${savedEntry.document_no} kèm ảnh bằng chứng`,
-      description: `${savedEntry.project_display_name_snapshot ?? savedEntry.project_id} · ${CONTRACT_TYPE_LABELS_VI[savedEntry.contract_type]} · ${ENTRY_TYPE_LABELS_VI[savedEntry.entry_type]} · ${formatVndMinor(savedEntry.amount_minor)}`,
+      title: `Đã ghi nhận ${savedPaymentEntry.document_no} & ${savedOffsetEntry.document_no} kèm ảnh bằng chứng`,
+      description: `Trả tiền TM/CK: -${formatVndMinor(savedPaymentEntry.amount_minor)} · Khấu trừ ứng: -${formatVndMinor(savedOffsetEntry.amount_minor)} · Công nợ sổ sau GD: ${formatVndMinor(savedOffsetEntry.balance_after_minor)}`,
     });
     resetAll();
     onOpenChange(false);
@@ -341,10 +938,10 @@ export function RecordVendorEntryDialog({
     <FormDialog
       open={open}
       onOpenChange={handleOpenChange}
-      closeDisabled={submitting || retryingEvidence}
+      closeDisabled={submitting || retryingEvidence || reloadingLedger || ambiguousRetryLocked}
       title={
         committedEntry
-          ? `Bút toán ${committedEntry.document_no} đã lưu — Hoàn tất ảnh bằng chứng`
+          ? `Bút toán ${committedEntry.document_no}${committedOffsetEntry ? ` & ${committedOffsetEntry.document_no}` : ""} đã lưu — Hoàn tất ảnh bằng chứng`
           : `Ghi nhận khoản tiền — ${vendorDisplayName}`
       }
       description={
@@ -360,7 +957,10 @@ export function RecordVendorEntryDialog({
           <div className="rounded-xl border border-emerald-500/35 bg-emerald-500/10 p-3.5 text-sm">
             <div className="flex items-center gap-2 font-semibold text-foreground">
               <CheckCircle2 className="h-4 w-4 text-emerald-600" aria-hidden />
-              <span>Đã ghi nhận bút toán {committedEntry.document_no} an toàn</span>
+              <span>
+                Đã ghi nhận bút toán {committedEntry.document_no}
+                {committedOffsetEntry ? ` và ${committedOffsetEntry.document_no}` : ""} an toàn
+              </span>
             </div>
             <p className="mt-1 text-xs text-muted">
               Dự án:{" "}
@@ -380,10 +980,23 @@ export function RecordVendorEntryDialog({
               {ENTRY_TYPE_LABELS_VI[committedEntry.entry_type]} · Số tiền:{" "}
               <strong className="font-mono text-foreground">
                 {formatVndMinor(committedEntry.amount_minor)}
-              </strong>{" "}
+              </strong>
+              {committedOffsetEntry ? (
+                <>
+                  {" "}
+                  · Khấu trừ ứng ({committedOffsetEntry.document_no}):{" "}
+                  <strong className="font-mono text-foreground">
+                    {formatVndMinor(committedOffsetEntry.amount_minor)}
+                  </strong>
+                </>
+              ) : null}{" "}
               · Số dư sổ sau GD:{" "}
               <strong className="font-mono text-foreground">
-                {formatVndMinor(committedEntry.balance_after_minor)}
+                {formatVndMinor(
+                  committedOffsetEntry
+                    ? committedOffsetEntry.balance_after_minor
+                    : committedEntry.balance_after_minor,
+                )}
               </strong>
             </p>
           </div>
@@ -396,7 +1009,8 @@ export function RecordVendorEntryDialog({
 
           <div className="space-y-1.5">
             <label htmlFor={fileInputId} className="block text-sm font-medium text-foreground">
-              Tệp ảnh bằng chứng cho {committedEntry.document_no} (JPEG / PNG, tối đa 10 MB)
+              Tệp ảnh bằng chứng cho phiếu thanh toán {committedEntry.document_no} (JPEG / PNG, tối
+              đa 10 MB)
             </label>
             <input
               id={fileInputId}
@@ -470,6 +1084,78 @@ export function RecordVendorEntryDialog({
             </Alert>
           ) : null}
 
+          {ambiguousRetryLocked ? (
+            <Alert
+              tone="warning"
+              data-testid="vfin-record-ambiguous-retry-lock"
+              title="Đang khóa chỉnh sửa và đóng hộp thoại để chống ghi trùng chứng từ"
+            >
+              <p>
+                Yêu cầu trước đó chưa nhận được phản hồi xác nhận từ máy chủ. Dữ liệu và khóa định
+                danh yêu cầu (Idempotency-Key) đang được giữ nguyên — bạn không thể đóng hay sửa
+                trực tiếp khi chưa xác nhận kết quả; hãy bấm{" "}
+                <strong>Thử gửi lại yêu cầu này</strong> (cùng dữ liệu và cùng Idempotency-Key) hoặc
+                bấm <strong>Tải lại sổ để đối chiếu</strong> và kiểm tra số dư/chứng từ mới nhất
+                trước khi mở yêu cầu mới.
+              </p>
+            </Alert>
+          ) : null}
+
+          {ambiguousRetryLocked && reconciledLedgerSnapshot ? (
+            <div
+              data-testid="vfin-record-reloaded-ledger-preview"
+              className="space-y-2 rounded-xl border border-primary/35 bg-primary/5 p-3 text-xs"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <strong className="text-foreground">
+                  Dữ liệu sổ vừa tải từ máy chủ để đối chiếu
+                </strong>
+                <span className="font-mono text-muted">
+                  Dự án: {projectId} · {CONTRACT_TYPE_LABELS_VI[contractType]}
+                </span>
+              </div>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <div>
+                  <span className="text-muted">Công nợ phải trả mới nhất của sổ: </span>
+                  <strong className="font-mono text-foreground">
+                    {reconciledLedgerSnapshot.has_active_book
+                      ? formatVndMinor(reconciledLedgerSnapshot.current_payable_minor)
+                      : "0 ₫ (Chưa phát sinh)"}
+                  </strong>
+                </div>
+                <div>
+                  <span className="text-muted">Dư ứng dùng chung mới nhất (Vendor): </span>
+                  <strong className="font-mono text-foreground">
+                    {formatVndMinor(reconciledLedgerSnapshot.shared_advance_balance_minor)}
+                  </strong>
+                </div>
+              </div>
+              {reconciledLedgerSnapshot.latest_entries.length === 0 ? (
+                <p className="text-muted">Chưa ghi nhận chứng từ nào trên sổ dự án này.</p>
+              ) : (
+                <div className="space-y-1 border-t border-border pt-2">
+                  <p className="font-medium text-foreground">Chứng từ mới nhất trên sổ:</p>
+                  {reconciledLedgerSnapshot.latest_entries.map((item) => (
+                    <div
+                      key={item.entry_id}
+                      className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-surface px-2.5 py-1.5"
+                    >
+                      <span>
+                        <strong className="font-mono text-foreground">{item.document_no}</strong> ·{" "}
+                        {ENTRY_TYPE_LABELS_VI[item.entry_type]} ·{" "}
+                        {formatVietnamDateLabel(item.effective_date)}
+                      </span>
+                      <span className="font-mono font-semibold text-foreground">
+                        {formatSignedVndDelta(item.balance_delta_minor)} (Sau GD:{" "}
+                        {formatVndMinor(item.balance_after_minor)})
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : null}
+
           {errorMsg ? (
             <Alert tone="error" role="alert" title="Không thể ghi nhận bút toán">
               <p>{errorMsg}</p>
@@ -484,11 +1170,9 @@ export function RecordVendorEntryDialog({
               id={projectSelectId}
               data-testid="vfin-record-project-select"
               value={projectId}
-              disabled={submitting}
+              disabled={submitting || ambiguousRetryLocked}
               onChange={(e) => {
-                setProjectId(e.target.value);
-                setErrorMsg(null);
-                rotateKey();
+                applyDraftEdit({ project_id: e.target.value });
               }}
               className="min-h-11 sm:min-h-10 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
             >
@@ -523,11 +1207,11 @@ export function RecordVendorEntryDialog({
                 id={contractTypeSelectId}
                 data-testid="vfin-record-contract-type-select"
                 value={contractType}
-                disabled={submitting}
+                disabled={submitting || ambiguousRetryLocked}
                 onChange={(e) => {
-                  setContractType(e.target.value as VendorFinanceClassifiedContractType);
-                  setErrorMsg(null);
-                  rotateKey();
+                  applyDraftEdit({
+                    contract_type: e.target.value as VendorFinanceClassifiedContractType,
+                  });
                 }}
                 className="min-h-11 sm:min-h-10 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
               >
@@ -548,12 +1232,13 @@ export function RecordVendorEntryDialog({
               </label>
               <select
                 id={typeSelectId}
+                data-testid="vfin-record-entry-type-select"
                 value={entryType}
-                disabled={submitting}
+                disabled={submitting || ambiguousRetryLocked}
                 onChange={(e) => {
-                  setEntryType(e.target.value as NormalVendorFinanceEntryType);
-                  setErrorMsg(null);
-                  rotateKey();
+                  applyDraftEdit({
+                    entry_type: e.target.value as DialogRecordVendorFinanceEntryType,
+                  });
                 }}
                 className="min-h-11 sm:min-h-10 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
               >
@@ -573,62 +1258,185 @@ export function RecordVendorEntryDialog({
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <label htmlFor={amountInputId} className="block text-sm font-medium text-foreground">
-                Số tiền (VND nguyên dương) <span className="text-rose-600">*</span>
-              </label>
-              <input
-                id={amountInputId}
-                type="text"
-                inputMode="numeric"
-                autoComplete="off"
-                placeholder="Ví dụ: 15000000"
-                value={amountInput}
-                disabled={submitting}
-                onChange={(e) => {
-                  setAmountInput(e.target.value);
-                  setErrorMsg(null);
-                  rotateKey();
-                }}
-                className="min-h-11 sm:min-h-10 w-full rounded-lg border border-border bg-surface px-3 py-2 font-mono text-sm tabular-nums text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-              />
-              <p aria-live="polite" className="text-xs text-muted">
-                {amountInput.trim().length === 0 ? (
-                  "Chỉ nhập số nguyên VND (không số thập phân)."
-                ) : parsedAmountPreview.ok ? (
-                  <>
-                    Hiển thị:{" "}
-                    <strong className="font-mono text-foreground">
-                      {formatVndMinor(parsedAmountPreview.canonical)}
-                    </strong>
-                  </>
-                ) : (
-                  <span className="text-rose-600 dark:text-rose-300">
-                    {parsedAmountPreview.message}
-                  </span>
-                )}
-              </p>
-            </div>
+          {isSettlementMode ? (
+            <div className="space-y-3" data-testid="vfin-record-settlement-section">
+              <div
+                data-testid="vfin-record-settlement-summary"
+                className="grid grid-cols-1 gap-2 rounded-xl border border-border bg-surface-muted/40 p-3 text-xs sm:grid-cols-2"
+              >
+                <div>
+                  <span className="text-muted">Công nợ phải trả hiện tại của sổ: </span>
+                  <strong className="font-mono text-foreground">
+                    {activeSubLedger !== null
+                      ? formatVndMinor(currentSubLedgerPayableMinor)
+                      : "0 ₫ (Chưa phát sinh)"}
+                  </strong>
+                </div>
+                <div>
+                  <span className="text-muted">Dư ứng dùng chung khả dụng (Vendor): </span>
+                  <strong className="font-mono text-foreground">
+                    {formatVndMinor(currentSharedAdvanceMinor)}
+                  </strong>
+                </div>
+              </div>
 
-            <div className="space-y-1.5">
-              <label htmlFor={dateInputId} className="block text-sm font-medium text-foreground">
-                Ngày hiệu lực <span className="text-rose-600">*</span>
-              </label>
-              <input
-                id={dateInputId}
-                type="date"
-                value={effectiveDate}
-                disabled={submitting}
-                onChange={(e) => {
-                  setEffectiveDate(e.target.value);
-                  setErrorMsg(null);
-                  rotateKey();
-                }}
-                className="min-h-11 sm:min-h-10 w-full rounded-lg border border-border bg-surface px-3 py-2 font-mono text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-              />
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <label
+                    htmlFor={amountInputId}
+                    className="block text-sm font-medium text-foreground"
+                  >
+                    Trả tiền TM/CK (VND)
+                  </label>
+                  <input
+                    id={amountInputId}
+                    data-testid="vfin-record-payment-amount-input"
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="off"
+                    placeholder="Ví dụ: 6000000 (tùy chọn)"
+                    value={amountInput}
+                    disabled={submitting || ambiguousRetryLocked}
+                    onChange={(e) => {
+                      applyDraftEdit({ amount_input: e.target.value });
+                    }}
+                    className="min-h-11 sm:min-h-10 w-full rounded-lg border border-border bg-surface px-3 py-2 font-mono text-sm tabular-nums text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                  />
+                  <p aria-live="polite" className="text-xs text-muted">
+                    {amountInput.trim().length === 0 ? (
+                      "Tùy chọn — Ghi bút toán Thanh toán cho Vendor (-)."
+                    ) : parsedAmountPreview.ok ? (
+                      <>
+                        Trả TM/CK:{" "}
+                        <strong className="font-mono text-foreground">
+                          -{formatVndMinor(parsedAmountPreview.canonical)}
+                        </strong>
+                      </>
+                    ) : (
+                      <span className="text-rose-600 dark:text-rose-300">
+                        {parsedAmountPreview.message}
+                      </span>
+                    )}
+                  </p>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label
+                    htmlFor={offsetAmountInputId}
+                    className="block text-sm font-medium text-foreground"
+                  >
+                    Khấu trừ ứng (VND)
+                  </label>
+                  <input
+                    id={offsetAmountInputId}
+                    data-testid="vfin-record-offset-amount-input"
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="off"
+                    placeholder="Ví dụ: 4000000 (tùy chọn)"
+                    value={offsetAmountInput}
+                    disabled={submitting || ambiguousRetryLocked}
+                    onChange={(e) => {
+                      applyDraftEdit({ offset_amount_input: e.target.value });
+                    }}
+                    className="min-h-11 sm:min-h-10 w-full rounded-lg border border-border bg-surface px-3 py-2 font-mono text-sm tabular-nums text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                  />
+                  <p aria-live="polite" className="text-xs text-muted">
+                    {offsetAmountInput.trim().length === 0 ? (
+                      "Tùy chọn — Giảm công nợ sổ dự án & giảm dư ứng Vendor (-)."
+                    ) : parsedOffsetAmountPreview.ok ? (
+                      <>
+                        Khấu trừ ứng:{" "}
+                        <strong className="font-mono text-foreground">
+                          -{formatVndMinor(parsedOffsetAmountPreview.canonical)}
+                        </strong>
+                      </>
+                    ) : (
+                      <span className="text-rose-600 dark:text-rose-300">
+                        {parsedOffsetAmountPreview.message}
+                      </span>
+                    )}
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 items-start">
+                <p className="text-xs text-muted">
+                  Hai ô số tiền đều tùy chọn, nhưng phải nhập ít nhất một ô (&gt; 0 ₫). Kế toán được
+                  trả từng phần qua nhiều đợt; tổng tiền trả TM/CK + khấu trừ ứng không vượt quá
+                  công nợ phải trả hiện tại của sổ.
+                </p>
+                <div className="space-y-1.5">
+                  <label htmlFor={dateInputId} className="block text-sm font-medium text-foreground">
+                    Ngày hiệu lực <span className="text-rose-600">*</span>
+                  </label>
+                  <input
+                    id={dateInputId}
+                    type="date"
+                    value={effectiveDate}
+                    disabled={submitting || ambiguousRetryLocked}
+                    onChange={(e) => {
+                      applyDraftEdit({ effective_date: e.target.value });
+                    }}
+                    className="min-h-11 sm:min-h-10 w-full rounded-lg border border-border bg-surface px-3 py-2 font-mono text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                  />
+                </div>
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <label htmlFor={amountInputId} className="block text-sm font-medium text-foreground">
+                  Số tiền (VND nguyên dương) <span className="text-rose-600">*</span>
+                </label>
+                <input
+                  id={amountInputId}
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  placeholder="Ví dụ: 15000000"
+                  value={amountInput}
+                  disabled={submitting || ambiguousRetryLocked}
+                  onChange={(e) => {
+                    applyDraftEdit({ amount_input: e.target.value });
+                  }}
+                  className="min-h-11 sm:min-h-10 w-full rounded-lg border border-border bg-surface px-3 py-2 font-mono text-sm tabular-nums text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                />
+                <p aria-live="polite" className="text-xs text-muted">
+                  {amountInput.trim().length === 0 ? (
+                    "Chỉ nhập số nguyên VND (không số thập phân)."
+                  ) : parsedAmountPreview.ok ? (
+                    <>
+                      Hiển thị:{" "}
+                      <strong className="font-mono text-foreground">
+                        {formatVndMinor(parsedAmountPreview.canonical)}
+                      </strong>
+                    </>
+                  ) : (
+                    <span className="text-rose-600 dark:text-rose-300">
+                      {parsedAmountPreview.message}
+                    </span>
+                  )}
+                </p>
+              </div>
+
+              <div className="space-y-1.5">
+                <label htmlFor={dateInputId} className="block text-sm font-medium text-foreground">
+                  Ngày hiệu lực <span className="text-rose-600">*</span>
+                </label>
+                <input
+                  id={dateInputId}
+                  type="date"
+                  value={effectiveDate}
+                  disabled={submitting || ambiguousRetryLocked}
+                  onChange={(e) => {
+                    applyDraftEdit({ effective_date: e.target.value });
+                  }}
+                  className="min-h-11 sm:min-h-10 w-full rounded-lg border border-border bg-surface px-3 py-2 font-mono text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                />
+              </div>
+            </div>
+          )}
 
           <div className="space-y-1.5">
             <label htmlFor={reasonInputId} className="block text-sm font-medium text-foreground">
@@ -640,11 +1448,9 @@ export function RecordVendorEntryDialog({
               maxLength={VFIN_UI_MAX_REASON_LENGTH}
               placeholder="Ghi rõ căn cứ bảng kê, đợt thanh toán, hợp đồng hoặc lý do điều chỉnh…"
               value={reason}
-              disabled={submitting}
+              disabled={submitting || ambiguousRetryLocked}
               onChange={(e) => {
-                setReason(e.target.value);
-                setErrorMsg(null);
-                rotateKey();
+                applyDraftEdit({ reason: e.target.value });
               }}
               className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
             />
@@ -658,11 +1464,17 @@ export function RecordVendorEntryDialog({
               id={fileInputId}
               type="file"
               accept="image/jpeg,image/png"
-              disabled={submitting}
+              disabled={submitting || ambiguousRetryLocked || isOffsetOnlySettlement}
               onChange={(e) => handleEvidencePick(e.target.files?.[0] ?? null)}
-              className="block min-h-11 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground file:mr-3 file:rounded-md file:border-0 file:bg-primary/10 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+              className="block min-h-11 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground file:mr-3 file:rounded-md file:border-0 file:bg-primary/10 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:opacity-50"
             />
-            {evidenceFile ? (
+            {isOffsetOnlySettlement ? (
+              <p className="text-xs text-muted">
+                Khi chỉ nhập Khấu trừ ứng (không phát sinh chi tiền TM/CK), giao dịch là bút toán
+                khấu trừ nội bộ nên không đính kèm ảnh chứng từ thanh toán. Nếu có nhập Trả tiền
+                TM/CK, ảnh sẽ được gắn vào bút toán Thanh toán (PAYMENT_RECORDED).
+              </p>
+            ) : evidenceFile ? (
               <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted">
                 <span className="flex items-center gap-1.5">
                   <FileCheck2 className="h-3.5 w-3.5 text-primary" aria-hidden />
@@ -671,9 +1483,9 @@ export function RecordVendorEntryDialog({
                 </span>
                 <button
                   type="button"
-                  disabled={submitting}
+                  disabled={submitting || ambiguousRetryLocked}
                   onClick={() => handleEvidencePick(null)}
-                  className="text-xs font-medium text-rose-600 hover:underline"
+                  className="text-xs font-medium text-rose-600 hover:underline disabled:opacity-50"
                 >
                   Bỏ chọn ảnh
                 </button>
@@ -689,13 +1501,41 @@ export function RecordVendorEntryDialog({
           <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border pt-3">
             <Button
               variant="secondary"
-              disabled={submitting}
+              disabled={submitting || reloadingLedger || ambiguousRetryLocked}
               onClick={() => handleOpenChange(false)}
             >
               Hủy
             </Button>
-            <Button type="submit" variant="primary" loading={submitting} disabled={submitting}>
-              Lưu bút toán
+            {ambiguousRetryLocked ? (
+              <Button
+                type="button"
+                variant="secondary"
+                loading={reloadingLedger}
+                disabled={submitting || reloadingLedger}
+                data-testid="vfin-record-reload-ledger-btn"
+                onClick={() => void handleReloadLedgerToVerify()}
+              >
+                Tải lại sổ để đối chiếu
+              </Button>
+            ) : null}
+            {ambiguousRetryLocked && reconciledLedgerSnapshot ? (
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={submitting || reloadingLedger}
+                data-testid="vfin-record-unlock-after-reconcile-btn"
+                onClick={handleUnlockAfterLedgerReconcile}
+              >
+                Đã đối chiếu sổ — Mở yêu cầu mới
+              </Button>
+            ) : null}
+            <Button
+              type="submit"
+              variant="primary"
+              loading={submitting}
+              disabled={submitting || reloadingLedger}
+            >
+              {ambiguousRetryLocked ? "Thử gửi lại yêu cầu này" : "Lưu bút toán"}
             </Button>
           </div>
         </form>
@@ -2098,319 +2938,7 @@ export function RecordVendorRefundDialog({
 }
 
 // =============================================================================
-// 8. Apply Shared Advance Offset Dialog (`POST /api/vendor-finance/vendors/[vendorId]/shared-advances/apply-offset`)
-// =============================================================================
-export function ApplyVendorSharedAdvanceOffsetDialog({
-  open,
-  onOpenChange,
-  vendorId,
-  vendorDisplayName,
-  subLedger,
-  currentSharedAdvanceMinor,
-  defaultDate,
-  onDataChanged,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  vendorId: string;
-  vendorDisplayName: string;
-  subLedger: VendorFinanceDetailSubLedger | null;
-  currentSharedAdvanceMinor: string;
-  defaultDate: string;
-  onDataChanged: () => void;
-}) {
-  const descriptionId = useId();
-  const amountInputId = useId();
-  const dateInputId = useId();
-  const reasonInputId = useId();
-  const notify = useNotify();
-
-  const [amountInput, setAmountInput] = useState("");
-  const [effectiveDate, setEffectiveDate] = useState(defaultDate);
-  const [reason, setReason] = useState("");
-  const [idempotencyKey, setIdempotencyKey] = useState(() => createClientIdempotencyKey());
-  const [submitting, setSubmitting] = useState(false);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-
-  const rotateKey = () => setIdempotencyKey(createClientIdempotencyKey());
-
-  const handleClose = (nextOpen: boolean) => {
-    if (submitting) return;
-    if (!nextOpen) {
-      setAmountInput("");
-      setEffectiveDate(defaultDate);
-      setReason("");
-      setIdempotencyKey(createClientIdempotencyKey());
-      setErrorMsg(null);
-    }
-    onOpenChange(nextOpen);
-  };
-
-  const sharedBalBig = BigInt(currentSharedAdvanceMinor || "0");
-  const subLedgerPayableBig = BigInt(subLedger?.current_balance_minor ?? "0");
-  const maxOffsetBig =
-    sharedBalBig > BigInt(0) && subLedgerPayableBig > BigInt(0)
-      ? sharedBalBig < subLedgerPayableBig
-        ? sharedBalBig
-        : subLedgerPayableBig
-      : BigInt(0);
-  const maxOffsetCanonical = maxOffsetBig.toString();
-
-  const parsedAmountPreview = normalizePositiveVndInput(amountInput);
-
-  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!subLedger || !subLedger.project_id) return;
-    setErrorMsg(null);
-
-    const built = buildApplySharedAdvanceOffsetRequest({
-      project_id: subLedger.project_id,
-      contract_type: subLedger.contract_type,
-      amount_input: amountInput,
-      effective_date: effectiveDate,
-      reason,
-      idempotency_key: idempotencyKey,
-      available_shared_advance_minor: currentSharedAdvanceMinor,
-      current_subledger_payable_minor: subLedger.current_balance_minor,
-    });
-    if (!built.ok) {
-      setErrorMsg(built.message);
-      return;
-    }
-
-    setSubmitting(true);
-    try {
-      const res = await fetch(buildApplyVendorSharedAdvanceOffsetUrl(vendorId), {
-        method: "POST",
-        headers: built.request.headers,
-        body: JSON.stringify(built.request.body),
-      });
-      const json: unknown = await res.json().catch(() => null);
-
-      if (!res.ok) {
-        const classified = classifyVendorFinanceError(json, res.status);
-        if (classified.shouldRotateIdempotencyKey) {
-          rotateKey();
-        }
-        if (
-          classified.code === "VENDOR_FINANCE_INSUFFICIENT_SHARED_ADVANCE" ||
-          classified.code === "VENDOR_FINANCE_INSUFFICIENT_SUBLEDGER_PAYABLE"
-        ) {
-          // Reload fresh server balances while keeping dialog open so user can adjust
-          onDataChanged();
-        }
-        setErrorMsg(classified.message);
-        setSubmitting(false);
-        return;
-      }
-
-      const parsed = parseApplySharedAdvanceOffsetEnvelope(json);
-      if (!parsed) {
-        setErrorMsg("Phản hồi khấu trừ ứng từ máy chủ không hợp lệ.");
-        setSubmitting(false);
-        return;
-      }
-
-      setSubmitting(false);
-      notify.success({
-        title: `Đã khấu trừ ứng ${parsed.entry.document_no}`,
-        description: `Số dư sổ dự án sau khấu trừ: ${formatVndMinor(parsed.entry.balance_after_minor)} · Dư ứng dùng chung còn: ${formatVndMinor(parsed.shared_advance_balance_minor)}`,
-      });
-      onDataChanged();
-      handleClose(false);
-    } catch {
-      setErrorMsg("Mất kết nối mạng khi gửi yêu cầu khấu trừ ứng. Bạn có thể bấm Xác nhận lại an toàn.");
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <FormDialog
-      open={open}
-      onOpenChange={handleClose}
-      closeDisabled={submitting}
-      title={`Khấu trừ ứng vào công nợ dự án — ${vendorDisplayName}`}
-      description="Khấu trừ nguyên tử một số tiền cụ thể từ Số dư ứng dùng chung của Vendor vào công nợ phải trả của sổ dự án đang chọn. Không chuyển thành thanh toán tiền mặt/ngân hàng."
-      descriptionId={descriptionId}
-      dataTestId="vfin-apply-shared-advance-offset-dialog"
-    >
-      {!subLedger ? null : (
-        <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4" noValidate>
-          <div className="rounded-xl border border-border bg-surface-muted/60 p-3.5 text-xs space-y-1.5">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="font-semibold text-foreground" data-testid="vfin-offset-fixed-project">
-                Dự án cố định: {subLedger.project_display_name ?? subLedger.project_id} ({subLedger.project_id})
-              </span>
-              <StatusBadge
-                tone={CONTRACT_TYPE_BADGE_TONES[subLedger.contract_type]}
-                dataTestId="vfin-offset-fixed-contract-type"
-              >
-                {CONTRACT_TYPE_LABELS_VI[subLedger.contract_type]}
-              </StatusBadge>
-            </div>
-            <p className="text-muted">
-              Kế toán phụ trách sổ:{" "}
-              <strong className="text-foreground">
-                {subLedger.responsible_accountant_display_name ?? "—"}
-              </strong>
-            </p>
-            <div className="grid grid-cols-1 gap-2 pt-1 sm:grid-cols-3">
-              <div className="rounded-lg border border-border bg-surface p-2">
-                <p className="text-[11px] text-muted">Phải trả hiện tại của sổ</p>
-                <p
-                  className="font-mono text-sm font-semibold text-foreground"
-                  data-testid="vfin-offset-subledger-payable"
-                >
-                  {formatVndMinor(subLedger.current_balance_minor)}
-                </p>
-              </div>
-              <div className="rounded-lg border border-border bg-surface p-2">
-                <p className="text-[11px] text-muted">Dư ứng dùng chung hiện tại</p>
-                <p
-                  className="font-mono text-sm font-semibold text-primary"
-                  data-testid="vfin-offset-shared-advance-available"
-                >
-                  {formatVndMinor(currentSharedAdvanceMinor)}
-                </p>
-              </div>
-              <div className="rounded-lg border border-primary/30 bg-primary/5 p-2">
-                <p className="text-[11px] text-muted">Trần khấu trừ tối đa</p>
-                <p
-                  className="font-mono text-sm font-semibold text-primary"
-                  data-testid="vfin-offset-max-ceiling"
-                >
-                  {formatVndMinor(maxOffsetCanonical)}
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {errorMsg ? (
-            <Alert tone="error" role="alert" title="Không thể khấu trừ ứng">
-              <p>{errorMsg}</p>
-            </Alert>
-          ) : null}
-
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between gap-2">
-                <label htmlFor={amountInputId} className="block text-sm font-medium text-foreground">
-                  Số tiền khấu trừ (VND) <span className="text-rose-600">*</span>
-                </label>
-                {maxOffsetBig > BigInt(0) ? (
-                  <button
-                    type="button"
-                    data-testid="vfin-fill-max-offset-btn"
-                    disabled={submitting}
-                    onClick={() => {
-                      setAmountInput(maxOffsetCanonical);
-                      setErrorMsg(null);
-                      rotateKey();
-                    }}
-                    className="text-xs font-semibold text-primary hover:underline"
-                  >
-                    Điền tối đa ({formatVndMinor(maxOffsetCanonical)})
-                  </button>
-                ) : null}
-              </div>
-              <input
-                id={amountInputId}
-                data-testid="vfin-offset-amount-input"
-                type="text"
-                inputMode="numeric"
-                autoComplete="off"
-                placeholder="Nhập số tiền muốn khấu trừ…"
-                value={amountInput}
-                disabled={submitting}
-                onChange={(e) => {
-                  setAmountInput(e.target.value);
-                  setErrorMsg(null);
-                  rotateKey();
-                }}
-                className="min-h-11 sm:min-h-10 w-full rounded-lg border border-border bg-surface px-3 py-2 font-mono text-sm tabular-nums text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-              />
-              <p aria-live="polite" className="text-xs text-muted">
-                {amountInput.trim().length === 0 ? (
-                  `Nhập số tiền dương ≤ ${formatVndMinor(maxOffsetCanonical)}`
-                ) : parsedAmountPreview.ok ? (
-                  <>
-                    Khấu trừ:{" "}
-                    <strong className="font-mono text-foreground">
-                      -{formatVndMinor(parsedAmountPreview.canonical)}
-                    </strong>{" "}
-                    (giảm đồng thời dư ứng dùng chung & phải trả sổ dự án)
-                  </>
-                ) : (
-                  <span className="text-rose-600 dark:text-rose-300">
-                    {parsedAmountPreview.message}
-                  </span>
-                )}
-              </p>
-            </div>
-
-            <div className="space-y-1.5">
-              <label htmlFor={dateInputId} className="block text-sm font-medium text-foreground">
-                Ngày hiệu lực <span className="text-rose-600">*</span>
-              </label>
-              <input
-                id={dateInputId}
-                data-testid="vfin-offset-date-input"
-                type="date"
-                value={effectiveDate}
-                disabled={submitting}
-                onChange={(e) => {
-                  setEffectiveDate(e.target.value);
-                  setErrorMsg(null);
-                  rotateKey();
-                }}
-                className="min-h-11 sm:min-h-10 w-full rounded-lg border border-border bg-surface px-3 py-2 font-mono text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-              />
-            </div>
-          </div>
-
-          <div className="space-y-1.5">
-            <label htmlFor={reasonInputId} className="block text-sm font-medium text-foreground">
-              Lý do / Diễn giải khấu trừ ứng <span className="text-rose-600">*</span>
-            </label>
-            <textarea
-              id={reasonInputId}
-              data-testid="vfin-offset-reason-input"
-              rows={3}
-              maxLength={VFIN_UI_MAX_REASON_LENGTH}
-              placeholder="Ghi rõ đợt quyết toán, bảng lương hoặc chứng từ công nợ dự án áp dụng khấu trừ ứng…"
-              value={reason}
-              disabled={submitting}
-              onChange={(e) => {
-                setReason(e.target.value);
-                setErrorMsg(null);
-                rotateKey();
-              }}
-              className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-            />
-          </div>
-
-          <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border pt-3">
-            <Button variant="secondary" disabled={submitting} onClick={() => handleClose(false)}>
-              Hủy
-            </Button>
-            <Button
-              type="submit"
-              variant="primary"
-              loading={submitting}
-              disabled={submitting}
-              data-testid="vfin-offset-submit-btn"
-            >
-              Xác nhận khấu trừ ứng
-            </Button>
-          </div>
-        </form>
-      )}
-    </FormDialog>
-  );
-}
-
-// =============================================================================
-// 9. Reverse Shared Advance Movement Dialog (`POST /api/vendor-finance/shared-advances/[movementId]/reverse`)
+// 8. Reverse Shared Advance Movement Dialog (`POST /api/vendor-finance/shared-advances/[movementId]/reverse`)
 // =============================================================================
 export function ReverseVendorSharedAdvanceMovementDialog({
   open,

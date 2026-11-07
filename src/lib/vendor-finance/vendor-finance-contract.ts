@@ -2593,6 +2593,84 @@ export function parseReverseSharedAdvanceMovementBody(
   return parseReverseVendorFinanceEntryBody(body, idempotencyHeader);
 }
 
+export type RecordPaymentWithOffsetBody = {
+  project_id: string;
+  contract_type: ClassifiedVendorFinanceContractType;
+  payment_amount_minor: string;
+  offset_amount_minor: string;
+  effective_date: string;
+  reason: string;
+  idempotency_key: string;
+};
+
+export function parseRecordPaymentWithOffsetBody(
+  body: unknown,
+  idempotencyHeader: string | null,
+):
+  | { ok: true; value: RecordPaymentWithOffsetBody }
+  | { ok: false; code: VendorFinanceErrorCode } {
+  const forbidden = checkForbiddenVendorFinanceClientFields(body);
+  if (!forbidden.ok) return forbidden;
+  if (
+    !isRecord(body) ||
+    !exactKeys(body, [
+      "project_id",
+      "contract_type",
+      "payment_amount_minor",
+      "offset_amount_minor",
+      "effective_date",
+      "reason",
+      "idempotency_key",
+    ])
+  ) {
+    return { ok: false, code: "VENDOR_FINANCE_PAYLOAD_INVALID" };
+  }
+
+  const projectId = parseProjectIdParam(body.project_id);
+  if (!projectId.ok) return projectId;
+
+  if (
+    typeof body.contract_type !== "string" ||
+    !(CLASSIFIED_VENDOR_FINANCE_CONTRACT_TYPES as readonly string[]).includes(
+      body.contract_type,
+    )
+  ) {
+    return { ok: false, code: "VENDOR_FINANCE_CONTRACT_TYPE_INVALID" };
+  }
+
+  const paymentAmount = parsePositiveMinorAmount(body.payment_amount_minor);
+  if (!paymentAmount.ok) return paymentAmount;
+
+  const offsetAmount = parsePositiveMinorAmount(body.offset_amount_minor);
+  if (!offsetAmount.ok) return offsetAmount;
+
+  if (paymentAmount.value + offsetAmount.value > PG_BIGINT_MAX) {
+    return { ok: false, code: "VENDOR_FINANCE_AMOUNT_OVERFLOW" };
+  }
+
+  const effectiveDate = parseBusinessCalendarDate(body.effective_date);
+  if (!effectiveDate.ok) return effectiveDate;
+
+  const reason = parseReasonText(body.reason);
+  if (!reason.ok) return reason;
+
+  const idem = resolveIdempotencyKey(idempotencyHeader, body.idempotency_key);
+  if (!idem.ok) return idem;
+
+  return {
+    ok: true,
+    value: {
+      project_id: projectId.project_id,
+      contract_type: body.contract_type as ClassifiedVendorFinanceContractType,
+      payment_amount_minor: paymentAmount.canonical,
+      offset_amount_minor: offsetAmount.canonical,
+      effective_date: effectiveDate.date,
+      reason: reason.reason,
+      idempotency_key: idem.idempotency_key,
+    },
+  };
+}
+
 // -----------------------------------------------------------------------------
 // Deterministic SHA-256 Request Fingerprints
 // -----------------------------------------------------------------------------
@@ -2826,6 +2904,27 @@ export function computeApplySharedAdvanceOffsetFingerprint(input: {
     project_id: input.project_id,
     contract_type: input.contract_type,
     amount_minor: input.amount_minor,
+    effective_date: input.effective_date,
+    reason: input.reason,
+  });
+}
+
+export function computeRecordPaymentWithOffsetFingerprint(input: {
+  vendor_id: string;
+  project_id: string;
+  contract_type: ClassifiedVendorFinanceContractType;
+  payment_amount_minor: string;
+  offset_amount_minor: string;
+  effective_date: string;
+  reason: string;
+}): string {
+  return sha256Json({
+    op: "RECORD_PAYMENT_WITH_OFFSET",
+    vendor_id: input.vendor_id,
+    project_id: input.project_id,
+    contract_type: input.contract_type,
+    payment_amount_minor: input.payment_amount_minor,
+    offset_amount_minor: input.offset_amount_minor,
     effective_date: input.effective_date,
     reason: input.reason,
   });
@@ -3243,6 +3342,14 @@ export type VendorFinanceRecordVendorRefundResponse = {
 export type VendorFinanceApplySharedAdvanceOffsetResponse = {
   movement: VendorFinanceSharedAdvanceMovementProjection;
   entry: VendorFinanceEntryProjection;
+  shared_advance_balance_minor: string;
+  replayed: boolean;
+};
+
+export type VendorFinanceRecordPaymentWithOffsetResponse = {
+  payment_entry: VendorFinanceEntryProjection;
+  offset_entry: VendorFinanceEntryProjection;
+  movement: VendorFinanceSharedAdvanceMovementProjection;
   shared_advance_balance_minor: string;
   replayed: boolean;
 };
@@ -5780,6 +5887,49 @@ export function projectApplySharedAdvanceOffsetMutation(
   const replayed = boolVal(value.replayed);
   if (!movement || !entry || balance === null || replayed === null) return null;
   return { movement, entry, shared_advance_balance_minor: balance, replayed };
+}
+
+export function projectRecordPaymentWithOffsetMutation(
+  value: unknown,
+): VendorFinanceRecordPaymentWithOffsetResponse | null {
+  if (
+    !isRecord(value) ||
+    !exactKeys(value, [
+      "payment_entry",
+      "offset_entry",
+      "movement",
+      "shared_advance_balance_minor",
+      "replayed",
+    ])
+  ) {
+    return null;
+  }
+  const paymentEntry = projectVendorFinanceEntry(value.payment_entry);
+  const offsetEntry = projectVendorFinanceEntry(value.offset_entry);
+  const movement = projectSharedAdvanceMovement(value.movement);
+  const balance = nonNegativeMoneyStr(value.shared_advance_balance_minor);
+  const replayed = boolVal(value.replayed);
+  if (
+    !paymentEntry ||
+    !offsetEntry ||
+    !movement ||
+    balance === null ||
+    replayed === null ||
+    paymentEntry.entry_type !== "PAYMENT_RECORDED" ||
+    offsetEntry.entry_type !== "ADVANCE_OFFSET_RECORDED" ||
+    movement.movement_type !== "PROJECT_OFFSET_APPLIED" ||
+    movement.project_entry_id !== offsetEntry.entry_id ||
+    paymentEntry.entry_id === offsetEntry.entry_id
+  ) {
+    return null;
+  }
+  return {
+    payment_entry: paymentEntry,
+    offset_entry: offsetEntry,
+    movement,
+    shared_advance_balance_minor: balance,
+    replayed,
+  };
 }
 
 export function projectReverseEntryMutation(

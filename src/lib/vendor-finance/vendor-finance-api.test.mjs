@@ -37,6 +37,7 @@ import {
   handlePostFinalizeVendorFinanceEvidence,
   handlePostFundVendorSharedAdvance,
   handlePostPreviewOpeningBatch,
+  handlePostRecordVendorPaymentWithOffset,
   handlePostRecordVendorRefund,
   handlePostReserveVendorFinanceEvidence,
   handlePostReverseVendorFinanceEntry,
@@ -113,6 +114,9 @@ const EXPECTED_ROUTE_METHODS = Object.freeze({
   },
   "src/app/api/vendor-finance/vendors/[vendorId]/shared-advances/apply-offset/route.ts": {
     POST: "handlePostApplyVendorSharedAdvanceOffset",
+  },
+  "src/app/api/vendor-finance/vendors/[vendorId]/shared-advances/settle-with-offset/route.ts": {
+    POST: "handlePostRecordVendorPaymentWithOffset",
   },
   "src/app/api/vendor-finance/shared-advances/[movementId]/reverse/route.ts": {
     POST: "handlePostReverseVendorSharedAdvanceMovement",
@@ -1061,6 +1065,79 @@ function makeMockRepository({
           },
         };
       },
+      async recordPaymentWithOffset(input) {
+        calls.push(["recordPaymentWithOffset", input]);
+        const afterPayment = 15000000n - BigInt(input.payment_amount_minor);
+        const afterOffset = afterPayment - BigInt(input.offset_amount_minor);
+        const sharedAfter = 100000000n - BigInt(input.offset_amount_minor);
+        return {
+          ok: true,
+          data: {
+            payment_entry: sampleEntry({
+              entry_id: ENTRY_ID,
+              document_no: "PT-2026-000201",
+              document_kind: "PAYMENT_VOUCHER",
+              document_title_vi: "Phiếu thanh toán cho Vendor",
+              entry_type: "PAYMENT_RECORDED",
+              contract_type: input.contract_type,
+              amount_minor: input.payment_amount_minor,
+              balance_before_minor: "15000000",
+              balance_delta_minor: `-${input.payment_amount_minor}`,
+              balance_after_minor: String(afterPayment),
+            }),
+            offset_entry: sampleEntry({
+              entry_id: REV_ENTRY_ID,
+              vendor_sequence: 2,
+              cursor_sequence: 2,
+              document_no: "KT-2026-000202",
+              document_kind: "ADVANCE_OFFSET_VOUCHER",
+              document_title_vi: "Phiếu khấu trừ ứng Vendor vào công nợ dự án",
+              entry_type: "ADVANCE_OFFSET_RECORDED",
+              contract_type: input.contract_type,
+              amount_minor: input.offset_amount_minor,
+              balance_before_minor: String(afterPayment),
+              balance_delta_minor: `-${input.offset_amount_minor}`,
+              balance_after_minor: String(afterOffset),
+            }),
+            movement: {
+              movement_id: REC_ID,
+              vendor_id: input.vendor_id,
+              vendor_display_name_snapshot: "Công ty TNHH Alpha",
+              vendor_active: true,
+              vendor_advance_sequence: 3,
+              cursor_sequence: 3,
+              document_no: "KT-2026-000203",
+              document_kind: "ADVANCE_OFFSET_VOUCHER",
+              document_title_vi: "Phiếu khấu trừ số dư ứng dùng chung vào công nợ dự án",
+              movement_type: "PROJECT_OFFSET_APPLIED",
+              amount_minor: input.offset_amount_minor,
+              balance_before_minor: "100000000",
+              balance_delta_minor: `-${input.offset_amount_minor}`,
+              balance_after_minor: String(sharedAfter),
+              effective_date: input.effective_date,
+              reason: input.reason,
+              project_entry_id: REV_ENTRY_ID,
+              project_id: input.project_id,
+              project_display_name_snapshot: "Dự án Miền Bắc",
+              accountant_ref: ACC_A_ID,
+              responsible_accountant_display_name: "Trần Thị Kế Toán A",
+              contract_type: input.contract_type,
+              reverses_movement_id: null,
+              reverses_document_no: null,
+              reversed_by_movement_id: null,
+              reversed_by_document_no: null,
+              can_reverse: true,
+              can_attach_evidence: false,
+              evidence: null,
+              created_by_display_name: "Trần Thị Kế Toán A",
+              created_at: "2026-10-24T02:00:00.000Z",
+              internal_disclaimer: VENDOR_FINANCE_INTERNAL_DISCLAIMER_VI,
+            },
+            shared_advance_balance_minor: String(sharedAfter),
+            replayed: false,
+          },
+        };
+      },
       async reverseSharedAdvanceMovement(input) {
         calls.push(["reverseSharedAdvanceMovement", input]);
         return {
@@ -1241,6 +1318,7 @@ test("dynamic route discovery & DIRECT_ENTRY_API_ENABLED hidden 404 gate across 
       handlePostFundVendorSharedAdvance(new Request(`${ORIGIN}/api/vendor-finance/vendors/VND_ALPHA/shared-advances/fund`, { method: "POST", body: untouchedBody(), duplex: "half" }), "VND_ALPHA", disabledFlag, bombDeps),
       handlePostRecordVendorRefund(new Request(`${ORIGIN}/api/vendor-finance/vendors/VND_ALPHA/shared-advances/refund`, { method: "POST", body: untouchedBody(), duplex: "half" }), "VND_ALPHA", disabledFlag, bombDeps),
       handlePostApplyVendorSharedAdvanceOffset(new Request(`${ORIGIN}/api/vendor-finance/vendors/VND_ALPHA/shared-advances/apply-offset`, { method: "POST", body: untouchedBody(), duplex: "half" }), "VND_ALPHA", disabledFlag, bombDeps),
+      handlePostRecordVendorPaymentWithOffset(new Request(`${ORIGIN}/api/vendor-finance/vendors/VND_ALPHA/shared-advances/settle-with-offset`, { method: "POST", body: untouchedBody(), duplex: "half" }), "VND_ALPHA", disabledFlag, bombDeps),
       handlePostReverseVendorSharedAdvanceMovement(new Request(`${ORIGIN}/api/vendor-finance/shared-advances/${ENTRY_ID}/reverse`, { method: "POST", body: untouchedBody(), duplex: "half" }), ENTRY_ID, disabledFlag, bombDeps),
       handleGetVendorFinanceSingleEntry(new Request(`${ORIGIN}/api/vendor-finance/entries/${ENTRY_ID}`), ENTRY_ID, disabledFlag, bombDeps),
       handlePostReverseVendorFinanceEntry(new Request(`${ORIGIN}/api/vendor-finance/entries/${ENTRY_ID}/reverse`, { method: "POST", body: untouchedBody(), duplex: "half" }), ENTRY_ID, disabledFlag, bombDeps),
@@ -1258,7 +1336,7 @@ test("dynamic route discovery & DIRECT_ENTRY_API_ENABLED hidden 404 gate across 
       handleGetDownloadVendorFinanceEvidence(new Request(`${ORIGIN}/api/vendor-finance/evidence/${EV_ID_1}/download`), EV_ID_1, disabledFlag, bombDeps),
     ]);
 
-    assert.equal(responses.length, 28);
+    assert.equal(responses.length, 29);
     for (const res of responses) {
       assert.equal(res.status, 404);
       assert.equal(res.headers.get("cache-control"), "private, no-store");
@@ -2724,3 +2802,64 @@ test("VFIN-04 XLSX export builder & route: 8 canonical columns, exact BigInt tex
     console.error = origConsoleError;
   }
 });
+
+test("VFIN-05 handlePostRecordVendorPaymentWithOffset: atomic combined payment + advance offset (201, 200 replay, 400 validation, 422 insufficient balance)", async () => {
+  const { repository, calls } = makeMockRepository();
+  const deps = {
+    resolveSession: async () => makeSession(),
+    repository,
+  };
+
+  const validBody = {
+    project_id: PROJECT_ID,
+    contract_type: "SEASONAL",
+    payment_amount_minor: "6000000",
+    offset_amount_minor: "4000000",
+    effective_date: "2026-10-25",
+    reason: "Thanh toán 6tr TM/CK + khấu trừ ứng 4tr COASIA",
+    idempotency_key: IDEM_1,
+  };
+
+  const createdRes = await handlePostRecordVendorPaymentWithOffset(
+    new Request(`${ORIGIN}/api/vendor-finance/vendors/VND_ALPHA/shared-advances/settle-with-offset`, {
+      method: "POST",
+      headers: {
+        ...SAME_ORIGIN_POST_HEADERS,
+        "Idempotency-Key": IDEM_1,
+      },
+      body: JSON.stringify(validBody),
+    }),
+    "VND_ALPHA",
+    "true",
+    deps,
+  );
+  assert.equal(createdRes.status, 201);
+  const createdJson = await createdRes.json();
+  assert.equal(createdJson.ok, true);
+  assert.equal(createdJson.data.payment_entry.entry_type, "PAYMENT_RECORDED");
+  assert.equal(createdJson.data.payment_entry.amount_minor, "6000000");
+  assert.equal(createdJson.data.offset_entry.entry_type, "ADVANCE_OFFSET_RECORDED");
+  assert.equal(createdJson.data.offset_entry.amount_minor, "4000000");
+  assert.equal(createdJson.data.movement.movement_type, "PROJECT_OFFSET_APPLIED");
+  assert.equal(createdJson.data.replayed, false);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0], "recordPaymentWithOffset");
+
+  // Invalid zero payment_amount_minor -> 422 VENDOR_FINANCE_AMOUNT_INVALID
+  const badAmountRes = await handlePostRecordVendorPaymentWithOffset(
+    new Request(`${ORIGIN}/api/vendor-finance/vendors/VND_ALPHA/shared-advances/settle-with-offset`, {
+      method: "POST",
+      headers: SAME_ORIGIN_POST_HEADERS,
+      body: JSON.stringify({ ...validBody, payment_amount_minor: "0" }),
+    }),
+    "VND_ALPHA",
+    "true",
+    deps,
+  );
+  assert.equal(badAmountRes.status, 422);
+  assert.deepEqual(await badAmountRes.json(), {
+    ok: false,
+    code: "VENDOR_FINANCE_AMOUNT_INVALID",
+  });
+});
+

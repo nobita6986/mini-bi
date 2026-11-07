@@ -36,6 +36,7 @@ import type {
   OpeningBatchItemInput,
   OpeningVendorFinanceEntryType,
   PreviewOpeningBatchBody,
+  RecordPaymentWithOffsetBody,
   RecordVendorFinanceEntryBody,
   RecordVendorRefundBody,
   ReserveVendorFinanceEvidenceBody,
@@ -94,6 +95,7 @@ import type {
   VendorFinanceProjectAccountantsAdminProject,
   VendorFinanceReconciliationProjection,
   VendorFinanceReconciliationsPageResponse,
+  VendorFinanceRecordPaymentWithOffsetResponse,
   VendorFinanceRecordVendorRefundResponse,
   VendorFinanceReverseSharedAdvanceMovementResponse,
   VendorFinanceSharedAdvanceMovementProjection,
@@ -154,6 +156,19 @@ export const VFIN_UI_CREATOR_NORMAL_ENTRY_TYPES = [
   "ADJUSTMENT_INCREASE",
   "ADJUSTMENT_DECREASE",
 ] as const satisfies readonly NormalVendorFinanceEntryType[];
+
+export type DialogRecordVendorFinanceEntryType =
+  | NormalVendorFinanceEntryType
+  | "ADVANCE_OFFSET_RECORDED";
+
+export const VFIN_UI_DIALOG_RECORD_ENTRY_TYPES = [
+  "DEBT_RECORDED",
+  "PAYROLL_RECORDED",
+  "PAYMENT_RECORDED",
+  "ADVANCE_OFFSET_RECORDED",
+  "ADJUSTMENT_INCREASE",
+  "ADJUSTMENT_DECREASE",
+] as const satisfies readonly DialogRecordVendorFinanceEntryType[];
 
 export const VFIN_UI_OPENING_ENTRY_TYPES = [
   "OPENING_PAYABLE",
@@ -1133,6 +1148,10 @@ export function buildApplyVendorSharedAdvanceOffsetUrl(vendorId: string): string
   return `/api/vendor-finance/vendors/${encodeURIComponent(vendorId)}/shared-advances/apply-offset`;
 }
 
+export function buildRecordVendorPaymentWithOffsetUrl(vendorId: string): string {
+  return `/api/vendor-finance/vendors/${encodeURIComponent(vendorId)}/shared-advances/settle-with-offset`;
+}
+
 export function buildReverseVendorSharedAdvanceMovementUrl(movementId: string): string {
   return `/api/vendor-finance/shared-advances/${encodeURIComponent(movementId)}/reverse`;
 }
@@ -1222,6 +1241,7 @@ export function buildRecordEntryRequest(input: {
   reason: string;
   idempotency_key: string;
   allowed_entry_types?: readonly NormalVendorFinanceEntryType[];
+  current_subledger_payable_minor?: string | null;
 }):
   | { ok: true; request: BuiltJsonRequest<RecordVendorFinanceEntryBody> }
   | { ok: false; message: string } {
@@ -1249,6 +1269,20 @@ export function buildRecordEntryRequest(input: {
   const amount = normalizePositiveVndInput(input.amount_input);
   if (!amount.ok) {
     return { ok: false, message: amount.message };
+  }
+  if (
+    entryType === "PAYMENT_RECORDED" &&
+    typeof input.current_subledger_payable_minor === "string" &&
+    /^(?:0|-?[1-9][0-9]{0,18})$/.test(input.current_subledger_payable_minor)
+  ) {
+    const payable = BigInt(input.current_subledger_payable_minor);
+    if (payable <= ZERO_BIGINT || amount.value > payable) {
+      return {
+        ok: false,
+        message:
+          "Số tiền thanh toán vượt quá công nợ phải trả hiện tại của sổ dự án và loại hợp đồng đã chọn.",
+      };
+    }
   }
   const effectiveDate = validateUiCalendarDate(input.effective_date);
   if (!effectiveDate.ok) {
@@ -2004,6 +2038,102 @@ export function buildApplySharedAdvanceOffsetRequest(input: {
         project_id: trimmedProject,
         contract_type: contractType,
         amount_minor: amount.canonical,
+        effective_date: effectiveDate.date,
+        reason: reason.reason,
+        idempotency_key: idem,
+      },
+    },
+  };
+}
+
+export function buildRecordPaymentWithOffsetRequest(input: {
+  project_id: string;
+  contract_type: string;
+  payment_amount_input: string;
+  offset_amount_input: string;
+  effective_date: string;
+  reason: string;
+  idempotency_key: string;
+  available_shared_advance_minor?: string | null;
+  current_subledger_payable_minor?: string | null;
+}):
+  | { ok: true; request: BuiltJsonRequest<RecordPaymentWithOffsetBody> }
+  | { ok: false; message: string } {
+  const trimmedProject = input.project_id.trim();
+  if (!isCanonicalUiProjectId(trimmedProject)) {
+    return { ok: false, message: "Vui lòng chọn dự án hợp lệ để thanh toán và khấu trừ ứng." };
+  }
+  if (!(VFIN_UI_CLASSIFIED_CONTRACT_TYPES as readonly string[]).includes(input.contract_type)) {
+    return {
+      ok: false,
+      message: "Chỉ sổ đã phân loại hợp đồng (Thời vụ hoặc Chính thức) mới được thanh toán và khấu trừ ứng.",
+    };
+  }
+  const contractType = input.contract_type as ClassifiedVendorFinanceContractType;
+  const paymentAmount = normalizePositiveVndInput(input.payment_amount_input);
+  if (!paymentAmount.ok) {
+    return { ok: false, message: `Số tiền trả TM/CK: ${paymentAmount.message}` };
+  }
+  const offsetAmount = normalizePositiveVndInput(input.offset_amount_input);
+  if (!offsetAmount.ok) {
+    return { ok: false, message: `Số tiền khấu trừ ứng: ${offsetAmount.message}` };
+  }
+  const totalAmount = paymentAmount.value + offsetAmount.value;
+  if (totalAmount > VFIN_UI_PG_BIGINT_MAX) {
+    return {
+      ok: false,
+      message: "Tổng số tiền thanh toán và khấu trừ vượt quá giới hạn hệ thống.",
+    };
+  }
+  if (
+    typeof input.available_shared_advance_minor === "string" &&
+    /^(?:0|[1-9][0-9]{0,18})$/.test(input.available_shared_advance_minor)
+  ) {
+    const avail = BigInt(input.available_shared_advance_minor);
+    if (offsetAmount.value > avail) {
+      return {
+        ok: false,
+        message: "Số tiền khấu trừ vượt quá số dư ứng dùng chung hiện tại của Vendor.",
+      };
+    }
+  }
+  if (
+    typeof input.current_subledger_payable_minor === "string" &&
+    /^(?:0|-?[1-9][0-9]{0,18})$/.test(input.current_subledger_payable_minor)
+  ) {
+    const payable = BigInt(input.current_subledger_payable_minor);
+    if (payable <= ZERO_BIGINT || totalAmount > payable) {
+      return {
+        ok: false,
+        message:
+          "Tổng tiền trả TM/CK và khấu trừ ứng vượt quá công nợ phải trả hiện tại của sổ dự án và loại hợp đồng đã chọn.",
+      };
+    }
+  }
+  const effectiveDate = validateUiCalendarDate(input.effective_date);
+  if (!effectiveDate.ok) {
+    return { ok: false, message: effectiveDate.message };
+  }
+  const reason = validateUiReasonText(input.reason);
+  if (!reason.ok) {
+    return { ok: false, message: reason.message };
+  }
+  if (!isUuidString(input.idempotency_key)) {
+    return { ok: false, message: "Mã chống gửi trùng (Idempotency-Key) không hợp lệ." };
+  }
+  const idem = input.idempotency_key.toLowerCase();
+  return {
+    ok: true,
+    request: {
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": idem,
+      },
+      body: {
+        project_id: trimmedProject,
+        contract_type: contractType,
+        payment_amount_minor: paymentAmount.canonical,
+        offset_amount_minor: offsetAmount.canonical,
         effective_date: effectiveDate.date,
         reason: reason.reason,
         idempotency_key: idem,
@@ -4044,6 +4174,55 @@ export function parseApplySharedAdvanceOffsetEnvelope(
     return null;
   }
   return { movement, entry, shared_advance_balance_minor: balance, replayed };
+}
+
+export function parseRecordPaymentWithOffsetEnvelope(
+  envelope: unknown,
+): VendorFinanceRecordPaymentWithOffsetResponse | null {
+  const data = unwrapOkDataEnvelope(envelope);
+  if (
+    !isRecord(data) ||
+    !exactKeys(data, [
+      "payment_entry",
+      "offset_entry",
+      "movement",
+      "shared_advance_balance_minor",
+      "replayed",
+    ])
+  ) {
+    return null;
+  }
+  const paymentEntry = parseEntryProjection(data.payment_entry);
+  const offsetEntry = parseEntryProjection(data.offset_entry);
+  const movement = parseSharedAdvanceMovementProjection(data.movement);
+  const balance = nonNegativeMoneyStr(data.shared_advance_balance_minor);
+  const replayed = boolVal(data.replayed);
+  if (
+    !paymentEntry ||
+    !offsetEntry ||
+    !movement ||
+    balance === null ||
+    replayed === null ||
+    paymentEntry.vendor_id !== offsetEntry.vendor_id ||
+    offsetEntry.vendor_id !== movement.vendor_id ||
+    paymentEntry.entry_type !== "PAYMENT_RECORDED" ||
+    offsetEntry.entry_type !== "ADVANCE_OFFSET_RECORDED" ||
+    movement.movement_type !== "PROJECT_OFFSET_APPLIED" ||
+    movement.project_entry_id !== offsetEntry.entry_id ||
+    movement.amount_minor !== offsetEntry.amount_minor ||
+    paymentEntry.project_id !== offsetEntry.project_id ||
+    paymentEntry.contract_type !== offsetEntry.contract_type ||
+    offsetEntry.balance_before_minor !== paymentEntry.balance_after_minor
+  ) {
+    return null;
+  }
+  return {
+    payment_entry: paymentEntry,
+    offset_entry: offsetEntry,
+    movement,
+    shared_advance_balance_minor: balance,
+    replayed,
+  };
 }
 
 export function parseReverseSharedAdvanceMovementEnvelope(
@@ -6495,5 +6674,374 @@ export async function uploadEvidenceForCommittedTarget(input: {
     message: "Phiên tải ảnh bằng chứng đã hết hạn. Vui lòng bấm Thử tải lại ảnh.",
     alreadyAttached: false,
     resumeState: null,
+  };
+}
+
+// -----------------------------------------------------------------------------
+// 9. Active Sub-Ledger Resolution & Lost-Response Ambiguous Retry Guard (VFIN-05)
+// -----------------------------------------------------------------------------
+
+/**
+ * Resolves the active accountant's sub-ledger for `RecordVendorEntryDialog`.
+ * Never falls back to a handed-over historical accountant's book on the same
+ * `(project_id, contract_type)`, because server RPCs always write to the current
+ * active accountant's book. When the active accountant's book has not been
+ * initialized yet, `sub_ledger` is `null` and `current_payable_minor` is `"0"`.
+ */
+export function resolveActiveProjectSubLedgerForRecord(input: {
+  sub_ledgers: readonly VendorFinanceDetailSubLedger[];
+  project_id: string;
+  contract_type: ClassifiedVendorFinanceContractType;
+  active_accountant_ref: string | null;
+}): {
+  sub_ledger: VendorFinanceDetailSubLedger | null;
+  current_payable_minor: string;
+} {
+  const matched =
+    input.sub_ledgers.find(
+      (sub) =>
+        sub.ledger_scope === "PROJECT_ACCOUNTANT" &&
+        sub.project_id === input.project_id &&
+        sub.contract_type === input.contract_type &&
+        sub.is_active_assignment &&
+        (input.active_accountant_ref
+          ? sub.accountant_ref === input.active_accountant_ref
+          : true),
+    ) ?? null;
+  return {
+    sub_ledger: matched,
+    current_payable_minor: matched?.current_balance_minor ?? "0",
+  };
+}
+
+export type RecordEntryDialogDraftState = {
+  project_id: string;
+  contract_type: ClassifiedVendorFinanceContractType;
+  entry_type: DialogRecordVendorFinanceEntryType;
+  amount_input: string;
+  offset_amount_input: string;
+  effective_date: string;
+  reason: string;
+  idempotency_key: string;
+  ambiguous_retry_locked: boolean;
+};
+
+/**
+ * Determines whether a mutation response (or network failure) leaves the server
+ * commit state unknown, requiring the dialog to freeze its payload and
+ * `idempotency_key` until the user either retries the exact same request or
+ * reloads the ledger to verify before starting a new request.
+ */
+export function isAmbiguousMutationOutcome(
+  input:
+    | { kind: "network_error" }
+    | { kind: "invalid_ok_envelope" }
+    | {
+        kind: "http_error";
+        http_status: number;
+        classified: ClassifiedVendorFinanceError;
+      },
+): boolean {
+  if (input.kind === "network_error" || input.kind === "invalid_ok_envelope") {
+    return true;
+  }
+  if (input.classified.shouldRotateIdempotencyKey) {
+    return false;
+  }
+  if (
+    input.http_status === 401 ||
+    input.http_status === 403 ||
+    input.classified.code === "UNAUTHENTICATED" ||
+    input.classified.code === "ACTOR_NOT_AVAILABLE" ||
+    input.classified.code === "CSRF_ORIGIN_DENIED" ||
+    input.classified.code === "VENDOR_FINANCE_ACCESS_DENIED" ||
+    input.classified.code === "VENDOR_FINANCE_RECORD_DENIED" ||
+    input.classified.code === "VENDOR_FINANCE_PROJECT_ACCESS_DENIED"
+  ) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Applies a field edit to `RecordVendorEntryDialog` draft state.
+ * When `ambiguous_retry_locked` is true (after a lost/corrupted response),
+ * edits and idempotency-key rotation are strictly blocked so the user cannot
+ * mutate the reason/amount and accidentally submit a second payment batch.
+ */
+export function applyRecordEntryDialogDraftEdit(
+  state: RecordEntryDialogDraftState,
+  patch: Partial<
+    Pick<
+      RecordEntryDialogDraftState,
+      | "project_id"
+      | "contract_type"
+      | "entry_type"
+      | "amount_input"
+      | "offset_amount_input"
+      | "effective_date"
+      | "reason"
+    >
+  >,
+  nextIdempotencyKey: () => string = createClientIdempotencyKey,
+): RecordEntryDialogDraftState {
+  if (state.ambiguous_retry_locked) {
+    return state;
+  }
+  return {
+    ...state,
+    ...patch,
+    idempotency_key: nextIdempotencyKey(),
+  };
+}
+
+/**
+ * Determines whether the `RecordVendorEntryDialog` may be dismissed via
+ * `Hủy`, `×`, `Escape`, or clicking the backdrop.
+ * When `ambiguous_retry_locked` is true, dismissal is strictly blocked so the
+ * in-flight/ambiguous payload and `idempotency_key` are never lost.
+ */
+export function canDismissRecordEntryDialog(input: {
+  submitting: boolean;
+  retrying_evidence: boolean;
+  reloading_ledger?: boolean;
+  ambiguous_retry_locked: boolean;
+}): boolean {
+  if (
+    input.submitting ||
+    input.retrying_evidence ||
+    Boolean(input.reloading_ledger) ||
+    input.ambiguous_retry_locked
+  ) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Evaluates a user attempt to close `RecordVendorEntryDialog` (`Hủy` / `×` / `Escape` / backdrop).
+ * While `ambiguous_retry_locked` is true (e.g., server committed the payment batch
+ * but the response was lost), closing is rejected and the original `state`
+ * (including payload and `idempotency_key`) is preserved unchanged.
+ */
+export function attemptCloseRecordEntryDialog(
+  state: RecordEntryDialogDraftState,
+  defaults: Pick<
+    RecordEntryDialogDraftState,
+    "project_id" | "contract_type" | "entry_type" | "effective_date"
+  >,
+  flags?: {
+    submitting?: boolean;
+    retrying_evidence?: boolean;
+    reloading_ledger?: boolean;
+  },
+  nextIdempotencyKey: () => string = createClientIdempotencyKey,
+): {
+  allow_close: boolean;
+  next_state: RecordEntryDialogDraftState;
+} {
+  if (
+    !canDismissRecordEntryDialog({
+      submitting: Boolean(flags?.submitting),
+      retrying_evidence: Boolean(flags?.retrying_evidence),
+      reloading_ledger: Boolean(flags?.reloading_ledger),
+      ambiguous_retry_locked: state.ambiguous_retry_locked,
+    })
+  ) {
+    return {
+      allow_close: false,
+      next_state: state,
+    };
+  }
+  return {
+    allow_close: true,
+    next_state: {
+      project_id: defaults.project_id,
+      contract_type: defaults.contract_type,
+      entry_type: defaults.entry_type,
+      amount_input: "",
+      offset_amount_input: "",
+      effective_date: defaults.effective_date,
+      reason: "",
+      idempotency_key: nextIdempotencyKey(),
+      ambiguous_retry_locked: false,
+    },
+  };
+}
+
+/**
+ * Transitions `RecordEntryDialogDraftState` after a submission attempt.
+ * - On an ambiguous outcome (`network_error`, `invalid_ok_envelope`, or ambiguous `5xx`),
+ *   locks the dialog (`ambiguous_retry_locked: true`) and preserves the exact payload and `idempotency_key`.
+ * - Only unlocks after a definitive response (`ok` or non-ambiguous `http_error`) for a retry
+ *   sent with the same request and same `idempotency_key`.
+ */
+export function applyRecordEntryMutationOutcome(
+  state: RecordEntryDialogDraftState,
+  outcome:
+    | { kind: "ok" }
+    | { kind: "network_error" }
+    | { kind: "invalid_ok_envelope" }
+    | {
+        kind: "http_error";
+        http_status: number;
+        classified: ClassifiedVendorFinanceError;
+      },
+  nextIdempotencyKey: () => string = createClientIdempotencyKey,
+): RecordEntryDialogDraftState {
+  if (outcome.kind === "ok") {
+    return {
+      ...state,
+      ambiguous_retry_locked: false,
+    };
+  }
+  if (outcome.kind !== "http_error" || isAmbiguousMutationOutcome(outcome)) {
+    return {
+      ...state,
+      ambiguous_retry_locked: true,
+    };
+  }
+  return {
+    ...state,
+    ambiguous_retry_locked: false,
+    idempotency_key: outcome.classified.shouldRotateIdempotencyKey
+      ? nextIdempotencyKey()
+      : state.idempotency_key,
+  };
+}
+
+export type ReconciledLedgerSnapshotForAmbiguousRetry = {
+  has_active_book: boolean;
+  current_payable_minor: string;
+  shared_advance_balance_minor: string;
+  latest_entries: readonly VendorFinanceEntryProjection[];
+};
+
+/**
+ * Reloads and validates both the vendor detail summary and the active sub-ledger's
+ * latest entries so the user can inspect the authoritative server ledger state
+ * inside `RecordVendorEntryDialog` before deciding whether to open a new request.
+ */
+export async function reloadLedgerForAmbiguousRetryVerification(input: {
+  vendor_id: string;
+  project_id: string;
+  contract_type: ClassifiedVendorFinanceContractType;
+  active_accountant_ref: string | null;
+  fetch_impl?: typeof fetch;
+}): Promise<
+  | { ok: true; snapshot: ReconciledLedgerSnapshotForAmbiguousRetry }
+  | { ok: false; message: string }
+> {
+  const fetchImpl = input.fetch_impl ?? fetch;
+  try {
+    const [detailRes, entriesRes] = await Promise.all([
+      fetchImpl(buildVendorDetailUrl(input.vendor_id), {
+        method: "GET",
+        cache: "no-store",
+      }),
+      fetchImpl(
+        buildVendorEntriesUrl(input.vendor_id, {
+          ledger_scope: "PROJECT_ACCOUNTANT",
+          project_id: input.project_id,
+          accountant_ref: input.active_accountant_ref ?? undefined,
+          contract_type: input.contract_type,
+          page_size: 5,
+        }),
+        {
+          method: "GET",
+          cache: "no-store",
+        },
+      ),
+    ]);
+
+    if (!detailRes.ok || !entriesRes.ok) {
+      return {
+        ok: false,
+        message:
+          "Không thể tải lại sổ từ máy chủ để đối chiếu. Dữ liệu và Idempotency-Key vẫn được giữ nguyên; vui lòng thử tải lại sổ hoặc bấm Thử gửi lại yêu cầu này.",
+      };
+    }
+
+    const [detailJson, entriesJson]: [unknown, unknown] = await Promise.all([
+      detailRes.json().catch(() => null),
+      entriesRes.json().catch(() => null),
+    ]);
+    const detailParsed = parseVendorDetailEnvelope(detailJson);
+    const entriesParsed = parseVendorEntriesPageEnvelope(entriesJson);
+    if (
+      !detailParsed ||
+      !entriesParsed ||
+      detailParsed.vendor.vendor_id !== input.vendor_id ||
+      entriesParsed.vendor_id !== input.vendor_id
+    ) {
+      return {
+        ok: false,
+        message:
+          "Dữ liệu sổ tải về không hợp lệ nên chưa thể đối chiếu. Dữ liệu và Idempotency-Key vẫn được giữ nguyên.",
+      };
+    }
+
+    const resolved = resolveActiveProjectSubLedgerForRecord({
+      sub_ledgers: detailParsed.sub_ledgers,
+      project_id: input.project_id,
+      contract_type: input.contract_type,
+      active_accountant_ref: input.active_accountant_ref,
+    });
+
+    return {
+      ok: true,
+      snapshot: {
+        has_active_book: resolved.sub_ledger !== null,
+        current_payable_minor: resolved.current_payable_minor,
+        shared_advance_balance_minor: detailParsed.vendor.shared_advance_balance_minor,
+        latest_entries: entriesParsed.entries.slice(0, 3),
+      },
+    };
+  } catch {
+    return {
+      ok: false,
+      message:
+        "Mất kết nối mạng khi tải lại sổ để đối chiếu. Dữ liệu và Idempotency-Key vẫn được giữ nguyên; vui lòng thử tải lại sổ hoặc bấm Thử gửi lại yêu cầu này.",
+    };
+  }
+}
+
+/**
+ * Unlocks `RecordVendorEntryDialog` to start a new request ONLY AFTER a ledger
+ * reload has succeeded (`reconciled_snapshot !== null`) and been presented to
+ * the user for reconciliation. If `reconciled_snapshot` is null, refuses to unlock
+ * and preserves the locked payload and `idempotency_key`.
+ */
+export function unlockRecordEntryDialogAfterLedgerReconciliation(
+  state: RecordEntryDialogDraftState,
+  reconciled_snapshot: ReconciledLedgerSnapshotForAmbiguousRetry | null,
+  defaults: Pick<
+    RecordEntryDialogDraftState,
+    "project_id" | "contract_type" | "entry_type" | "effective_date"
+  >,
+  nextIdempotencyKey: () => string = createClientIdempotencyKey,
+): {
+  unlocked: boolean;
+  next_state: RecordEntryDialogDraftState;
+} {
+  if (!reconciled_snapshot) {
+    return {
+      unlocked: false,
+      next_state: state,
+    };
+  }
+  return {
+    unlocked: true,
+    next_state: {
+      project_id: defaults.project_id,
+      contract_type: defaults.contract_type,
+      entry_type: defaults.entry_type,
+      amount_input: "",
+      offset_amount_input: "",
+      effective_date: defaults.effective_date,
+      reason: "",
+      idempotency_key: nextIdempotencyKey(),
+      ambiguous_retry_locked: false,
+    },
   };
 }

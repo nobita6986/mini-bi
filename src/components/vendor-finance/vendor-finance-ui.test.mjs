@@ -332,13 +332,14 @@ test("VFIN-04: Vendor shared advance balance, 4 shared advance dialogs, cross-pr
   assert.match(detailView, /shouldCommitSharedAdvanceLoadMore\(/);
   assert.match(detailView, /mergeUniqueSharedAdvanceMovements\(/);
 
-  // Target 3: 4 Shared advance mutation dialogs + balance-race reload + no ADVANCE_RECORDED / OPENING_ADVANCE creation paths
+  // Target 3: Shared advance mutation dialogs + balance-race reload + no ADVANCE_RECORDED / OPENING_ADVANCE creation paths
   assert.match(entryDialogs, /export function FundVendorSharedAdvanceDialog/);
   assert.match(entryDialogs, /vfin-fund-shared-advance-dialog/);
   assert.match(entryDialogs, /export function RecordVendorRefundDialog/);
   assert.match(entryDialogs, /vfin-record-vendor-refund-dialog/);
-  assert.match(entryDialogs, /export function ApplyVendorSharedAdvanceOffsetDialog/);
-  assert.match(entryDialogs, /vfin-apply-shared-advance-offset-dialog/);
+  assert.doesNotMatch(entryDialogs, /ApplyVendorSharedAdvanceOffsetDialog/);
+  assert.doesNotMatch(entryDialogs, /vfin-apply-shared-advance-offset-dialog/);
+  assert.doesNotMatch(detailView, /ApplyVendorSharedAdvanceOffsetDialog/);
   assert.match(entryDialogs, /export function ReverseVendorSharedAdvanceMovementDialog/);
   assert.match(entryDialogs, /vfin-reverse-shared-advance-dialog/);
   assert.match(entryDialogs, /VENDOR_FINANCE_INSUFFICIENT_SHARED_ADVANCE/);
@@ -353,4 +354,28 @@ test("VFIN-04: Vendor shared advance balance, 4 shared advance dialogs, cross-pr
   assert.match(monthlyReportView, /totals\.advance_offset_in_month_minor/);
   assert.match(monthlyReportView, /sum\.advance_offset_in_month_minor/);
   assert.match(monthlyReportView, /row\.advance_offset_in_month_minor/);
+
+  // Target 5 (VFIN-05): Unified Payment + Advance Offset form in RecordVendorEntryDialog + lost-response retry lock + active accountant sub-ledger resolution
+  assert.match(entryDialogs, /vfin-record-payment-amount-input/);
+  assert.match(entryDialogs, /vfin-record-offset-amount-input/);
+  assert.match(entryDialogs, /vfin-record-settlement-summary/);
+  assert.match(entryDialogs, /buildRecordPaymentWithOffsetRequest\(/);
+  assert.match(entryDialogs, /buildRecordVendorPaymentWithOffsetUrl\(/);
+  assert.match(entryDialogs, /parseRecordPaymentWithOffsetEnvelope\(/);
+  assert.match(entryDialogs, /resolveActiveProjectSubLedgerForRecord\(/);
+  assert.match(entryDialogs, /applyRecordEntryDialogDraftEdit\(/);
+  assert.match(entryDialogs, /applyRecordEntryMutationOutcome\(/);
+  assert.match(entryDialogs, /canDismissRecordEntryDialog\(/);
+  assert.match(entryDialogs, /attemptCloseRecordEntryDialog\(/);
+  assert.match(entryDialogs, /reloadLedgerForAmbiguousRetryVerification\(/);
+  assert.match(entryDialogs, /unlockRecordEntryDialogAfterLedgerReconciliation\(/);
+  assert.match(
+    entryDialogs,
+    /closeDisabled=\{submitting \|\| retryingEvidence \|\| reloadingLedger \|\| ambiguousRetryLocked\}/,
+  );
+  assert.match(entryDialogs, /vfin-record-ambiguous-retry-lock/);
+  assert.match(entryDialogs, /vfin-record-reload-ledger-btn/);
+  assert.match(entryDialogs, /vfin-record-reloaded-ledger-preview/);
+  assert.match(entryDialogs, /vfin-record-unlock-after-reconcile-btn/);
+  assert.match(detailView, /openUnifiedOffsetDialog/);
 });

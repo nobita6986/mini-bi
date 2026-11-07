@@ -18,20 +18,20 @@ import {
   computeAssignProjectAccountantFingerprint,
   computeFundSharedAdvanceFingerprint,
   computeRecordEntryFingerprint,
+  computeRecordPaymentWithOffsetFingerprint,
   computeRecordVendorRefundFingerprint,
   computeReserveEvidenceFingerprint,
-  computeReverseEntryFingerprint,
   computeReverseSharedAdvanceMovementFingerprint,
 } from "../src/lib/vendor-finance/vendor-finance-contract.ts";
 import { createVendorFinanceRepository } from "../src/lib/vendor-finance/vendor-finance-repository.ts";
 import {
   parseMonthlyReportEnvelope,
+  parseRecordPaymentWithOffsetEnvelope,
   parseVendorDetailEnvelope,
 } from "../src/lib/vendor-finance/ui-model.ts";
 import {
-  VFIN_03_CONTRACT_TYPE_LEDGERS_MIGRATION_NAME,
   VFIN_04_SHARED_VENDOR_ADVANCE_MIGRATION_NAME,
-  VFIN_04_SHARED_VENDOR_ADVANCE_RPC_SIGNATURES,
+  VFIN_05_COMBINED_PAYMENT_OFFSET_MIGRATION_NAME,
   migrationChecksum,
 } from "./lib/migration-validation.mjs";
 import { AUTH_PROLOGUE } from "./lib/s04c-read-fixture.mjs";
@@ -236,6 +236,19 @@ const VFIN_04_RPC_BINDINGS = {
     ["p_project_id", "text"],
     ["p_contract_type", "text"],
     ["p_amount_minor", "text"],
+    ["p_effective_date", "date"],
+    ["p_reason", "text"],
+    ["p_idempotency_key", "uuid"],
+    ["p_request_fingerprint", "text"],
+  ],
+  vendor_finance_record_payment_with_offset: [
+    ["p_auth_subject", "uuid"],
+    ["p_app_user_id", "uuid"],
+    ["p_vendor_id", "text"],
+    ["p_project_id", "text"],
+    ["p_contract_type", "text"],
+    ["p_payment_amount_minor", "text"],
+    ["p_offset_amount_minor", "text"],
     ["p_effective_date", "date"],
     ["p_reason", "text"],
     ["p_idempotency_key", "uuid"],
@@ -1392,7 +1405,232 @@ test("VFIN-04 Controlled Reset, Shared Vendor Advance, Multi-Project/Multi-Contr
     });
     assert.equal(capExceeded.ok, false);
     assert.equal(capExceeded.code, "VENDOR_FINANCE_EXPORT_ROW_CAP_EXCEEDED");
+
+    // 6. VFIN-05 Combined Payment & Shared Advance Offset (COASIA 10M payable = 6M TM/CK + 4M offset, payable ceiling on PAYMENT_RECORDED only, atomic rollback, idempotency)
+    const vfin05Sql = await readFile(
+      path.join(MIGRATION_DIR, VFIN_05_COMBINED_PAYMENT_OFFSET_MIGRATION_NAME),
+      "utf8",
+    );
+    await db.exec(vfin05Sql);
+
+    // Seed COASIA vendor
+    await db.query(
+      `select public.direct_entry_create_vendor(
+         $1::uuid, $2::uuid, 0, 'vnd_coasia', 'Công ty TNHH COASIA', '2026-01-01'::date, 'Tạo NCC COASIA', $3::text
+       )`,
+      [FULL_ADMIN.auth, FULL_ADMIN.app, nextUuid()],
+    );
+
+    // 6a. ACCT_A records 10,000,000 VND debt on PRJ_A / SEASONAL for COASIA
+    const debt10mBody = {
+      vendor_id: "vnd_coasia",
+      project_id: PRJ_A,
+      contract_type: "SEASONAL",
+      entry_type: "DEBT_RECORDED",
+      amount_minor: "10000000",
+      effective_date: "2026-10-10",
+      reason: "Phát sinh công nợ COASIA 10 triệu",
+    };
+    const recDebt = await repo.recordEntry({
+      auth_subject: ACCT_A.auth,
+      app_user_id: ACCT_A.app,
+      ...debt10mBody,
+      idempotency_key: nextUuid(),
+      request_fingerprint: computeRecordEntryFingerprint(debt10mBody),
+    });
+    assert.equal(recDebt.ok, true);
+    assert.equal(recDebt.data.entry.balance_after_minor, "10000000");
+
+    // 6b. Confirmed Decision #2: Single PAYMENT_RECORDED exceeding payable (11M > 10M) is rejected with VENDOR_FINANCE_INSUFFICIENT_SUBLEDGER_PAYABLE
+    const overPayBody = {
+      vendor_id: "vnd_coasia",
+      project_id: PRJ_A,
+      contract_type: "SEASONAL",
+      entry_type: "PAYMENT_RECORDED",
+      amount_minor: "11000000",
+      effective_date: "2026-10-11",
+      reason: "Trả vượt công nợ 10 triệu",
+    };
+    const overPayRes = await repo.recordEntry({
+      auth_subject: ACCT_A.auth,
+      app_user_id: ACCT_A.app,
+      ...overPayBody,
+      idempotency_key: nextUuid(),
+      request_fingerprint: computeRecordEntryFingerprint(overPayBody),
+    });
+    assert.equal(overPayRes.ok, false);
+    assert.equal(overPayRes.code, "VENDOR_FINANCE_INSUFFICIENT_SUBLEDGER_PAYABLE");
+
+    // Confirmed Decision #2: ADJUSTMENT_DECREASE on another sub-ledger (OFFICIAL) is NOT blocked by the payment ceiling rule
+    const adjDecBody = {
+      vendor_id: "vnd_coasia",
+      project_id: PRJ_A,
+      contract_type: "OFFICIAL",
+      entry_type: "ADJUSTMENT_DECREASE",
+      amount_minor: "500000",
+      effective_date: "2026-10-11",
+      reason: "Điều chỉnh giảm ngoài phạm vi quy tắc thanh toán",
+    };
+    const adjDecRes = await repo.recordEntry({
+      auth_subject: ACCT_A.auth,
+      app_user_id: ACCT_A.app,
+      ...adjDecBody,
+      idempotency_key: nextUuid(),
+      request_fingerprint: computeRecordEntryFingerprint(adjDecBody),
+    });
+    assert.equal(adjDecRes.ok, true);
+    assert.equal(adjDecRes.data.entry.balance_after_minor, "-500000");
+
+    // 6c. CASH_HOLDER_BEHALF funds 4,000,000 VND shared advance for COASIA
+    const fund4mBody = {
+      vendor_id: "vnd_coasia",
+      amount_minor: "4000000",
+      effective_date: "2026-10-12",
+      reason: "Ứng dùng chung COASIA 4 triệu",
+    };
+    const fund4m = await repo.fundSharedAdvance({
+      auth_subject: CASH_HOLDER_BEHALF.auth,
+      app_user_id: CASH_HOLDER_BEHALF.app,
+      ...fund4mBody,
+      idempotency_key: nextUuid(),
+      request_fingerprint: computeFundSharedAdvanceFingerprint(fund4mBody),
+    });
+    assert.equal(fund4m.ok, true);
+    assert.equal(fund4m.data.shared_advance_balance_minor, "4000000");
+
+    // 6d. Atomic rollback when offset > shared advance (4M payment + 5M offset > 4M shared advance)
+    const badOffsetBody = {
+      vendor_id: "vnd_coasia",
+      project_id: PRJ_A,
+      contract_type: "SEASONAL",
+      payment_amount_minor: "4000000",
+      offset_amount_minor: "5000000",
+      effective_date: "2026-10-15",
+      reason: "Khấu trừ vượt dư ứng",
+    };
+    const badOffsetRes = await repo.recordPaymentWithOffset({
+      auth_subject: ACCT_A.auth,
+      app_user_id: ACCT_A.app,
+      ...badOffsetBody,
+      idempotency_key: nextUuid(),
+      request_fingerprint: computeRecordPaymentWithOffsetFingerprint(badOffsetBody),
+    });
+    assert.equal(badOffsetRes.ok, false);
+    assert.equal(badOffsetRes.code, "VENDOR_FINANCE_INSUFFICIENT_SHARED_ADVANCE");
+
+    // Verify neither PAYMENT_RECORDED nor ADVANCE_OFFSET_RECORDED was committed on failure
+    const entriesAfterFail1 = await db.query(
+      `select count(*)::int as cnt from public.vendor_finance_entries where vendor_id = 'vnd_coasia' and contract_type = 'SEASONAL'`,
+    );
+    assert.equal(entriesAfterFail1.rows[0].cnt, 1, "Only the 10M DEBT_RECORDED entry exists");
+
+    // 6e. Atomic rollback when payment + offset > subledger payable (7M payment + 4M offset = 11M > 10M payable)
+    const badTotalBody = {
+      vendor_id: "vnd_coasia",
+      project_id: PRJ_A,
+      contract_type: "SEASONAL",
+      payment_amount_minor: "7000000",
+      offset_amount_minor: "4000000",
+      effective_date: "2026-10-15",
+      reason: "Tổng vượt công nợ 10 triệu",
+    };
+    const badTotalRes = await repo.recordPaymentWithOffset({
+      auth_subject: ACCT_A.auth,
+      app_user_id: ACCT_A.app,
+      ...badTotalBody,
+      idempotency_key: nextUuid(),
+      request_fingerprint: computeRecordPaymentWithOffsetFingerprint(badTotalBody),
+    });
+    assert.equal(badTotalRes.ok, false);
+    assert.equal(badTotalRes.code, "VENDOR_FINANCE_INSUFFICIENT_SUBLEDGER_PAYABLE");
+
+    // 6f. COASIA Exact Scenario: 10M payable settled with 6M PAYMENT_RECORDED + 4M ADVANCE_OFFSET_RECORDED in one confirmation
+    const settleIdem = nextUuid();
+    const settleBody = {
+      vendor_id: "vnd_coasia",
+      project_id: PRJ_A,
+      contract_type: "SEASONAL",
+      payment_amount_minor: "6000000",
+      offset_amount_minor: "4000000",
+      effective_date: "2026-10-15",
+      reason: "Thanh toán COASIA 6tr TM/CK + khấu trừ ứng 4tr",
+    };
+    const settleFp = computeRecordPaymentWithOffsetFingerprint(settleBody);
+    const settleRes = await repo.recordPaymentWithOffset({
+      auth_subject: ACCT_A.auth,
+      app_user_id: ACCT_A.app,
+      ...settleBody,
+      idempotency_key: settleIdem,
+      request_fingerprint: settleFp,
+    });
+    assert.equal(settleRes.ok, true);
+    assert.equal(settleRes.data.replayed, false);
+    assert.equal(settleRes.data.payment_entry.entry_type, "PAYMENT_RECORDED");
+    assert.equal(settleRes.data.payment_entry.amount_minor, "6000000");
+    assert.equal(settleRes.data.payment_entry.balance_before_minor, "10000000");
+    assert.equal(settleRes.data.payment_entry.balance_delta_minor, "-6000000");
+    assert.equal(settleRes.data.payment_entry.balance_after_minor, "4000000");
+    assert.equal(settleRes.data.payment_entry.can_attach_evidence, true);
+
+    assert.equal(settleRes.data.offset_entry.entry_type, "ADVANCE_OFFSET_RECORDED");
+    assert.equal(settleRes.data.offset_entry.amount_minor, "4000000");
+    assert.equal(settleRes.data.offset_entry.balance_before_minor, "4000000");
+    assert.equal(settleRes.data.offset_entry.balance_delta_minor, "-4000000");
+    assert.equal(settleRes.data.offset_entry.balance_after_minor, "0");
+
+    assert.equal(settleRes.data.movement.movement_type, "PROJECT_OFFSET_APPLIED");
+    assert.equal(settleRes.data.movement.amount_minor, "4000000");
+    assert.equal(settleRes.data.movement.balance_after_minor, "0");
+    assert.equal(settleRes.data.movement.project_entry_id, settleRes.data.offset_entry.entry_id);
+    assert.equal(settleRes.data.movement.can_attach_evidence, false);
+    assert.equal(settleRes.data.shared_advance_balance_minor, "0");
+
+    // UI model parser accepts the DB-backed response
+    const parsedUiSettle = parseRecordPaymentWithOffsetEnvelope({ ok: true, data: settleRes.data });
+    assert.ok(parsedUiSettle, "parseRecordPaymentWithOffsetEnvelope must accept real DB output");
+
+    // 6g. Idempotent replay with same key & fingerprint returns replayed: true without duplicate rows
+    const replaySettle = await repo.recordPaymentWithOffset({
+      auth_subject: ACCT_A.auth,
+      app_user_id: ACCT_A.app,
+      ...settleBody,
+      idempotency_key: settleIdem,
+      request_fingerprint: settleFp,
+    });
+    assert.equal(replaySettle.ok, true);
+    assert.equal(replaySettle.data.replayed, true);
+    assert.equal(replaySettle.data.payment_entry.entry_id, settleRes.data.payment_entry.entry_id);
+    assert.equal(replaySettle.data.offset_entry.entry_id, settleRes.data.offset_entry.entry_id);
+
+    // Different fingerprint with same idempotency_key -> VENDOR_FINANCE_IDEMPOTENCY_CONFLICT
+    const conflictBody = { ...settleBody, payment_amount_minor: "5000000" };
+    const conflictSettle = await repo.recordPaymentWithOffset({
+      auth_subject: ACCT_A.auth,
+      app_user_id: ACCT_A.app,
+      ...conflictBody,
+      idempotency_key: settleIdem,
+      request_fingerprint: computeRecordPaymentWithOffsetFingerprint(conflictBody),
+    });
+    assert.equal(conflictSettle.ok, false);
+    assert.equal(conflictSettle.code, "VENDOR_FINANCE_IDEMPOTENCY_CONFLICT");
+
+    // 6h. Monthly report shows paid_in_month_minor = 6,000,000 and advance_offset_in_month_minor = 4,000,000 separately
+    const coasiaMonthly = await repo.getMonthlyReport({
+      auth_subject: BOD_VIEWER.auth,
+      app_user_id: BOD_VIEWER.app,
+      month: "2026-10",
+      project_id: PRJ_A,
+      accountant_ref: null,
+      vendor_id: "vnd_coasia",
+      contract_type: "SEASONAL",
+    });
+    assert.equal(coasiaMonthly.ok, true);
+    assert.equal(coasiaMonthly.data.totals.obligations_in_month_minor, "10000000");
+    assert.equal(coasiaMonthly.data.totals.paid_in_month_minor, "6000000");
+    assert.equal(coasiaMonthly.data.totals.advance_offset_in_month_minor, "4000000");
+    assert.equal(coasiaMonthly.data.totals.closing_payable_minor, "0");
   } finally {
     await db.close();
   }
 });
+

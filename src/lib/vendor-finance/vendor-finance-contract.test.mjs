@@ -11,6 +11,7 @@ import {
   computeClassifySubLedgerFingerprint,
   computeFundSharedAdvanceFingerprint,
   computeRecordEntryFingerprint,
+  computeRecordPaymentWithOffsetFingerprint,
   computeRecordVendorRefundFingerprint,
   computeReverseSharedAdvanceMovementFingerprint,
   decodeSharedAdvanceMovementsCursor,
@@ -36,6 +37,7 @@ import {
   parseNonNegativeMinorAmount,
   parsePositiveMinorAmount,
   parsePreviewOpeningBatchBody,
+  parseRecordPaymentWithOffsetBody,
   parseRecordVendorFinanceEntryBody,
   parseRecordVendorRefundBody,
   parseReserveVendorFinanceEvidenceBody,
@@ -47,6 +49,7 @@ import {
   projectFundSharedAdvanceMutation,
   projectMonthlyReport,
   projectOpeningApplyMutation,
+  projectRecordPaymentWithOffsetMutation,
   projectReverseSharedAdvanceMovementMutation,
   projectSharedAdvanceMovement,
   projectVendorFinanceEntry,
@@ -1162,4 +1165,99 @@ test("VFIN-04 shared advance & export parsers, cursors, fingerprints, and projec
       vendors: [],
     }),
   );
+
+  // VFIN-05 combined payment + shared advance offset body parser, fingerprint, projector & error status
+  const settleOk = parseRecordPaymentWithOffsetBody(
+    {
+      project_id: "PRJ_NORTH",
+      contract_type: "OFFICIAL",
+      payment_amount_minor: "6000000",
+      offset_amount_minor: "4000000",
+      effective_date: "2026-10-24",
+      reason: "  Thanh toán 6tr + khấu trừ 4tr  ",
+      idempotency_key: IDEM_1,
+    },
+    IDEM_1,
+  );
+  assert.equal(settleOk.ok, true);
+  assert.equal(settleOk.value.payment_amount_minor, "6000000");
+  assert.equal(settleOk.value.offset_amount_minor, "4000000");
+  assert.equal(settleOk.value.reason, "Thanh toán 6tr + khấu trừ 4tr");
+
+  const settleZeroPay = parseRecordPaymentWithOffsetBody(
+    {
+      project_id: "PRJ_NORTH",
+      contract_type: "OFFICIAL",
+      payment_amount_minor: "0",
+      offset_amount_minor: "4000000",
+      effective_date: "2026-10-24",
+      reason: "Invalid zero payment",
+      idempotency_key: IDEM_1,
+    },
+    IDEM_1,
+  );
+  assert.deepEqual(settleZeroPay, { ok: false, code: "VENDOR_FINANCE_AMOUNT_INVALID" });
+
+  const settleOverflowSum = parseRecordPaymentWithOffsetBody(
+    {
+      project_id: "PRJ_NORTH",
+      contract_type: "OFFICIAL",
+      payment_amount_minor: PG_BIGINT_MAX.toString(),
+      offset_amount_minor: "1",
+      effective_date: "2026-10-24",
+      reason: "Overflow sum",
+      idempotency_key: IDEM_1,
+    },
+    IDEM_1,
+  );
+  assert.deepEqual(settleOverflowSum, { ok: false, code: "VENDOR_FINANCE_AMOUNT_OVERFLOW" });
+
+  const fpSettle1 = computeRecordPaymentWithOffsetFingerprint({
+    vendor_id: "VND_ALPHA",
+    ...settleOk.value,
+  });
+  const fpSettle2 = computeRecordPaymentWithOffsetFingerprint({
+    vendor_id: "VND_ALPHA",
+    ...settleOk.value,
+    payment_amount_minor: "5000000",
+  });
+  assert.match(fpSettle1, /^[0-9a-f]{64}$/);
+  assert.notEqual(fpSettle1, fpSettle2);
+
+  const samplePaymentEntry = makeCanonicalEntry({
+    entry_type: "PAYMENT_RECORDED",
+    document_kind: "PAYMENT_VOUCHER",
+    contract_type: "OFFICIAL",
+    amount_minor: "6000000",
+    balance_before_minor: "10000000",
+    balance_delta_minor: "-6000000",
+    balance_after_minor: "4000000",
+  });
+  assert.ok(
+    projectRecordPaymentWithOffsetMutation({
+      payment_entry: samplePaymentEntry,
+      offset_entry: {
+        ...sampleOffsetEntry,
+        entry_id: BATCH_ID,
+      },
+      movement: {
+        ...sampleMov,
+        project_entry_id: BATCH_ID,
+      },
+      shared_advance_balance_minor: "0",
+      replayed: false,
+    }),
+  );
+  // Fail-closed if payment_entry is not PAYMENT_RECORDED or movement.project_entry_id != offset_entry.entry_id
+  assert.equal(
+    projectRecordPaymentWithOffsetMutation({
+      payment_entry: sampleOffsetEntry,
+      offset_entry: sampleOffsetEntry,
+      movement: sampleMov,
+      shared_advance_balance_minor: "0",
+      replayed: false,
+    }),
+    null,
+  );
+  assert.equal(vendorFinanceHttpStatusForError("VENDOR_FINANCE_INSUFFICIENT_SUBLEDGER_PAYABLE"), 422);
 });
