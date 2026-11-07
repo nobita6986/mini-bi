@@ -1256,6 +1256,27 @@ test("HTTP response envelope parsers validate all 18 VFIN-02 endpoint contracts 
     },
   };
   assert.ok(parseVendorDetailEnvelope(validDetail));
+  assert.ok(
+    parseVendorDetailEnvelope({
+      ok: true,
+      data: {
+        ...validDetail.data,
+        selected_sub_ledger: { ...subLedgerDetail, can_apply_vendor_advance: true },
+        sub_ledgers: [{ ...subLedgerDetail, can_apply_vendor_advance: true }],
+      },
+    }),
+  );
+  assert.equal(
+    parseVendorDetailEnvelope({
+      ok: true,
+      data: {
+        ...validDetail.data,
+        selected_sub_ledger: { ...subLedgerDetail, can_apply_shared_advance_offset: true },
+        sub_ledgers: [{ ...subLedgerDetail, can_apply_shared_advance_offset: true }],
+      },
+    }),
+    null,
+  );
 
   // 3. Entries page envelope + keyset cursor invariant
   const nextCursor = encodeVendorEntriesCursor({
@@ -1578,6 +1599,51 @@ test("HTTP response envelope parsers validate all 18 VFIN-02 endpoint contracts 
     },
   };
   assert.ok(parseMonthlyReportEnvelope(validMonthlyEnvelope));
+  // VFIN-04 monthly report payload with 9 allowed_actions fields + advance_offset_in_month_minor
+  const validVfin04MonthlyEnvelope = {
+    ok: true,
+    data: {
+      ...validMonthlyEnvelope.data,
+      allowed_actions: {
+        ...validMonthlyEnvelope.data.allowed_actions,
+        can_view_shared_advance: true,
+        can_fund_vendor_advance: false,
+        can_record_vendor_refund: false,
+        can_apply_vendor_advance: false,
+        active_assigned_project_count: 0,
+      },
+      totals: {
+        ...validMonthlyEnvelope.data.totals,
+        advance_offset_in_month_minor: "3000000",
+      },
+      project_accountant_summaries: validMonthlyEnvelope.data.project_accountant_summaries.map((s) => ({
+        ...s,
+        advance_offset_in_month_minor: "3000000",
+      })),
+      rows: validMonthlyEnvelope.data.rows.map((r) => ({
+        ...r,
+        advance_offset_in_month_minor: "3000000",
+      })),
+    },
+  };
+  const parsedVfin04Monthly = parseMonthlyReportEnvelope(validVfin04MonthlyEnvelope);
+  assert.ok(parsedVfin04Monthly);
+  assert.equal(parsedVfin04Monthly.allowed_actions.can_apply_vendor_advance, false);
+  assert.equal(parsedVfin04Monthly.totals.advance_offset_in_month_minor, "3000000");
+  assert.equal(
+    parseMonthlyReportEnvelope({
+      ok: true,
+      data: {
+        ...validVfin04MonthlyEnvelope.data,
+        totals: {
+          ...validVfin04MonthlyEnvelope.data.totals,
+          paid_and_offset_in_month_minor: "8000000",
+        },
+      },
+    }),
+    null,
+    "unknown field paid_and_offset_in_month_minor must fail closed",
+  );
   assert.equal(
     parseMonthlyReportEnvelope({
       ok: true,

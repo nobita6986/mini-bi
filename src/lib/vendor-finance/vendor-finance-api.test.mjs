@@ -27,7 +27,6 @@ import {
   handlePostClassifyVendorSubLedger,
   handlePostEndGlobalRoleAdmin,
   handlePostEndProjectAccountantAdmin,
-  handlePostExportVendorFinanceVendors,
   handlePostFinalizeVendorFinanceEvidence,
   handlePostFundVendorSharedAdvance,
   handlePostPreviewOpeningBatch,
@@ -81,7 +80,6 @@ const EXPECTED_ROUTE_METHODS = Object.freeze({
   },
   "src/app/api/vendor-finance/vendors/export/route.ts": {
     GET: "handleGetExportVendorFinanceVendors",
-    POST: "handlePostExportVendorFinanceVendors",
   },
   "src/app/api/vendor-finance/vendors/[vendorId]/route.ts": {
     GET: "handleGetVendorFinanceVendorDetail",
@@ -942,7 +940,7 @@ function makeMockRepository({
               reversed_by_movement_id: null,
               reversed_by_document_no: null,
               can_reverse: true,
-              can_attach_evidence: true,
+              can_attach_evidence: false,
               evidence: null,
               created_by_display_name: "Kế toán cầm tiền",
               created_at: "2026-10-24T02:00:00.000Z",
@@ -987,7 +985,7 @@ function makeMockRepository({
               reversed_by_movement_id: null,
               reversed_by_document_no: null,
               can_reverse: true,
-              can_attach_evidence: true,
+              can_attach_evidence: false,
               evidence: null,
               created_by_display_name: "Kế toán cầm tiền",
               created_at: "2026-10-24T02:00:00.000Z",
@@ -1032,7 +1030,7 @@ function makeMockRepository({
               reversed_by_movement_id: null,
               reversed_by_document_no: null,
               can_reverse: true,
-              can_attach_evidence: true,
+              can_attach_evidence: false,
               evidence: null,
               created_by_display_name: "Trần Thị Kế Toán A",
               created_at: "2026-10-24T02:00:00.000Z",
@@ -1090,7 +1088,7 @@ function makeMockRepository({
               reversed_by_movement_id: null,
               reversed_by_document_no: null,
               can_reverse: false,
-              can_attach_evidence: true,
+              can_attach_evidence: false,
               evidence: null,
               created_by_display_name: "Kế toán cầm tiền",
               created_at: "2026-10-24T02:05:00.000Z",
@@ -1226,7 +1224,6 @@ test("dynamic route discovery & DIRECT_ENTRY_API_ENABLED hidden 404 gate across 
       handleGetVendorFinanceContext(new Request(`${ORIGIN}/api/vendor-finance/context`), disabledFlag, bombDeps),
       handleGetVendorFinanceVendors(new Request(`${ORIGIN}/api/vendor-finance/vendors`), disabledFlag, bombDeps),
       handleGetExportVendorFinanceVendors(new Request(`${ORIGIN}/api/vendor-finance/vendors/export`), disabledFlag, bombDeps),
-      handlePostExportVendorFinanceVendors(new Request(`${ORIGIN}/api/vendor-finance/vendors/export`, { method: "POST", body: untouchedBody(), duplex: "half" }), disabledFlag, bombDeps),
       handleGetVendorFinanceVendorDetail(new Request(`${ORIGIN}/api/vendor-finance/vendors/VND_ALPHA`), "VND_ALPHA", disabledFlag, bombDeps),
       handleGetVendorFinanceEntries(new Request(`${ORIGIN}/api/vendor-finance/vendors/VND_ALPHA/entries`), "VND_ALPHA", disabledFlag, bombDeps),
       handlePostVendorFinanceEntry(new Request(`${ORIGIN}/api/vendor-finance/vendors/VND_ALPHA/entries`, { method: "POST", body: untouchedBody(), duplex: "half" }), "VND_ALPHA", disabledFlag, bombDeps),
@@ -1254,7 +1251,7 @@ test("dynamic route discovery & DIRECT_ENTRY_API_ENABLED hidden 404 gate across 
       handleGetDownloadVendorFinanceEvidence(new Request(`${ORIGIN}/api/vendor-finance/evidence/${EV_ID_1}/download`), EV_ID_1, disabledFlag, bombDeps),
     ]);
 
-    assert.equal(responses.length, 29);
+    assert.equal(responses.length, 28);
     for (const res of responses) {
       assert.equal(res.status, 404);
       assert.equal(res.headers.get("cache-control"), "private, no-store");
@@ -2520,20 +2517,6 @@ test("VFIN-04 HTTP authority & shared advance / export routes: CASH_HOLDER vs Pr
     acctDeps,
   );
   assert.equal(getExportRes.status, 200);
-
-  const postExportRes = await handlePostExportVendorFinanceVendors(
-    new Request(`${ORIGIN}/api/vendor-finance/vendors/export`, {
-      method: "POST",
-      headers: SAME_ORIGIN_POST_HEADERS,
-      body: JSON.stringify({
-        project_id: PROJECT_ID,
-        contract_type: "SEASONAL",
-      }),
-    }),
-    "true",
-    acctDeps,
-  );
-  assert.equal(postExportRes.status, 200);
 
   // 3. Export row cap exceeded returns 422 VENDOR_FINANCE_EXPORT_ROW_CAP_EXCEEDED
   const capExceededDeps = {

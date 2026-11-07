@@ -1009,13 +1009,38 @@ test("VFIN-04 shared advance & export parsers, cursors, fingerprints, and projec
     reversed_by_movement_id: null,
     reversed_by_document_no: null,
     can_reverse: true,
-    can_attach_evidence: true,
+    can_attach_evidence: false,
     evidence: null,
     created_by_display_name: "Trần Thị Kế Toán A",
     created_at: "2026-10-24T02:00:00.000Z",
     internal_disclaimer: VENDOR_FINANCE_INTERNAL_DISCLAIMER_VI,
   };
   assert.ok(projectSharedAdvanceMovement(sampleMov));
+  assert.equal(
+    projectSharedAdvanceMovement({ ...sampleMov, can_attach_evidence: true }),
+    null,
+    "shared advance movement does not support evidence attachment",
+  );
+  // Redacted cross-project movement (project fields, reason, and created_by_display_name all null)
+  assert.ok(
+    projectSharedAdvanceMovement({
+      ...sampleMov,
+      reason: null,
+      project_entry_id: null,
+      project_id: null,
+      project_display_name_snapshot: null,
+      accountant_ref: null,
+      responsible_accountant_display_name: null,
+      contract_type: null,
+      can_reverse: false,
+      created_by_display_name: null,
+    }),
+  );
+  // Partial redaction (reason null while project_id non-null) must fail closed
+  assert.equal(
+    projectSharedAdvanceMovement({ ...sampleMov, reason: null }),
+    null,
+  );
   assert.equal(
     projectSharedAdvanceMovement({ ...sampleMov, balance_after_minor: "70000000" }),
     null,
@@ -1105,7 +1130,7 @@ test("VFIN-04 shared advance & export parsers, cursors, fingerprints, and projec
     }),
   );
 
-  // Evidence target_kind accepts SHARED_ADVANCE_MOVEMENT
+  // Evidence target_kind rejects SHARED_ADVANCE_MOVEMENT
   const evReserve = parseReserveVendorFinanceEvidenceBody(
     {
       target_kind: "SHARED_ADVANCE_MOVEMENT",
@@ -1117,7 +1142,7 @@ test("VFIN-04 shared advance & export parsers, cursors, fingerprints, and projec
     },
     IDEM_1,
   );
-  assert.equal(evReserve.ok, true);
+  assert.deepEqual(evReserve, { ok: false, code: "VENDOR_FINANCE_EVIDENCE_TARGET_INVALID" });
 
   // Export projector validates row cap and items length
   assert.ok(

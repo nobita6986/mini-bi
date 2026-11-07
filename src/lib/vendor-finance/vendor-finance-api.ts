@@ -36,7 +36,6 @@ import {
   parseCreateVendorReconciliationBody,
   parseEndGlobalRoleBody,
   parseEndProjectAccountantBody,
-  parseExportVendorFinanceVendorsBody,
   parseExportVendorFinanceVendorsQuery,
   parseFinalizeVendorFinanceEvidenceBody,
   parseFundSharedAdvanceBody,
@@ -1743,55 +1742,6 @@ export async function handleGetExportVendorFinanceVendors(
     accountant_ref: query.value.accountant_ref,
     ledger_scope: query.value.ledger_scope,
     contract_type: query.value.contract_type,
-  });
-  if (!result.ok) return vfinError(result.code);
-
-  return vfinOk(result.data, 200);
-}
-
-export async function handlePostExportVendorFinanceVendors(
-  request: Request,
-  enabledFlag: string | undefined,
-  dependencies: VendorFinanceApiDependencies,
-): Promise<Response> {
-  const gate = directEntryFeatureGate(enabledFlag);
-  if (gate) return gate;
-
-  if (!isSameOriginAuthRequest(request)) {
-    return vfinError("CSRF_ORIGIN_DENIED");
-  }
-
-  if (hasDisallowedAuthorityHeaders(request)) {
-    return vfinError("CLIENT_AUTHORITY_FIELD_FORBIDDEN");
-  }
-
-  const url = parseRequestUrl(request);
-  if (!url || !parseNoQueryParams(url).ok) {
-    return vfinError("VENDOR_FINANCE_QUERY_INVALID");
-  }
-
-  const actor = await resolveVendorFinanceAuthority(dependencies, "view");
-  if (!actor.ok) return actor.response;
-
-  const boundedBody = await readBoundedJsonBody(
-    request,
-    MAX_VENDOR_FINANCE_MUTATION_JSON_BYTES,
-  );
-  if (!boundedBody.ok) return vfinError(boundedBody.code);
-
-  const parsedBody = parseExportVendorFinanceVendorsBody(boundedBody.value);
-  if (!parsedBody.ok) return vfinError(parsedBody.code);
-
-  const result = await dependencies.repository.exportVendors({
-    auth_subject: actor.auth_subject,
-    app_user_id: actor.app_user_id,
-    search: parsedBody.value.search,
-    active: parsedBody.value.active,
-    balance_filter: parsedBody.value.balance_filter,
-    project_id: parsedBody.value.project_id,
-    accountant_ref: parsedBody.value.accountant_ref,
-    ledger_scope: parsedBody.value.ledger_scope,
-    contract_type: parsedBody.value.contract_type,
   });
   if (!result.ok) return vfinError(result.code);
 

@@ -632,9 +632,7 @@ function projectEvidenceReservationRecord(value: unknown): EvidenceReservationRe
   if (
     typeof r.evidence_id !== "string" ||
     !UUID_REGEX.test(r.evidence_id) ||
-    (r.target_kind !== "ENTRY" &&
-      r.target_kind !== "RECONCILIATION" &&
-      r.target_kind !== "SHARED_ADVANCE_MOVEMENT") ||
+    (r.target_kind !== "ENTRY" && r.target_kind !== "RECONCILIATION") ||
     typeof r.target_id !== "string" ||
     !UUID_REGEX.test(r.target_id) ||
     r.status !== "RESERVED" ||
@@ -705,9 +703,7 @@ function projectEvidenceReservationInfoRecord(
   if (
     typeof value.evidence_id !== "string" ||
     !UUID_REGEX.test(value.evidence_id) ||
-    (value.target_kind !== "ENTRY" &&
-      value.target_kind !== "RECONCILIATION" &&
-      value.target_kind !== "SHARED_ADVANCE_MOVEMENT") ||
+    (value.target_kind !== "ENTRY" && value.target_kind !== "RECONCILIATION") ||
     typeof value.target_id !== "string" ||
     !UUID_REGEX.test(value.target_id) ||
     (value.status !== "RESERVED" &&
@@ -770,9 +766,7 @@ function projectEvidenceFinalizeRecord(
       "checksum_sha256",
       "finalized_at",
     ]) ||
-    (ev.target_kind !== "ENTRY" &&
-      ev.target_kind !== "RECONCILIATION" &&
-      ev.target_kind !== "SHARED_ADVANCE_MOVEMENT") ||
+    (ev.target_kind !== "ENTRY" && ev.target_kind !== "RECONCILIATION") ||
     typeof ev.target_id !== "string" ||
     !UUID_REGEX.test(ev.target_id)
   ) {
@@ -819,9 +813,7 @@ function projectEvidenceDownloadRecord(value: unknown): EvidenceDownloadRecord |
   if (
     typeof value.evidence_id !== "string" ||
     !UUID_REGEX.test(value.evidence_id) ||
-    (value.target_kind !== "ENTRY" &&
-      value.target_kind !== "RECONCILIATION" &&
-      value.target_kind !== "SHARED_ADVANCE_MOVEMENT") ||
+    (value.target_kind !== "ENTRY" && value.target_kind !== "RECONCILIATION") ||
     typeof value.target_id !== "string" ||
     !UUID_REGEX.test(value.target_id) ||
     !isOpaqueVfinEvidenceStorageKey(value.storage_key) ||

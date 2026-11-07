@@ -158,7 +158,6 @@ export const VFIN_UI_EVIDENCE_MIME_TYPES = [
 export const VFIN_UI_EVIDENCE_TARGET_KINDS = [
   "ENTRY",
   "RECONCILIATION",
-  "SHARED_ADVANCE_MOVEMENT",
 ] as const satisfies readonly VendorFinanceEvidenceTargetKind[];
 
 export const VFIN_UI_ACTIVE_FILTERS = [
@@ -2879,7 +2878,7 @@ function parseDetailSubLedgerProjection(value: unknown): VendorFinanceDetailSubL
         "can_classify_contract_type",
         "classification",
       ],
-      ["can_apply_shared_advance_offset"],
+      ["can_apply_vendor_advance"],
     )
   ) {
     return null;
@@ -2901,9 +2900,9 @@ function parseDetailSubLedgerProjection(value: unknown): VendorFinanceDetailSubL
   const canRecordEntry = boolVal(value.can_record_entry);
   const canReconcile = boolVal(value.can_reconcile);
   const canClassify = boolVal(value.can_classify_contract_type);
-  const canApplyOffset =
-    "can_apply_shared_advance_offset" in value
-      ? boolVal(value.can_apply_shared_advance_offset)
+  const canApplyVendorAdvance =
+    "can_apply_vendor_advance" in value
+      ? boolVal(value.can_apply_vendor_advance)
       : Boolean(canRecordEntry) &&
         ledgerScope === "PROJECT_ACCOUNTANT" &&
         (contractType === "SEASONAL" || contractType === "OFFICIAL") &&
@@ -2931,7 +2930,7 @@ function parseDetailSubLedgerProjection(value: unknown): VendorFinanceDetailSubL
     canRecordEntry === null ||
     canReconcile === null ||
     canClassify === null ||
-    canApplyOffset === null ||
+    canApplyVendorAdvance === null ||
     (value.classification !== null && classification === null)
   ) {
     return null;
@@ -2955,7 +2954,7 @@ function parseDetailSubLedgerProjection(value: unknown): VendorFinanceDetailSubL
     can_record_entry: canRecordEntry,
     can_reconcile: canReconcile,
     can_classify_contract_type: canClassify,
-    can_apply_shared_advance_offset: canApplyOffset,
+    can_apply_vendor_advance: canApplyVendorAdvance,
     classification,
   };
 }
@@ -3657,13 +3656,23 @@ export function parseMonthlyReportEnvelope(
       "legacy_unallocated_rows",
     ]) ||
     !isRecord(data.allowed_actions) ||
-    !exactKeys(data.allowed_actions, [
-      "visibility_scope",
-      "can_view",
-      "can_record",
-      "can_reconcile",
-      "can_manage_project_assignments",
-    ]) ||
+    !requiredAndOptionalKeysOnly(
+      data.allowed_actions,
+      [
+        "visibility_scope",
+        "can_view",
+        "can_record",
+        "can_reconcile",
+        "can_manage_project_assignments",
+      ],
+      [
+        "can_view_shared_advance",
+        "can_fund_vendor_advance",
+        "can_record_vendor_refund",
+        "can_apply_vendor_advance",
+        "active_assigned_project_count",
+      ],
+    ) ||
     !isRecord(data.filters) ||
     !exactKeys(data.filters, [
       "month",
@@ -3687,7 +3696,7 @@ export function parseMonthlyReportEnvelope(
         "closing_payable_minor",
         "closing_advance_minor",
       ],
-      ["advance_offset_in_month_minor", "paid_and_offset_in_month_minor"],
+      ["advance_offset_in_month_minor"],
     ) ||
     !Array.isArray(data.project_accountant_summaries) ||
     !Array.isArray(data.rows) ||
@@ -3702,6 +3711,26 @@ export function parseMonthlyReportEnvelope(
   const canRecord = boolVal(data.allowed_actions.can_record);
   const canReconcile = boolVal(data.allowed_actions.can_reconcile);
   const canManage = boolVal(data.allowed_actions.can_manage_project_assignments);
+  const canViewShared =
+    "can_view_shared_advance" in data.allowed_actions
+      ? boolVal(data.allowed_actions.can_view_shared_advance)
+      : true;
+  const canFund =
+    "can_fund_vendor_advance" in data.allowed_actions
+      ? boolVal(data.allowed_actions.can_fund_vendor_advance)
+      : false;
+  const canRefund =
+    "can_record_vendor_refund" in data.allowed_actions
+      ? boolVal(data.allowed_actions.can_record_vendor_refund)
+      : false;
+  const canApply =
+    "can_apply_vendor_advance" in data.allowed_actions
+      ? boolVal(data.allowed_actions.can_apply_vendor_advance)
+      : canRecord;
+  const assignedCount =
+    "active_assigned_project_count" in data.allowed_actions
+      ? nonNegInt(data.allowed_actions.active_assigned_project_count)
+      : undefined;
 
   const monthCheck =
     typeof data.filters.month === "string" ? validateUiCalendarMonth(data.filters.month) : null;
@@ -3725,12 +3754,6 @@ export function parseMonthlyReportEnvelope(
     "advance_offset_in_month_minor" in t
       ? nonNegativeMoneyStr(t.advance_offset_in_month_minor)
       : "0";
-  const paidAndOffset =
-    "paid_and_offset_in_month_minor" in t
-      ? nonNegativeMoneyStr(t.paid_and_offset_in_month_minor)
-      : paid !== null && advanceOffset !== null
-        ? (BigInt(paid) + BigInt(advanceOffset)).toString()
-        : null;
   const paidAndAdvanced = nonNegativeMoneyStr(t.paid_and_advanced_in_month_minor);
   const closingPayable = nonNegativeMoneyStr(t.closing_payable_minor);
   const closingAdvance = nonNegativeMoneyStr(t.closing_advance_minor);
@@ -3742,6 +3765,11 @@ export function parseMonthlyReportEnvelope(
     canRecord === null ||
     canReconcile === null ||
     canManage === null ||
+    canViewShared === null ||
+    canFund === null ||
+    canRefund === null ||
+    canApply === null ||
+    assignedCount === null ||
     !monthCheck ||
     !monthCheck.ok ||
     filterProjectId === undefined ||
@@ -3759,7 +3787,6 @@ export function parseMonthlyReportEnvelope(
     paid === null ||
     advanced === null ||
     advanceOffset === null ||
-    paidAndOffset === null ||
     paidAndAdvanced === null ||
     closingPayable === null ||
     closingAdvance === null
@@ -3792,7 +3819,7 @@ export function parseMonthlyReportEnvelope(
           "closing_advance_minor",
           "in_month_entry_count",
         ],
-        ["advance_offset_in_month_minor", "paid_and_offset_in_month_minor"],
+        ["advance_offset_in_month_minor"],
       )
     ) {
       return null;
@@ -3812,12 +3839,6 @@ export function parseMonthlyReportEnvelope(
       "advance_offset_in_month_minor" in rawSum
         ? nonNegativeMoneyStr(rawSum.advance_offset_in_month_minor)
         : "0";
-    const sPaidOffset =
-      "paid_and_offset_in_month_minor" in rawSum
-        ? nonNegativeMoneyStr(rawSum.paid_and_offset_in_month_minor)
-        : sPaid !== null && sAdvOffset !== null
-          ? (BigInt(sPaid) + BigInt(sAdvOffset)).toString()
-          : null;
     const sPaidAdv = nonNegativeMoneyStr(rawSum.paid_and_advanced_in_month_minor);
     const sClosePay = nonNegativeMoneyStr(rawSum.closing_payable_minor);
     const sCloseAdv = nonNegativeMoneyStr(rawSum.closing_advance_minor);
@@ -3838,7 +3859,6 @@ export function parseMonthlyReportEnvelope(
       sPaid === null ||
       sAdv === null ||
       sAdvOffset === null ||
-      sPaidOffset === null ||
       sPaidAdv === null ||
       sClosePay === null ||
       sCloseAdv === null ||
@@ -3861,7 +3881,6 @@ export function parseMonthlyReportEnvelope(
       paid_in_month_minor: sPaid,
       advanced_in_month_minor: sAdv,
       advance_offset_in_month_minor: sAdvOffset,
-      paid_and_offset_in_month_minor: sPaidOffset,
       paid_and_advanced_in_month_minor: sPaidAdv,
       closing_payable_minor: sClosePay,
       closing_advance_minor: sCloseAdv,
@@ -3904,7 +3923,7 @@ export function parseMonthlyReportEnvelope(
           "in_month_entry_count",
           "total_entry_count",
         ],
-        ["advance_offset_in_month_minor", "paid_and_offset_in_month_minor"],
+        ["advance_offset_in_month_minor"],
       )
     ) {
       return null;
@@ -3929,12 +3948,6 @@ export function parseMonthlyReportEnvelope(
       "advance_offset_in_month_minor" in rawRow
         ? nonNegativeMoneyStr(rawRow.advance_offset_in_month_minor)
         : "0";
-    const rPaidOffset =
-      "paid_and_offset_in_month_minor" in rawRow
-        ? nonNegativeMoneyStr(rawRow.paid_and_offset_in_month_minor)
-        : rPaid !== null && rAdvOffset !== null
-          ? (BigInt(rPaid) + BigInt(rAdvOffset)).toString()
-          : null;
     const rPaidAdv = nonNegativeMoneyStr(rawRow.paid_and_advanced_in_month_minor);
     const netChange = signedMoneyStr(rawRow.net_change_in_month_minor);
     const closingBal = signedMoneyStr(rawRow.closing_balance_minor);
@@ -3965,7 +3978,6 @@ export function parseMonthlyReportEnvelope(
       rPaid === null ||
       rAdv === null ||
       rAdvOffset === null ||
-      rPaidOffset === null ||
       rPaidAdv === null ||
       netChange === null ||
       closingBal === null ||
@@ -4003,7 +4015,6 @@ export function parseMonthlyReportEnvelope(
       paid_in_month_minor: rPaid,
       advanced_in_month_minor: rAdv,
       advance_offset_in_month_minor: rAdvOffset,
-      paid_and_offset_in_month_minor: rPaidOffset,
       paid_and_advanced_in_month_minor: rPaidAdv,
       net_change_in_month_minor: netChange,
       closing_balance_minor: closingBal,
@@ -4079,6 +4090,13 @@ export function parseMonthlyReportEnvelope(
       can_record: canRecord,
       can_reconcile: canReconcile,
       can_manage_project_assignments: canManage,
+      can_view_shared_advance: canViewShared,
+      can_fund_vendor_advance: canFund,
+      can_record_vendor_refund: canRefund,
+      can_apply_vendor_advance: canApply,
+      ...(assignedCount !== undefined
+        ? { active_assigned_project_count: assignedCount }
+        : {}),
     },
     filters: {
       month: monthCheck.month,
@@ -4096,7 +4114,6 @@ export function parseMonthlyReportEnvelope(
       paid_in_month_minor: paid,
       advanced_in_month_minor: advanced,
       advance_offset_in_month_minor: advanceOffset,
-      paid_and_offset_in_month_minor: paidAndOffset,
       paid_and_advanced_in_month_minor: paidAndAdvanced,
       closing_payable_minor: closingPayable,
       closing_advance_minor: closingAdvance,
@@ -4557,9 +4574,7 @@ export function parseEvidenceReserveEnvelope(
 
   const evidenceId = uuidStr(data.evidence_id);
   const targetKind =
-    data.target_kind === "ENTRY" ||
-    data.target_kind === "RECONCILIATION" ||
-    data.target_kind === "SHARED_ADVANCE_MOVEMENT"
+    data.target_kind === "ENTRY" || data.target_kind === "RECONCILIATION"
       ? data.target_kind
       : null;
   const targetId = uuidStr(data.target_id);
@@ -4638,9 +4653,7 @@ export function parseEvidenceFinalizeEnvelope(
       "checksum_sha256",
       "finalized_at",
     ]) ||
-    (ev.target_kind !== "ENTRY" &&
-      ev.target_kind !== "RECONCILIATION" &&
-      ev.target_kind !== "SHARED_ADVANCE_MOVEMENT") ||
+    (ev.target_kind !== "ENTRY" && ev.target_kind !== "RECONCILIATION") ||
     !isUuidString(ev.target_id)
   ) {
     return null;
@@ -4687,9 +4700,7 @@ export function parseEvidenceDownloadEnvelope(
   }
   const evidenceId = uuidStr(data.evidence_id);
   const targetKind =
-    data.target_kind === "ENTRY" ||
-    data.target_kind === "RECONCILIATION" ||
-    data.target_kind === "SHARED_ADVANCE_MOVEMENT"
+    data.target_kind === "ENTRY" || data.target_kind === "RECONCILIATION"
       ? data.target_kind
       : null;
   const targetId = uuidStr(data.target_id);

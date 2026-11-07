@@ -108,7 +108,6 @@ export type VendorFinanceEvidenceMimeType = (typeof VENDOR_FINANCE_EVIDENCE_MIME
 export const VENDOR_FINANCE_EVIDENCE_TARGET_KINDS = [
   "ENTRY",
   "RECONCILIATION",
-  "SHARED_ADVANCE_MOVEMENT",
 ] as const;
 
 export type VendorFinanceEvidenceTargetKind = (typeof VENDOR_FINANCE_EVIDENCE_TARGET_KINDS)[number];
@@ -2979,7 +2978,7 @@ export type VendorFinanceSharedAdvanceMovementProjection = {
   balance_delta_minor: string;
   balance_after_minor: string;
   effective_date: string;
-  reason: string;
+  reason: string | null;
   project_entry_id: string | null;
   project_id: string | null;
   project_display_name_snapshot: string | null;
@@ -2993,7 +2992,7 @@ export type VendorFinanceSharedAdvanceMovementProjection = {
   can_reverse: boolean;
   can_attach_evidence: boolean;
   evidence: VendorFinanceEvidenceSummary | null;
-  created_by_display_name: string;
+  created_by_display_name: string | null;
   created_at: string;
   internal_disclaimer: string;
 };
@@ -3169,7 +3168,7 @@ export type VendorFinanceDetailSubLedger = {
   has_opening_entry: boolean;
   eligible_for_opening: boolean;
   can_record_entry: boolean;
-  can_apply_shared_advance: boolean;
+  can_apply_vendor_advance: boolean;
   can_reconcile: boolean;
   can_classify_contract_type: boolean;
   classification: VendorFinanceSubLedgerClassificationProjection | null;
@@ -4318,7 +4317,7 @@ export function projectSharedAdvanceMovement(
   const balanceDeltaMinor = signedMoneyStr(value.balance_delta_minor);
   const balanceAfterMinor = nonNegativeMoneyStr(value.balance_after_minor);
   const effectiveDate = dateStr(value.effective_date);
-  const reason = nonEmptyStr(value.reason);
+  const reason = nullableStr(value.reason);
   const projectEntryId = nullableUuidStr(value.project_entry_id);
   const projectId =
     value.project_id === null
@@ -4338,9 +4337,9 @@ export function projectSharedAdvanceMovement(
   const reversedByMovementId = nullableUuidStr(value.reversed_by_movement_id);
   const reversedByDocNo = nullableStr(value.reversed_by_document_no);
   const canReverse = boolVal(value.can_reverse);
-  const canAttachEvidence = boolVal(value.can_attach_evidence);
-  const evidence = value.evidence === null ? null : projectEvidenceSummary(value.evidence);
-  const createdByDisplayName = nonEmptyStr(value.created_by_display_name);
+  const canAttachEvidence = value.can_attach_evidence === false ? false : null;
+  const evidence = value.evidence === null ? null : undefined;
+  const createdByDisplayName = nullableStr(value.created_by_display_name);
   const createdAt = nonEmptyStr(value.created_at);
   const disclaimer =
     value.internal_disclaimer === VENDOR_FINANCE_INTERNAL_DISCLAIMER_VI
@@ -4363,7 +4362,7 @@ export function projectSharedAdvanceMovement(
     balanceDeltaMinor === null ||
     balanceAfterMinor === null ||
     effectiveDate === null ||
-    reason === null ||
+    reason === undefined ||
     projectEntryId === undefined ||
     projectId === undefined ||
     projectDisplayNameSnapshot === undefined ||
@@ -4375,9 +4374,10 @@ export function projectSharedAdvanceMovement(
     reversedByMovementId === undefined ||
     reversedByDocNo === undefined ||
     canReverse === null ||
-    canAttachEvidence === null ||
-    (value.evidence !== null && evidence === null) ||
-    createdByDisplayName === null ||
+    canAttachEvidence !== false ||
+    evidence !== null ||
+    createdByDisplayName === undefined ||
+    (reason === null) !== (createdByDisplayName === null) ||
     createdAt === null ||
     disclaimer === null
   ) {
@@ -4398,6 +4398,10 @@ export function projectSharedAdvanceMovement(
   ];
   const allProjectFieldsNonNull = projectFields.every((f) => f !== null);
   const allProjectFieldsNull = projectFields.every((f) => f === null);
+
+  if (allProjectFieldsNonNull && (reason === null || createdByDisplayName === null)) {
+    return null;
+  }
 
   if (movementType === "PROJECT_OFFSET_APPLIED") {
     if (!allProjectFieldsNonNull && !allProjectFieldsNull) {
@@ -5163,7 +5167,7 @@ function projectDetailSubLedger(value: unknown): VendorFinanceDetailSubLedger | 
         "can_classify_contract_type",
         "classification",
       ],
-      ["can_apply_shared_advance"],
+      ["can_apply_vendor_advance"],
     )
   ) {
     return null;
@@ -5189,9 +5193,9 @@ function projectDetailSubLedger(value: unknown): VendorFinanceDetailSubLedger | 
   const hasOpening = boolVal(value.has_opening_entry);
   const eligible = boolVal(value.eligible_for_opening);
   const canRecordEntry = boolVal(value.can_record_entry);
-  const canApplyShared =
-    "can_apply_shared_advance" in value
-      ? boolVal(value.can_apply_shared_advance)
+  const canApplyVendorAdvance =
+    "can_apply_vendor_advance" in value
+      ? boolVal(value.can_apply_vendor_advance)
       : Boolean(canRecordEntry && direction === "PAYABLE" && contractType !== "UNCLASSIFIED");
   const canReconcile = boolVal(value.can_reconcile);
   const canClassify = boolVal(value.can_classify_contract_type);
@@ -5215,7 +5219,7 @@ function projectDetailSubLedger(value: unknown): VendorFinanceDetailSubLedger | 
     hasOpening === null ||
     eligible === null ||
     canRecordEntry === null ||
-    canApplyShared === null ||
+    canApplyVendorAdvance === null ||
     canReconcile === null ||
     canClassify === null ||
     (value.classification !== null && classification === null)
@@ -5238,7 +5242,7 @@ function projectDetailSubLedger(value: unknown): VendorFinanceDetailSubLedger | 
     has_opening_entry: hasOpening,
     eligible_for_opening: eligible,
     can_record_entry: canRecordEntry,
-    can_apply_shared_advance: canApplyShared,
+    can_apply_vendor_advance: canApplyVendorAdvance,
     can_reconcile: canReconcile,
     can_classify_contract_type: canClassify,
     classification,

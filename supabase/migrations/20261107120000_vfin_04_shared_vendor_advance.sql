@@ -610,6 +610,7 @@ declare
   v_pre_dept_count integer := 0;
   v_pre_gov_audit_count integer := 0;
   v_pre_gov_idem_count integer := 0;
+  v_pre_gov_digest text := null;
   v_del_audit_count integer := 0;
   v_del_idem_count integer := 0;
   v_del_evidence_count integer := 0;
@@ -630,6 +631,7 @@ declare
   v_post_dept_count integer := 0;
   v_post_gov_audit_count integer := 0;
   v_post_gov_idem_count integer := 0;
+  v_post_gov_digest text := null;
   v_disabled_trigger_count integer := 0;
 begin
   select count(*)::integer
@@ -675,6 +677,20 @@ begin
      'ASSIGN_GLOBAL_ROLE',
      'END_GLOBAL_ROLE'
    );
+
+  select pg_catalog.md5(
+           coalesce((select pg_catalog.string_agg(pg_catalog.md5(pg_catalog.to_jsonb(r)::text), ',' order by pg_catalog.md5(pg_catalog.to_jsonb(r)::text)) from public.vendor_finance_project_accountants r), '') || '|' ||
+           coalesce((select pg_catalog.string_agg(pg_catalog.md5(pg_catalog.to_jsonb(r)::text), ',' order by pg_catalog.md5(pg_catalog.to_jsonb(r)::text)) from public.vendor_finance_global_roles r), '') || '|' ||
+           coalesce((select pg_catalog.string_agg(pg_catalog.md5(pg_catalog.to_jsonb(r)::text), ',' order by pg_catalog.md5(pg_catalog.to_jsonb(r)::text)) from public.vendor_finance_project_vendors r), '') || '|' ||
+           coalesce((select pg_catalog.string_agg(pg_catalog.md5(pg_catalog.to_jsonb(r)::text), ',' order by pg_catalog.md5(pg_catalog.to_jsonb(r)::text)) from public.vendor_finance_document_counters r), '') || '|' ||
+           coalesce((select pg_catalog.string_agg(pg_catalog.md5(pg_catalog.to_jsonb(r)::text), ',' order by pg_catalog.md5(pg_catalog.to_jsonb(r)::text)) from public.vendors r), '') || '|' ||
+           coalesce((select pg_catalog.string_agg(pg_catalog.md5(pg_catalog.to_jsonb(r)::text), ',' order by pg_catalog.md5(pg_catalog.to_jsonb(r)::text)) from public.direct_entry_projects r), '') || '|' ||
+           coalesce((select pg_catalog.string_agg(pg_catalog.md5(pg_catalog.to_jsonb(r)::text), ',' order by pg_catalog.md5(pg_catalog.to_jsonb(r)::text)) from public.direct_entry_app_users r), '') || '|' ||
+           coalesce((select pg_catalog.string_agg(pg_catalog.md5(pg_catalog.to_jsonb(r)::text), ',' order by pg_catalog.md5(pg_catalog.to_jsonb(r)::text)) from public.organization_department_memberships r), '') || '|' ||
+           coalesce((select pg_catalog.string_agg(pg_catalog.md5(pg_catalog.to_jsonb(r)::text), ',' order by pg_catalog.md5(pg_catalog.to_jsonb(r)::text)) from public.vendor_finance_audit_events r where r.action in ('PROJECT_ACCOUNTANT_ASSIGNED', 'PROJECT_ACCOUNTANT_ENDED', 'PROJECT_VENDOR_LINK_UPDATED', 'GLOBAL_ROLE_ASSIGNED', 'GLOBAL_ROLE_ENDED')), '') || '|' ||
+           coalesce((select pg_catalog.string_agg(pg_catalog.md5(pg_catalog.to_jsonb(r)::text), ',' order by pg_catalog.md5(pg_catalog.to_jsonb(r)::text)) from public.vendor_finance_idempotency r where r.action in ('ASSIGN_PROJECT_ACCOUNTANT', 'END_PROJECT_ACCOUNTANT', 'SET_PROJECT_VENDOR_LINK', 'ASSIGN_GLOBAL_ROLE', 'END_GLOBAL_ROLE')), '')
+         )
+    into v_pre_gov_digest;
 
   -- Disable ONLY the exact named immutable triggers on transactional/audit/idempotency tables.
   alter table public.vendor_finance_evidence
@@ -798,6 +814,20 @@ begin
   select count(*)::integer into v_post_gov_audit_count from public.vendor_finance_audit_events;
   select count(*)::integer into v_post_gov_idem_count from public.vendor_finance_idempotency;
 
+  select pg_catalog.md5(
+           coalesce((select pg_catalog.string_agg(pg_catalog.md5(pg_catalog.to_jsonb(r)::text), ',' order by pg_catalog.md5(pg_catalog.to_jsonb(r)::text)) from public.vendor_finance_project_accountants r), '') || '|' ||
+           coalesce((select pg_catalog.string_agg(pg_catalog.md5(pg_catalog.to_jsonb(r)::text), ',' order by pg_catalog.md5(pg_catalog.to_jsonb(r)::text)) from public.vendor_finance_global_roles r), '') || '|' ||
+           coalesce((select pg_catalog.string_agg(pg_catalog.md5(pg_catalog.to_jsonb(r)::text), ',' order by pg_catalog.md5(pg_catalog.to_jsonb(r)::text)) from public.vendor_finance_project_vendors r), '') || '|' ||
+           coalesce((select pg_catalog.string_agg(pg_catalog.md5(pg_catalog.to_jsonb(r)::text), ',' order by pg_catalog.md5(pg_catalog.to_jsonb(r)::text)) from public.vendor_finance_document_counters r), '') || '|' ||
+           coalesce((select pg_catalog.string_agg(pg_catalog.md5(pg_catalog.to_jsonb(r)::text), ',' order by pg_catalog.md5(pg_catalog.to_jsonb(r)::text)) from public.vendors r), '') || '|' ||
+           coalesce((select pg_catalog.string_agg(pg_catalog.md5(pg_catalog.to_jsonb(r)::text), ',' order by pg_catalog.md5(pg_catalog.to_jsonb(r)::text)) from public.direct_entry_projects r), '') || '|' ||
+           coalesce((select pg_catalog.string_agg(pg_catalog.md5(pg_catalog.to_jsonb(r)::text), ',' order by pg_catalog.md5(pg_catalog.to_jsonb(r)::text)) from public.direct_entry_app_users r), '') || '|' ||
+           coalesce((select pg_catalog.string_agg(pg_catalog.md5(pg_catalog.to_jsonb(r)::text), ',' order by pg_catalog.md5(pg_catalog.to_jsonb(r)::text)) from public.organization_department_memberships r), '') || '|' ||
+           coalesce((select pg_catalog.string_agg(pg_catalog.md5(pg_catalog.to_jsonb(r)::text), ',' order by pg_catalog.md5(pg_catalog.to_jsonb(r)::text)) from public.vendor_finance_audit_events r), '') || '|' ||
+           coalesce((select pg_catalog.string_agg(pg_catalog.md5(pg_catalog.to_jsonb(r)::text), ',' order by pg_catalog.md5(pg_catalog.to_jsonb(r)::text)) from public.vendor_finance_idempotency r), '')
+         )
+    into v_post_gov_digest;
+
   if v_post_pa_count <> v_pre_pa_count
      or v_post_gr_count <> v_pre_gr_count
      or v_post_pv_count <> v_pre_pv_count
@@ -808,7 +838,8 @@ begin
      or v_post_user_count <> v_pre_user_count
      or v_post_dept_count <> v_pre_dept_count
      or v_post_gov_audit_count <> v_pre_gov_audit_count
-     or v_post_gov_idem_count <> v_pre_gov_idem_count then
+     or v_post_gov_idem_count <> v_pre_gov_idem_count
+     or v_post_gov_digest is distinct from v_pre_gov_digest then
     raise exception 'VENDOR_FINANCE_RESET_GOVERNANCE_PRESERVATION_FAILED'
       using errcode = '55000';
   end if;
@@ -849,7 +880,8 @@ begin
       'document_counters', v_post_dc_count,
       'document_counter_sequence_sum', v_post_dc_seq_sum,
       'governance_audit_events', v_post_gov_audit_count,
-      'governance_idempotency', v_post_gov_idem_count
+      'governance_idempotency', v_post_gov_idem_count,
+      'governance_digest_md5', v_post_gov_digest
     )
   );
 end;
@@ -1145,14 +1177,12 @@ begin
 
   if p_movement.movement_type in ('ADVANCE_FUNDED', 'VENDOR_REFUND_RECORDED') then
     v_can_reverse := (v_can_fund and v_reversed_by_id is null);
-    v_can_attach_evidence := v_can_fund;
   elsif p_movement.movement_type = 'PROJECT_OFFSET_APPLIED' then
     v_can_reverse := (v_can_write_subledger and v_reversed_by_id is null);
-    v_can_attach_evidence := v_can_write_subledger;
   else
     v_can_reverse := false;
-    v_can_attach_evidence := (v_can_fund or v_can_write_subledger);
   end if;
+  v_can_attach_evidence := false;
 
   v_can_see_project_details := (
     v_vis = 'ALL'
@@ -1179,7 +1209,7 @@ begin
     'balance_delta_minor', p_movement.balance_delta_minor::text,
     'balance_after_minor', p_movement.balance_after_minor::text,
     'effective_date', p_movement.effective_date::text,
-    'reason', p_movement.reason,
+    'reason', case when v_can_see_project_details then p_movement.reason else null end,
     'project_entry_id', case when v_can_see_project_details then p_movement.project_entry_id else null end,
     'project_id', case when v_can_see_project_details then p_movement.project_id else null end,
     'project_display_name_snapshot', case when v_can_see_project_details then p_movement.project_display_name_snapshot else null end,
@@ -1192,12 +1222,8 @@ begin
     'reversed_by_document_no', v_reversed_by_doc_no,
     'can_reverse', v_can_reverse,
     'can_attach_evidence', v_can_attach_evidence,
-    'evidence', case
-      when v_can_see_project_details and p_movement.project_entry_id is not null
-        then public.vendor_finance__internal_evidence_projection(p_movement.project_entry_id, null)
-      else null
-    end,
-    'created_by_display_name', p_movement.created_by_display_name_snapshot,
+    'evidence', null,
+    'created_by_display_name', case when v_can_see_project_details then p_movement.created_by_display_name_snapshot else null end,
     'created_at', pg_catalog.to_jsonb(p_movement.created_at),
     'internal_disclaimer', public.vendor_finance__internal_disclaimer_vi()
   );
@@ -1533,8 +1559,14 @@ begin
       cross join (values ('SEASONAL'::text), ('OFFICIAL'::text)) as ct(contract_type)
      where v.vendor_id <> '__system_vendor__'
        and v.active = true
-       and p_project_id is not null
-       and p.project_id = p_project_id
+       and (
+         p_project_id is not null
+         or p_accountant_user_id is not null
+         or p_ledger_scope = 'PROJECT_ACCOUNTANT'
+         or p_contract_type in ('SEASONAL', 'OFFICIAL')
+       )
+       and (p_project_id is null or p.project_id = p_project_id)
+       and (p_accountant_user_id is null or pa.accountant_user_id = p_accountant_user_id)
        and (v_vis = 'ALL' or pa.accountant_user_id = p_app_user_id)
     union
     select distinct e.vendor_id,
@@ -1990,8 +2022,14 @@ begin
       cross join (values ('SEASONAL'::text), ('OFFICIAL'::text)) as ct(contract_type)
      where v.vendor_id <> '__system_vendor__'
        and v.active = true
-       and p_project_id is not null
-       and p.project_id = p_project_id
+       and (
+         p_project_id is not null
+         or p_accountant_user_id is not null
+         or p_ledger_scope = 'PROJECT_ACCOUNTANT'
+         or p_contract_type in ('SEASONAL', 'OFFICIAL')
+       )
+       and (p_project_id is null or p.project_id = p_project_id)
+       and (p_accountant_user_id is null or pa.accountant_user_id = p_accountant_user_id)
        and (v_vis = 'ALL' or pa.accountant_user_id = p_app_user_id)
     union
     select distinct e.vendor_id,
@@ -2319,8 +2357,15 @@ begin
       cross join (values ('SEASONAL'::text), ('OFFICIAL'::text)) as ct(contract_type)
      where p.active = true
        and v_vendor.active = true
-       and (p_project_id is not null or v_vis = 'PROJECT_SCOPED')
+       and (
+         p_project_id is not null
+         or p_accountant_user_id is not null
+         or p_ledger_scope = 'PROJECT_ACCOUNTANT'
+         or p_contract_type in ('SEASONAL', 'OFFICIAL')
+         or v_vis = 'PROJECT_SCOPED'
+       )
        and (p_project_id is null or p.project_id = p_project_id)
+       and (p_accountant_user_id is null or pa.accountant_user_id = p_accountant_user_id)
        and (v_vis = 'ALL' or pa.accountant_user_id = p_app_user_id)
     union
     select distinct e.ledger_scope,
@@ -2431,6 +2476,16 @@ begin
                  and en.contract_type in ('SEASONAL', 'OFFICIAL')
                  and en.is_active_assignment
                  and (en.entry_count > 0 or (v_vendor.active and en.project_active))
+                 and public.vendor_finance__internal_can_actor_write_subledger(
+                   v_auth, p_app_user_id, 'record', en.ledger_scope, en.project_id, en.accountant_ref
+                 )
+               ),
+               'can_apply_vendor_advance', (
+                 en.ledger_scope = 'PROJECT_ACCOUNTANT'
+                 and en.contract_type in ('SEASONAL', 'OFFICIAL')
+                 and en.is_active_assignment
+                 and en.current_balance_minor > 0
+                 and coalesce((v_auth->>'can_apply_vendor_advance')::boolean, false)
                  and public.vendor_finance__internal_can_actor_write_subledger(
                    v_auth, p_app_user_id, 'record', en.ledger_scope, en.project_id, en.accountant_ref
                  )
@@ -2596,11 +2651,7 @@ begin
     if not v_sel_can_record then
       v_allowed_entry_types := '[]'::jsonb;
     elsif v_vendor.active and v_sel_project_active then
-      if v_record_scope = 'ALL' then
-        v_allowed_entry_types := '["DEBT_RECORDED","PAYROLL_RECORDED","PAYMENT_RECORDED","ADVANCE_RECORDED","ADJUSTMENT_INCREASE","ADJUSTMENT_DECREASE"]'::jsonb;
-      else
-        v_allowed_entry_types := '["DEBT_RECORDED","PAYROLL_RECORDED","PAYMENT_RECORDED","ADJUSTMENT_INCREASE","ADJUSTMENT_DECREASE"]'::jsonb;
-      end if;
+      v_allowed_entry_types := '["DEBT_RECORDED","PAYROLL_RECORDED","PAYMENT_RECORDED","ADJUSTMENT_INCREASE","ADJUSTMENT_DECREASE"]'::jsonb;
     else
       v_allowed_entry_types := '["PAYMENT_RECORDED","ADJUSTMENT_INCREASE","ADJUSTMENT_DECREASE"]'::jsonb;
     end if;
@@ -3052,8 +3103,8 @@ begin
       using errcode = '22023';
   end if;
 
-  -- Project accountants (record_scope <> 'ALL') cannot record ADVANCE_RECORDED.
-  if p_entry_type = 'ADVANCE_RECORDED' and v_record_scope <> 'ALL' then
+  -- Project sub-ledgers cannot record ADVANCE_RECORDED; all new advances use shared vendor advances.
+  if p_entry_type = 'ADVANCE_RECORDED' then
     raise exception 'VENDOR_FINANCE_RECORD_DENIED'
       using errcode = '42501';
   end if;
@@ -3381,7 +3432,7 @@ begin
         using errcode = '22023';
     end if;
 
-    if v_entry_type = 'OPENING_ADVANCE' and v_record_scope <> 'ALL' then
+    if v_entry_type = 'OPENING_ADVANCE' then
       raise exception 'VENDOR_FINANCE_RECORD_DENIED'
         using errcode = '42501';
     end if;
@@ -3636,7 +3687,7 @@ begin
         using errcode = '22023';
     end if;
 
-    if v_entry_type = 'OPENING_ADVANCE' and v_record_scope <> 'ALL' then
+    if v_entry_type = 'OPENING_ADVANCE' then
       raise exception 'VENDOR_FINANCE_RECORD_DENIED'
         using errcode = '42501';
     end if;

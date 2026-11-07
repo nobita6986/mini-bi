@@ -25,6 +25,10 @@ import {
 } from "../src/lib/vendor-finance/vendor-finance-contract.ts";
 import { createVendorFinanceRepository } from "../src/lib/vendor-finance/vendor-finance-repository.ts";
 import {
+  parseMonthlyReportEnvelope,
+  parseVendorDetailEnvelope,
+} from "../src/lib/vendor-finance/ui-model.ts";
+import {
   VFIN_03_CONTRACT_TYPE_LEDGERS_MIGRATION_NAME,
   VFIN_04_SHARED_VENDOR_ADVANCE_MIGRATION_NAME,
   VFIN_04_SHARED_VENDOR_ADVANCE_RPC_SIGNATURES,
@@ -733,6 +737,62 @@ test("VFIN-04 Controlled Reset, Shared Vendor Advance, Multi-Project/Multi-Contr
     // 5. Exercise VFIN-04 through canonical TypeScript repository (`createVendorFinanceRepository`)
     const repo = createPgliteVfinRepo(db);
 
+    // 5.0 Immediately after reset (zero ledger entries), sub-ledger filters (accountant_ref, contract_type, ledger_scope)
+    //     still return active Vendors via active project accountant assignments (Must-Fix #2)
+    for (const filterCase of [
+      { accountant_ref: ACCT_A.app, project_id: null, ledger_scope: "all", contract_type: "all" },
+      { accountant_ref: null, project_id: null, ledger_scope: "all", contract_type: "SEASONAL" },
+      { accountant_ref: null, project_id: null, ledger_scope: "PROJECT_ACCOUNTANT", contract_type: "all" },
+    ]) {
+      const postResetList = await repo.listVendors({
+        auth_subject: BOD_VIEWER.auth,
+        app_user_id: BOD_VIEWER.app,
+        search: null,
+        active: "active",
+        balance_filter: "all",
+        ...filterCase,
+        page: 1,
+        page_size: 25,
+      });
+      assert.equal(postResetList.ok, true);
+      assert.equal(
+        postResetList.data.total,
+        2,
+        `post-reset listVendors must return 2 active vendors for filter ${JSON.stringify(filterCase)}`,
+      );
+
+      const postResetExport = await repo.exportVendors({
+        auth_subject: BOD_VIEWER.auth,
+        app_user_id: BOD_VIEWER.app,
+        search: null,
+        active: "active",
+        balance_filter: "all",
+        ...filterCase,
+      });
+      assert.equal(postResetExport.ok, true);
+      assert.equal(
+        postResetExport.data.total,
+        2,
+        `post-reset exportVendors must return 2 active vendors for filter ${JSON.stringify(filterCase)}`,
+      );
+    }
+
+    const postResetDetailByAcct = await repo.getVendor({
+      auth_subject: BOD_VIEWER.auth,
+      app_user_id: BOD_VIEWER.app,
+      vendor_id: "vnd_shared_x",
+      project_id: null,
+      accountant_ref: ACCT_A.app,
+      ledger_scope: null,
+      contract_type: null,
+    });
+    assert.equal(postResetDetailByAcct.ok, true);
+    assert.equal(postResetDetailByAcct.data.sub_ledgers.length, 2, "SEASONAL + OFFICIAL candidate sub-ledgers for ACCT_A");
+    assert.ok(
+      parseVendorDetailEnvelope({ ok: true, data: postResetDetailByAcct.data }),
+      "parseVendorDetailEnvelope must accept post-reset getVendor payload with can_apply_vendor_advance",
+    );
+
     // 5a. Role & Authority Matrix checks
     const cashHolderAccess = await repo.getActorAccess({
       auth_subject: CASH_HOLDER_ONLY.auth,
@@ -776,31 +836,61 @@ test("VFIN-04 Controlled Reset, Shared Vendor Advance, Multi-Project/Multi-Contr
     assert.equal(deniedFundByAcct.ok, false);
     assert.equal(deniedFundByAcct.code, "VENDOR_FINANCE_RECORD_DENIED");
 
-    // Project Accountant cannot record ADVANCE_RECORDED or OPENING_ADVANCE at DB boundary
-    await assert.rejects(
-      () =>
-        db.query(
-          `select public.vendor_finance_record_entry(
-             $1::uuid, $2::uuid, 'vnd_shared_x', $3::text, 'SEASONAL', 'ADVANCE_RECORDED',
-             '10000000', '2026-10-10'::date, 'Cố tạo ADVANCE_RECORDED', $4::uuid, $5::text
-           )`,
-          [ACCT_A.auth, ACCT_A.app, PRJ_A, nextUuid(), "1".repeat(64)],
-        ),
-      (err) => err?.message?.includes("VENDOR_FINANCE_RECORD_DENIED"),
-    );
+    // No actor (including PROJECT_SCOPED, CASH_HOLDER_RECORD_BEHALF, and FULL_ADMIN) can record ADVANCE_RECORDED or OPENING_ADVANCE at DB boundary
+    for (const actor of [ACCT_A, CASH_HOLDER_BEHALF, FULL_ADMIN]) {
+      await assert.rejects(
+        () =>
+          db.query(
+            `select public.vendor_finance_record_entry(
+               $1::uuid, $2::uuid, 'vnd_shared_x', $3::text, 'SEASONAL', 'ADVANCE_RECORDED',
+               '10000000', '2026-10-10'::date, 'Cố tạo ADVANCE_RECORDED', $4::uuid, $5::text
+             )`,
+            [actor.auth, actor.app, PRJ_A, nextUuid(), "1".repeat(64)],
+          ),
+        (err) => err?.message?.includes("VENDOR_FINANCE_RECORD_DENIED"),
+      );
 
-    await assert.rejects(
-      () =>
-        db.query(
-          `select public.vendor_finance_apply_opening_batch(
-             $1::uuid, $2::uuid, $3::text, 'SEASONAL', '2026-10-01'::date,
-             '[{"vendor_id":"vnd_shared_x","entry_type":"OPENING_ADVANCE","amount_minor":"10000000"}]'::jsonb,
-             'Cố tạo OPENING_ADVANCE', $4::uuid, $5::text
-           )`,
-          [ACCT_A.auth, ACCT_A.app, PRJ_A, nextUuid(), "2".repeat(64)],
-        ),
-      (err) => err?.message?.includes("VENDOR_FINANCE_RECORD_DENIED"),
-    );
+      await assert.rejects(
+        () =>
+          db.query(
+            `select public.vendor_finance_preview_opening_batch(
+               $1::uuid, $2::uuid, $3::text, 'SEASONAL', '2026-10-01'::date,
+               '[{"vendor_id":"vnd_shared_x","entry_type":"OPENING_ADVANCE","amount_minor":"10000000"}]'::jsonb
+             )`,
+            [actor.auth, actor.app, PRJ_A],
+          ),
+        (err) => err?.message?.includes("VENDOR_FINANCE_RECORD_DENIED"),
+      );
+
+      await assert.rejects(
+        () =>
+          db.query(
+            `select public.vendor_finance_apply_opening_batch(
+               $1::uuid, $2::uuid, $3::text, 'SEASONAL', '2026-10-01'::date,
+               '[{"vendor_id":"vnd_shared_x","entry_type":"OPENING_ADVANCE","amount_minor":"10000000"}]'::jsonb,
+               'Cố tạo OPENING_ADVANCE', $4::uuid, $5::text
+             )`,
+            [actor.auth, actor.app, PRJ_A, nextUuid(), "2".repeat(64)],
+          ),
+        (err) => err?.message?.includes("VENDOR_FINANCE_RECORD_DENIED"),
+      );
+
+      const detailForActor = await repo.getVendor({
+        auth_subject: actor.auth,
+        app_user_id: actor.app,
+        vendor_id: "vnd_shared_x",
+        project_id: PRJ_A,
+        accountant_ref: null,
+        ledger_scope: null,
+        contract_type: "SEASONAL",
+      });
+      assert.equal(detailForActor.ok, true);
+      assert.equal(
+        detailForActor.data.allowed_actions.allowed_entry_types.includes("ADVANCE_RECORDED"),
+        false,
+        `allowed_entry_types must not include ADVANCE_RECORDED for ${actor.name}`,
+      );
+    }
 
     // CASH_HOLDER cannot write project sub-ledgers
     const deniedProjectWriteByCashHolder = await repo.recordEntry({
@@ -1187,6 +1277,18 @@ test("VFIN-04 Controlled Reset, Shared Vendor Advance, Multi-Project/Multi-Contr
       null,
       "PRJ_B project_id is redacted for ACCT_A",
     );
+    assert.equal(
+      prjBMovForAcctA.reason,
+      null,
+      "PRJ_B free-text reason is redacted for ACCT_A",
+    );
+    assert.equal(
+      prjBMovForAcctA.created_by_display_name,
+      null,
+      "PRJ_B created_by_display_name is redacted for ACCT_A",
+    );
+    assert.equal(prjBMovForAcctA.can_attach_evidence, false);
+    assert.equal(prjBMovForAcctA.evidence, null);
 
     // Filter invariance on listVendors & getVendor across project_id / contract_type filters
     const listAll = await repo.listVendors({
@@ -1242,6 +1344,12 @@ test("VFIN-04 Controlled Reset, Shared Vendor Advance, Multi-Project/Multi-Contr
     assert.equal(monthlyReport.data.totals.paid_in_month_minor, "0"); // zero cash paid
     assert.equal(monthlyReport.data.totals.advance_offset_in_month_minor, "75000000"); // 40M + 35M net offset
     assert.equal(monthlyReport.data.totals.closing_payable_minor, "35000000"); // 110M - 75M = 35M
+    const parsedMonthlyUi = parseMonthlyReportEnvelope({ ok: true, data: monthlyReport.data });
+    assert.ok(
+      parsedMonthlyUi,
+      "parseMonthlyReportEnvelope must accept real DB monthly report output without returning null",
+    );
+    assert.equal(parsedMonthlyUi.totals.advance_offset_in_month_minor, "75000000");
 
     // 5n. Export Vendors parity + 10,000 row cap enforcement (cap + 1 = 10,001)
     const exported = await repo.exportVendors({
