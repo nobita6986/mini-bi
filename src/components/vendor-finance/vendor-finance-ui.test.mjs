@@ -364,8 +364,18 @@ test("VFIN-04: Vendor shared advance balance, 4 shared advance dialogs, cross-pr
   assert.match(entryDialogs, /parseRecordPaymentWithOffsetEnvelope\(/);
   assert.match(entryDialogs, /resolveActiveProjectSubLedgerForRecord\(/);
   assert.match(entryDialogs, /applyRecordEntryDialogDraftEdit\(/);
-  assert.match(entryDialogs, /isAmbiguousMutationOutcome\(/);
+  assert.match(entryDialogs, /applyRecordEntryMutationOutcome\(/);
+  assert.match(entryDialogs, /canDismissRecordEntryDialog\(/);
+  assert.match(entryDialogs, /attemptCloseRecordEntryDialog\(/);
+  assert.match(entryDialogs, /reloadLedgerForAmbiguousRetryVerification\(/);
+  assert.match(entryDialogs, /unlockRecordEntryDialogAfterLedgerReconciliation\(/);
+  assert.match(
+    entryDialogs,
+    /closeDisabled=\{submitting \|\| retryingEvidence \|\| reloadingLedger \|\| ambiguousRetryLocked\}/,
+  );
   assert.match(entryDialogs, /vfin-record-ambiguous-retry-lock/);
   assert.match(entryDialogs, /vfin-record-reload-ledger-btn/);
+  assert.match(entryDialogs, /vfin-record-reloaded-ledger-preview/);
+  assert.match(entryDialogs, /vfin-record-unlock-after-reconcile-btn/);
   assert.match(detailView, /openUnifiedOffsetDialog/);
 });

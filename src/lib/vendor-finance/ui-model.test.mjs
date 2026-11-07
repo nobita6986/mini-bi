@@ -74,6 +74,8 @@ import {
   VFIN_UI_REDACTED_FIELD_LABEL_VI,
   VFIN_UI_SHARED_ADVANCE_MOVEMENT_TYPES,
   applyRecordEntryDialogDraftEdit,
+  applyRecordEntryMutationOutcome,
+  attemptCloseRecordEntryDialog,
   buildAdminEndGlobalRoleUrl,
   buildAdminEndProjectAccountantUrl,
   buildAdminGlobalRolesUrl,
@@ -116,6 +118,7 @@ import {
   buildVendorListUrl,
   buildVendorReconciliationsUrl,
   buildVendorSharedAdvancesUrl,
+  canDismissRecordEntryDialog,
   classifyVendorFinanceError,
   computeBrowserSha256Hex,
   computeReconciliationDifferencePreview,
@@ -163,9 +166,11 @@ import {
   parseVendorListEnvelope,
   parseVendorReconciliationsPageEnvelope,
   parseVendorSharedAdvancesPageEnvelope,
+  reloadLedgerForAmbiguousRetryVerification,
   resolveActiveProjectSubLedgerForRecord,
   resolveVendorFinanceExportFilename,
   shouldCommitSharedAdvanceLoadMore,
+  unlockRecordEntryDialogAfterLedgerReconciliation,
   uploadEvidenceForCommittedTarget,
   validateEvidenceFilePreflight,
 } from "./ui-model.ts";
@@ -3163,4 +3168,264 @@ test("VFIN-04: Shared advance URL/request builders, redaction-aware envelope par
   });
   assert.equal(resolvedWithActiveBook.sub_ledger, activeNewAccountantSubLedger);
   assert.equal(resolvedWithActiveBook.current_payable_minor, "6000000");
+
+  // 9. Regression: Server commits payment batch, response is lost, then user attempts to close dialog
+  //    (Hủy / × / Escape / backdrop click must NOT lose payload or Idempotency-Key)
+  const draftDefaults = {
+    project_id: PROJECT_ID,
+    contract_type: "SEASONAL",
+    entry_type: "PAYMENT_RECORDED",
+    effective_date: "2026-10-25",
+  };
+  const preSubmitDraft = {
+    project_id: PROJECT_ID,
+    contract_type: "SEASONAL",
+    entry_type: "PAYMENT_RECORDED",
+    amount_input: "6000000",
+    offset_amount_input: "4000000",
+    effective_date: "2026-10-25",
+    reason: "Thanh toán COASIA 6tr + khấu trừ ứng 4tr",
+    idempotency_key: IDEMPOTENCY_KEY,
+    ambiguous_retry_locked: false,
+  };
+
+  // Step 1: Server commits the batch (payable drops 10M -> 0, shared advance drops 4M -> 0),
+  //         but browser loses the HTTP response (`network_error`).
+  let keyRotationsDuringLock = 0;
+  const lockedDraftAfterLostCommitResponse = applyRecordEntryMutationOutcome(
+    preSubmitDraft,
+    { kind: "network_error" },
+    () => {
+      keyRotationsDuringLock += 1;
+      return "90909090-9090-4090-8090-909090909090";
+    },
+  );
+  assert.equal(lockedDraftAfterLostCommitResponse.ambiguous_retry_locked, true);
+  assert.equal(lockedDraftAfterLostCommitResponse.idempotency_key, IDEMPOTENCY_KEY);
+  assert.equal(lockedDraftAfterLostCommitResponse.amount_input, "6000000");
+  assert.equal(lockedDraftAfterLostCommitResponse.offset_amount_input, "4000000");
+  assert.equal(lockedDraftAfterLostCommitResponse.reason, "Thanh toán COASIA 6tr + khấu trừ ứng 4tr");
+  assert.equal(keyRotationsDuringLock, 0);
+
+  // Step 2: User attempts to dismiss dialog via Hủy / × / Escape / backdrop click
+  assert.equal(
+    canDismissRecordEntryDialog({
+      submitting: false,
+      retrying_evidence: false,
+      reloading_ledger: false,
+      ambiguous_retry_locked: lockedDraftAfterLostCommitResponse.ambiguous_retry_locked,
+    }),
+    false,
+  );
+  const closeAttemptResult = attemptCloseRecordEntryDialog(
+    lockedDraftAfterLostCommitResponse,
+    draftDefaults,
+    { submitting: false, retrying_evidence: false, reloading_ledger: false },
+    () => {
+      keyRotationsDuringLock += 1;
+      return "91919191-9191-4191-8191-919191919191";
+    },
+  );
+  assert.equal(
+    closeAttemptResult.allow_close,
+    false,
+    "closing dialog via Hủy/×/Escape/backdrop must be blocked when ambiguous_retry_locked is true",
+  );
+  assert.equal(
+    closeAttemptResult.next_state,
+    lockedDraftAfterLostCommitResponse,
+    "attempting to close must preserve the exact draft state reference",
+  );
+  assert.equal(closeAttemptResult.next_state.idempotency_key, IDEMPOTENCY_KEY);
+  assert.equal(closeAttemptResult.next_state.amount_input, "6000000");
+  assert.equal(closeAttemptResult.next_state.offset_amount_input, "4000000");
+  assert.equal(closeAttemptResult.next_state.reason, "Thanh toán COASIA 6tr + khấu trừ ứng 4tr");
+  assert.equal(keyRotationsDuringLock, 0);
+
+  // Step 3: Attempting to unlock without a completed ledger reconciliation snapshot is rejected
+  const prematureUnlockAttempt = unlockRecordEntryDialogAfterLedgerReconciliation(
+    lockedDraftAfterLostCommitResponse,
+    null,
+    draftDefaults,
+    () => {
+      keyRotationsDuringLock += 1;
+      return "92929292-9292-4292-8292-929292929292";
+    },
+  );
+  assert.equal(prematureUnlockAttempt.unlocked, false);
+  assert.equal(prematureUnlockAttempt.next_state, lockedDraftAfterLostCommitResponse);
+  assert.equal(keyRotationsDuringLock, 0);
+
+  // Step 4: If retry encounters another ambiguous error (503), lock and key remain intact
+  const stillLockedAfter503 = applyRecordEntryMutationOutcome(
+    lockedDraftAfterLostCommitResponse,
+    {
+      kind: "http_error",
+      http_status: 503,
+      classified: classified503,
+    },
+    () => {
+      keyRotationsDuringLock += 1;
+      return "93939393-9393-4393-8393-939393939393";
+    },
+  );
+  assert.equal(stillLockedAfter503.ambiguous_retry_locked, true);
+  assert.equal(stillLockedAfter503.idempotency_key, IDEMPOTENCY_KEY);
+  assert.equal(keyRotationsDuringLock, 0);
+
+  // Step 5: Retry with the preserved payload and idempotency_key succeeds even though server
+  //         payable is now 0 (because retry skips client-side preflight balance ceiling and
+  //         replays the committed idempotent response on the server).
+  const retryRequestBuilt = buildRecordPaymentWithOffsetRequest({
+    project_id: stillLockedAfter503.project_id,
+    contract_type: stillLockedAfter503.contract_type,
+    payment_amount_input: stillLockedAfter503.amount_input,
+    offset_amount_input: stillLockedAfter503.offset_amount_input,
+    effective_date: stillLockedAfter503.effective_date,
+    reason: stillLockedAfter503.reason,
+    idempotency_key: stillLockedAfter503.idempotency_key,
+    available_shared_advance_minor: stillLockedAfter503.ambiguous_retry_locked ? null : "0",
+    current_subledger_payable_minor: stillLockedAfter503.ambiguous_retry_locked ? null : "0",
+  });
+  assert.equal(retryRequestBuilt.ok, true);
+  assert.equal(retryRequestBuilt.request.headers["Idempotency-Key"], IDEMPOTENCY_KEY);
+  assert.equal(retryRequestBuilt.request.body.idempotency_key, IDEMPOTENCY_KEY);
+
+  const unlockedAfterReplayOk = applyRecordEntryMutationOutcome(
+    stillLockedAfter503,
+    { kind: "ok" },
+  );
+  assert.equal(unlockedAfterReplayOk.ambiguous_retry_locked, false);
+  assert.equal(unlockedAfterReplayOk.idempotency_key, IDEMPOTENCY_KEY);
+
+  // Step 6: "Tải lại sổ để đối chiếu" awaits both detail and entries endpoints, fails closed on
+  //         reload error, and exposes the committed ledger state before allowing a new request.
+  const failedReload = await reloadLedgerForAmbiguousRetryVerification({
+    vendor_id: "VND-001",
+    project_id: PROJECT_ID,
+    contract_type: "SEASONAL",
+    active_accountant_ref: ACCOUNTANT_A_REF,
+    fetch_impl: async () => new Response("Unavailable", { status: 503 }),
+  });
+  assert.equal(failedReload.ok, false);
+
+  const postCommitSubLedger = {
+    ledger_scope: "PROJECT_ACCOUNTANT",
+    project_id: PROJECT_ID,
+    project_display_name: "Dự án Tuyển dụng Miền Bắc",
+    project_active: true,
+    accountant_ref: ACCOUNTANT_A_REF,
+    responsible_accountant_display_name: "Nguyễn Thị Kế Toán A",
+    contract_type: "SEASONAL",
+    is_active_assignment: true,
+    current_balance_minor: "0",
+    balance_direction: "BALANCED",
+    latest_sequence: 5,
+    entry_count: 5,
+    has_opening_entry: true,
+    eligible_for_opening: false,
+    can_record_entry: true,
+    can_reconcile: true,
+    can_classify_contract_type: false,
+    can_apply_vendor_advance: true,
+    classification: null,
+  };
+  const postCommitDetailEnvelope = {
+    ok: true,
+    data: {
+      authorization_date: "2026-10-25",
+      allowed_actions: {
+        visibility_scope: "PROJECT_SCOPED",
+        can_view: true,
+        can_record: true,
+        can_reconcile: true,
+        can_manage_project_assignments: false,
+        can_view_shared_advance: true,
+        can_fund_vendor_advance: false,
+        can_record_vendor_refund: false,
+        can_apply_vendor_advance: true,
+        allowed_entry_types: ["DEBT_RECORDED", "PAYMENT_RECORDED"],
+      },
+      selected_sub_ledger: postCommitSubLedger,
+      sub_ledgers: [postCommitSubLedger],
+      vendor: {
+        vendor_id: "VND-001",
+        display_name: "COASIA",
+        active: true,
+        current_balance_minor: "0",
+        balance_direction: "BALANCED",
+        shared_advance_balance_minor: "0",
+        latest_sequence: 5,
+        entry_count: 5,
+        has_opening_entry: true,
+        eligible_for_opening: false,
+        totals: {
+          opening_payable_minor: "15000000",
+          opening_advance_minor: "0",
+          debt_recorded_minor: "0",
+          payroll_recorded_minor: "0",
+          payment_recorded_minor: "11000000",
+          advance_recorded_minor: "4000000",
+          adjustment_increase_minor: "0",
+          adjustment_decrease_minor: "0",
+          reversed_entry_count: 0,
+        },
+        latest_reconciliation: null,
+        recent_reconciliations: [],
+      },
+    },
+  };
+  const postCommitEntriesEnvelope = {
+    ok: true,
+    data: {
+      authorization_date: "2026-10-25",
+      vendor_id: "VND-001",
+      page_size: 25,
+      next_cursor: null,
+      has_more: false,
+      entries: [settleOffsetEntry, settlePaymentEntry],
+    },
+  };
+
+  const succeededReload = await reloadLedgerForAmbiguousRetryVerification({
+    vendor_id: "VND-001",
+    project_id: PROJECT_ID,
+    contract_type: "SEASONAL",
+    active_accountant_ref: ACCOUNTANT_A_REF,
+    fetch_impl: async (url) => {
+      const urlStr = String(url);
+      if (urlStr.includes("/entries")) {
+        return new Response(JSON.stringify(postCommitEntriesEnvelope), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify(postCommitDetailEnvelope), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    },
+  });
+  assert.equal(succeededReload.ok, true);
+  assert.equal(succeededReload.snapshot.has_active_book, true);
+  assert.equal(succeededReload.snapshot.current_payable_minor, "0");
+  assert.equal(succeededReload.snapshot.shared_advance_balance_minor, "0");
+  assert.equal(succeededReload.snapshot.latest_entries.length, 2);
+  assert.equal(succeededReload.snapshot.latest_entries[0].document_no, settleOffsetEntry.document_no);
+  assert.equal(succeededReload.snapshot.latest_entries[1].document_no, settlePaymentEntry.document_no);
+
+  const unlockedAfterReconcile = unlockRecordEntryDialogAfterLedgerReconciliation(
+    lockedDraftAfterLostCommitResponse,
+    succeededReload.snapshot,
+    draftDefaults,
+    () => "94949494-9494-4494-8494-949494949494",
+  );
+  assert.equal(unlockedAfterReconcile.unlocked, true);
+  assert.equal(unlockedAfterReconcile.next_state.ambiguous_retry_locked, false);
+  assert.equal(
+    unlockedAfterReconcile.next_state.idempotency_key,
+    "94949494-9494-4494-8494-949494949494",
+  );
+  assert.equal(unlockedAfterReconcile.next_state.amount_input, "");
+  assert.equal(unlockedAfterReconcile.next_state.offset_amount_input, "");
 });

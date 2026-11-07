@@ -39,7 +39,15 @@ export function FormDialog({
   dataTestId?: string;
 }) {
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+    <Dialog.Root
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen && closeDisabled) {
+          return;
+        }
+        onOpenChange(nextOpen);
+      }}
+    >
       {trigger ? <Dialog.Trigger asChild>{trigger}</Dialog.Trigger> : null}
       <Dialog.Portal>
         <Dialog.Overlay
@@ -51,6 +59,21 @@ export function FormDialog({
           data-ui-dialog-motion="true"
           aria-describedby={descriptionId}
           onCloseAutoFocus={onCloseAutoFocus}
+          onEscapeKeyDown={(event) => {
+            if (closeDisabled) {
+              event.preventDefault();
+            }
+          }}
+          onPointerDownOutside={(event) => {
+            if (closeDisabled) {
+              event.preventDefault();
+            }
+          }}
+          onInteractOutside={(event) => {
+            if (closeDisabled) {
+              event.preventDefault();
+            }
+          }}
           className={cn(
             "fixed inset-x-0 bottom-0 z-50 max-h-[92dvh] w-full overflow-y-auto rounded-t-2xl border border-border bg-surface p-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] text-foreground shadow-xl focus:outline-none",
             "sm:inset-x-auto sm:bottom-auto sm:left-1/2 sm:top-1/2 sm:max-h-[90dvh] sm:w-[min(38rem,calc(100vw-2rem))] sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-2xl sm:p-6",

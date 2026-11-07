@@ -20,6 +20,8 @@ import type {
 } from "@/lib/vendor-finance/vendor-finance-contract";
 import {
   applyRecordEntryDialogDraftEdit,
+  applyRecordEntryMutationOutcome,
+  attemptCloseRecordEntryDialog,
   buildApplySharedAdvanceOffsetRequest,
   buildApplyVendorSharedAdvanceOffsetUrl,
   buildClassifySubLedgerRequest,
@@ -38,6 +40,7 @@ import {
   buildReverseVendorSharedAdvanceMovementUrl,
   buildVendorEntriesUrl,
   buildVendorReconciliationsUrl,
+  canDismissRecordEntryDialog,
   classifyVendorFinanceError,
   computeReconciliationDifferencePreview,
   CONTRACT_TYPE_BADGE_TONES,
@@ -49,7 +52,6 @@ import {
   formatSignedVndDelta,
   formatVietnamDateLabel,
   formatVndMinor,
-  isAmbiguousMutationOutcome,
   normalizePositiveVndInput,
   normalizeSignedVndInput,
   parseApplySharedAdvanceOffsetEnvelope,
@@ -61,8 +63,10 @@ import {
   parseRecordVendorRefundEnvelope,
   parseReverseEntryEnvelope,
   parseReverseSharedAdvanceMovementEnvelope,
+  reloadLedgerForAmbiguousRetryVerification,
   resolveActiveProjectSubLedgerForRecord,
   SHARED_ADVANCE_MOVEMENT_TYPE_LABELS_VI,
+  unlockRecordEntryDialogAfterLedgerReconciliation,
   uploadEvidenceForCommittedTarget,
   validateEvidenceFilePreflight,
   VFIN_UI_CLASSIFIED_CONTRACT_TYPES,
@@ -70,6 +74,7 @@ import {
   VFIN_UI_REDACTED_FIELD_LABEL_VI,
   type DialogRecordVendorFinanceEntryType,
   type EvidenceUploadResumeState,
+  type ReconciledLedgerSnapshotForAmbiguousRetry,
   type RecordEntryDialogDraftState,
 } from "@/lib/vendor-finance/ui-model";
 
@@ -165,6 +170,9 @@ export function RecordVendorEntryDialog({
   const [reason, setReason] = useState("");
   const [idempotencyKey, setIdempotencyKey] = useState(() => createClientIdempotencyKey());
   const [ambiguousRetryLocked, setAmbiguousRetryLocked] = useState(false);
+  const [reloadingLedger, setReloadingLedger] = useState(false);
+  const [reconciledLedgerSnapshot, setReconciledLedgerSnapshot] =
+    useState<ReconciledLedgerSnapshotForAmbiguousRetry | null>(null);
 
   const [evidenceFile, setEvidenceFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -179,9 +187,28 @@ export function RecordVendorEntryDialog({
     useState<EvidenceUploadResumeState | null>(null);
   const [retryingEvidence, setRetryingEvidence] = useState(false);
 
-  const unlockAndRotateKey = () => {
-    setAmbiguousRetryLocked(false);
-    setIdempotencyKey(createClientIdempotencyKey());
+  const currentDraftState: RecordEntryDialogDraftState = {
+    project_id: projectId,
+    contract_type: contractType,
+    entry_type: entryType,
+    amount_input: amountInput,
+    offset_amount_input: offsetAmountInput,
+    effective_date: effectiveDate,
+    reason,
+    idempotency_key: idempotencyKey,
+    ambiguous_retry_locked: ambiguousRetryLocked,
+  };
+
+  const syncDraftState = (nextState: RecordEntryDialogDraftState) => {
+    setProjectId(nextState.project_id);
+    setContractType(nextState.contract_type);
+    setEntryType(nextState.entry_type);
+    setAmountInput(nextState.amount_input);
+    setOffsetAmountInput(nextState.offset_amount_input);
+    setEffectiveDate(nextState.effective_date);
+    setReason(nextState.reason);
+    setIdempotencyKey(nextState.idempotency_key);
+    setAmbiguousRetryLocked(nextState.ambiguous_retry_locked);
   };
 
   const applyDraftEdit = (
@@ -198,31 +225,11 @@ export function RecordVendorEntryDialog({
       >
     >,
   ) => {
-    const nextState = applyRecordEntryDialogDraftEdit(
-      {
-        project_id: projectId,
-        contract_type: contractType,
-        entry_type: entryType,
-        amount_input: amountInput,
-        offset_amount_input: offsetAmountInput,
-        effective_date: effectiveDate,
-        reason,
-        idempotency_key: idempotencyKey,
-        ambiguous_retry_locked: ambiguousRetryLocked,
-      },
-      patch,
-    );
+    const nextState = applyRecordEntryDialogDraftEdit(currentDraftState, patch);
     if (nextState.ambiguous_retry_locked) {
       return;
     }
-    setProjectId(nextState.project_id);
-    setContractType(nextState.contract_type);
-    setEntryType(nextState.entry_type);
-    setAmountInput(nextState.amount_input);
-    setOffsetAmountInput(nextState.offset_amount_input);
-    setEffectiveDate(nextState.effective_date);
-    setReason(nextState.reason);
-    setIdempotencyKey(nextState.idempotency_key);
+    syncDraftState(nextState);
     setErrorMsg(null);
   };
 
@@ -236,6 +243,8 @@ export function RecordVendorEntryDialog({
     setReason("");
     setIdempotencyKey(createClientIdempotencyKey());
     setAmbiguousRetryLocked(false);
+    setReloadingLedger(false);
+    setReconciledLedgerSnapshot(null);
     setEvidenceFile(null);
     setSubmitting(false);
     setErrorMsg(null);
@@ -245,18 +254,77 @@ export function RecordVendorEntryDialog({
     setRetryingEvidence(false);
   };
 
-  const handleReloadLedgerToVerify = () => {
-    if (submitting || retryingEvidence) return;
+  const selectedProject =
+    recordableProjects.find((p) => p.project_id === projectId) ?? null;
+
+  const handleReloadLedgerToVerify = async () => {
+    if (submitting || retryingEvidence || reloadingLedger) return;
+    setReloadingLedger(true);
+    setErrorMsg(null);
+    const res = await reloadLedgerForAmbiguousRetryVerification({
+      vendor_id: vendorId,
+      project_id: projectId,
+      contract_type: contractType,
+      active_accountant_ref: selectedProject?.active_accountant_ref ?? null,
+    });
+    setReloadingLedger(false);
+    if (!res.ok) {
+      setErrorMsg(res.message);
+      return;
+    }
+    setReconciledLedgerSnapshot(res.snapshot);
     onDataChanged();
-    resetAll();
-    onOpenChange(false);
+  };
+
+  const handleUnlockAfterLedgerReconcile = () => {
+    if (submitting || retryingEvidence || reloadingLedger) return;
+    const unlockDecision = unlockRecordEntryDialogAfterLedgerReconciliation(
+      currentDraftState,
+      reconciledLedgerSnapshot,
+      {
+        project_id: resolvedDefaultProject,
+        contract_type: resolvedDefaultContractType,
+        entry_type: resolvedDefaultType,
+        effective_date: defaultDate,
+      },
+    );
+    if (!unlockDecision.unlocked) {
+      return;
+    }
+    syncDraftState(unlockDecision.next_state);
+    setReconciledLedgerSnapshot(null);
+    setEvidenceFile(null);
+    setErrorMsg(null);
   };
 
   const handleOpenChange = (nextOpen: boolean) => {
-    if (submitting || retryingEvidence) return;
     if (!nextOpen) {
-      if (ambiguousRetryLocked) {
-        onDataChanged();
+      if (
+        !canDismissRecordEntryDialog({
+          submitting,
+          retrying_evidence: retryingEvidence,
+          reloading_ledger: reloadingLedger,
+          ambiguous_retry_locked: ambiguousRetryLocked,
+        })
+      ) {
+        return;
+      }
+      const closeDecision = attemptCloseRecordEntryDialog(
+        currentDraftState,
+        {
+          project_id: resolvedDefaultProject,
+          contract_type: resolvedDefaultContractType,
+          entry_type: resolvedDefaultType,
+          effective_date: defaultDate,
+        },
+        {
+          submitting,
+          retrying_evidence: retryingEvidence,
+          reloading_ledger: reloadingLedger,
+        },
+      );
+      if (!closeDecision.allow_close) {
+        return;
       }
       resetAll();
     }
@@ -282,8 +350,6 @@ export function RecordVendorEntryDialog({
     setEvidenceFile(file);
   };
 
-  const selectedProject =
-    recordableProjects.find((p) => p.project_id === projectId) ?? null;
   const effectiveNormalAllowedEntryTypes: readonly NormalVendorFinanceEntryType[] =
     !vendorActive || (selectedProject && !selectedProject.active)
       ? creatorAllowedEntryTypes.filter(
@@ -335,10 +401,17 @@ export function RecordVendorEntryDialog({
 
   const handleSubmitEntry = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (committedEntry) {
+    if (committedEntry || reloadingLedger) {
       return;
     }
     setErrorMsg(null);
+
+    const preflightPayableMinor = ambiguousRetryLocked
+      ? null
+      : currentSubLedgerPayableMinor;
+    const preflightSharedAdvanceMinor = ambiguousRetryLocked
+      ? null
+      : currentSharedAdvanceMinor;
 
     if (!isSettlementMode) {
       if (evidenceFile) {
@@ -358,7 +431,7 @@ export function RecordVendorEntryDialog({
         reason,
         idempotency_key: idempotencyKey,
         allowed_entry_types: effectiveNormalAllowedEntryTypes,
-        current_subledger_payable_minor: currentSubLedgerPayableMinor,
+        current_subledger_payable_minor: preflightPayableMinor,
       });
       if (!built.ok) {
         setErrorMsg(built.message);
@@ -377,16 +450,14 @@ export function RecordVendorEntryDialog({
 
         if (!res.ok) {
           const classified = classifyVendorFinanceError(json, res.status);
-          if (classified.shouldRotateIdempotencyKey) {
-            unlockAndRotateKey();
-          } else if (
-            isAmbiguousMutationOutcome({
-              kind: "http_error",
-              http_status: res.status,
-              classified,
-            })
-          ) {
-            setAmbiguousRetryLocked(true);
+          const nextState = applyRecordEntryMutationOutcome(currentDraftState, {
+            kind: "http_error",
+            http_status: res.status,
+            classified,
+          });
+          syncDraftState(nextState);
+          if (nextState.ambiguous_retry_locked) {
+            setReconciledLedgerSnapshot(null);
           }
           if (classified.code === "VENDOR_FINANCE_INSUFFICIENT_SUBLEDGER_PAYABLE") {
             onDataChanged();
@@ -398,17 +469,30 @@ export function RecordVendorEntryDialog({
 
         const parsed = parseRecordEntryEnvelope(json);
         if (!parsed) {
-          setAmbiguousRetryLocked(true);
+          syncDraftState(
+            applyRecordEntryMutationOutcome(currentDraftState, {
+              kind: "invalid_ok_envelope",
+            }),
+          );
+          setReconciledLedgerSnapshot(null);
           setErrorMsg(
             "Phản hồi ghi nhận bút toán từ máy chủ không hợp lệ nên chưa rõ kết quả. Dữ liệu và Idempotency-Key đã được giữ nguyên: hãy bấm Thử gửi lại yêu cầu này hoặc Tải lại sổ để đối chiếu trước khi tạo yêu cầu mới.",
           );
           setSubmitting(false);
           return;
         }
-        setAmbiguousRetryLocked(false);
+        syncDraftState(
+          applyRecordEntryMutationOutcome(currentDraftState, { kind: "ok" }),
+        );
+        setReconciledLedgerSnapshot(null);
         savedEntry = parsed.entry;
       } catch {
-        setAmbiguousRetryLocked(true);
+        syncDraftState(
+          applyRecordEntryMutationOutcome(currentDraftState, {
+            kind: "network_error",
+          }),
+        );
+        setReconciledLedgerSnapshot(null);
         setErrorMsg(
           "Mất kết nối mạng hoặc mất phản hồi khi ghi nhận bút toán. Dữ liệu và Idempotency-Key đã được giữ nguyên: hãy bấm Thử gửi lại yêu cầu này hoặc Tải lại sổ để đối chiếu trước khi tạo yêu cầu mới.",
         );
@@ -486,7 +570,7 @@ export function RecordVendorEntryDialog({
         reason,
         idempotency_key: idempotencyKey,
         allowed_entry_types: effectiveNormalAllowedEntryTypes,
-        current_subledger_payable_minor: currentSubLedgerPayableMinor,
+        current_subledger_payable_minor: preflightPayableMinor,
       });
       if (!built.ok) {
         setErrorMsg(built.message);
@@ -505,16 +589,14 @@ export function RecordVendorEntryDialog({
 
         if (!res.ok) {
           const classified = classifyVendorFinanceError(json, res.status);
-          if (classified.shouldRotateIdempotencyKey) {
-            unlockAndRotateKey();
-          } else if (
-            isAmbiguousMutationOutcome({
-              kind: "http_error",
-              http_status: res.status,
-              classified,
-            })
-          ) {
-            setAmbiguousRetryLocked(true);
+          const nextState = applyRecordEntryMutationOutcome(currentDraftState, {
+            kind: "http_error",
+            http_status: res.status,
+            classified,
+          });
+          syncDraftState(nextState);
+          if (nextState.ambiguous_retry_locked) {
+            setReconciledLedgerSnapshot(null);
           }
           if (classified.code === "VENDOR_FINANCE_INSUFFICIENT_SUBLEDGER_PAYABLE") {
             onDataChanged();
@@ -526,17 +608,30 @@ export function RecordVendorEntryDialog({
 
         const parsed = parseRecordEntryEnvelope(json);
         if (!parsed) {
-          setAmbiguousRetryLocked(true);
+          syncDraftState(
+            applyRecordEntryMutationOutcome(currentDraftState, {
+              kind: "invalid_ok_envelope",
+            }),
+          );
+          setReconciledLedgerSnapshot(null);
           setErrorMsg(
             "Phản hồi ghi nhận thanh toán từ máy chủ không hợp lệ nên chưa rõ kết quả. Dữ liệu và Idempotency-Key đã được giữ nguyên: hãy bấm Thử gửi lại yêu cầu này hoặc Tải lại sổ để đối chiếu trước khi tạo yêu cầu mới.",
           );
           setSubmitting(false);
           return;
         }
-        setAmbiguousRetryLocked(false);
+        syncDraftState(
+          applyRecordEntryMutationOutcome(currentDraftState, { kind: "ok" }),
+        );
+        setReconciledLedgerSnapshot(null);
         savedEntry = parsed.entry;
       } catch {
-        setAmbiguousRetryLocked(true);
+        syncDraftState(
+          applyRecordEntryMutationOutcome(currentDraftState, {
+            kind: "network_error",
+          }),
+        );
+        setReconciledLedgerSnapshot(null);
         setErrorMsg(
           "Mất kết nối mạng hoặc mất phản hồi khi ghi nhận thanh toán. Dữ liệu và Idempotency-Key đã được giữ nguyên: hãy bấm Thử gửi lại yêu cầu này hoặc Tải lại sổ để đối chiếu trước khi tạo yêu cầu mới.",
         );
@@ -592,8 +687,8 @@ export function RecordVendorEntryDialog({
         effective_date: effectiveDate,
         reason,
         idempotency_key: idempotencyKey,
-        available_shared_advance_minor: currentSharedAdvanceMinor,
-        current_subledger_payable_minor: currentSubLedgerPayableMinor,
+        available_shared_advance_minor: preflightSharedAdvanceMinor,
+        current_subledger_payable_minor: preflightPayableMinor,
       });
       if (!built.ok) {
         setErrorMsg(built.message);
@@ -611,16 +706,14 @@ export function RecordVendorEntryDialog({
 
         if (!res.ok) {
           const classified = classifyVendorFinanceError(json, res.status);
-          if (classified.shouldRotateIdempotencyKey) {
-            unlockAndRotateKey();
-          } else if (
-            isAmbiguousMutationOutcome({
-              kind: "http_error",
-              http_status: res.status,
-              classified,
-            })
-          ) {
-            setAmbiguousRetryLocked(true);
+          const nextState = applyRecordEntryMutationOutcome(currentDraftState, {
+            kind: "http_error",
+            http_status: res.status,
+            classified,
+          });
+          syncDraftState(nextState);
+          if (nextState.ambiguous_retry_locked) {
+            setReconciledLedgerSnapshot(null);
           }
           if (
             classified.code === "VENDOR_FINANCE_INSUFFICIENT_SHARED_ADVANCE" ||
@@ -635,7 +728,12 @@ export function RecordVendorEntryDialog({
 
         const parsed = parseApplySharedAdvanceOffsetEnvelope(json);
         if (!parsed) {
-          setAmbiguousRetryLocked(true);
+          syncDraftState(
+            applyRecordEntryMutationOutcome(currentDraftState, {
+              kind: "invalid_ok_envelope",
+            }),
+          );
+          setReconciledLedgerSnapshot(null);
           setErrorMsg(
             "Phản hồi khấu trừ ứng từ máy chủ không hợp lệ nên chưa rõ kết quả. Dữ liệu và Idempotency-Key đã được giữ nguyên: hãy bấm Thử gửi lại yêu cầu này hoặc Tải lại sổ để đối chiếu trước khi tạo yêu cầu mới.",
           );
@@ -643,7 +741,10 @@ export function RecordVendorEntryDialog({
           return;
         }
 
-        setAmbiguousRetryLocked(false);
+        syncDraftState(
+          applyRecordEntryMutationOutcome(currentDraftState, { kind: "ok" }),
+        );
+        setReconciledLedgerSnapshot(null);
         onDataChanged();
         setSubmitting(false);
         notify.success({
@@ -653,7 +754,12 @@ export function RecordVendorEntryDialog({
         resetAll();
         onOpenChange(false);
       } catch {
-        setAmbiguousRetryLocked(true);
+        syncDraftState(
+          applyRecordEntryMutationOutcome(currentDraftState, {
+            kind: "network_error",
+          }),
+        );
+        setReconciledLedgerSnapshot(null);
         setErrorMsg(
           "Mất kết nối mạng hoặc mất phản hồi khi khấu trừ ứng. Dữ liệu và Idempotency-Key đã được giữ nguyên: hãy bấm Thử gửi lại yêu cầu này hoặc Tải lại sổ để đối chiếu trước khi tạo yêu cầu mới.",
         );
@@ -679,8 +785,8 @@ export function RecordVendorEntryDialog({
       effective_date: effectiveDate,
       reason,
       idempotency_key: idempotencyKey,
-      available_shared_advance_minor: currentSharedAdvanceMinor,
-      current_subledger_payable_minor: currentSubLedgerPayableMinor,
+      available_shared_advance_minor: preflightSharedAdvanceMinor,
+      current_subledger_payable_minor: preflightPayableMinor,
     });
     if (!built.ok) {
       setErrorMsg(built.message);
@@ -701,16 +807,14 @@ export function RecordVendorEntryDialog({
 
       if (!res.ok) {
         const classified = classifyVendorFinanceError(json, res.status);
-        if (classified.shouldRotateIdempotencyKey) {
-          unlockAndRotateKey();
-        } else if (
-          isAmbiguousMutationOutcome({
-            kind: "http_error",
-            http_status: res.status,
-            classified,
-          })
-        ) {
-          setAmbiguousRetryLocked(true);
+        const nextState = applyRecordEntryMutationOutcome(currentDraftState, {
+          kind: "http_error",
+          http_status: res.status,
+          classified,
+        });
+        syncDraftState(nextState);
+        if (nextState.ambiguous_retry_locked) {
+          setReconciledLedgerSnapshot(null);
         }
         if (
           classified.code === "VENDOR_FINANCE_INSUFFICIENT_SHARED_ADVANCE" ||
@@ -725,19 +829,32 @@ export function RecordVendorEntryDialog({
 
       const parsed = parseRecordPaymentWithOffsetEnvelope(json);
       if (!parsed) {
-        setAmbiguousRetryLocked(true);
+        syncDraftState(
+          applyRecordEntryMutationOutcome(currentDraftState, {
+            kind: "invalid_ok_envelope",
+          }),
+        );
+        setReconciledLedgerSnapshot(null);
         setErrorMsg(
           "Phản hồi thanh toán kết hợp khấu trừ ứng từ máy chủ không hợp lệ nên chưa rõ kết quả. Dữ liệu và Idempotency-Key đã được giữ nguyên: hãy bấm Thử gửi lại yêu cầu này hoặc Tải lại sổ để đối chiếu trước khi tạo yêu cầu mới.",
         );
         setSubmitting(false);
         return;
       }
-      setAmbiguousRetryLocked(false);
+      syncDraftState(
+        applyRecordEntryMutationOutcome(currentDraftState, { kind: "ok" }),
+      );
+      setReconciledLedgerSnapshot(null);
       savedPaymentEntry = parsed.payment_entry;
       savedOffsetEntry = parsed.offset_entry;
       savedSharedAdvanceBalanceMinor = parsed.shared_advance_balance_minor;
     } catch {
-      setAmbiguousRetryLocked(true);
+      syncDraftState(
+        applyRecordEntryMutationOutcome(currentDraftState, {
+          kind: "network_error",
+        }),
+      );
+      setReconciledLedgerSnapshot(null);
       setErrorMsg(
         "Mất kết nối mạng hoặc mất phản hồi khi thanh toán và khấu trừ ứng. Dữ liệu và Idempotency-Key đã được giữ nguyên: hãy bấm Thử gửi lại yêu cầu này hoặc Tải lại sổ để đối chiếu trước khi tạo yêu cầu mới.",
       );
@@ -821,7 +938,7 @@ export function RecordVendorEntryDialog({
     <FormDialog
       open={open}
       onOpenChange={handleOpenChange}
-      closeDisabled={submitting || retryingEvidence}
+      closeDisabled={submitting || retryingEvidence || reloadingLedger || ambiguousRetryLocked}
       title={
         committedEntry
           ? `Bút toán ${committedEntry.document_no}${committedOffsetEntry ? ` & ${committedOffsetEntry.document_no}` : ""} đã lưu — Hoàn tất ảnh bằng chứng`
@@ -971,15 +1088,72 @@ export function RecordVendorEntryDialog({
             <Alert
               tone="warning"
               data-testid="vfin-record-ambiguous-retry-lock"
-              title="Đang khóa chỉnh sửa để chống ghi trùng chứng từ"
+              title="Đang khóa chỉnh sửa và đóng hộp thoại để chống ghi trùng chứng từ"
             >
               <p>
                 Yêu cầu trước đó chưa nhận được phản hồi xác nhận từ máy chủ. Dữ liệu và khóa định
-                danh yêu cầu (Idempotency-Key) đang được giữ nguyên — bạn chỉ có thể bấm{" "}
-                <strong>Thử gửi lại yêu cầu này</strong> hoặc bấm{" "}
-                <strong>Tải lại sổ để đối chiếu</strong> trước khi tạo yêu cầu mới.
+                danh yêu cầu (Idempotency-Key) đang được giữ nguyên — bạn không thể đóng hay sửa
+                trực tiếp khi chưa xác nhận kết quả; hãy bấm{" "}
+                <strong>Thử gửi lại yêu cầu này</strong> (cùng dữ liệu và cùng Idempotency-Key) hoặc
+                bấm <strong>Tải lại sổ để đối chiếu</strong> và kiểm tra số dư/chứng từ mới nhất
+                trước khi mở yêu cầu mới.
               </p>
             </Alert>
+          ) : null}
+
+          {ambiguousRetryLocked && reconciledLedgerSnapshot ? (
+            <div
+              data-testid="vfin-record-reloaded-ledger-preview"
+              className="space-y-2 rounded-xl border border-primary/35 bg-primary/5 p-3 text-xs"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <strong className="text-foreground">
+                  Dữ liệu sổ vừa tải từ máy chủ để đối chiếu
+                </strong>
+                <span className="font-mono text-muted">
+                  Dự án: {projectId} · {CONTRACT_TYPE_LABELS_VI[contractType]}
+                </span>
+              </div>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <div>
+                  <span className="text-muted">Công nợ phải trả mới nhất của sổ: </span>
+                  <strong className="font-mono text-foreground">
+                    {reconciledLedgerSnapshot.has_active_book
+                      ? formatVndMinor(reconciledLedgerSnapshot.current_payable_minor)
+                      : "0 ₫ (Chưa phát sinh)"}
+                  </strong>
+                </div>
+                <div>
+                  <span className="text-muted">Dư ứng dùng chung mới nhất (Vendor): </span>
+                  <strong className="font-mono text-foreground">
+                    {formatVndMinor(reconciledLedgerSnapshot.shared_advance_balance_minor)}
+                  </strong>
+                </div>
+              </div>
+              {reconciledLedgerSnapshot.latest_entries.length === 0 ? (
+                <p className="text-muted">Chưa ghi nhận chứng từ nào trên sổ dự án này.</p>
+              ) : (
+                <div className="space-y-1 border-t border-border pt-2">
+                  <p className="font-medium text-foreground">Chứng từ mới nhất trên sổ:</p>
+                  {reconciledLedgerSnapshot.latest_entries.map((item) => (
+                    <div
+                      key={item.entry_id}
+                      className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-surface px-2.5 py-1.5"
+                    >
+                      <span>
+                        <strong className="font-mono text-foreground">{item.document_no}</strong> ·{" "}
+                        {ENTRY_TYPE_LABELS_VI[item.entry_type]} ·{" "}
+                        {formatVietnamDateLabel(item.effective_date)}
+                      </span>
+                      <span className="font-mono font-semibold text-foreground">
+                        {formatSignedVndDelta(item.balance_delta_minor)} (Sau GD:{" "}
+                        {formatVndMinor(item.balance_after_minor)})
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           ) : null}
 
           {errorMsg ? (
@@ -1327,7 +1501,7 @@ export function RecordVendorEntryDialog({
           <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border pt-3">
             <Button
               variant="secondary"
-              disabled={submitting}
+              disabled={submitting || reloadingLedger || ambiguousRetryLocked}
               onClick={() => handleOpenChange(false)}
             >
               Hủy
@@ -1336,14 +1510,31 @@ export function RecordVendorEntryDialog({
               <Button
                 type="button"
                 variant="secondary"
-                disabled={submitting}
+                loading={reloadingLedger}
+                disabled={submitting || reloadingLedger}
                 data-testid="vfin-record-reload-ledger-btn"
-                onClick={handleReloadLedgerToVerify}
+                onClick={() => void handleReloadLedgerToVerify()}
               >
                 Tải lại sổ để đối chiếu
               </Button>
             ) : null}
-            <Button type="submit" variant="primary" loading={submitting} disabled={submitting}>
+            {ambiguousRetryLocked && reconciledLedgerSnapshot ? (
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={submitting || reloadingLedger}
+                data-testid="vfin-record-unlock-after-reconcile-btn"
+                onClick={handleUnlockAfterLedgerReconcile}
+              >
+                Đã đối chiếu sổ — Mở yêu cầu mới
+              </Button>
+            ) : null}
+            <Button
+              type="submit"
+              variant="primary"
+              loading={submitting}
+              disabled={submitting || reloadingLedger}
+            >
               {ambiguousRetryLocked ? "Thử gửi lại yêu cầu này" : "Lưu bút toán"}
             </Button>
           </div>
