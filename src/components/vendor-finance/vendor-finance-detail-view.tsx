@@ -82,7 +82,6 @@ import {
 } from "@/lib/vendor-finance/ui-model";
 
 import {
-  ApplyVendorSharedAdvanceOffsetDialog,
   ClassifyVendorSubLedgerDialog,
   CreateVendorReconciliationDialog,
   FundVendorSharedAdvanceDialog,
@@ -226,7 +225,6 @@ export function VendorFinanceDetailView({
     useState<VendorFinanceDetailSubLedger | null>(null);
   const [fundAdvanceDialogOpen, setFundAdvanceDialogOpen] = useState(false);
   const [refundDialogOpen, setRefundDialogOpen] = useState(false);
-  const [applyOffsetDialogOpen, setApplyOffsetDialogOpen] = useState(false);
   const [reversingSharedMovement, setReversingSharedMovement] =
     useState<VendorFinanceSharedAdvanceMovementProjection | null>(null);
 
@@ -828,14 +826,6 @@ export function VendorFinanceDetailView({
   );
 
   const openUnifiedOffsetDialog = () => {
-    if (
-      selectedSubLedger &&
-      !selectedSubLedger.is_active_assignment &&
-      !recordableProjectsForVendor.some((p) => p.project_id === selectedSubLedger.project_id)
-    ) {
-      setApplyOffsetDialogOpen(true);
-      return;
-    }
     setRecordInitialType("ADVANCE_OFFSET_RECORDED");
     setRecordDialogOpen(true);
   };
@@ -2348,19 +2338,6 @@ export function VendorFinanceDetailView({
           onOpenChange={setRefundDialogOpen}
           vendorId={vendor.vendor_id}
           vendorDisplayName={vendor.display_name}
-          currentSharedAdvanceMinor={sharedAdvanceBalanceMinor}
-          defaultDate={detail?.authorization_date ?? ""}
-          onDataChanged={triggerReloadAll}
-        />
-      ) : null}
-
-      {vendor && applyOffsetDialogOpen && selectedSubLedger ? (
-        <ApplyVendorSharedAdvanceOffsetDialog
-          open={applyOffsetDialogOpen}
-          onOpenChange={setApplyOffsetDialogOpen}
-          vendorId={vendor.vendor_id}
-          vendorDisplayName={vendor.display_name}
-          subLedger={selectedSubLedger}
           currentSharedAdvanceMinor={sharedAdvanceBalanceMinor}
           defaultDate={detail?.authorization_date ?? ""}
           onDataChanged={triggerReloadAll}

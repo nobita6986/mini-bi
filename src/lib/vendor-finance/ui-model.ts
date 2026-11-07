@@ -6676,3 +6676,121 @@ export async function uploadEvidenceForCommittedTarget(input: {
     resumeState: null,
   };
 }
+
+// -----------------------------------------------------------------------------
+// 9. Active Sub-Ledger Resolution & Lost-Response Ambiguous Retry Guard (VFIN-05)
+// -----------------------------------------------------------------------------
+
+/**
+ * Resolves the active accountant's sub-ledger for `RecordVendorEntryDialog`.
+ * Never falls back to a handed-over historical accountant's book on the same
+ * `(project_id, contract_type)`, because server RPCs always write to the current
+ * active accountant's book. When the active accountant's book has not been
+ * initialized yet, `sub_ledger` is `null` and `current_payable_minor` is `"0"`.
+ */
+export function resolveActiveProjectSubLedgerForRecord(input: {
+  sub_ledgers: readonly VendorFinanceDetailSubLedger[];
+  project_id: string;
+  contract_type: ClassifiedVendorFinanceContractType;
+  active_accountant_ref: string | null;
+}): {
+  sub_ledger: VendorFinanceDetailSubLedger | null;
+  current_payable_minor: string;
+} {
+  const matched =
+    input.sub_ledgers.find(
+      (sub) =>
+        sub.ledger_scope === "PROJECT_ACCOUNTANT" &&
+        sub.project_id === input.project_id &&
+        sub.contract_type === input.contract_type &&
+        sub.is_active_assignment &&
+        (input.active_accountant_ref
+          ? sub.accountant_ref === input.active_accountant_ref
+          : true),
+    ) ?? null;
+  return {
+    sub_ledger: matched,
+    current_payable_minor: matched?.current_balance_minor ?? "0",
+  };
+}
+
+export type RecordEntryDialogDraftState = {
+  project_id: string;
+  contract_type: ClassifiedVendorFinanceContractType;
+  entry_type: DialogRecordVendorFinanceEntryType;
+  amount_input: string;
+  offset_amount_input: string;
+  effective_date: string;
+  reason: string;
+  idempotency_key: string;
+  ambiguous_retry_locked: boolean;
+};
+
+/**
+ * Determines whether a mutation response (or network failure) leaves the server
+ * commit state unknown, requiring the dialog to freeze its payload and
+ * `idempotency_key` until the user either retries the exact same request or
+ * reloads the ledger to verify before starting a new request.
+ */
+export function isAmbiguousMutationOutcome(
+  input:
+    | { kind: "network_error" }
+    | { kind: "invalid_ok_envelope" }
+    | {
+        kind: "http_error";
+        http_status: number;
+        classified: ClassifiedVendorFinanceError;
+      },
+): boolean {
+  if (input.kind === "network_error" || input.kind === "invalid_ok_envelope") {
+    return true;
+  }
+  if (input.classified.shouldRotateIdempotencyKey) {
+    return false;
+  }
+  if (
+    input.http_status === 401 ||
+    input.http_status === 403 ||
+    input.classified.code === "UNAUTHENTICATED" ||
+    input.classified.code === "ACTOR_NOT_AVAILABLE" ||
+    input.classified.code === "CSRF_ORIGIN_DENIED" ||
+    input.classified.code === "VENDOR_FINANCE_ACCESS_DENIED" ||
+    input.classified.code === "VENDOR_FINANCE_RECORD_DENIED" ||
+    input.classified.code === "VENDOR_FINANCE_PROJECT_ACCESS_DENIED"
+  ) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Applies a field edit to `RecordVendorEntryDialog` draft state.
+ * When `ambiguous_retry_locked` is true (after a lost/corrupted response),
+ * edits and idempotency-key rotation are strictly blocked so the user cannot
+ * mutate the reason/amount and accidentally submit a second payment batch.
+ */
+export function applyRecordEntryDialogDraftEdit(
+  state: RecordEntryDialogDraftState,
+  patch: Partial<
+    Pick<
+      RecordEntryDialogDraftState,
+      | "project_id"
+      | "contract_type"
+      | "entry_type"
+      | "amount_input"
+      | "offset_amount_input"
+      | "effective_date"
+      | "reason"
+    >
+  >,
+  nextIdempotencyKey: () => string = createClientIdempotencyKey,
+): RecordEntryDialogDraftState {
+  if (state.ambiguous_retry_locked) {
+    return state;
+  }
+  return {
+    ...state,
+    ...patch,
+    idempotency_key: nextIdempotencyKey(),
+  };
+}
