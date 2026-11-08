@@ -54,8 +54,8 @@ export function isWorkerExportScope(value: unknown): value is WorkerExportScope 
     (WORKER_EXPORT_SCOPES as readonly string[]).includes(value);
 }
 
-/** Scope tab cua danh sach nao duoc phep xuat; `uploader` => null. */
-export function exportScopeForTab(tab: string): WorkerExportScope | null {
+/** Scope tab cua danh sach nao duoc phep xuat; `uploader` hoac `null` => null. */
+export function exportScopeForTab(tab: string | null | undefined): WorkerExportScope | null {
   return isWorkerExportScope(tab) ? tab : null;
 }
 

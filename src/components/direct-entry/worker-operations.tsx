@@ -585,7 +585,7 @@ export function WorkerOperations({
   }
 
   const scope = tab === null ? null : tabScope(tab);
-  const exportScope = tab === null ? null : exportScopeForTab(tab);
+  const exportScope = exportScopeForTab(tab);
   const canExportThisTab = exportScope === "all" ? canExportAll : canExport;
   const workerPage =
     scope !== null && tabs.includes(scope)
