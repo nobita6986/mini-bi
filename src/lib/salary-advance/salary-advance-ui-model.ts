@@ -364,6 +364,10 @@ export function decideSalaryAdvancePageAccess(params: {
     return "ACCESS_DENIED";
   }
 
+  if (params.canAccess !== true || Boolean(params.contextErrorCode)) {
+    return "TEMPORARY_UNAVAILABLE";
+  }
+
   return "ALLOW";
 }
 
