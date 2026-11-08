@@ -546,7 +546,7 @@ export function DetailedRecruitmentMatrixPanel({
   };
 
   return (
-    <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-4 sm:px-6">
+    <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-4 sm:px-6">
       <header className="rounded-2xl border border-border bg-gradient-to-r from-primary/10 via-surface to-secondary/10 px-5 py-4">
         <div className="min-w-0 flex-1">
           <p className="text-xs font-medium uppercase tracking-wide text-primary">

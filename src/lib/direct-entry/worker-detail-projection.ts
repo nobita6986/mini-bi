@@ -129,11 +129,18 @@ function projectOptionalState(value: unknown): "omitted" | "unknown" | "intentio
 }
 
 /** Doc mot OptionalValue<string>/<Gender>; `provided` tra value, state khac tra null. */
-function projectOptionalValue(value: unknown, maxLength: number): { ok: true; value: string | null } | { ok: false } {
+function projectOptionalValue(
+  value: unknown,
+  maxLength: number,
+  options?: { allowBlankProvided?: boolean },
+): { ok: true; value: string | null } | { ok: false } {
   if (!isRecord(value)) return { ok: false };
   if (value.state === "provided") {
     if (Object.keys(value).length !== 2 || typeof value.value !== "string" ||
-        value.value.trim().length < 1 || value.value.length > maxLength) return { ok: false };
+        value.value.length > maxLength) return { ok: false };
+    if (value.value.trim().length < 1) {
+      return options?.allowBlankProvided ? { ok: true, value: null } : { ok: false };
+    }
     return { ok: true, value: value.value };
   }
   if (projectOptionalState(value) === null) return { ok: false };
@@ -141,9 +148,13 @@ function projectOptionalValue(value: unknown, maxLength: number): { ok: true; va
 }
 
 /** Truong optional trong `WorkerDetails` co the vang mat; vang mat == chua khai bao. */
-function projectOptionalField(value: unknown, maxLength: number): { ok: true; value: string | null } | { ok: false } {
+function projectOptionalField(
+  value: unknown,
+  maxLength: number,
+  options?: { allowBlankProvided?: boolean },
+): { ok: true; value: string | null } | { ok: false } {
   if (value === undefined) return { ok: true, value: null };
-  return projectOptionalValue(value, maxLength);
+  return projectOptionalValue(value, maxLength, options);
 }
 
 function projectWorker(value: unknown): WorkerDetailWorker | null {
@@ -161,8 +172,8 @@ function projectWorker(value: unknown): WorkerDetailWorker | null {
   const nationalId = projectOptionalField(value.national_id, 64);
   const issuedAt = projectOptionalField(value.national_id_issued_at, 32);
   const issuedPlace = projectOptionalField(value.national_id_issued_place, 256);
-  const address = projectOptionalField(value.address, 512);
-  const phone = projectOptionalField(value.phone, 64);
+  const address = projectOptionalField(value.address, 1024, { allowBlankProvided: true });
+  const phone = projectOptionalField(value.phone, 64, { allowBlankProvided: true });
   if (!dateOfBirth.ok || !nationalId.ok || !issuedAt.ok || !issuedPlace.ok ||
       !address.ok || !phone.ok) return null;
   return {

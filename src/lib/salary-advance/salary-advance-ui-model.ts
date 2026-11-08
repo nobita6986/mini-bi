@@ -345,6 +345,7 @@ const CONFLICT_ERROR_CODES = new Set<string>([
 export function decideSalaryAdvancePageAccess(params: {
   enabledFlag: string | undefined;
   actor: ActorResolution | null;
+  canAccess?: boolean | null;
   contextErrorCode?: string | null;
 }): SalaryAdvancePageAccessDecision {
   if (params.enabledFlag !== "true") {
@@ -356,8 +357,15 @@ export function decideSalaryAdvancePageAccess(params: {
     return sessionDecision;
   }
 
-  if (params.contextErrorCode === "SALARY_ADVANCE_ACCESS_DENIED") {
+  if (
+    params.canAccess === false ||
+    params.contextErrorCode === "SALARY_ADVANCE_ACCESS_DENIED"
+  ) {
     return "ACCESS_DENIED";
+  }
+
+  if (params.canAccess !== true || Boolean(params.contextErrorCode)) {
+    return "TEMPORARY_UNAVAILABLE";
   }
 
   return "ALLOW";

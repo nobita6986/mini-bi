@@ -554,3 +554,21 @@ test("T1A: WorkerOperations renders 0-usable-tab state without probing RPCs and 
   assert.match(page, /canReadWorkerDirectoryCatalog\(projection\)/);
   assert.match(page, /canReadCatalog=\{canReadCatalog\}/);
 });
+
+test("T1A Hotfix Issue #2: WorkerTable RowActionCluster omits read-only explanation text while preserving server-gated action buttons", () => {
+  const tableStart = source.indexOf("function WorkerTable(");
+  const tableEnd = source.indexOf("const DIRECT_EDIT_FILE_KINDS", tableStart);
+  assert.ok(tableStart >= 0 && tableEnd > tableStart);
+  const tableSource = source.slice(tableStart, tableEnd);
+
+  assert.match(tableSource, /Xem chi tiết/);
+  assert.match(tableSource, /\{!canDirectEdit && cta\.show \? \(/);
+  assert.match(tableSource, /Đề xuất thay đổi/);
+  assert.match(tableSource, /\{canDirectEdit \? \(/);
+  assert.match(tableSource, /Sửa trực tiếp/);
+  assert.doesNotMatch(
+    tableSource,
+    /cta\.message/,
+    "RowActionCluster in WorkerTable must not render the read-only explanation text",
+  );
+});

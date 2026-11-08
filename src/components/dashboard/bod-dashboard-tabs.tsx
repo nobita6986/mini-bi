@@ -146,7 +146,7 @@ export function BodDashboardTabs({
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 py-4 sm:px-6" aria-busy={isPending}>
+    <div className="mx-auto flex w-full max-w-7xl flex-1 flex-col px-4 py-4 sm:px-6" aria-busy={isPending}>
       <div role="tablist" aria-label="Báo cáo" className="flex flex-wrap gap-2 border-b border-border">
         {visibleTabs.map((tab, index) => (
           <button

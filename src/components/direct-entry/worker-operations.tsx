@@ -1352,9 +1352,6 @@ function WorkerTable({
                         Sửa trực tiếp
                       </button>
                     ) : null}
-                    {cta.show || canDirectEdit ? null : (
-                      <span className="text-xs text-muted">{cta.message}</span>
-                    )}
                   </RowActionCluster>
                 </td>
               </tr>

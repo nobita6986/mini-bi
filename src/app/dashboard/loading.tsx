@@ -3,7 +3,7 @@ export default function DashboardLoading() {
     <main
       aria-busy="true"
       aria-label="Đang tải bảng điều khiển"
-      className="mx-auto w-full max-w-6xl flex-1 animate-pulse motion-reduce:animate-none px-4 py-6 sm:px-6"
+      className="mx-auto w-full max-w-7xl flex-1 animate-pulse motion-reduce:animate-none px-4 py-6 sm:px-6"
     >
       <div className="mb-6 space-y-2">
         <div className="h-7 w-56 rounded-lg bg-muted/30" />

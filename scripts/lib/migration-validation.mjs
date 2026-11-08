@@ -282,6 +282,10 @@ export const HF_SALARY_ADVANCE_PM_WORKER_HISTORY_MIGRATION_NAME =
   "20261030180000_hf_salary_advance_pm_worker_history.sql";
 export const HF_SALARY_ADVANCE_PM_WORKER_HISTORY_RPC_SIGNATURE =
   "public.salary_advance_list_project_worker_history(uuid, uuid, text, uuid, text, text, text, text, text, integer)";
+export const T1A_HOTFIX_WORKER_DETAIL_AND_SALARY_ADVANCE_ACCESS_MIGRATION_NAME =
+  "20261108140000_t1a_hotfix_worker_detail_and_salary_advance_access.sql";
+export const T1A_HOTFIX_SALARY_ADVANCE_ACTOR_ACCESS_RPC_SIGNATURE =
+  "public.salary_advance_get_actor_access(uuid, uuid)";
 export const HF_DUPLICATE_CCCD_RESIGNED_WITHDRAW_AND_WORKER_FILTERS_MIGRATION_NAME =
   "20261031100000_hf_duplicate_cccd_resigned_withdraw_and_worker_filters.sql";
 export const HF_DUPLICATE_CCCD_RESIGNED_WITHDRAW_AND_WORKER_FILTERS_RPC_SIGNATURES = Object.freeze([
@@ -616,7 +620,8 @@ export async function verifyS0T1CHistoricalCompatibility(
     attendanceMultiSlotPolicyProfilesApplied = false,
     workerDirectoryLaborTypeFilterApplied = false,
     vfin04SharedVendorAdvanceApplied = false,
-    vfin05CombinedPaymentOffsetApplied = false } = {},
+    vfin05CombinedPaymentOffsetApplied = false,
+    t1aHotfixWorkerDetailAndSalaryAdvanceAccessApplied = false } = {},
 ) {
   const baseAllowlist = extractS0T1CAllowlistSignatures(migrationSql);
   if (baseAllowlist.length === 0) {
@@ -696,6 +701,9 @@ export async function verifyS0T1CHistoricalCompatibility(
       : []),
     ...(hfSalaryAdvancePmWorkerHistoryApplied
       ? [HF_SALARY_ADVANCE_PM_WORKER_HISTORY_RPC_SIGNATURE]
+      : []),
+    ...(t1aHotfixWorkerDetailAndSalaryAdvanceAccessApplied
+      ? [T1A_HOTFIX_SALARY_ADVANCE_ACTOR_ACCESS_RPC_SIGNATURE]
       : []),
     ...(hfDuplicateCccdResignedWithdrawAndWorkerFiltersApplied
       ? HF_DUPLICATE_CCCD_RESIGNED_WITHDRAW_AND_WORKER_FILTERS_RPC_SIGNATURES
@@ -992,6 +1000,8 @@ export async function verifyAppliedMigrationChecksum(
           appliedMap.has(VFIN_04_SHARED_VENDOR_ADVANCE_MIGRATION_NAME),
         vfin05CombinedPaymentOffsetApplied:
           appliedMap.has(VFIN_05_COMBINED_PAYMENT_OFFSET_MIGRATION_NAME),
+        t1aHotfixWorkerDetailAndSalaryAdvanceAccessApplied:
+          appliedMap.has(T1A_HOTFIX_WORKER_DETAIL_AND_SALARY_ADVANCE_ACCESS_MIGRATION_NAME),
       },
     );
     if (postconditions.ok) {

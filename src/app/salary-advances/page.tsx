@@ -4,7 +4,10 @@ import { connection } from "next/server";
 import { AccessDenied, AccountUnavailable } from "@/components/auth/access-denied";
 import { TemporaryUnavailable } from "@/components/auth/temporary-unavailable";
 import { SalaryAdvanceWorkspace } from "@/components/salary-advances/salary-advance-workspace";
-import { resolveActorForRequest } from "@/lib/navigation/resolve-nav-actor";
+import {
+  resolveActorForRequest,
+  resolveSalaryAdvanceAccessForRequest,
+} from "@/lib/navigation/resolve-nav-actor";
 import { decideSalaryAdvancePageAccess } from "@/lib/salary-advance/salary-advance-ui-model";
 
 export const dynamic = "force-dynamic";
@@ -16,9 +19,14 @@ export const metadata = {
 export default async function SalaryAdvancesPage() {
   await connection();
   const actor = await resolveActorForRequest().catch(() => null);
+  const access =
+    actor?.ok && process.env.DIRECT_ENTRY_API_ENABLED === "true"
+      ? await resolveSalaryAdvanceAccessForRequest().catch(() => null)
+      : null;
   const decision = decideSalaryAdvancePageAccess({
     enabledFlag: process.env.DIRECT_ENTRY_API_ENABLED,
     actor,
+    canAccess: access ? access.canAccess : null,
   });
 
   switch (decision) {
