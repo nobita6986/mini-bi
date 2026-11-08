@@ -56,6 +56,16 @@ export type EffectiveReportReviewScope = {
   label?: string;
 };
 
+export const WORKER_OPERATIONS_TAB_IDS = [
+  "uploader",
+  "recruited",
+  "managed",
+  "team",
+  "all",
+] as const;
+
+export type WorkerOperationsTabId = (typeof WORKER_OPERATIONS_TAB_IDS)[number];
+
 export type SessionIdentity = {
   auth_subject: string;
   provider: "supabase";
@@ -72,6 +82,7 @@ export type DirectEntryActor = {
   scopes: readonly EffectiveScope[];
   effective_report_review_scopes?: readonly EffectiveReportReviewScope[];
   self_recruiter_suggestion: string | null;
+  allowed_worker_tabs?: readonly WorkerOperationsTabId[];
   session: {
     provider: "supabase";
     verification: "getUser";
@@ -100,6 +111,7 @@ export type ActorAuthorizationRecord = {
   teams: unknown;
   team_scope_grants: unknown;
   all_scope_grants: unknown;
+  allowed_worker_tabs?: unknown;
 };
 
 export type ActorRepository = {
@@ -243,6 +255,7 @@ const FORBIDDEN_CLIENT_FIELDS = new Set([
   "effectivescope",
   "effectivescopes",
   "selfrecruitersuggestion",
+  "allowedworkertabs",
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -313,6 +326,24 @@ export function resolveSelfRecruiterSuggestion(input: {
     return { kind: "ambiguous", recruiter_id: null };
   }
   return effectiveRecruiterSuggestion(input.app_user_id, input.links);
+}
+
+const WORKER_TAB_ID_SET = new Set<string>(WORKER_OPERATIONS_TAB_IDS);
+
+function isWorkerOperationsTabId(value: unknown): value is WorkerOperationsTabId {
+  return typeof value === "string" && WORKER_TAB_ID_SET.has(value);
+}
+
+/**
+ * Normalizes the server-computed `allowed_worker_tabs` array from `direct_entry_resolve_actor_context`
+ * into canonical `WORKER_OPERATIONS_TAB_IDS` order without duplicating SQL authority checks in TypeScript.
+ */
+export function normalizeAllowedWorkerOperationsTabs(
+  tabs: readonly unknown[] | null | undefined,
+): readonly WorkerOperationsTabId[] {
+  if (!Array.isArray(tabs)) return [];
+  const allowedSet = new Set(tabs.filter(isWorkerOperationsTabId));
+  return WORKER_OPERATIONS_TAB_IDS.filter((tab) => allowedSet.has(tab));
 }
 
 export function resolveActor(
@@ -415,6 +446,16 @@ async function resolveActorInternal(input: {
     }));
   }
 
+  const resolvedCapabilities = record.capabilities.filter((capability): capability is Capability =>
+    CAPABILITY_SET.has(capability)
+  );
+  const selfRecruiterId = recruiterSuggestion.kind === "suggestion"
+    ? recruiterSuggestion.recruiter_id
+    : null;
+  const allowedWorkerTabs = Array.isArray(record.allowed_worker_tabs)
+    ? normalizeAllowedWorkerOperationsTabs(record.allowed_worker_tabs)
+    : undefined;
+
   return {
     ok: true,
     actor: {
@@ -422,16 +463,15 @@ async function resolveActorInternal(input: {
       app_user_id: appUserId,
       display_name: record.display_name as string,
       enabled: true,
-      capabilities: record.capabilities.filter((capability): capability is Capability =>
-        CAPABILITY_SET.has(capability)
-      ),
+      capabilities: resolvedCapabilities,
       scopes,
       ...(effectiveReportReviewScopes !== undefined
         ? { effective_report_review_scopes: effectiveReportReviewScopes }
         : {}),
-      self_recruiter_suggestion: recruiterSuggestion.kind === "suggestion"
-        ? recruiterSuggestion.recruiter_id
-        : null,
+      self_recruiter_suggestion: selfRecruiterId,
+      ...(allowedWorkerTabs !== undefined
+        ? { allowed_worker_tabs: allowedWorkerTabs }
+        : {}),
       session: {
         provider: "supabase",
         verification: "getUser",
@@ -464,6 +504,14 @@ function isValidAuthorizationRecord(
   all_scope_grants: AllScopeGrant[];
 } {
   if (!isRecord(value)) return false;
+  if (
+    value.allowed_worker_tabs !== undefined &&
+    (!Array.isArray(value.allowed_worker_tabs) ||
+      !value.allowed_worker_tabs.every(isWorkerOperationsTabId) ||
+      new Set(value.allowed_worker_tabs).size !== value.allowed_worker_tabs.length)
+  ) {
+    return false;
+  }
   return UUID.test(String(value.auth_subject)) &&
     UUID.test(String(value.app_user_id)) &&
     isCanonicalDisplayName(value.display_name) &&

@@ -297,10 +297,8 @@ test("Leave Management WP1 full PGlite integration & business rule verification"
     [ACTORS.recruiterOfficial.auth],
   );
 
-  // Apply WP1 migration (and any subsequent migrations)
-  for (const m of migrations.slice(wp1Index)) {
-    await db.exec(m.sql);
-  }
+  // Apply WP1 migration and verify non-regression before applying later migrations
+  await db.exec(migrations[wp1Index].sql);
 
   // 1. Verify non-regression of direct_entry_resolve_actor_context and organization_departments
   const { rows: postContextRows } = await db.query(
@@ -312,6 +310,11 @@ test("Leave Management WP1 full PGlite integration & business rule verification"
     preContextRows[0].ctx,
     "WP1 migration must not alter direct_entry_resolve_actor_context output",
   );
+
+  // Apply any subsequent migrations in the chain
+  for (const m of migrations.slice(wp1Index + 1)) {
+    await db.exec(m.sql);
+  }
 
   const { rows: sysDepts } = await db.query(
     "select system_key from public.organization_departments order by system_key",

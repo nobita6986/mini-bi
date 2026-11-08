@@ -147,6 +147,7 @@ export type N8nDatasetAdapter = (
   spec: ValidatedN8nQuerySpec,
   context: {
     actor: N8nInternalActorRef;
+    capabilities?: readonly string[];
     businessDate: string;
     signal?: AbortSignal;
   },
@@ -181,7 +182,11 @@ export type N8nDispatcherDependencies = {
   now?: () => Date;
   timeoutMs?: number;
   resolveActor?: () => Promise<
-    | { ok: true; actor: N8nInternalActorRef }
+    | {
+        ok: true;
+        actor: N8nInternalActorRef & { capabilities?: readonly string[] };
+        capabilities?: readonly string[];
+      }
     | { ok: false; code: string; message: string }
   >;
   customAdapters?: Readonly<Record<string, N8nDatasetAdapter>>;
@@ -1021,7 +1026,24 @@ function createDefaultAdapters(
     // -----------------------------------------------------------------------
     // 3. WORKERS
     // -----------------------------------------------------------------------
-    async workers_directory(spec, { actor }) {
+    async workers_directory(spec, { actor, capabilities }) {
+      const resolvedCaps =
+        capabilities ??
+        (actor as N8nInternalActorRef & { capabilities?: readonly string[] }).capabilities;
+      if (
+        Array.isArray(resolvedCaps) &&
+        !resolvedCaps.includes("entry_admin") &&
+        !resolvedCaps.includes("change_review")
+      ) {
+        return {
+          ok: false,
+          status: 403,
+          code: "WORKER_DIRECTORY_DENIED",
+          message:
+            "Principal n8n_bod_readonly thiếu capability bắt buộc (entry_admin hoặc change_review) cho danh bạ người lao động (scope=all).",
+        };
+      }
+
       const cursorToken =
         spec.cursor?.kind === "token" ? spec.cursor.token ?? null : null;
       const empStatusRaw = findEqFilterString(
@@ -1048,6 +1070,14 @@ function createDefaultAdapters(
       });
 
       if (!outcome.ok) {
+        if (outcome.kind === "denied" || outcome.kind === "not-found") {
+          return {
+            ok: false,
+            status: 403,
+            code: "WORKER_DIRECTORY_DENIED",
+            message: "Không có quyền truy vấn danh bạ hồ sơ người lao động (scope=all).",
+          };
+        }
         return {
           ok: false,
           status: outcome.kind === "invalid" ? 400 : 503,
@@ -3250,6 +3280,13 @@ export async function dispatchN8nBodQuery(
           }
           const outcome = await adapter(effectiveSpec, {
             actor: actorResolution.actor,
+            capabilities:
+              actorResolution.capabilities ??
+              (
+                actorResolution.actor as N8nInternalActorRef & {
+                  capabilities?: readonly string[];
+                }
+              ).capabilities,
             businessDate,
             signal: abortController.signal,
           });

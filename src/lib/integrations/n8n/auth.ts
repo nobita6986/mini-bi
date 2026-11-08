@@ -236,6 +236,7 @@ function isVerifiedAllScopeActor(
   auth_subject: string;
   app_user_id: string;
   enabled: true;
+  capabilities?: unknown;
   all_scope_grants: unknown[];
 } {
   if (payload.enabled !== true) return false;
@@ -295,7 +296,7 @@ export type N8nActorResolverDependencies = {
 export async function resolveN8nBodServiceActor(
   deps: N8nActorResolverDependencies = {},
 ): Promise<
-  | { ok: true; actor: N8nInternalActorRef }
+  | { ok: true; actor: N8nInternalActorRef; capabilities: readonly string[] }
   | { ok: false; code: "SERVICE_PRINCIPAL_ACTOR_UNAVAILABLE"; message: string }
 > {
   const env = deps.env ?? readDefaultEnv();
@@ -346,7 +347,12 @@ export async function resolveN8nBodServiceActor(
         auth_subject: data.auth_subject,
         app_user_id: data.app_user_id,
       };
-      return { ok: true, actor };
+      const capabilities: readonly string[] = Array.isArray(data.capabilities)
+        ? (data.capabilities as unknown[]).filter(
+            (item: unknown): item is string => typeof item === "string",
+          )
+        : [];
+      return { ok: true, actor, capabilities };
     }
   } catch {
     // Fall through to fail-closed error below.

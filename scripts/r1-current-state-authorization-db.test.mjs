@@ -293,9 +293,10 @@ test("actor context and capability/scope helpers use only explicit current rows"
       "select public.direct_entry_resolve_actor_context($1) as context", [AUTH],
     )).rows[0].context;
     assert.deepEqual(Object.keys(context).sort(), [
-      "all_scope_grants", "app_user_id", "auth_subject", "capabilities", "display_name",
-      "enabled", "recruiter_links", "team_scope_grants", "teams",
+      "all_scope_grants", "allowed_worker_tabs", "app_user_id", "auth_subject", "capabilities",
+      "display_name", "enabled", "recruiter_links", "team_scope_grants", "teams",
     ]);
+    assert.deepEqual(context.allowed_worker_tabs, ["recruited", "all"]);
     assert.ok(context.capabilities.includes("entry_admin"));
     for (const retired of ["pii_view", "pii_export", "payment_view", "payment_edit"]) {
       assert.equal(context.capabilities.includes(retired), false, retired);
@@ -1662,6 +1663,375 @@ test("actor binding and S0 service-role ACLs remain enforced", async () => {
       export_anon: false,
       export_authenticated: false,
     });
+  } finally {
+    await db.close();
+  }
+});
+
+test("T1A: direct_entry_resolve_actor_context allowed_worker_tabs matches RPC authority for uploader, recruited, managed, team, and all including ambiguous and revoked cases", async () => {
+  const { db } = await buildDb();
+  try {
+    const { assignment, managerAuth, managerApp } = await seedProjectManager(db);
+    await db.query(
+      `insert into public.recruiters (recruiter_id, display_name, active)
+       values ($1, 'Synthetic Recruiter C', true)`,
+      [REC_C],
+    );
+
+    const resolveCtx = async (authSubject) =>
+      (
+        await db.query(
+          "select public.direct_entry_resolve_actor_context($1::uuid) as context",
+          [authSubject],
+        )
+      ).rows[0].context;
+
+    // -------------------------------------------------------------------------
+    // 1. Existing fields + report_review scopes + ACL non-regression
+    // -------------------------------------------------------------------------
+    await addCurrentCapability(db, APP, "report_review");
+    const adminCtx = await resolveCtx(AUTH);
+    assert.deepEqual(Object.keys(adminCtx).sort(), [
+      "all_scope_grants",
+      "allowed_worker_tabs",
+      "app_user_id",
+      "auth_subject",
+      "capabilities",
+      "display_name",
+      "effective_report_review_scopes",
+      "enabled",
+      "recruiter_links",
+      "team_scope_grants",
+      "teams",
+    ]);
+    assert.deepEqual(adminCtx.allowed_worker_tabs, ["recruited", "all"]);
+    assert.ok(Array.isArray(adminCtx.effective_report_review_scopes));
+    assert.ok(adminCtx.effective_report_review_scopes.length > 0);
+
+    // -------------------------------------------------------------------------
+    // 2. Uploader tab parity with public.direct_entry_list_own_submissions
+    // -------------------------------------------------------------------------
+    const uploaderAuth = uuid(81);
+    const uploaderApp = uuid(82);
+    await addActor(db, uploaderAuth, uploaderApp, "Synthetic Uploader");
+    await addCurrentCapability(db, uploaderApp, "entry_own");
+    await addCurrentCapability(db, uploaderApp, "entry_create");
+    await db.query(
+      `insert into public.direct_entry_scope_grants
+         (app_user_id, scope_kind, team_id, valid_from, valid_to, is_current)
+       values ($1, 'own', null, '2020-01-01', '2021-01-01', true)`,
+      [uploaderApp],
+    );
+
+    // Without submission_create: uploader tab is absent and RPC raises 42501
+    assert.deepEqual((await resolveCtx(uploaderAuth)).allowed_worker_tabs, []);
+    await assert.rejects(
+      db.query(
+        "select public.direct_entry_list_own_submissions($1::uuid, $2::uuid, 25, null, null)",
+        [uploaderAuth, uploaderApp],
+      ),
+      (err) => err.code === "42501",
+      "entry_own/entry_create without submission_create is rejected by direct_entry_list_own_submissions",
+    );
+
+    // Grant submission_create (with historical valid_to metadata): both tab and RPC succeed
+    await addCurrentCapability(db, uploaderApp, "submission_create");
+    assert.deepEqual((await resolveCtx(uploaderAuth)).allowed_worker_tabs, ["uploader"]);
+    const ownSubPage = (
+      await db.query(
+        "select public.direct_entry_list_own_submissions($1::uuid, $2::uuid, 25, null, null) as page",
+        [uploaderAuth, uploaderApp],
+      )
+    ).rows[0].page;
+    assert.ok(Array.isArray(ownSubPage.items));
+    assert.equal(ownSubPage.page_size, 25);
+
+    // Duplicate current own scope grant (count = 2): both tab and RPC reject
+    await db.query("drop index if exists public.idx_direct_entry_scope_grants_current_own_unique");
+    const duplicateOwnGrantId = (
+      await db.query(
+        `insert into public.direct_entry_scope_grants
+           (app_user_id, scope_kind, team_id, valid_from, is_current)
+         values ($1, 'own', null, '2022-01-01', true)
+         returning grant_id`,
+        [uploaderApp],
+      )
+    ).rows[0].grant_id;
+    assert.deepEqual(
+      (await resolveCtx(uploaderAuth)).allowed_worker_tabs,
+      [],
+      "duplicate current own scope grants must omit uploader tab",
+    );
+    await assert.rejects(
+      db.query(
+        "select public.direct_entry_list_own_submissions($1::uuid, $2::uuid, 25, null, null)",
+        [uploaderAuth, uploaderApp],
+      ),
+      (err) => err.code === "42501",
+      "duplicate current own scope grants must fail closed in direct_entry_list_own_submissions",
+    );
+
+    // Restore single current own scope grant -> allowed again
+    await db.query("delete from public.direct_entry_scope_grants where grant_id = $1", [
+      duplicateOwnGrantId,
+    ]);
+    assert.deepEqual((await resolveCtx(uploaderAuth)).allowed_worker_tabs, ["uploader"]);
+
+    // Non-current own scope grant -> denied
+    await db.query(
+      "update public.direct_entry_scope_grants set is_current = false where app_user_id = $1",
+      [uploaderApp],
+    );
+    assert.deepEqual((await resolveCtx(uploaderAuth)).allowed_worker_tabs, []);
+    await assert.rejects(
+      db.query(
+        "select public.direct_entry_list_own_submissions($1::uuid, $2::uuid, 25, null, null)",
+        [uploaderAuth, uploaderApp],
+      ),
+      (err) => err.code === "42501",
+    );
+
+    // -------------------------------------------------------------------------
+    // 3. Managed & Recruited tab parity with direct_entry_actor_has_project_assignment
+    // -------------------------------------------------------------------------
+    // Effective PM (with 1 verified current link to REC_B) gets uploader, recruited, managed
+    assert.deepEqual((await resolveCtx(managerAuth)).allowed_worker_tabs, [
+      "uploader",
+      "recruited",
+      "managed",
+    ]);
+    const pmManagedPage = (
+      await db.query(
+        "select public.direct_entry_list_workers($1::uuid, $2::uuid, 'managed', null, null, null, null, 25) as page",
+        [managerAuth, managerApp],
+      )
+    ).rows[0].page;
+    assert.equal(pmManagedPage.scope, "managed");
+    assert.ok(Array.isArray(pmManagedPage.items));
+    const pmOwnSubPage = (
+      await db.query(
+        "select public.direct_entry_list_own_submissions($1::uuid, $2::uuid, 25, null, null) as page",
+        [managerAuth, managerApp],
+      )
+    ).rows[0].page;
+    assert.ok(Array.isArray(pmOwnSubPage.items));
+
+    // Cross-account ambiguous recruiter link: another enabled user also links to REC_B
+    const dupRecruiterAuth = uuid(83);
+    const dupRecruiterApp = uuid(84);
+    await addActor(db, dupRecruiterAuth, dupRecruiterApp, "Duplicate Recruiter Link Actor");
+    const crossAccountLinkId = (
+      await db.query(
+        `insert into public.direct_entry_app_user_recruiter_links
+           (app_user_id, recruiter_id, verified, valid_from, valid_to, is_current)
+         values ($1, $2, true, '2015-01-01', '2019-01-01', true)
+         returning link_id`,
+        [dupRecruiterApp, REC_B],
+      )
+    ).rows[0].link_id;
+
+    // direct_entry_project_assignment_effective rejects when manager_recruiter_id has >1 verified current link
+    assert.deepEqual(
+      (await resolveCtx(managerAuth)).allowed_worker_tabs,
+      ["recruited"],
+      "cross-account ambiguous recruiter link must revoke managed and PM-derived uploader tabs",
+    );
+    await assert.rejects(
+      db.query(
+        "select public.direct_entry_list_workers($1::uuid, $2::uuid, 'managed', null, null, null, null, 25)",
+        [managerAuth, managerApp],
+      ),
+      (err) => err.code === "42501",
+    );
+
+    // Clean up cross-account duplicate link -> managed + uploader restored
+    await db.query("delete from public.direct_entry_app_user_recruiter_links where link_id = $1", [
+      crossAccountLinkId,
+    ]);
+    assert.deepEqual((await resolveCtx(managerAuth)).allowed_worker_tabs, [
+      "uploader",
+      "recruited",
+      "managed",
+    ]);
+
+    // Same-account ambiguous recruiter links (manager linked to both REC_B and REC_C):
+    // recruited requires count(*) = 1 per app_user_id (so recruited is omitted and raises 42501),
+    // while direct_entry_project_assignment_effective checks uniqueness per manager_recruiter_id (REC_B),
+    // so managed + PM-derived uploader remain allowed.
+    const secondSelfLinkId = (
+      await db.query(
+        `insert into public.direct_entry_app_user_recruiter_links
+           (app_user_id, recruiter_id, verified, valid_from, valid_to, is_current)
+         values ($1, $2, true, '2015-01-01', '2019-01-01', true)
+         returning link_id`,
+        [managerApp, REC_C],
+      )
+    ).rows[0].link_id;
+    assert.deepEqual(
+      (await resolveCtx(managerAuth)).allowed_worker_tabs,
+      ["uploader", "managed"],
+      "same-account ambiguous recruiter links omit recruited while preserving managed via direct_entry_actor_has_project_assignment",
+    );
+    await assert.rejects(
+      db.query(
+        "select public.direct_entry_list_workers($1::uuid, $2::uuid, 'recruited', null, null, null, null, 25)",
+        [managerAuth, managerApp],
+      ),
+      (err) => err.code === "42501",
+    );
+    const managedStillOk = (
+      await db.query(
+        "select public.direct_entry_list_workers($1::uuid, $2::uuid, 'managed', null, null, null, null, 25) as page",
+        [managerAuth, managerApp],
+      )
+    ).rows[0].page;
+    assert.equal(managedStillOk.scope, "managed");
+
+    await db.query("delete from public.direct_entry_app_user_recruiter_links where link_id = $1", [
+      secondSelfLinkId,
+    ]);
+    assert.deepEqual((await resolveCtx(managerAuth)).allowed_worker_tabs, [
+      "uploader",
+      "recruited",
+      "managed",
+    ]);
+
+    // Revoking PM assignment removes managed and PM-derived uploader, keeping recruited
+    await db.query(
+      "update public.direct_entry_project_manager_assignments set is_current = false where assignment_id = $1",
+      [assignment.assignment_id],
+    );
+    assert.deepEqual((await resolveCtx(managerAuth)).allowed_worker_tabs, ["recruited"]);
+    await assert.rejects(
+      db.query(
+        "select public.direct_entry_list_workers($1::uuid, $2::uuid, 'managed', null, null, null, null, 25)",
+        [managerAuth, managerApp],
+      ),
+      (err) => err.code === "42501",
+    );
+
+    // -------------------------------------------------------------------------
+    // 4. Team tab parity with public.direct_entry_assert_team_leader_current_team
+    // -------------------------------------------------------------------------
+    const leader = await seedStrictTeamLeader(db, {
+      auth: uuid(85),
+      app: uuid(86),
+      recruiter: REC_C,
+      team: TEAM_A,
+    });
+    assert.deepEqual((await resolveCtx(leader.auth)).allowed_worker_tabs, ["recruited", "team"]);
+    const teamPage = (
+      await db.query(
+        "select public.direct_entry_list_workers($1::uuid, $2::uuid, 'team', null, null, null, null, 25) as page",
+        [leader.auth, leader.app],
+      )
+    ).rows[0].page;
+    assert.equal(teamPage.scope, "team");
+    assert.ok(Array.isArray(teamPage.items));
+
+    // 4a. Ambiguous team scope grants (2 current team scopes) -> team tab omitted & RPC raises 42501
+    const extraTeamScopeId = (
+      await db.query(
+        `insert into public.direct_entry_scope_grants
+           (app_user_id, scope_kind, team_id, valid_from, is_current)
+         values ($1, 'team', $2, '2020-01-01', true)
+         returning grant_id`,
+        [leader.app, TEAM_B],
+      )
+    ).rows[0].grant_id;
+    assert.deepEqual(
+      (await resolveCtx(leader.auth)).allowed_worker_tabs,
+      ["recruited"],
+      "ambiguous team scope grants must omit team tab",
+    );
+    await assert.rejects(
+      db.query(
+        "select public.direct_entry_list_workers($1::uuid, $2::uuid, 'team', null, null, null, null, 25)",
+        [leader.auth, leader.app],
+      ),
+      (err) => err.code === "42501",
+    );
+    await db.query("delete from public.direct_entry_scope_grants where grant_id = $1", [
+      extraTeamScopeId,
+    ]);
+    assert.deepEqual((await resolveCtx(leader.auth)).allowed_worker_tabs, ["recruited", "team"]);
+
+    // 4b. Ambiguous team leader assignments -> team tab omitted & RPC raises 42501
+    await db.query("alter table public.direct_entry_team_leader_assignments disable trigger user");
+    const extraLeaderAssignmentId = (
+      await db.query(
+        `insert into public.direct_entry_team_leader_assignments
+           (team_id, leader_app_user_id, leader_recruiter_id, valid_from, valid_to, is_current)
+         values ($1, $2, $3, '2021-01-01', '2099-01-01', true)
+         returning assignment_id`,
+        [TEAM_B, leader.app, leader.recruiter],
+      )
+    ).rows[0].assignment_id;
+    assert.deepEqual(
+      (await resolveCtx(leader.auth)).allowed_worker_tabs,
+      ["recruited"],
+      "ambiguous team leader assignments must omit team tab",
+    );
+    await assert.rejects(
+      db.query(
+        "select public.direct_entry_list_workers($1::uuid, $2::uuid, 'team', null, null, null, null, 25)",
+        [leader.auth, leader.app],
+      ),
+      (err) => err.code === "42501",
+    );
+    await db.query(
+      "delete from public.direct_entry_team_leader_assignments where assignment_id = $1",
+      [extraLeaderAssignmentId],
+    );
+    await db.query("alter table public.direct_entry_team_leader_assignments enable trigger user");
+    assert.deepEqual((await resolveCtx(leader.auth)).allowed_worker_tabs, ["recruited", "team"]);
+
+    // 4c. Ambiguous recruiter team memberships -> team tab omitted & RPC raises 42501
+    await db.query("alter table public.recruiter_team_memberships disable trigger user");
+    const extraMembershipId = (
+      await db.query(
+        `insert into public.recruiter_team_memberships
+           (recruiter_id, team_id, valid_from, valid_to, is_current)
+         values ($1, $2, '2021-01-01', '2099-01-01', true)
+         returning membership_id`,
+        [leader.recruiter, TEAM_B],
+      )
+    ).rows[0].membership_id;
+    assert.deepEqual(
+      (await resolveCtx(leader.auth)).allowed_worker_tabs,
+      ["recruited"],
+      "ambiguous recruiter team memberships must omit team tab",
+    );
+    await assert.rejects(
+      db.query(
+        "select public.direct_entry_list_workers($1::uuid, $2::uuid, 'team', null, null, null, null, 25)",
+        [leader.auth, leader.app],
+      ),
+      (err) => err.code === "42501",
+    );
+    await db.query("delete from public.recruiter_team_memberships where membership_id = $1", [
+      extraMembershipId,
+    ]);
+    await db.query("alter table public.recruiter_team_memberships enable trigger user");
+    assert.deepEqual((await resolveCtx(leader.auth)).allowed_worker_tabs, ["recruited", "team"]);
+
+    // 4d. Non-HRP provider membership (vendor) -> team tab omitted & RPC raises 42501
+    await db.query(
+      "update public.recruiter_provider_memberships set provider_type = 'vendor' where recruiter_id = $1",
+      [leader.recruiter],
+    );
+    assert.deepEqual(
+      (await resolveCtx(leader.auth)).allowed_worker_tabs,
+      ["recruited"],
+      "vendor provider membership must omit team tab",
+    );
+    await assert.rejects(
+      db.query(
+        "select public.direct_entry_list_workers($1::uuid, $2::uuid, 'team', null, null, null, null, 25)",
+        [leader.auth, leader.app],
+      ),
+      (err) => err.code === "42501",
+    );
   } finally {
     await db.close();
   }

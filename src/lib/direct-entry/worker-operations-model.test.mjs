@@ -13,6 +13,7 @@ import {
   applyPage,
   bankAccountSummary,
   beginLoad,
+  canAccessUploaderSubmissionsTab,
   canSelectQuickOffboardingWorker,
   canReviewChangeRequests,
   canViewGlobalChangeRequestHistory,
@@ -26,9 +27,12 @@ import {
   initialWorkerTab,
   isWorkerOperationsTab,
   parseChangeRequestPageResponse,
+  parseSessionWorkerPermissionsResponse,
+  reconcileWorkerOperationsPermissions,
   requestRowKey,
   requestsQuery,
   resetTabPage,
+  resolveInitialWorkerTab,
   runDirectEditDocumentUploads,
   submissionRowKey,
   submissionsQuery,
@@ -49,6 +53,8 @@ import {
   workerListErrorMessage,
   workerStatusLabel,
   WORKER_LOAD_FAILED_MESSAGE,
+  WORKER_NO_USABLE_TAB_MESSAGE,
+  WORKER_OPERATIONS_INITIAL_TAB_PRIORITY,
   updateWorkerDirectoryFilter,
   VIETQR_BANK_CATALOG,
   buildDirectEditEntryFieldProposal,
@@ -63,6 +69,23 @@ import {
   resolveBankCatalogOption,
   toDirectEditDateInputValue,
 } from "./worker-operations-model.ts";
+import {
+  resolveActor,
+  validateClientBusinessPayload,
+} from "../auth/direct-entry-v2.ts";
+import {
+  canReadWorkerDirectoryCatalog,
+  directEntryNavPredicate,
+  resolveAllowedWorkerOperationsTabs,
+  workerOperationsNavPredicate,
+} from "../navigation/registry-capability.ts";
+import {
+  decideDirectEntryPageAccess,
+  decideWorkerOperationsPageAccess,
+} from "../auth/direct-entry-page-access.ts";
+import { createDirectEntrySessionResponse } from "./session-bootstrap.ts";
+import { listWorkers } from "./worker-directory-api.ts";
+import { listOwnSubmissions } from "./submission-read-api.ts";
 
 const AUTH = "2026-10-08";
 const ENTRY = "11111111-1111-4111-8111-111111111111";
@@ -104,11 +127,12 @@ test("W06-R1: bon view khong tron quan he; scope=all chi khi server cho phep", (
   assert.equal(tabScope("team"), "team");
   assert.equal(tabScope("all"), "all");
   assert.equal(isWorkerOperationsTab("recruited"), true);
-  // "all" chi duoc OFFER khi server projection xac nhan.
-  assert.deepEqual([...visibleWorkerTabs(false)], ["uploader", "recruited", "managed"]);
-  assert.deepEqual([...visibleWorkerTabs(true)], ["uploader", "recruited", "managed", "all"]);
-  assert.deepEqual([...visibleWorkerTabs(false, true)], ["uploader", "recruited", "managed", "team"]);
-  assert.deepEqual([...visibleWorkerTabs(true, true)], ["uploader", "recruited", "managed", "team", "all"]);
+  // Chi OFFER cac tab ma server xac nhan quyen doc that su; khong mac dinh bat uploader/recruited/managed.
+  assert.deepEqual([...visibleWorkerTabs(false)], []);
+  assert.deepEqual([...visibleWorkerTabs(true)], ["all"]);
+  assert.deepEqual([...visibleWorkerTabs(false, true)], ["team"]);
+  assert.deepEqual([...visibleWorkerTabs(true, true, true, true, true)], ["uploader", "recruited", "managed", "team", "all"]);
+  assert.deepEqual([...visibleWorkerTabs({ allowedTabs: ["recruited", "team"] })], ["recruited", "team"]);
 });
 
 test("quick offboarding only selects editable ON or UNCONFIRMED workers", () => {
@@ -151,22 +175,24 @@ test("W06-R2: helper phan trang ton tai (0e2cbba khong co -> test that bai that 
   }
 });
 
-test("W06-R2: initial tab tu actor projection — mac dinh mo tab 'Du an toi quan ly' (managed)", () => {
+test("W06-R2: initial tab tu actor projection — uu tien managed -> all -> team -> recruited -> uploader theo quyen that", () => {
   const all = [{ kind: "all" }];
-  // Moi actor da xac thuc khi "managed" kha dung deu mac dinh vao "managed" ("Dự án tôi quản lý").
-  assert.equal(initialWorkerTab({ capabilities: ["change_review"], scopes: all }, true), "managed");
-  assert.equal(initialWorkerTab({ capabilities: ["entry_admin"], scopes: all }, true), "managed");
-  assert.equal(initialWorkerTab({ capabilities: ["change_request_create"], scopes: [{ kind: "own" }] }, false), "managed");
-  assert.equal(initialWorkerTab({ capabilities: ["team_manager_assign"], scopes: [{ kind: "team" }] }, false, true), "managed");
-  assert.equal(initialWorkerTab({ capabilities: ["team_manager_assign"], scopes: [{ kind: "team" }] }, false), "managed");
-  assert.equal(initialWorkerTab({ capabilities: ["entry_own"], scopes: [{ kind: "own" }] }, false), "managed");
-  assert.equal(initialWorkerTab({ capabilities: ["entry_team"], scopes: [{ kind: "team" }] }, false), "managed");
-  assert.equal(initialWorkerTab({ capabilities: ["change_review"], scopes: all }, false), "managed");
-  // Fallback khi canSeeManagedWorkers === false hoac actor === null:
+  // Khong bao gio mac dinh managed = true hoac uploader = true khi server chua xac nhan.
+  assert.equal(initialWorkerTab({ capabilities: ["change_review"], scopes: all }, true), "all");
+  assert.equal(initialWorkerTab({ capabilities: ["entry_admin"], scopes: all }, true), "all");
+  assert.equal(initialWorkerTab({ capabilities: ["change_request_create"], scopes: [{ kind: "own" }] }, false), null);
+  assert.equal(initialWorkerTab({ capabilities: ["team_manager_assign"], scopes: [{ kind: "team" }] }, false, true), "team");
+  assert.equal(initialWorkerTab({ capabilities: ["team_manager_assign"], scopes: [{ kind: "team" }] }, false), null);
+  assert.equal(initialWorkerTab({ capabilities: ["entry_own"], scopes: [{ kind: "own" }] }, false), null);
+  assert.equal(initialWorkerTab({ capabilities: ["entry_team"], scopes: [{ kind: "team" }] }, false), null);
+  assert.equal(initialWorkerTab({ capabilities: ["change_review"], scopes: all }, false), null);
+  // Khi co quyen managed that su => uu tien managed dau tien:
+  assert.equal(initialWorkerTab({ capabilities: ["change_review"], scopes: all }, true, true, true, true, true), "managed");
   assert.equal(initialWorkerTab({ capabilities: ["change_review"], scopes: all }, true, false, false), "all");
   assert.equal(initialWorkerTab({ capabilities: ["team_manager_assign"], scopes: [{ kind: "team" }] }, false, true, false), "team");
-  assert.equal(initialWorkerTab({ capabilities: ["entry_own"], scopes: [{ kind: "own" }] }, false, false, false), "uploader");
-  assert.equal(initialWorkerTab(null, true), "uploader");
+  assert.equal(initialWorkerTab({ capabilities: ["entry_own"], scopes: [{ kind: "own" }] }, false, false, false, true, false), "recruited");
+  assert.equal(initialWorkerTab({ capabilities: ["submission_create"], scopes: [{ kind: "own" }] }, false, false, false, false, true), "uploader");
+  assert.equal(initialWorkerTab(null, false), null);
   assert.equal(fallbackWorkerTab({ capabilities: ["entry_admin"], scopes: all }, true, false), "all");
 });
 
@@ -401,9 +427,10 @@ test("HF-R5A: moi loi tai du lieu deu co copy sanitized, khong bao gio im lang",
   assert.equal(emptyFailure.message, WORKER_LOAD_FAILED_MESSAGE);
 });
 
-test("W06-R3: audience ca nhan khong ton tai hien 0, scope all van fail-closed", () => {
-  assert.equal(relationDenialIsEmpty("recruited", 403), true);
-  assert.equal(relationDenialIsEmpty("managed", 403), true);
+test("W06-R3 / T1A: HTTP 403 luon fail-closed la tu choi quyen, khong bien thanh danh sach rong", () => {
+  assert.equal(relationDenialIsEmpty("recruited", 403), false);
+  assert.equal(relationDenialIsEmpty("managed", 403), false);
+  assert.equal(relationDenialIsEmpty("team", 403), false);
   assert.equal(relationDenialIsEmpty("all", 403), false);
   assert.equal(relationDenialIsEmpty("managed", 500), false);
 });
@@ -1032,3 +1059,593 @@ test("HF Catalog Effective Date: worker starting before a recruiter's membership
     },
   });
 });
+
+const AUTH_SUBJECT = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const APP_USER_ID = "55555555-5555-4555-8555-555555555555";
+const TEAM_ID = "44444444-4444-4444-8444-444444444444";
+const AT_TIMESTAMP = "2026-10-08T08:00:00.000Z";
+
+function baseActorRecord(overrides = {}) {
+  return {
+    auth_subject: AUTH_SUBJECT,
+    app_user_id: APP_USER_ID,
+    display_name: "Nguyen Test Actor",
+    enabled: true,
+    capabilities: [],
+    recruiter_links: [],
+    teams: [],
+    team_scope_grants: [],
+    all_scope_grants: [],
+    ...overrides,
+  };
+}
+
+async function resolveTestActor(recordOverrides = {}) {
+  const record = baseActorRecord(recordOverrides);
+  return resolveActor({
+    session: {
+      auth_subject: AUTH_SUBJECT,
+      provider: "supabase",
+      authenticated_at: AT_TIMESTAMP,
+    },
+    repository: {
+      async loadByAuthSubject(subject) {
+        return subject === AUTH_SUBJECT ? structuredClone(record) : null;
+      },
+    },
+    at: AT_TIMESTAMP,
+  });
+}
+
+test("T1A-1: uploader tab authority uses server-resolved allowed_worker_tabs, gates catalog by entry_create|entry_own, and handles 0 usable tabs cleanly", async () => {
+  // 1a. Actor with submission_create + server-confirmed allowed_worker_tabs = ["uploader"] (no entry_create/entry_own)
+  const resolvedOwn = await resolveTestActor({
+    capabilities: ["submission_create"],
+    allowed_worker_tabs: ["uploader"],
+  });
+  assert.equal(resolvedOwn.ok, true);
+  const allowedOwn = resolveAllowedWorkerOperationsTabs(resolvedOwn.actor);
+  assert.deepEqual(allowedOwn, ["uploader"]);
+  assert.equal(canReadWorkerDirectoryCatalog(resolvedOwn.actor), false);
+  assert.equal(initialWorkerTab(resolvedOwn.actor), "uploader");
+
+  // Real listOwnSubmissions API succeeds for uploader and returns valid page for parseSubmissionPageResponse
+  const subResponse = await listOwnSubmissions(
+    new Request("https://bi.internal/api/direct-entry/submissions?page_size=25"),
+    "true",
+    {
+      resolveSession: async () => ({ actor: resolvedOwn, response_headers: {} }),
+      repository: {
+        listOwnSubmissions: async () => ({
+          ok: true,
+          data: {
+            items: [
+              {
+                submission_id: REQUEST,
+                state: "DRAFT",
+                version: 1,
+                entry_count: 1,
+                created_at: "2026-10-01T00:00:00.000000Z",
+                updated_at: "2026-10-02T00:00:00.000000Z",
+                submitted_at: null,
+                allowed_transitions: ["SUBMITTED"],
+                project_scoped: false,
+              },
+            ],
+            page_size: 25,
+            has_more: false,
+            next_cursor: null,
+          },
+        }),
+        readOwnSubmission: async () => ({ ok: false, kind: "not-found" }),
+      },
+    },
+  );
+  assert.equal(subResponse.status, 200);
+  const parsedSub = parseSubmissionPageResponse(await subResponse.json(), { page_size: 25 });
+  assert.ok(parsedSub !== null);
+  assert.equal(parsedSub.items.length, 1);
+
+  // 1b. Actor who passes workerOperationsNavPredicate (e.g. entry_own) but has 0 usable tabs (allowed_worker_tabs: [])
+  const resolvedZero = await resolveTestActor({
+    capabilities: ["entry_own"],
+    allowed_worker_tabs: [],
+  });
+  assert.equal(resolvedZero.ok, true);
+  assert.equal(workerOperationsNavPredicate(resolvedZero.actor), true);
+  assert.deepEqual(resolveAllowedWorkerOperationsTabs(resolvedZero.actor), []);
+  assert.deepEqual(visibleWorkerTabs(resolveAllowedWorkerOperationsTabs(resolvedZero.actor)), []);
+  assert.equal(initialWorkerTab(resolvedZero.actor), null);
+  assert.ok(WORKER_NO_USABLE_TAB_MESSAGE.length > 0);
+
+  // 1c. Legacy DB payload missing allowed_worker_tabs fails closed to [] (no client/TS guessing)
+  const resolvedLegacy = await resolveTestActor({
+    capabilities: ["entry_own", "submission_create"],
+  });
+  assert.equal(resolvedLegacy.ok, true);
+  assert.equal(resolvedLegacy.actor.allowed_worker_tabs, undefined);
+  assert.deepEqual(resolveAllowedWorkerOperationsTabs(resolvedLegacy.actor), []);
+});
+
+test("T1A-2: recruited tab authority uses server-confirmed allowed_worker_tabs and rejects malformed/duplicate tab payloads", async () => {
+  const resolvedRecruiter = await resolveTestActor({
+    capabilities: ["entry_own"],
+    recruiter_links: [
+      {
+        recruiter_id: RECRUITER,
+        app_user_id: APP_USER_ID,
+        verified: true,
+      },
+    ],
+    allowed_worker_tabs: ["recruited"],
+  });
+  assert.equal(resolvedRecruiter.ok, true);
+  assert.deepEqual(resolveAllowedWorkerOperationsTabs(resolvedRecruiter.actor), ["recruited"]);
+  assert.equal(canReadWorkerDirectoryCatalog(resolvedRecruiter.actor), true);
+  assert.equal(initialWorkerTab(resolvedRecruiter.actor), "recruited");
+
+  // Real listWorkers API succeeds for scope=recruited
+  const recResponse = await listWorkers(
+    new Request("https://bi.internal/api/direct-entry/workers?scope=recruited&page_size=25"),
+    "true",
+    {
+      resolveSession: async () => ({ actor: resolvedRecruiter, response_headers: {} }),
+      repository: {
+        listWorkers: async (query) => ({
+          ok: true,
+          data: {
+            ...page([row()]),
+            scope: query.scope,
+          },
+        }),
+      },
+    },
+  );
+  assert.equal(recResponse.status, 200);
+  const parsedRec = parseWorkerPageResponse(await recResponse.json(), {
+    scope: "recruited",
+    page_size: 25,
+  });
+  assert.ok(parsedRec !== null);
+  assert.equal(parsedRec.items.length, 1);
+
+  // Malformed or duplicate allowed_worker_tabs in DB record fails actor resolution closed
+  for (const invalidTabs of [
+    "recruited",
+    ["invalid_tab"],
+    ["recruited", "recruited"],
+    [null],
+  ]) {
+    const bad = await resolveTestActor({
+      capabilities: ["entry_own"],
+      allowed_worker_tabs: invalidTabs,
+    });
+    assert.deepEqual(bad, { ok: false, reason: "ACTOR_REPOSITORY_INVALID" });
+  }
+});
+
+test("T1A-3: team tab authority requires server-confirmed team in allowed_worker_tabs; team_manager_assign @ team without team leader authority does not open team tab", async () => {
+  // Actor with team_manager_assign + team scope where SQL direct_entry_assert_team_leader_current_team failed (e.g. missing leader assignment)
+  const incompleteLeader = await resolveTestActor({
+    capabilities: ["entry_team", "team_manager_assign"],
+    teams: [{ team_id: TEAM_ID, code: "TEAM_NORTH", display: "Team North", active: true }],
+    team_scope_grants: [{ team_id: TEAM_ID, valid_from: "2026-01-01", valid_to: null }],
+    allowed_worker_tabs: ["recruited"],
+  });
+  assert.equal(incompleteLeader.ok, true);
+  // Navigation guard still allows entering /direct-entry/workers, but team tab is NOT in allowedTabs
+  assert.equal(workerOperationsNavPredicate(incompleteLeader.actor), true);
+  const allowedIncomplete = resolveAllowedWorkerOperationsTabs(incompleteLeader.actor);
+  assert.deepEqual(allowedIncomplete, ["recruited"]);
+  assert.equal(allowedIncomplete.includes("team"), false);
+  assert.equal(initialWorkerTab(incompleteLeader.actor), "recruited");
+
+  // Full Team Leader where SQL confirmed team authority
+  const validLeader = await resolveTestActor({
+    capabilities: ["entry_team", "team_manager_assign"],
+    teams: [{ team_id: TEAM_ID, code: "TEAM_NORTH", display: "Team North", active: true }],
+    team_scope_grants: [{ team_id: TEAM_ID, valid_from: "2026-01-01", valid_to: null }],
+    allowed_worker_tabs: ["team", "recruited"],
+  });
+  assert.equal(validLeader.ok, true);
+  // Canonical tab bar order is ["recruited", "team"], while initial tab selection picks "team"
+  assert.deepEqual(resolveAllowedWorkerOperationsTabs(validLeader.actor), ["recruited", "team"]);
+  assert.equal(initialWorkerTab(validLeader.actor), "team");
+});
+
+test("T1A-4: managed tab authority requires server-confirmed managed in allowed_worker_tabs; change_request_create alone does not open managed tab", async () => {
+  const withoutProjectAssignment = await resolveTestActor({
+    capabilities: ["change_request_create"],
+    allowed_worker_tabs: [],
+  });
+  assert.equal(withoutProjectAssignment.ok, true);
+  assert.deepEqual(resolveAllowedWorkerOperationsTabs(withoutProjectAssignment.actor), []);
+  assert.equal(initialWorkerTab(withoutProjectAssignment.actor), null);
+
+  const activePm = await resolveTestActor({
+    capabilities: ["change_request_create"],
+    allowed_worker_tabs: ["managed", "recruited", "uploader"],
+  });
+  assert.equal(activePm.ok, true);
+  assert.deepEqual(resolveAllowedWorkerOperationsTabs(activePm.actor), [
+    "uploader",
+    "recruited",
+    "managed",
+  ]);
+  assert.equal(initialWorkerTab(activePm.actor), "managed");
+});
+
+test("T1A-5: all tab authority requires server-confirmed all in allowed_worker_tabs", async () => {
+  const reviewerAll = await resolveTestActor({
+    capabilities: ["change_review"],
+    all_scope_grants: [{ valid_from: "2026-01-01", valid_to: null }],
+    allowed_worker_tabs: ["all"],
+  });
+  assert.equal(reviewerAll.ok, true);
+  assert.deepEqual(resolveAllowedWorkerOperationsTabs(reviewerAll.actor), ["all"]);
+  assert.equal(initialWorkerTab(reviewerAll.actor), "all");
+  assert.equal(canReadWorkerDirectoryCatalog(reviewerAll.actor), false);
+});
+
+test("T1A-6: actor with multiple permissions simultaneously follows initialWorkerTab/fallbackWorkerTab priority (managed -> all -> team -> recruited -> uploader)", async () => {
+  assert.deepEqual(
+    [...WORKER_OPERATIONS_INITIAL_TAB_PRIORITY],
+    ["managed", "all", "team", "recruited", "uploader"],
+  );
+
+  const multiActor = await resolveTestActor({
+    capabilities: ["submission_create", "entry_own", "entry_team", "team_manager_assign", "change_review"],
+    all_scope_grants: [{ valid_from: "2026-01-01", valid_to: null }],
+    allowed_worker_tabs: ["uploader", "recruited", "managed", "team", "all"],
+  });
+  assert.equal(multiActor.ok, true);
+  const allTabs = resolveAllowedWorkerOperationsTabs(multiActor.actor);
+  assert.deepEqual(allTabs, ["uploader", "recruited", "managed", "team", "all"]);
+  assert.equal(initialWorkerTab(allTabs), "managed");
+  assert.equal(fallbackWorkerTab(multiActor.actor, undefined, undefined, undefined, undefined, allTabs), "all");
+  assert.equal(resolveInitialWorkerTab(["uploader", "recruited", "team"]), "team");
+  assert.equal(resolveInitialWorkerTab(["uploader", "recruited"]), "recruited");
+  assert.equal(resolveInitialWorkerTab(["uploader"]), "uploader");
+  assert.equal(resolveInitialWorkerTab([]), null);
+});
+
+test("T1A-7: mid-session permission revocation (HTTP 403 + GET /api/direct-entry/session refresh) clears stale data, shows denial, updates allowed tabs, and does not retry rejected scope", async () => {
+  // 1. Initial state: actor has ["recruited", "managed"] and has loaded 1 worker on "managed" + 1 worker on "recruited"
+  const initialState = {
+    allowedTabs: ["recruited", "managed"],
+    activeTab: "managed",
+    workerPages: {
+      recruited: applyPage(emptyTabPage(), page([row({ entry_id: RECRUITER })]), workerRowKey, false),
+      managed: applyPage(emptyTabPage(), { ...page([row()]), scope: "managed" }, workerRowKey, false),
+      team: emptyTabPage(),
+      all: emptyTabPage(),
+    },
+    submissionPage: emptyTabPage(),
+    workerSummary: { total_workers: 1, project_count: 1, recruiter_count: 1 },
+  };
+
+  // 2. PM assignment is revoked mid-session; GET /api/direct-entry/workers?scope=managed returns HTTP 403
+  const currentActorTabs = ["recruited"];
+  const deniedManagedRes = await listWorkers(
+    new Request("https://bi.internal/api/direct-entry/workers?scope=managed&page_size=25"),
+    "true",
+    {
+      resolveSession: async () => ({
+        actor: await resolveTestActor({
+          capabilities: ["entry_own", "change_request_create"],
+          allowed_worker_tabs: currentActorTabs,
+        }),
+        response_headers: {},
+      }),
+      repository: {
+        listWorkers: async () => ({ ok: false, kind: "denied" }),
+      },
+    },
+  );
+  assert.equal(deniedManagedRes.status, 403);
+
+  // 3. Component immediately reconciles the 403 denial on "managed"
+  const afterDenial = reconcileWorkerOperationsPermissions(initialState, {
+    revokedTab: "managed",
+    denialMessage: workerListErrorMessage(403),
+  });
+  assert.equal(afterDenial.workerPages.managed.state, "denied");
+  assert.equal(afterDenial.workerPages.managed.items.length, 0, "Stale items on revoked tab must be cleared");
+  assert.equal(afterDenial.workerPages.managed.cursor, null);
+  assert.equal(afterDenial.workerPages.managed.hasMore, false);
+  assert.equal(afterDenial.workerSummary, null, "Stale workerSummary on revoked tab must be cleared");
+  assert.deepEqual(afterDenial.allowedTabs, ["recruited"]);
+  assert.equal(afterDenial.activeTab, "managed", "Keeps denied tab visible so user sees explicit 403 message");
+  assert.equal(afterDenial.shouldFetchNextActiveTab, false, "Must not auto-retry or hop without user action");
+
+  // 4. Component calls GET /api/direct-entry/session (real createDirectEntrySessionResponse) to sync latest permissions
+  // Suppose "recruited" was ALSO revoked on the server, leaving only ["uploader"]
+  const sessionResponse = await createDirectEntrySessionResponse("true", async () => ({
+    actor: await resolveTestActor({
+      capabilities: ["submission_create"],
+      allowed_worker_tabs: ["uploader"],
+    }),
+    response_headers: {},
+  }));
+  assert.equal(sessionResponse.status, 200);
+  const parsedSession = parseSessionWorkerPermissionsResponse(await sessionResponse.json());
+  assert.deepEqual(parsedSession, {
+    allowedTabs: ["uploader"],
+    canReadCatalog: false,
+  });
+
+  // 5. Reconciling with session response wipes cached data on "recruited" (newly revoked) while preserving the "denied" message on "managed"
+  const afterSessionSync = reconcileWorkerOperationsPermissions(afterDenial, {
+    nextAllowedTabs: parsedSession.allowedTabs,
+    preserveDeniedActiveTab: true,
+  });
+  assert.deepEqual(afterSessionSync.allowedTabs, ["uploader"]);
+  assert.equal(afterSessionSync.workerPages.recruited.items.length, 0, "Newly revoked tab cache is wiped");
+  assert.equal(afterSessionSync.workerPages.managed.state, "denied", "Denied state on active tab stays visible");
+  assert.equal(afterSessionSync.workerPages.managed.items.length, 0);
+  assert.equal(afterSessionSync.shouldFetchNextActiveTab, false);
+});
+
+test("T1A-8: forged scope request to API/RPC is rejected with HTTP 403 and client payload validator blocks allowed_worker_tabs spoofing", async () => {
+  assert.equal(
+    validateClientBusinessPayload({ allowed_worker_tabs: ["all"] }).ok,
+    false,
+  );
+  assert.equal(
+    validateClientBusinessPayload({ allowedWorkerTabs: ["all"] }).ok,
+    false,
+  );
+
+  const SESSION_ACTOR = {
+    auth_subject: AUTH_SUBJECT,
+    app_user_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    display_name: "Staff Actor",
+    enabled: true,
+    capabilities: ["entry_own"],
+    scopes: [{ kind: "own", reference: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", valid_from: "0001-01-01", valid_to: null }],
+    self_recruiter_suggestion: null,
+    allowed_worker_tabs: [],
+    session: {
+      provider: "supabase",
+      verification: "getUser",
+      authenticated_at: AT_TIMESTAMP,
+    },
+  };
+
+  const resolveSession = async () => ({
+    actor: {
+      ok: true,
+      actor: SESSION_ACTOR,
+    },
+    response_headers: {},
+  });
+
+  const observedCalls = [];
+  const fakeRepo = {
+    listWorkers: async (query) => {
+      observedCalls.push({ fn: "listWorkers", query });
+      return { ok: false, kind: "denied" };
+    },
+    listOwnSubmissions: async (query) => {
+      observedCalls.push({ fn: "listOwnSubmissions", query });
+      return { ok: false, kind: "denied" };
+    },
+    readOwnSubmission: async () => ({ ok: false, kind: "denied" }),
+  };
+
+  // 1. Spoofed auth_subject in query string is rejected before session (400 WORKER_QUERY_INVALID)
+  const spoofedQueryRes = await listWorkers(
+    new Request(
+      "https://bi.internal/api/direct-entry/workers?scope=all&page_size=25&auth_subject=99999999-9999-4999-8999-999999999999",
+    ),
+    "true",
+    { resolveSession, repository: fakeRepo },
+  );
+  assert.equal(spoofedQueryRes.status, 400);
+  const spoofedBody = await spoofedQueryRes.json();
+  assert.equal(spoofedBody.ok, false);
+  assert.equal(spoofedBody.code, "WORKER_QUERY_INVALID");
+  assert.equal(observedCalls.length, 0);
+
+  // 2. Client forges scope=managed / team / all -> binds SESSION_ACTOR and returns HTTP 403 WORKER_DIRECTORY_DENIED
+  for (const forgedScope of ["managed", "team", "all"]) {
+    const res = await listWorkers(
+      new Request(
+        `https://bi.internal/api/direct-entry/workers?scope=${forgedScope}&page_size=25`,
+      ),
+      "true",
+      { resolveSession, repository: fakeRepo },
+    );
+    assert.equal(res.status, 403, `Forged scope=${forgedScope} must return HTTP 403`);
+    const body = await res.json();
+    assert.equal(body.ok, false);
+    assert.equal(body.code, "WORKER_DIRECTORY_DENIED");
+  }
+
+  // 3. Client without submission_create/PM authority calls /api/direct-entry/submissions -> returns HTTP 403 SUBMISSION_READ_DENIED
+  const subRes = await listOwnSubmissions(
+    new Request("https://bi.internal/api/direct-entry/submissions?page_size=25"),
+    "true",
+    { resolveSession, repository: fakeRepo },
+  );
+  assert.equal(subRes.status, 403);
+  const subBody = await subRes.json();
+  assert.equal(subBody.ok, false);
+  assert.equal(subBody.code, "SUBMISSION_READ_DENIED");
+
+  // Verify every repository call received the trusted SESSION_ACTOR
+  assert.equal(observedCalls.length, 4);
+  for (const call of observedCalls) {
+    assert.equal(call.query.auth_subject, SESSION_ACTOR.auth_subject);
+    assert.equal(call.query.app_user_id, SESSION_ACTOR.app_user_id);
+  }
+});
+
+test("T1A-9: uploader tab authority matches direct_entry_list_own_submissions in R1 (submission_create capability, exactly 1 current own scope with team_id=null, valid_from/valid_to inert metadata, or project assignment)", () => {
+  const validOwnScope = {
+    scope_kind: "own",
+    team_id: null,
+    valid_from: "2026-01-01",
+    valid_to: "2026-10-09",
+    is_current: true,
+  };
+
+  // 1. Capability check: submission_create is required when hasProjectAssignment is false
+  assert.equal(
+    canAccessUploaderSubmissionsTab({
+      enabled: true,
+      authorizationDate: AUTH,
+      capabilities: ["submission_create"],
+      scopeGrants: [validOwnScope],
+      hasProjectAssignment: false,
+    }),
+    true,
+  );
+  for (const nonUploaderCap of ["entry_create", "entry_own", "entry_admin", "change_review"]) {
+    assert.equal(
+      canAccessUploaderSubmissionsTab({
+        enabled: true,
+        authorizationDate: AUTH,
+        capabilities: [nonUploaderCap],
+        scopeGrants: [validOwnScope],
+        hasProjectAssignment: false,
+      }),
+      false,
+      `Capability ${nonUploaderCap} alone must not open uploader tab without submission_create or PM assignment`,
+    );
+  }
+  assert.equal(
+    canAccessUploaderSubmissionsTab({
+      enabled: true,
+      authorizationDate: AUTH,
+      capabilities: [],
+      scopeGrants: [],
+      hasProjectAssignment: true,
+    }),
+    true,
+    "Effective project manager assignment satisfies direct_entry_list_own_submissions",
+  );
+  assert.equal(
+    canAccessUploaderSubmissionsTab({
+      enabled: false,
+      authorizationDate: AUTH,
+      capabilities: ["submission_create"],
+      scopeGrants: [validOwnScope],
+      hasProjectAssignment: true,
+    }),
+    false,
+    "Disabled actor is always denied",
+  );
+
+  // 2. Scope uniqueness and shape: requires count(*) = 1 of scope_kind='own' AND team_id IS NULL AND is_current
+  assert.equal(
+    canAccessUploaderSubmissionsTab({
+      enabled: true,
+      authorizationDate: AUTH,
+      capabilities: ["submission_create"],
+      scopeGrants: [],
+    }),
+    false,
+    "0 own scope grants -> denied",
+  );
+  assert.equal(
+    canAccessUploaderSubmissionsTab({
+      enabled: true,
+      authorizationDate: AUTH,
+      capabilities: ["submission_create"],
+      scopeGrants: [validOwnScope, { ...validOwnScope, valid_from: "2026-02-01" }],
+    }),
+    false,
+    "Duplicate (2) current own scope grants -> count <> 1 -> denied",
+  );
+  assert.equal(
+    canAccessUploaderSubmissionsTab({
+      enabled: true,
+      authorizationDate: AUTH,
+      capabilities: ["submission_create"],
+      scopeGrants: [{ ...validOwnScope, team_id: "team_synthetic_01" }],
+    }),
+    false,
+    "own scope grant with non-null team_id -> denied",
+  );
+  assert.equal(
+    canAccessUploaderSubmissionsTab({
+      enabled: true,
+      authorizationDate: AUTH,
+      capabilities: ["submission_create"],
+      scopeGrants: [{ ...validOwnScope, is_current: false }],
+    }),
+    false,
+    "non-current own scope grant -> denied",
+  );
+  assert.equal(
+    canAccessUploaderSubmissionsTab({
+      enabled: true,
+      authorizationDate: AUTH,
+      capabilities: [{ capability: "submission_create", is_current: false }],
+      scopeGrants: [validOwnScope],
+    }),
+    false,
+    "non-current submission_create capability grant -> denied",
+  );
+
+  // 3. R1 current-state semantics: valid_from / valid_to are inert metadata when is_current = true
+  assert.equal(
+    canAccessUploaderSubmissionsTab({
+      enabled: true,
+      authorizationDate: AUTH,
+      capabilities: [
+        {
+          capability: "submission_create",
+          valid_from: "2099-01-01",
+          valid_to: "2099-12-31",
+          is_current: true,
+        },
+      ],
+      scopeGrants: [{ ...validOwnScope, valid_from: "2020-01-01", valid_to: "2020-06-01", is_current: true }],
+    }),
+    true,
+    "R1 current-state authorization uses is_current=true regardless of historical valid_from/valid_to metadata",
+  );
+});
+
+test("T1A-10: page gate and nav predicate allow Worker Directory (/direct-entry/workers) when SQL returns at least one allowed_worker_tabs entry (recruited or uploader only) without opening /direct-entry", async () => {
+  const recruitedOnly = await resolveTestActor({
+    capabilities: [],
+    recruiter_links: [
+      {
+        app_user_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        recruiter_id: RECRUITER,
+        verified: true,
+        valid_from: "2026-01-01",
+        valid_to: null,
+      },
+    ],
+    allowed_worker_tabs: ["recruited"],
+  });
+  assert.equal(recruitedOnly.ok, true);
+  assert.equal(decideWorkerOperationsPageAccess({ uiEnabled: true, actor: recruitedOnly }), "ALLOW");
+  assert.equal(workerOperationsNavPredicate(recruitedOnly.actor), true);
+  assert.equal(decideDirectEntryPageAccess({ uiEnabled: true, actor: recruitedOnly }), "ACCESS_DENIED");
+  assert.equal(directEntryNavPredicate(recruitedOnly.actor), false);
+
+  const uploaderOnly = await resolveTestActor({
+    capabilities: ["submission_create"],
+    allowed_worker_tabs: ["uploader"],
+  });
+  assert.equal(uploaderOnly.ok, true);
+  assert.equal(decideWorkerOperationsPageAccess({ uiEnabled: true, actor: uploaderOnly }), "ALLOW");
+  assert.equal(workerOperationsNavPredicate(uploaderOnly.actor), true);
+  assert.equal(decideDirectEntryPageAccess({ uiEnabled: true, actor: uploaderOnly }), "ACCESS_DENIED");
+  assert.equal(directEntryNavPredicate(uploaderOnly.actor), false);
+
+  const noTabsNoEntryCaps = await resolveTestActor({
+    capabilities: ["submission_create"],
+    allowed_worker_tabs: [],
+  });
+  assert.equal(noTabsNoEntryCaps.ok, true);
+  assert.equal(decideWorkerOperationsPageAccess({ uiEnabled: true, actor: noTabsNoEntryCaps }), "ACCESS_DENIED");
+  assert.equal(workerOperationsNavPredicate(noTabsNoEntryCaps.actor), false);
+});
+
+

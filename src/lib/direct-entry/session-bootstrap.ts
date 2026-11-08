@@ -34,6 +34,7 @@ export async function createDirectEntrySessionResponse(
       | "scopes"
       | "self_recruiter_suggestion"
       | "effective_report_review_scopes"
+      | "allowed_worker_tabs"
     > = {
       app_user_id: result.actor.actor.app_user_id,
       capabilities: result.actor.actor.capabilities,
@@ -41,6 +42,9 @@ export async function createDirectEntrySessionResponse(
       self_recruiter_suggestion: result.actor.actor.self_recruiter_suggestion,
       ...(result.actor.actor.effective_report_review_scopes !== undefined
         ? { effective_report_review_scopes: result.actor.actor.effective_report_review_scopes }
+        : {}),
+      ...(result.actor.actor.allowed_worker_tabs !== undefined
+        ? { allowed_worker_tabs: result.actor.actor.allowed_worker_tabs }
         : {}),
     };
     const headers = new Headers({ "Cache-Control": NO_STORE });

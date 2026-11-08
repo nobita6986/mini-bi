@@ -229,6 +229,9 @@ export const resolveNavActorForAppShell = cache(
       ...(actor.actor.effective_report_review_scopes !== undefined
         ? { effective_report_review_scopes: actor.actor.effective_report_review_scopes }
         : {}),
+      ...(actor.actor.allowed_worker_tabs !== undefined
+        ? { allowed_worker_tabs: actor.actor.allowed_worker_tabs }
+        : {}),
     };
     if (process.env.WORK_REPORTS_API_ENABLED === "true" && !workReportsNavPredicate(projection)) {
       const obligations = await createSubmissionRepository().listMine({

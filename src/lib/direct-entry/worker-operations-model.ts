@@ -70,6 +70,18 @@ export {
 export const WORKER_OPERATIONS_TABS = ["uploader", "recruited", "managed", "team", "all"] as const;
 export type WorkerOperationsTab = (typeof WORKER_OPERATIONS_TABS)[number];
 
+/**
+ * Default initial-tab selection order derived from `HEAD:src/lib/direct-entry/worker-operations-model.ts`
+ * (`initialWorkerTab` / `fallbackWorkerTab`: `managed -> all -> team -> uploader`), extended by placing
+ * `recruited` immediately before `uploader` now that `recruited` is an explicit server-verified tab in
+ * `allowed_worker_tabs` (distinct from the UI tab bar display order `WORKER_OPERATIONS_TABS`).
+ */
+export const WORKER_OPERATIONS_INITIAL_TAB_PRIORITY: readonly WorkerOperationsTab[] =
+  Object.freeze(["managed", "all", "team", "recruited", "uploader"]);
+
+export const WORKER_NO_USABLE_TAB_MESSAGE =
+  "Tài khoản của bạn hiện không có phạm vi danh sách người lao động khả dụng.";
+
 export const WORKER_OPERATIONS_TAB_LABELS: Readonly<Record<WorkerOperationsTab, string>> =
   Object.freeze({
     uploader: "Tôi đã nhập",
@@ -97,16 +109,131 @@ export function tabScope(tab: WorkerOperationsTab): WorkerDirectoryScope | null 
   return null;
 }
 
+export type WorkerTabPermissionsInput = {
+  allowedTabs?: readonly WorkerOperationsTab[];
+  allowed_worker_tabs?: readonly WorkerOperationsTab[];
+  canSeeUploaderWorkers?: boolean;
+  canSeeRecruitedWorkers?: boolean;
+  canSeeManagedWorkers?: boolean;
+  canSeeTeamWorkers?: boolean;
+  canSeeAllWorkers?: boolean;
+};
+
 /**
- * Tab "Toan bo NLD" chi duoc OFFER khi server-side actor projection xac nhan
- * (entry_admin | change_review) + effective all scope. RPC W03 van enforce lai.
+ * Resolves the canonical ordered list of Worker Operations tabs that the server has confirmed
+ * are usable for the current actor (`allowed_worker_tabs`). Never assumes `managed`, `recruited`,
+ * or `uploader` by default.
  */
 export function visibleWorkerTabs(
-  canSeeAllWorkers: boolean,
+  input:
+    | readonly WorkerOperationsTab[]
+    | WorkerTabPermissionsInput
+    | boolean
+    | null
+    | undefined = [],
   canSeeTeamWorkers = false,
+  canSeeManagedWorkers = false,
+  canSeeRecruitedWorkers = false,
+  canSeeUploaderWorkers = false,
 ): readonly WorkerOperationsTab[] {
-  return WORKER_OPERATIONS_TABS.filter((tab) =>
-    (tab !== "all" || canSeeAllWorkers) && (tab !== "team" || canSeeTeamWorkers));
+  if (input === null || input === undefined) return [];
+  if (Array.isArray(input)) {
+    const allowedSet = new Set(input.filter(isWorkerOperationsTab));
+    return WORKER_OPERATIONS_TABS.filter((tab) => allowedSet.has(tab));
+  }
+  if (typeof input === "boolean") {
+    const canSeeAllWorkers = input;
+    return WORKER_OPERATIONS_TABS.filter((tab) => {
+      if (tab === "uploader") return canSeeUploaderWorkers === true;
+      if (tab === "recruited") return canSeeRecruitedWorkers === true;
+      if (tab === "managed") return canSeeManagedWorkers === true;
+      if (tab === "team") return canSeeTeamWorkers === true;
+      if (tab === "all") return canSeeAllWorkers === true;
+      return false;
+    });
+  }
+  const obj = input as WorkerTabPermissionsInput;
+  if (Array.isArray(obj.allowedTabs)) {
+    const allowedSet = new Set(obj.allowedTabs.filter(isWorkerOperationsTab));
+    return WORKER_OPERATIONS_TABS.filter((tab) => allowedSet.has(tab));
+  }
+  if (Array.isArray(obj.allowed_worker_tabs)) {
+    const allowedSet = new Set(obj.allowed_worker_tabs.filter(isWorkerOperationsTab));
+    return WORKER_OPERATIONS_TABS.filter((tab) => allowedSet.has(tab));
+  }
+  return WORKER_OPERATIONS_TABS.filter((tab) => {
+    if (tab === "uploader") return obj.canSeeUploaderWorkers === true;
+    if (tab === "recruited") return obj.canSeeRecruitedWorkers === true;
+    if (tab === "managed") return obj.canSeeManagedWorkers === true;
+    if (tab === "team") return obj.canSeeTeamWorkers === true;
+    if (tab === "all") return obj.canSeeAllWorkers === true;
+    return false;
+  });
+}
+
+export type UploaderScopeGrantCandidate = {
+  scope_kind: string;
+  team_id: string | null;
+  valid_from?: string;
+  valid_to?: string | null;
+  is_current?: boolean;
+};
+
+export type UploaderCapabilityGrantCandidate =
+  | string
+  | {
+      capability: string;
+      valid_from?: string;
+      valid_to?: string | null;
+      is_current?: boolean;
+    };
+
+export type UploaderTabAuthorityInput = {
+  enabled?: boolean;
+  authorizationDate?: string;
+  capabilities: readonly UploaderCapabilityGrantCandidate[];
+  scopeGrants: readonly UploaderScopeGrantCandidate[];
+  hasProjectAssignment?: boolean;
+};
+
+/**
+ * Contract predicate mirroring `public.direct_entry_list_own_submissions`
+ * (`20261020200000_r1_current_state_authorization.sql`):
+ * - Actor must be enabled (`enabled !== false`).
+ * - `v_can_list_own`: requires current capability `submission_create`
+ *   AND **exactly 1** (`count === 1`) current `own` scope grant with `team_id === null`
+ *   (`is_current` is authoritative; `valid_from` / `valid_to` are historical metadata and not evaluated).
+ * - OR `v_has_project_assignment` (`hasProjectAssignment === true`).
+ */
+export function canAccessUploaderSubmissionsTab(
+  input: UploaderTabAuthorityInput | null | undefined,
+): boolean {
+  if (!input || input.enabled === false) {
+    return false;
+  }
+  const { capabilities, scopeGrants, hasProjectAssignment } = input;
+  const hasSubmissionCreate = capabilities.some((entry) => {
+    if (typeof entry === "string") {
+      return entry === "submission_create";
+    }
+    return Boolean(
+      entry &&
+        entry.capability === "submission_create" &&
+        entry.is_current !== false,
+    );
+  });
+
+  const matchingOwnScopeCount = scopeGrants.filter(
+    (grant) =>
+      grant !== null &&
+      typeof grant === "object" &&
+      grant.scope_kind === "own" &&
+      grant.team_id === null &&
+      grant.is_current !== false,
+  ).length;
+
+  const canListOwn = matchingOwnScopeCount === 1 && hasSubmissionCreate;
+  return canListOwn || hasProjectAssignment === true;
 }
 
 /** Reviewer queue chi hien khi change_review + effective all scope (khop W05 #55). */
@@ -317,46 +444,105 @@ export const WORKER_CONFLICT_MESSAGE =
 
 export type WorkerOperationsActor = {
   capabilities: readonly string[];
-  scopes: readonly { kind: string }[];
+  scopes: readonly { kind: string; reference?: string; valid_from?: string; valid_to?: string | null }[];
+  allowed_worker_tabs?: readonly WorkerOperationsTab[];
 };
 
 /**
- * Fallback tab khi tab mặc định "Dự án tôi quản lý" ("managed") không khả dụng
- * hoặc tài khoản chưa được phân giải.
+ * Selects the default Worker Operations tab strictly from the server-authorized `allowedTabs`
+ * using `WORKER_OPERATIONS_INITIAL_TAB_PRIORITY` (`managed` -> `all` -> `team` -> `recruited` -> `uploader`,
+ * derived from `HEAD:src/lib/direct-entry/worker-operations-model.ts` `initialWorkerTab`/`fallbackWorkerTab`).
+ * Returns `null` when no tab is authorized (`allowedTabs.length === 0`).
  */
-export function fallbackWorkerTab(
-  actor: WorkerOperationsActor | null,
-  canSeeAllWorkers: boolean,
-  canSeeTeamWorkers = false,
-): WorkerOperationsTab {
-  if (actor === null) return "uploader";
-  const onlyScopeAll = actor.scopes.some((scope) => scope.kind === "all");
-  if (onlyScopeAll && (actor.capabilities.includes("entry_admin") ||
-      actor.capabilities.includes("change_review")) && canSeeAllWorkers) {
-    return "all";
+export function resolveInitialWorkerTab(
+  allowedTabs: readonly WorkerOperationsTab[],
+): WorkerOperationsTab | null {
+  const validSet = new Set(visibleWorkerTabs(allowedTabs));
+  for (const candidate of WORKER_OPERATIONS_INITIAL_TAB_PRIORITY) {
+    if (validSet.has(candidate)) return candidate;
   }
-  if (canSeeTeamWorkers) return "team";
-  return "uploader";
+  return null;
 }
 
 /**
- * Chon tab BAN DAU khi mo trang /direct-entry/workers.
- * Mac dinh uu tien "Dự án tôi quản lý" ("managed"); neu "managed" khong kha dung
- * hoac actor chua duoc phan giai thi roi ve fallbackWorkerTab (all -> team -> uploader)
- * de khong bao gio tao man hinh trong. API/RPC van la authority cuoi cung.
+ * Fallback tab when `managed` is not authorized for the actor.
+ * Never defaults `uploader` or `managed` to true and never hops to an unauthorized `all` scope.
+ */
+export function fallbackWorkerTab(
+  actor: WorkerOperationsActor | null,
+  canSeeAllWorkers?: boolean,
+  canSeeTeamWorkers?: boolean,
+  canSeeRecruitedWorkers?: boolean,
+  canSeeUploaderWorkers?: boolean,
+  allowedTabs?: readonly WorkerOperationsTab[],
+): WorkerOperationsTab | null {
+  if (Array.isArray(allowedTabs)) {
+    return resolveInitialWorkerTab(allowedTabs.filter((tab) => tab !== "managed"));
+  }
+  if (actor === null) return null;
+  if (
+    Array.isArray(actor.allowed_worker_tabs) &&
+    canSeeAllWorkers === undefined &&
+    canSeeTeamWorkers === undefined &&
+    canSeeRecruitedWorkers === undefined &&
+    canSeeUploaderWorkers === undefined
+  ) {
+    return resolveInitialWorkerTab(actor.allowed_worker_tabs.filter((tab) => tab !== "managed"));
+  }
+  const tabs = visibleWorkerTabs({
+    ...(canSeeAllWorkers !== undefined ? { canSeeAllWorkers } : {}),
+    ...(canSeeTeamWorkers !== undefined ? { canSeeTeamWorkers } : {}),
+    ...(canSeeRecruitedWorkers !== undefined ? { canSeeRecruitedWorkers } : {}),
+    ...(canSeeUploaderWorkers !== undefined ? { canSeeUploaderWorkers } : {}),
+    canSeeManagedWorkers: false,
+  });
+  return resolveInitialWorkerTab(tabs);
+}
+
+/**
+ * Resolves the initial tab when opening `/direct-entry/workers`.
+ * Strictly selects from server-authorized tabs (`allowedTabs` or `actor.allowed_worker_tabs`) by priority:
+ * `managed` -> `all` -> `team` -> `recruited` -> `uploader` (extending `HEAD`'s `initialWorkerTab` /
+ * `fallbackWorkerTab` order). Never defaults `managed` or `uploader` to available, and returns `null`
+ * when 0 tabs are usable.
  */
 export function initialWorkerTab(
-  actor: WorkerOperationsActor | null,
-  canSeeAllWorkers: boolean,
-  canSeeTeamWorkers = false,
-  canSeeManagedWorkers = true,
-): WorkerOperationsTab {
-  if (actor === null) return "uploader";
-  const tabs = visibleWorkerTabs(canSeeAllWorkers, canSeeTeamWorkers);
-  if (canSeeManagedWorkers && tabs.includes("managed")) {
-    return "managed";
+  actorOrAllowedTabs: WorkerOperationsActor | readonly WorkerOperationsTab[] | null,
+  canSeeAllWorkers?: boolean,
+  canSeeTeamWorkers?: boolean,
+  canSeeManagedWorkers?: boolean,
+  canSeeRecruitedWorkers?: boolean,
+  canSeeUploaderWorkers?: boolean,
+  allowedTabs?: readonly WorkerOperationsTab[],
+): WorkerOperationsTab | null {
+  if (Array.isArray(actorOrAllowedTabs)) {
+    return resolveInitialWorkerTab(actorOrAllowedTabs);
   }
-  return fallbackWorkerTab(actor, canSeeAllWorkers, canSeeTeamWorkers);
+  if (Array.isArray(allowedTabs)) {
+    return resolveInitialWorkerTab(allowedTabs);
+  }
+  if (actorOrAllowedTabs === null || actorOrAllowedTabs === undefined) {
+    return null;
+  }
+  const actor = actorOrAllowedTabs as WorkerOperationsActor;
+  if (
+    Array.isArray(actor.allowed_worker_tabs) &&
+    canSeeAllWorkers === undefined &&
+    canSeeTeamWorkers === undefined &&
+    canSeeManagedWorkers === undefined &&
+    canSeeRecruitedWorkers === undefined &&
+    canSeeUploaderWorkers === undefined
+  ) {
+    return resolveInitialWorkerTab(actor.allowed_worker_tabs);
+  }
+  const tabs = visibleWorkerTabs({
+    ...(canSeeAllWorkers !== undefined ? { canSeeAllWorkers } : {}),
+    ...(canSeeTeamWorkers !== undefined ? { canSeeTeamWorkers } : {}),
+    ...(canSeeManagedWorkers !== undefined ? { canSeeManagedWorkers } : {}),
+    ...(canSeeRecruitedWorkers !== undefined ? { canSeeRecruitedWorkers } : {}),
+    ...(canSeeUploaderWorkers !== undefined ? { canSeeUploaderWorkers } : {}),
+  });
+  return resolveInitialWorkerTab(tabs);
 }
 
 /* ---------- W06-R2: pagination (page state thuan) ---------- */
@@ -493,10 +679,16 @@ export function applyPage<T>(
   };
 }
 
-/** Loi khi tai: neu da co items thi GIU page da tai thanh cong. */
+/**
+ * Loi khi tai: neu state === "denied" (HTTP 403 / mat quyen), PHAI xoa items + cursor cua tab
+ * vua mat quyen, khong giu du lieu cu. Loi tam thoi (5xx/network) khi Tai them van giu items da co.
+ */
 export function failLoad<T>(
   page: TabPage<T>, state: PageState, message: string | null,
 ): TabPage<T> {
+  if (state === "denied") {
+    return { items: [], cursor: null, hasMore: false, state: "denied", message };
+  }
   if (page.items.length > 0) return { ...page, state: "ready", message };
   return { ...page, state, message };
 }
@@ -706,15 +898,160 @@ export function privilegedEditErrorMessage(status: number, code?: string | null)
 }
 
 /**
- * Hai audience ca nhan co the khong ton tai voi actor hien tai (khong co recruiter
- * link / khong duoc gan quan ly du an). Do la tap ket qua rong, khong phai loi quyen
- * can hien cho nguoi dung. Scope `all` van giu 403 fail-closed.
+ * T1A: HTTP 403 la bi tu choi quyen (state: "denied"), KHONG BAO GIO duoc bien thanh
+ * ket qua rong ("0 nguoi lao dong"). Chi HTTP 200 voi danh sach rong moi la "khong co du lieu".
  */
 export function relationDenialIsEmpty(
-  scope: WorkerDirectoryScope,
-  status: number,
+  _scope: WorkerDirectoryScope,
+  _status: number,
 ): boolean {
-  return status === 403 && (scope === "recruited" || scope === "managed");
+  void _scope;
+  void _status;
+  return false;
+}
+
+export type WorkerScopeTab = "recruited" | "managed" | "team" | "all";
+
+export type WorkerOperationsPagesState<W = WorkerDirectoryRow, S = SubmissionReadItem> = {
+  allowedTabs: readonly WorkerOperationsTab[];
+  activeTab: WorkerOperationsTab | null;
+  workerPages: Readonly<Record<WorkerScopeTab, TabPage<W>>>;
+  submissionPage: TabPage<S>;
+  workerSummary: { total_workers: number; project_count: number; recruiter_count: number } | null;
+};
+
+export type SessionWorkerPermissions = {
+  allowedTabs: readonly WorkerOperationsTab[];
+  canReadCatalog: boolean;
+};
+
+/**
+ * Parses `GET /api/direct-entry/session` response to refresh server-verified worker tab permissions
+ * (`actor.allowed_worker_tabs`) and catalog read capability (`entry_create` | `entry_own`) mid-session.
+ */
+export function parseSessionWorkerPermissionsResponse(
+  payload: unknown,
+): SessionWorkerPermissions | null {
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    return null;
+  }
+  const body = payload as Record<string, unknown>;
+  if (body.ok !== true || typeof body.actor !== "object" || body.actor === null || Array.isArray(body.actor)) {
+    return null;
+  }
+  const actor = body.actor as Record<string, unknown>;
+  if (!Array.isArray(actor.capabilities) || !actor.capabilities.every((c) => typeof c === "string")) {
+    return null;
+  }
+  if (
+    actor.allowed_worker_tabs !== undefined &&
+    (!Array.isArray(actor.allowed_worker_tabs) || !actor.allowed_worker_tabs.every(isWorkerOperationsTab))
+  ) {
+    return null;
+  }
+  const capabilities = actor.capabilities as readonly string[];
+  const allowedTabs = Array.isArray(actor.allowed_worker_tabs)
+    ? visibleWorkerTabs(actor.allowed_worker_tabs)
+    : [];
+  return {
+    allowedTabs,
+    canReadCatalog:
+      capabilities.includes("entry_create") || capabilities.includes("entry_own"),
+  };
+}
+
+/**
+ * T1A: Làm mới danh sách tab an toàn khi quyền thay đổi trong lúc trang đang mở
+ * (do server cập nhật `nextAllowedTabs` hoặc do một tab đang mở nhận HTTP 403 `revokedTab`).
+ * - Xóa toàn bộ dữ liệu (`items`, `cursor`, `hasMore`, `workerSummary`) của mọi tab vừa mất quyền.
+ * - Khi `revokedTab` bị từ chối bởi HTTP 403, đặt state `"denied"` rõ ràng cho tab đó, loại bỏ tab
+ *   khỏi `allowedTabs`, KHÔNG tự retry và KHÔNG tự chuyển sang `all` hay scope không được phép.
+ * - Khi server cập nhật `nextAllowedTabs`, giữ `activeTab` nếu còn hợp lệ (hoặc đang hiển thị thông báo
+ *   `denied` khi `preserveDeniedActiveTab === true`) hoặc chọn từ `nextAllowedTabs` theo thứ tự ưu tiên.
+ */
+export function reconcileWorkerOperationsPermissions<W = WorkerDirectoryRow, S = SubmissionReadItem>(
+  state: WorkerOperationsPagesState<W, S>,
+  update: {
+    nextAllowedTabs?: readonly WorkerOperationsTab[];
+    revokedTab?: WorkerOperationsTab;
+    denialMessage?: string;
+    preserveDeniedActiveTab?: boolean;
+  },
+): WorkerOperationsPagesState<W, S> & { shouldFetchNextActiveTab: boolean } {
+  const baseAllowed = update.nextAllowedTabs !== undefined
+    ? visibleWorkerTabs(update.nextAllowedTabs)
+    : state.allowedTabs;
+  const nextAllowedTabs = update.revokedTab !== undefined
+    ? baseAllowed.filter((tab) => tab !== update.revokedTab)
+    : baseAllowed;
+  const allowedSet = new Set<WorkerOperationsTab>(nextAllowedTabs);
+
+  const keepDeniedScope = (scope: WorkerScopeTab): TabPage<W> =>
+    update.preserveDeniedActiveTab &&
+    state.activeTab === scope &&
+    state.workerPages[scope].state === "denied"
+      ? state.workerPages[scope]
+      : emptyTabPage<W>();
+
+  const nextWorkerPages: Record<WorkerScopeTab, TabPage<W>> = {
+    recruited: allowedSet.has("recruited") ? state.workerPages.recruited : keepDeniedScope("recruited"),
+    managed: allowedSet.has("managed") ? state.workerPages.managed : keepDeniedScope("managed"),
+    team: allowedSet.has("team") ? state.workerPages.team : keepDeniedScope("team"),
+    all: allowedSet.has("all") ? state.workerPages.all : keepDeniedScope("all"),
+  };
+  let nextSubmissionPage: TabPage<S> = allowedSet.has("uploader")
+    ? state.submissionPage
+    : update.preserveDeniedActiveTab &&
+        state.activeTab === "uploader" &&
+        state.submissionPage.state === "denied"
+      ? state.submissionPage
+      : emptyTabPage<S>();
+  let nextSummary = state.workerSummary;
+
+  if (update.revokedTab !== undefined) {
+    const message = update.denialMessage ?? workerListErrorMessage(403);
+    if (update.revokedTab === "uploader") {
+      nextSubmissionPage = failLoad(state.submissionPage, "denied", message);
+    } else {
+      const scope = update.revokedTab as WorkerScopeTab;
+      nextWorkerPages[scope] = failLoad(state.workerPages[scope], "denied", message);
+    }
+    if (state.activeTab === update.revokedTab) {
+      nextSummary = null;
+    }
+    return {
+      allowedTabs: nextAllowedTabs,
+      activeTab: state.activeTab,
+      workerPages: nextWorkerPages,
+      submissionPage: nextSubmissionPage,
+      workerSummary: nextSummary,
+      shouldFetchNextActiveTab: false,
+    };
+  }
+
+  let nextActiveTab: WorkerOperationsTab | null = state.activeTab;
+  let shouldFetchNextActiveTab = false;
+  if (nextActiveTab === null || !allowedSet.has(nextActiveTab)) {
+    nextSummary = null;
+    const activeIsDenied =
+      nextActiveTab !== null &&
+      (nextActiveTab === "uploader"
+        ? nextSubmissionPage.state === "denied"
+        : nextWorkerPages[nextActiveTab as WorkerScopeTab].state === "denied");
+    if (!(update.preserveDeniedActiveTab && activeIsDenied)) {
+      nextActiveTab = resolveInitialWorkerTab(nextAllowedTabs);
+      shouldFetchNextActiveTab = nextActiveTab !== null;
+    }
+  }
+
+  return {
+    allowedTabs: nextAllowedTabs,
+    activeTab: nextActiveTab,
+    workerPages: nextWorkerPages,
+    submissionPage: nextSubmissionPage,
+    workerSummary: nextSummary,
+    shouldFetchNextActiveTab,
+  };
 }
 
 /** Chi hien CTA khi row do server tra propose_change; khong bao gio tu suy quyen. */
