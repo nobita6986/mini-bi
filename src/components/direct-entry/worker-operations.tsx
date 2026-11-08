@@ -61,13 +61,15 @@ import {
   initialDirectEditBankQueryText,
   initialWorkerTab,
   mergeVietQrBankCatalog,
+  parseSessionWorkerPermissionsResponse,
   parseSubmissionPageResponse,
   parseWorkerPageResponse,
   privilegedEditErrorMessage,
   proposeCta,
-  relationDenialIsEmpty,
+  reconcileWorkerOperationsPermissions,
   resetTabPage,
   resolveBankCatalogOption,
+  resolveInitialWorkerTab,
   submissionRowKey,
   submissionsQuery,
   tabScope,
@@ -77,6 +79,7 @@ import {
   visibleWorkerTabs,
   workerListErrorMessage,
   WORKER_LOAD_FAILED_MESSAGE,
+  WORKER_NO_USABLE_TAB_MESSAGE,
   workerNameAvailability,
   workerProviderTypeLabel,
   workerRowKey,
@@ -184,12 +187,18 @@ function httpFailure(status: number): FetchOutcome<never> {
 }
 
 export function WorkerOperations({
+  allowedTabs,
+  canReadCatalog,
   canSeeAllWorkers = false,
   canSeeTeamWorkers = false,
   canExport = false,
   canExportAll = false,
   actor = null,
 }: {
+  /** Server-authorized list of genuinely usable tabs; client never assumes `managed` or `uploader`. */
+  allowedTabs?: readonly WorkerOperationsTab[];
+  /** Server-resolved catalog read capability (`entry_create` | `entry_own`). */
+  canReadCatalog?: boolean;
   canSeeAllWorkers?: boolean;
   /** Server-projected team audience controls only tab visibility; the RPC rechecks access. */
   canSeeTeamWorkers?: boolean;
@@ -199,15 +208,56 @@ export function WorkerOperations({
   canExportAll?: boolean;
   actor?: WorkerOperationsActor | null;
 }) {
-  const tabs = visibleWorkerTabs(canSeeAllWorkers, canSeeTeamWorkers);
+  const [revokedTabs, setRevokedTabs] = useState<readonly WorkerOperationsTab[]>([]);
+  const propAllowedTabs = useMemo(
+    () =>
+      allowedTabs !== undefined
+        ? visibleWorkerTabs(allowedTabs)
+        : visibleWorkerTabs({
+            ...(actor ?? {}),
+            canSeeAllWorkers,
+            canSeeTeamWorkers,
+          }),
+    [allowedTabs, actor, canSeeAllWorkers, canSeeTeamWorkers],
+  );
+  const propAllowedTabsKey = propAllowedTabs.join(",");
+  const propCanReadCatalog =
+    canReadCatalog !== undefined
+      ? canReadCatalog
+      : actor?.capabilities.includes("entry_create") === true ||
+        actor?.capabilities.includes("entry_own") === true;
+  const [sessionPermissionOverride, setSessionPermissionOverride] = useState<{
+    baseKey: string;
+    allowedTabs: readonly WorkerOperationsTab[];
+    canReadCatalog: boolean;
+  } | null>(null);
+  const activeSessionOverride =
+    sessionPermissionOverride !== null && sessionPermissionOverride.baseKey === propAllowedTabsKey
+      ? sessionPermissionOverride
+      : null;
+  const serverTabs = activeSessionOverride ? activeSessionOverride.allowedTabs : propAllowedTabs;
+  const tabs = useMemo(
+    () => serverTabs.filter((value) => !revokedTabs.includes(value)),
+    [serverTabs, revokedTabs],
+  );
   /** W2S1: capability document_upload do server-resolved actor quyet dinh, khong suy tu tab/role. */
   const canUploadDocuments = actor?.capabilities.includes("document_upload") === true;
-  const [tab, setTab] = useState<WorkerOperationsTab>(
-    () => initialWorkerTab(actor, canSeeAllWorkers, canSeeTeamWorkers));
+  const mayReadCatalog = activeSessionOverride
+    ? activeSessionOverride.canReadCatalog
+    : propCanReadCatalog;
+  const [selectedTab, setTab] = useState<WorkerOperationsTab | null>(() =>
+    initialWorkerTab(actor, canSeeAllWorkers, canSeeTeamWorkers, undefined, undefined, undefined, allowedTabs),
+  );
+  const tab: WorkerOperationsTab | null =
+    selectedTab !== null && (tabs.includes(selectedTab) || revokedTabs.includes(selectedTab))
+      ? selectedTab
+      : resolveInitialWorkerTab(tabs);
   const [filters, setFilters] = useState<WorkerDirectoryFilters>(
     () => ({ ...EMPTY_WORKER_DIRECTORY_FILTERS }));
   const [filterCatalogState, setFilterCatalogState] =
-    useState<"loading" | "ready" | "denied" | "unavailable">("loading");
+    useState<"loading" | "ready" | "denied" | "unavailable">(
+      () => (mayReadCatalog ? "loading" : "denied"),
+    );
   const [workerPages, setWorkerPages] = useState<Record<WorkerScopeTab, TabPage<WorkerDirectoryRow>>>(
     () => ({ recruited: emptyTabPage(), managed: emptyTabPage(), team: emptyTabPage(), all: emptyTabPage() }));
   const [workerSummary, setWorkerSummary] = useState<WorkerDirectorySummary | null>(null);
@@ -282,7 +332,7 @@ export function WorkerOperations({
   }, [catalogs]);
 
   useEffect(() => {
-    if (tab === "uploader" || filterCatalog !== undefined) return;
+    if (tab === null || tab === "uploader" || !mayReadCatalog || filterCatalog !== undefined) return;
     let active = true;
     ensureCatalog(today).then(
       () => { if (active) setFilterCatalogState("ready"); },
@@ -292,7 +342,7 @@ export function WorkerOperations({
       },
     );
     return () => { active = false; };
-  }, [tab, filterCatalog, ensureCatalog, today]);
+  }, [tab, mayReadCatalog, filterCatalog, ensureCatalog, today]);
 
   /* ---------- fetchers (khong setState) ---------- */
 
@@ -309,10 +359,6 @@ export function WorkerOperations({
       { headers: { accept: "application/json" } });
     const payload = await readJson(response);
     if (response.status !== 200) {
-      if (relationDenialIsEmpty(scope, response.status)) {
-        return { ok: true, page: { items: [], next_cursor: null, has_more: false,
-          summary: { total_workers: 0, project_count: 0, recruiter_count: 0 } } };
-      }
       return httpFailure(response.status);
     }
     const parsed = parseWorkerPageResponse(payload, { scope, page_size: WORKER_PAGE_SIZE });
@@ -336,30 +382,85 @@ export function WorkerOperations({
 
   /* ---------- appliers ---------- */
 
+  const syncSessionPermissions = useCallback(async (
+    revokedTab: WorkerOperationsTab,
+    denialMessage: string | null,
+  ): Promise<void> => {
+    const response = await fetch(API + "/session", {
+      headers: { accept: "application/json" },
+    }).catch(() => null);
+    if (response === null || response.status !== 200) return;
+    const parsed = parseSessionWorkerPermissionsResponse(await readJson(response));
+    if (parsed === null) return;
+    const effectiveAllowed = parsed.allowedTabs.filter((item) => item !== revokedTab);
+    setSessionPermissionOverride({
+      baseKey: propAllowedTabsKey,
+      allowedTabs: effectiveAllowed,
+      canReadCatalog: parsed.canReadCatalog,
+    });
+    if (!parsed.canReadCatalog) {
+      setFilterCatalogState("denied");
+    }
+    setWorkerPages((currentWorkerPages) => {
+      const reconciled = reconcileWorkerOperationsPermissions(
+        {
+          allowedTabs: effectiveAllowed,
+          activeTab: revokedTab,
+          workerPages: currentWorkerPages,
+          submissionPage: emptyTabPage(),
+          workerSummary: null,
+        },
+        {
+          nextAllowedTabs: effectiveAllowed,
+          preserveDeniedActiveTab: true,
+          denialMessage: denialMessage ?? undefined,
+        },
+      );
+      return { ...reconciled.workerPages };
+    });
+    if (!effectiveAllowed.includes("uploader") && revokedTab !== "uploader") {
+      setSubmissionPage(emptyTabPage());
+    }
+  }, [propAllowedTabsKey]);
+
   const applyWorkerPage = useCallback((
     scope: WorkerScopeTab, outcome: FetchOutcome<WorkerDirectoryRow>, append: boolean,
   ) => {
-    if (outcome.ok) setWorkerSummary(outcome.page.summary ?? null);
-    else if (!append) setWorkerSummary(null);
+    if (outcome.ok) {
+      setWorkerSummary(outcome.page.summary ?? null);
+    } else if (!append || outcome.state === "denied") {
+      setWorkerSummary(null);
+    }
+    if (!outcome.ok && outcome.state === "denied") {
+      setDrawerRow(null);
+      setDetailRow(null);
+      setRevokedTabs((current) => (current.includes(scope) ? current : [...current, scope]));
+      void syncSessionPermissions(scope, outcome.message);
+    }
     setWorkerPages((pages) => ({
       ...pages,
       [scope]: outcome.ok
         ? applyPage(pages[scope], outcome.page, workerRowKey, append)
         : failLoad(pages[scope], outcome.state, outcome.message),
     }));
-  }, []);
+  }, [syncSessionPermissions]);
 
   const applySubmissionPage = useCallback((
     outcome: FetchOutcome<SubmissionReadItem>, append: boolean,
   ) => {
+    if (!outcome.ok && outcome.state === "denied") {
+      setRevokedTabs((current) => (current.includes("uploader") ? current : [...current, "uploader"]));
+      void syncSessionPermissions("uploader", outcome.message);
+    }
     setSubmissionPage((page) => outcome.ok
       ? applyPage(page, outcome.page, submissionRowKey, append)
       : failLoad(page, outcome.state, outcome.message));
-  }, []);
+  }, [syncSessionPermissions]);
 
   /* ---------- effect: page 1 cho tab hien tai (moi tab doc lap) ---------- */
 
   useEffect(() => {
+    if (tab === null || !tabs.includes(tab)) return;
     let active = true;
     if (tab === "uploader") {
       fetchSubmissions(null).then(
@@ -374,7 +475,7 @@ export function WorkerOperations({
       );
     }
     return () => { active = false; };
-  }, [tab, filters, fetchSubmissions, fetchWorkers, applySubmissionPage, applyWorkerPage]);
+  }, [tab, tabs, filters, fetchSubmissions, fetchWorkers, applySubmissionPage, applyWorkerPage]);
 
   /* ---------- load more ---------- */
 
@@ -399,7 +500,7 @@ export function WorkerOperations({
   }
 
   function selectTab(next: WorkerOperationsTab, focus = true) {
-    if (quickOffboardingBusy) return;
+    if (quickOffboardingBusy || !tabs.includes(next)) return;
     if (next === tab) {
       if (focus) tabRefs.current[tabs.indexOf(next)]?.focus();
       return;
@@ -415,7 +516,7 @@ export function WorkerOperations({
   }
 
   function changeFilter(field: keyof WorkerDirectoryFilters, value: string) {
-    if (quickOffboardingBusy) return;
+    if (quickOffboardingBusy || tab === null) return;
     const scope = tabScope(tab);
     if (scope === null) return;
     workerQueryGeneration.current += 1;
@@ -429,7 +530,7 @@ export function WorkerOperations({
   }
 
   function clearFilters() {
-    if (quickOffboardingBusy) return;
+    if (quickOffboardingBusy || tab === null) return;
     const scope = tabScope(tab);
     if (scope === null) return;
     workerQueryGeneration.current += 1;
@@ -442,7 +543,7 @@ export function WorkerOperations({
   const workerPageGeneration = workerQueryGeneration.current;
 
   async function reload(): Promise<void> {
-    if (quickOffboardingBusy) return;
+    if (quickOffboardingBusy || tab === null || !tabs.includes(tab)) return;
     setConflict(null);
     cancelQuickOffboarding();
     if (tab === "uploader") {
@@ -471,6 +572,7 @@ export function WorkerOperations({
   }
 
   function onTabKeyDown(event: React.KeyboardEvent<HTMLButtonElement>, index: number): void {
+    if (tabs.length === 0) return;
     const last = tabs.length - 1;
     let next = -1;
     if (event.key === "ArrowRight") next = index === last ? 0 : index + 1;
@@ -482,12 +584,19 @@ export function WorkerOperations({
     selectTab(tabs[next]);
   }
 
-  const scope = tabScope(tab);
+  const scope = tab === null ? null : tabScope(tab);
   const exportScope = exportScopeForTab(tab);
   const canExportThisTab = exportScope === "all" ? canExportAll : canExport;
-  const workerPage = scope === null ? null : workerPages[scope as WorkerScopeTab];
+  const workerPage =
+    scope !== null && tabs.includes(scope)
+      ? workerPages[scope as WorkerScopeTab]
+      : scope !== null && revokedTabs.includes(scope)
+        ? workerPages[scope as WorkerScopeTab]
+        : null;
   const activePage: { state: PageState; message: string | null } =
-    workerPage ?? submissionPage;
+    tab === null
+      ? emptyTabPage()
+      : workerPage ?? submissionPage;
 
   function cancelQuickOffboarding(): void {
     if (quickOffboardingBusy) return;
@@ -651,6 +760,15 @@ export function WorkerOperations({
         </div>
       ) : null}
 
+      {tab === null ? (
+        <section
+          role="status"
+          data-testid="worker-no-usable-tabs"
+          className={infoClass}
+        >
+          {WORKER_NO_USABLE_TAB_MESSAGE}
+        </section>
+      ) : (
       <section
         role="tabpanel"
         id={"workers-panel-" + tab}
@@ -946,6 +1064,7 @@ export function WorkerOperations({
           </>
         ) : null}
       </section>
+      )}
 
       <WorkerExportDialog
         key={exportOpen ? "export-open" : "export-closed"}

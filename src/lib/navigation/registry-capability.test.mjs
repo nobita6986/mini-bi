@@ -139,6 +139,13 @@ test("W06-R1: worker operations audience matrix (reviewer/admin/PM/uploader)", (
   assert.equal(workerOperationsReviewPredicate(makeActor(["entry_admin"], all)), false,
     "admin khong tu dong la reviewer");
   assert.equal(workerOperationsReviewPredicate(makeActor(["change_review"], [{ kind: "own" }])), false);
+  // SQL-confirmed allowed_worker_tabs (e.g., recruited-only or uploader-only) opens Worker Directory nav without opening Direct Entry input nav.
+  const recruitedOnlyActor = { capabilities: [], scopes: [{ kind: "own" }], allowed_worker_tabs: ["recruited"] };
+  assert.equal(workerOperationsNavPredicate(recruitedOnlyActor), true);
+  assert.equal(directEntryNavPredicate(recruitedOnlyActor), false);
+  const uploaderOnlyActor = { capabilities: ["submission_create"], scopes: [{ kind: "own" }], allowed_worker_tabs: ["uploader"] };
+  assert.equal(workerOperationsNavPredicate(uploaderOnlyActor), true);
+  assert.equal(directEntryNavPredicate(uploaderOnlyActor), false);
 });
 
 test("resolveNavCapabilityPredicate: token không xác định fail-closed", () => {

@@ -85,6 +85,29 @@ test("Worker Operations page gate mirrors the navigation predicate", () => {
       workerOperationsNavPredicate(resolved.actor),
     );
   }
+
+  for (const tab of ["recruited", "uploader", "managed", "team", "all"]) {
+    const tabOnlyActor = actor(tab === "uploader" ? ["submission_create"] : []);
+    tabOnlyActor.actor.allowed_worker_tabs = [tab];
+    assert.equal(
+      decideWorkerOperationsPageAccess({ uiEnabled: true, actor: tabOnlyActor }),
+      "ALLOW",
+      `SQL-confirmed allowed_worker_tabs=[${tab}] must pass Worker Directory page gate`,
+    );
+    assert.equal(workerOperationsNavPredicate(tabOnlyActor.actor), true);
+    assert.equal(
+      decideDirectEntryPageAccess({ uiEnabled: true, actor: tabOnlyActor }),
+      "ACCESS_DENIED",
+      `allowed_worker_tabs=[${tab}] alone must not open /direct-entry input page`,
+    );
+  }
+
+  const emptyTabsActor = actor(["submission_create"]);
+  emptyTabsActor.actor.allowed_worker_tabs = [];
+  assert.equal(
+    decideWorkerOperationsPageAccess({ uiEnabled: true, actor: emptyTabsActor }),
+    "ACCESS_DENIED",
+  );
 });
 
 test("Change Requests page gate mirrors navigation predicate and admits active historical proposers", () => {

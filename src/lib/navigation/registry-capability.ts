@@ -20,7 +20,11 @@
  * - page boundary (server component) import thẳng — không phải build module mới.
  */
 
-import type { Capability } from "@/lib/auth/direct-entry-v2";
+import {
+  normalizeAllowedWorkerOperationsTabs,
+  type Capability,
+  type WorkerOperationsTabId,
+} from "../auth/direct-entry-v2.ts";
 
 /** Subset các field mà nav cần từ actor projection. */
 export type NavActorProjection = {
@@ -35,6 +39,7 @@ export type NavActorProjection = {
   hasLeaveManagementAccess?: boolean;
   hasLeaveAdminAccess?: boolean;
   hasSalaryAdvanceAccess?: boolean;
+  allowed_worker_tabs?: readonly WorkerOperationsTabId[];
 };
 
 /** Predicate phụ thuộc entry — registry.ts có metadata `capability`. */
@@ -151,12 +156,39 @@ export const workerOperationsTeamScopePredicate: NavCapabilityPredicate = (actor
   actor.scopes.some((scope) => scope.kind === "team");
 
 export const workerOperationsNavPredicate: NavCapabilityPredicate = (actor) => {
+  if (resolveAllowedWorkerOperationsTabs(actor).length > 0) return true;
   if (workerOperationsAllScopePredicate(actor)) return true;
   if (actor.capabilities.includes("change_request_create")) return true;
   if (workerOperationsTeamScopePredicate(actor)) return true;
   return actor.capabilities.some((capability) =>
     DIRECT_ENTRY_ENTRY_CAPABILITIES.includes(capability));
 };
+
+/**
+ * Resolves the canonical ordered list of Worker Operations tabs (`uploader`, `recruited`, `managed`, `team`, `all`)
+ * confirmed by `direct_entry_resolve_actor_context.allowed_worker_tabs`.
+ * Fail-closed (`[]`) when `allowed_worker_tabs` is absent or empty; never guesses tab authority on the client/app layer.
+ */
+export function resolveAllowedWorkerOperationsTabs(
+  actor: { allowed_worker_tabs?: readonly WorkerOperationsTabId[] | null } | null | undefined,
+): readonly WorkerOperationsTabId[] {
+  if (!actor || !Array.isArray(actor.allowed_worker_tabs)) return [];
+  return normalizeAllowedWorkerOperationsTabs(actor.allowed_worker_tabs);
+}
+
+/**
+ * Mirrors `direct_entry_input_catalog_unscoped_v42` capability requirement (`entry_create` OR `entry_own`)
+ * so `/direct-entry/workers` does not fire an avoidable 403 to `GET /api/direct-entry/catalog` on mount.
+ */
+export function canReadWorkerDirectoryCatalog(
+  actor: { capabilities: readonly string[] } | null | undefined,
+): boolean {
+  if (!actor) return false;
+  return (
+    actor.capabilities.includes("entry_create") ||
+    actor.capabilities.includes("entry_own")
+  );
+}
 
 /**
  * R2.2: Reviewer mode predicate cho module /direct-entry/change-requests.

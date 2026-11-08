@@ -6,6 +6,8 @@ import { WorkerOperations } from "@/components/direct-entry/worker-operations";
 import { decideWorkerOperationsPageAccess } from "@/lib/auth/direct-entry-page-access";
 import { canExportAllWorkers, canExportWorkers } from "@/lib/direct-entry/worker-export-ui-model";
 import {
+  canReadWorkerDirectoryCatalog,
+  resolveAllowedWorkerOperationsTabs,
   workerOperationsAllScopePredicate,
   workerOperationsTeamScopePredicate,
 } from "@/lib/navigation/registry-capability";
@@ -43,19 +45,26 @@ export default async function WorkerOperationsPage() {
       return <AccessDenied />;
     case "ALLOW": {
       const projection = actor !== null && actor.ok ? actor.actor : null;
+      const allowedTabs = resolveAllowedWorkerOperationsTabs(projection);
       const canSeeAllWorkers = projection !== null &&
-        workerOperationsAllScopePredicate(projection);
+        workerOperationsAllScopePredicate(projection) &&
+        allowedTabs.includes("all");
       const canSeeTeamWorkers = projection !== null &&
-        workerOperationsTeamScopePredicate(projection);
-      // Chi truyen capabilities + scope kind: khong lo auth_subject/app_user_id/PII.
+        workerOperationsTeamScopePredicate(projection) &&
+        allowedTabs.includes("team");
+      const canReadCatalog = canReadWorkerDirectoryCatalog(projection);
+      // Chi truyen capabilities + scope kind + allowed_worker_tabs: khong lo auth_subject/app_user_id/PII.
       const actorProjection = projection === null ? null : {
         capabilities: [...projection.capabilities],
         scopes: projection.scopes.map((scope) => ({ kind: scope.kind })),
+        allowed_worker_tabs: [...allowedTabs],
       };
       const canExport = canExportWorkers(actorProjection);
       const canExportAll = canExportAllWorkers(actorProjection);
       return (
         <WorkerOperations
+          allowedTabs={allowedTabs}
+          canReadCatalog={canReadCatalog}
           canSeeAllWorkers={canSeeAllWorkers}
           canSeeTeamWorkers={canSeeTeamWorkers}
           canExport={canExport}

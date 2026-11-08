@@ -31,7 +31,7 @@ test("W06: ba tab khong tron quan he + tablist keyboard arrow/Home/End", () => {
   assert.match(source, /role="tablist"/);
   assert.match(source, /role="tab"/);
   assert.match(source, /role="tabpanel"/);
-  assert.match(source, /visibleWorkerTabs\(canSeeAllWorkers, canSeeTeamWorkers\)/);
+  assert.match(source, /visibleWorkerTabs\(allowedTabs\)/);
   assert.match(source, /tabs\.map\(/);
   for (const key of ["ArrowRight", "ArrowLeft", "Home", "End"]) {
     assert.ok(source.includes(key), "thieu keyboard " + key);
@@ -61,13 +61,15 @@ test("W06-R2: uploader/submission vs recruited|managed|all/directory dung projec
 });
 
 test("R1.1: Team tab uses the server-authorized team scope and direct edit uses the row signal", () => {
-  assert.match(source, /visibleWorkerTabs\(canSeeAllWorkers, canSeeTeamWorkers\)/);
-  assert.match(source, /initialWorkerTab\(actor, canSeeAllWorkers, canSeeTeamWorkers\)/);
+  assert.match(source, /visibleWorkerTabs\(/);
+  assert.match(source, /initialWorkerTab\(actor, canSeeAllWorkers, canSeeTeamWorkers/);
   assert.match(source, /team: emptyTabPage\(\)/);
   assert.match(source, /const canDirectEdit = row\.allowed_actions\.direct_edit/);
   assert.match(source, /!canDirectEdit && cta\.show \?/);
   assert.doesNotMatch(source, /canPrivilegedEditWorkers|canPrivilegedEdit=|canDirectlyCorrectWorkers/);
   assert.match(source, /scope, \.\.\.workerFilters, cursor/);
+  assert.match(page, /resolveAllowedWorkerOperationsTabs\(projection\)/);
+  assert.match(page, /allowedTabs=\{allowedTabs\}/);
   assert.match(page, /workerOperationsTeamScopePredicate\(projection\)/);
   assert.match(page, /canSeeTeamWorkers=\{canSeeTeamWorkers\}/);
   assert.doesNotMatch(page, /canPrivilegedEditWorkers|canDirectlyCorrectWorkers/);
@@ -181,12 +183,12 @@ test("R1.2-HF: Dự án and Người tuyển filters are searchable comboboxes o
   assert.doesNotMatch(source, /<select id=\{recruiterFilterId\}/);
 });
 
-test("W06-R3: quan he khong ton tai hien 0; loi that cuc bo va co mau do", () => {
+test("W06-R3 / T1A: 403 phai hien la bi tu choi (khong bien thanh 0); 200 rong moi la 0 NLĐ", () => {
   // Khong con nhanh return <AccessDenied /> trong component (chi con o page boundary).
   assert.equal(/return <AccessDenied \/>/.test(source), false);
   assert.equal(/return <TemporaryUnavailable \/>/.test(source), false);
-  assert.match(source, /relationDenialIsEmpty\(scope, response\.status\)/);
-  assert.match(source, /items: \[\], next_cursor: null, has_more: false/);
+  assert.doesNotMatch(source, /relationDenialIsEmpty\(scope, response\.status\)/);
+  assert.match(source, /if \(response\.status !== 200\) \{\s*return httpFailure\(response\.status\);\s*\}/);
   assert.match(source, /0 người lao động trong quan hệ này\./);
   assert.match(source, /text-red-700/);
   // P2.5-HF-R3: trang thai "khong co du lieu" la THONG TIN (mau rieng), khong dung xanh la
@@ -223,7 +225,7 @@ test("P2.5-HF-R3: khong con cau hua ve quyen pham vi toan bo", () => {
 });
 
 test("W06-R2: initial tab tu actor projection server-side", () => {
-  assert.match(source, /initialWorkerTab\(actor, canSeeAllWorkers, canSeeTeamWorkers\)/);
+  assert.match(source, /initialWorkerTab\(actor, canSeeAllWorkers, canSeeTeamWorkers/);
   assert.match(source, /actor\?: WorkerOperationsActor \| null/);
   assert.equal(/app_user_id|auth_subject/.test(source.split("\n")
     .filter((line) => !/^\s*(\*|\/\/)/.test(line)).join("\n")), false,
@@ -537,4 +539,18 @@ test("HF Catalog Effective Date: ProposeDrawer uses today's catalog (not first_w
   // Current project/recruiter options are built from baseline?.projectId / baseline?.recruiterId
   assert.match(drawerSource, /buildWorkerEditProjectOptions\(\{\s*catalogProjects: catalog\?\.projects,\s*currentProjectId: baseline\?\.projectId \?\? entryForm\.project_id,/);
   assert.match(drawerSource, /buildWorkerEditRecruiterOptions\(\{\s*catalogRecruiters: catalog\?\.recruiters,\s*currentRecruiterId: baseline\?\.recruiterId \?\? entryForm\.recruiter_id,/);
+});
+
+test("T1A: WorkerOperations renders 0-usable-tab state without probing RPCs and refreshes permissions via /api/direct-entry/session on 403", () => {
+  assert.match(source, /data-testid="worker-no-usable-tabs"/);
+  assert.match(source, /\{WORKER_NO_USABLE_TAB_MESSAGE\}/);
+  assert.match(source, /if \(tab === null \|\| !tabs\.includes\(tab\)\) return;/);
+  assert.match(source, /if \(tab === null \|\| tab === "uploader" \|\| !mayReadCatalog \|\| filterCatalog !== undefined\) return;/);
+  assert.match(source, /fetch\(API \+ "\/session"/);
+  assert.match(source, /parseSessionWorkerPermissionsResponse\(/);
+  assert.match(source, /reconcileWorkerOperationsPermissions\(/);
+  assert.match(source, /void syncSessionPermissions\(scope, outcome\.message\)/);
+  assert.match(source, /void syncSessionPermissions\("uploader", outcome\.message\)/);
+  assert.match(page, /canReadWorkerDirectoryCatalog\(projection\)/);
+  assert.match(page, /canReadCatalog=\{canReadCatalog\}/);
 });

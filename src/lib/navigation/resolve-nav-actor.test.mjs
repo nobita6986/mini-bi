@@ -177,3 +177,14 @@ test("W2S2 WP2: resolveSalaryAdvanceAccessForRequest is wrapped by React cache()
   assert.match(resolveNavActor, /!salaryAdvanceNavPredicate\(projection\)/);
   assert.match(resolveNavActor, /projection\.hasSalaryAdvanceAccess\s*=\s*true/);
 });
+
+test("T1A: resolveNavActorForAppShell forwards server-confirmed allowed_worker_tabs onto NavActorProjection", () => {
+  assert.match(
+    resolveNavActor,
+    /actor\.actor\.allowed_worker_tabs\s*!==\s*undefined/,
+  );
+  assert.match(
+    resolveNavActor,
+    /allowed_worker_tabs:\s*actor\.actor\.allowed_worker_tabs/,
+  );
+});

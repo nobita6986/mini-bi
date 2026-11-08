@@ -1821,3 +1821,138 @@ test("Work Reports domain datasets (templates, assignments, submissions, analyti
   assert.equal(anaBody.rows.length, 1);
   assert.equal(anaBody.rows[0].group_label, "Nhóm Tuyển dụng Miền Bắc");
 });
+
+test("T1A-9: n8n workers_directory (scope=all) succeeds with entry_admin/change_review and returns HTTP 403 WORKER_DIRECTORY_DENIED when capability or RPC permission is lacking", async () => {
+  const WORKER_ID = "11111111-2222-4333-8444-555555555555";
+  const RECRUITER_ID = "22222222-3333-4444-8555-666666666666";
+
+  // 1. Principal with all_scope_grants + change_review capability succeeds on workers_directory (scope: "all")
+  let listWorkersCalls = [];
+  const allowedDeps = {
+    resolveActor: async () => ({
+      ok: true,
+      actor: TEST_ACTOR,
+      capabilities: ["change_review", "report_view"],
+    }),
+    workerDirectoryRepo: {
+      listWorkers: async (query) => {
+        listWorkersCalls.push(query);
+        return {
+          ok: true,
+          data: {
+            items: [
+              {
+                entry_id: WORKER_ID,
+                entry_version: 1,
+                submission_state: "SUBMITTED",
+                employee_code: "hrp-2026-000101",
+                display_name: "Nguyễn Văn A",
+                project_id: "proj_1",
+                project_display: "Dự án 1",
+                first_work_date: "2026-10-01",
+                labor_type: "TEMPORARY",
+                labor_type_display: "Thời vụ",
+                employment_status: "ON",
+                recruiter_id: RECRUITER_ID,
+                recruiter_display: "Trần Thị B",
+                payment: null,
+                pending_request: null,
+                last_decision: null,
+                is_project_manager: false,
+                allowed_actions: {
+                  view: true,
+                  view_pii: false,
+                  view_payment: false,
+                  propose_change: false,
+                  propose_change_code: "NOT_PROJECT_MANAGER",
+                  direct_edit: false,
+                },
+              },
+            ],
+            page_size: 25,
+            has_more: false,
+            next_cursor: null,
+            authorization_date: "2026-10-25",
+            summary: {
+              total_workers: 1,
+              project_count: 1,
+              recruiter_count: 1,
+            },
+          },
+        };
+      },
+    },
+  };
+
+  const okRes = await handleN8nBodQueryPost(
+    makeQueryRequest({
+      dataset: "workers_directory",
+      page_size: 25,
+    }),
+    { env: TEST_ENV, dispatcherDeps: allowedDeps },
+  );
+  assert.equal(okRes.status, 200);
+  const okBody = await okRes.json();
+  assert.equal(okBody.ok, true);
+  assert.equal(okBody.rows.length, 1);
+  assert.equal(okBody.rows[0].entry_id, WORKER_ID);
+  assert.equal(listWorkersCalls.length, 1);
+  assert.equal(listWorkersCalls[0].auth_subject, TEST_ACTOR.auth_subject);
+  assert.equal(listWorkersCalls[0].app_user_id, TEST_ACTOR.app_user_id);
+  assert.equal(listWorkersCalls[0].scope, "all");
+
+  // 2. Principal with all_scope_grants but ONLY report_view (missing entry_admin and change_review)
+  // is rejected with HTTP 403 WORKER_DIRECTORY_DENIED BEFORE calling workerDirectoryRepo.listWorkers
+  let forbiddenRepoCalled = false;
+  const insufficientCapDeps = {
+    resolveActor: async () => ({
+      ok: true,
+      actor: TEST_ACTOR,
+      capabilities: ["report_view"],
+    }),
+    workerDirectoryRepo: {
+      listWorkers: async () => {
+        forbiddenRepoCalled = true;
+        return { ok: false, kind: "denied" };
+      },
+    },
+  };
+
+  const capDeniedRes = await handleN8nBodQueryPost(
+    makeQueryRequest({
+      dataset: "workers_directory",
+      page_size: 25,
+    }),
+    { env: TEST_ENV, dispatcherDeps: insufficientCapDeps },
+  );
+  assert.equal(capDeniedRes.status, 403);
+  const capDeniedBody = await capDeniedRes.json();
+  assert.equal(capDeniedBody.ok, false);
+  assert.equal(capDeniedBody.error.code, "WORKER_DIRECTORY_DENIED");
+  assert.equal(forbiddenRepoCalled, false, "Must not invoke RPC when service actor lacks entry_admin and change_review");
+
+  // 3. When RPC itself returns 42501 (kind: "denied"), dispatcher maps it to HTTP 403 WORKER_DIRECTORY_DENIED (not 503)
+  const rpcDeniedDeps = {
+    resolveActor: async () => ({
+      ok: true,
+      actor: TEST_ACTOR,
+      capabilities: ["entry_admin"],
+    }),
+    workerDirectoryRepo: {
+      listWorkers: async () => ({ ok: false, kind: "denied" }),
+    },
+  };
+
+  const rpcDeniedRes = await handleN8nBodQueryPost(
+    makeQueryRequest({
+      dataset: "workers_directory",
+      page_size: 25,
+    }),
+    { env: TEST_ENV, dispatcherDeps: rpcDeniedDeps },
+  );
+  assert.equal(rpcDeniedRes.status, 403);
+  const rpcDeniedBody = await rpcDeniedRes.json();
+  assert.equal(rpcDeniedBody.ok, false);
+  assert.equal(rpcDeniedBody.error.code, "WORKER_DIRECTORY_DENIED");
+});
+
