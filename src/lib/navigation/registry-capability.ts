@@ -316,14 +316,17 @@ export const leaveAdminNavPredicate: NavCapabilityPredicate = (actor) =>
 
 /**
  * W2S2 WP2 Salary Advance navigation predicate:
- * Opens for Canonical Full Admin, BoD (`entry_privileged_edit` @ `all`), or server-verified
+ * Opens for Canonical Full Admin, BoD (`entry_privileged_edit` @ `all` or
+ * `report_analytics_view` + `report_view` @ `all`), or server-verified
  * Project Manager / Project Accountant / Supervisory Viewer (`hasSalaryAdvanceAccess === true`).
  */
 export const salaryAdvanceNavPredicate: NavCapabilityPredicate = (actor) =>
   adminAuthorityNavPredicate(actor) ||
   actor.hasSalaryAdvanceAccess === true ||
   (actor.scopes.some((scope) => scope.kind === "all") &&
-    actor.capabilities.includes("entry_privileged_edit"));
+    (actor.capabilities.includes("entry_privileged_edit") ||
+      (actor.capabilities.includes("report_analytics_view") &&
+        actor.capabilities.includes("report_view"))));
 
 /** Bảng ánh xạ `entry.capability` metadata → predicate tương ứng. */
 export const NAV_CAPABILITY_PREDICATES: Readonly<Record<string, NavCapabilityPredicate>> = {

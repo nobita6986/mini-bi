@@ -155,6 +155,10 @@ async function createPreWp1Database() {
 }
 
 const SALARY_ADVANCE_RPC_BINDINGS = {
+  salary_advance_get_actor_access: [
+    ["p_auth_subject", "uuid"],
+    ["p_app_user_id", "uuid"],
+  ],
   salary_advance_get_actor_context: [
     ["p_auth_subject", "uuid"],
     ["p_app_user_id", "uuid"],
@@ -3432,6 +3436,89 @@ test("(#2) Full W2S2 Salary Advance WP1 acceptance across all 7 mandatory verifi
     assert.deepEqual(vendorWorkerProjectHist, {
       ok: false,
       code: "SALARY_ADVANCE_WORKER_VENDOR_RECRUITED",
+    });
+
+    // =========================================================================
+    // HOTFIX VERIFICATION: Non-Throwing `salary_advance_get_actor_access` Probe
+    //   - Returns `{ can_access: false, ... }` WITHOUT raising `42501` for
+    //     non-authorized actors (`VFIN_ONLY_ACTOR`, `VFIN_CASH_HOLDER_ACTOR`),
+    //     while `salary_advance_get_actor_context` still raises `42501`!
+    //   - Returns `{ can_access: true, ... }` for authorized PM, Project
+    //     Accountant, Full Admin, and Canonical BoD actors.
+    // =========================================================================
+    for (const deniedActor of [VFIN_ONLY_ACTOR, VFIN_CASH_HOLDER_ACTOR]) {
+      const accessProbe = await repo.getActorAccess({
+        auth_subject: deniedActor.auth,
+        app_user_id: deniedActor.app,
+      });
+      assert.deepEqual(
+        accessProbe,
+        {
+          ok: true,
+          data: {
+            can_access: false,
+            is_project_manager: false,
+            is_project_accountant: false,
+            is_supervisory_viewer: false,
+          },
+        },
+        "salary_advance_get_actor_access must return can_access=false without throwing 42501",
+      );
+
+      const deniedContext = await repo.getActorContext({
+        auth_subject: deniedActor.auth,
+        app_user_id: deniedActor.app,
+      });
+      assert.deepEqual(
+        deniedContext,
+        {
+          ok: false,
+          code: "SALARY_ADVANCE_ACCESS_DENIED",
+        },
+        "salary_advance_get_actor_context must preserve 42501 SALARY_ADVANCE_ACCESS_DENIED",
+      );
+    }
+
+    const pm1Access = await repo.getActorAccess({
+      auth_subject: PM_1.auth,
+      app_user_id: PM_1.app,
+    });
+    assert.deepEqual(pm1Access, {
+      ok: true,
+      data: {
+        can_access: true,
+        is_project_manager: true,
+        is_project_accountant: false,
+        is_supervisory_viewer: false,
+      },
+    });
+
+    const acctBAccess = await repo.getActorAccess({
+      auth_subject: ACCT_B.auth,
+      app_user_id: ACCT_B.app,
+    });
+    assert.deepEqual(acctBAccess, {
+      ok: true,
+      data: {
+        can_access: true,
+        is_project_manager: false,
+        is_project_accountant: true,
+        is_supervisory_viewer: false,
+      },
+    });
+
+    const bodAccess = await repo.getActorAccess({
+      auth_subject: CANONICAL_BOD.auth,
+      app_user_id: CANONICAL_BOD.app,
+    });
+    assert.deepEqual(bodAccess, {
+      ok: true,
+      data: {
+        can_access: true,
+        is_project_manager: false,
+        is_project_accountant: false,
+        is_supervisory_viewer: true,
+      },
     });
 
     // Append-only trigger on salary_advance_events blocks UPDATE and DELETE even with write_marker

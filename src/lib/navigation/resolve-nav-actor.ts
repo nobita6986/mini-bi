@@ -192,15 +192,16 @@ export const resolveSalaryAdvanceAccessForRequest = cache(
       return null;
     }
     try {
-      const ctx = await createSalaryAdvanceRepository().getActorContext({
+      const access = await createSalaryAdvanceRepository().getActorAccess({
         auth_subject: actor.actor.auth_subject,
         app_user_id: actor.actor.app_user_id,
       });
-      if (ctx.ok) {
+      if (access.ok) {
         const canAccess = Boolean(
-          ctx.data.is_project_manager ||
-            ctx.data.is_project_accountant ||
-            ctx.data.is_supervisory_viewer
+          access.data.can_access &&
+            (access.data.is_project_manager ||
+              access.data.is_project_accountant ||
+              access.data.is_supervisory_viewer)
         );
         return { canAccess };
       }

@@ -374,3 +374,32 @@ test("workerPortraitUploadPolicy: thiếu document_view (portrait null) => HIDDE
   assert.deepEqual(workerPortraitUploadPolicy(null), { allow: false, reason: "HIDDEN" });
   assert.equal(workerPortraitUploadPolicyMessage("HIDDEN"), PORTRAIT_HIDDEN_MESSAGE);
 });
+
+test("projectWorkerDetail: chấp nhận address tới 1024 ký tự và chuẩn hóa address/phone rỗng khi state=provided", () => {
+  const longAddress = "X".repeat(1024);
+  const baseEntry = entryBody().entry;
+  const projectedLong = projectWorkerDetail(
+    entryBody({
+      worker_details: {
+        ...baseEntry.worker_details,
+        address: { state: "provided", value: longAddress },
+        phone: { state: "provided", value: "   " },
+      },
+    }),
+    ENTRY_ID,
+  );
+  assert.ok(projectedLong, "address 1024 chars + blank provided phone must be accepted");
+  assert.equal(projectedLong.worker.address, longAddress);
+  assert.equal(projectedLong.worker.phone, null);
+
+  const tooLongAddress = projectWorkerDetail(
+    entryBody({
+      worker_details: {
+        ...baseEntry.worker_details,
+        address: { state: "provided", value: "X".repeat(1025) },
+      },
+    }),
+    ENTRY_ID,
+  );
+  assert.equal(tooLongAddress, null, "address > 1024 chars still fails closed");
+});

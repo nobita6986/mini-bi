@@ -321,6 +321,24 @@ test("read validates UUID before session and keeps the restricted projection", a
   assert.equal(projectManagerResponse.status, 200,
     "a project-manager-scoped draft projection is a valid server response");
 
+  for (const directoryScope of ["recruited", "team_review"]) {
+    deps.repository.readEntry = async () => ({
+      ok: true,
+      data: { ...projection, scope_kind: directoryScope },
+    });
+    const scopedResponse = await getDirectEntryEntry(entryId, "true", deps);
+    assert.equal(
+      scopedResponse.status,
+      200,
+      `directory read scope '${directoryScope}' must pass projectEntry validation`,
+    );
+  }
+  assert.equal(
+    projectEntry({ ...projection, scope_kind: "invalid_scope" }),
+    null,
+    "unknown scope_kind still fails closed",
+  );
+
   deps.repository.readEntry = async () => ({
     ok: true,
     data: {

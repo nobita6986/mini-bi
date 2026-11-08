@@ -74,7 +74,7 @@ export function DashboardView({
 
   if (!report.ok) {
     return (
-      <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-4 sm:px-6">
+      <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-4 sm:px-6">
         <ReportError report={report} />
       </main>
     );
@@ -84,7 +84,7 @@ export function DashboardView({
     // Fail closed: the read succeeded but the DB did not confirm a scope, so no
     // fact row may be rendered under a guessed audience label.
     return (
-      <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-4 sm:px-6">
+      <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-4 sm:px-6">
         <ErrorState
           title="Không xác định được phạm vi báo cáo"
           detail="Phiên hiện tại chưa có phạm vi báo cáo hợp lệ nên dữ liệu không được hiển thị. Vui lòng tải lại trang; nếu vẫn lỗi, liên hệ quản trị viên."
@@ -153,7 +153,7 @@ export function DashboardView({
       canViewDuplicateCccd={canViewDuplicateCccd}
       canViewOffboarding={canViewOffboarding}
       general={
-        <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-4 sm:px-6">
+        <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-4 sm:px-6">
           <header className="rounded-2xl border border-border bg-gradient-to-r from-primary/10 via-surface to-secondary/10 px-5 py-4">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div className="min-w-0 flex-1">

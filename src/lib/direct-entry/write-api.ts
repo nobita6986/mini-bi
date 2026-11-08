@@ -336,7 +336,8 @@ export function projectEntry(value: unknown): Record<string, unknown> | null {
       typeof value.labor_type_display !== "string" || value.labor_type_display.length < 1 ||
       typeof value.version !== "number" || !Number.isSafeInteger(value.version) || value.version < 1 ||
       (value.scope_kind !== "own" && value.scope_kind !== "team" &&
-        value.scope_kind !== "all" && value.scope_kind !== "project") ||
+        value.scope_kind !== "all" && value.scope_kind !== "project" &&
+        value.scope_kind !== "recruited" && value.scope_kind !== "team_review") ||
       !isGeneralNoteReadProjection(value.general_note) ||
       !isPaymentReadProjection(value.payment) ||
       !isRecord(value.employment_status) ||

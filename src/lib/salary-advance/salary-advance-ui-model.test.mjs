@@ -167,6 +167,22 @@ test("decideSalaryAdvancePageAccess enforces feature flag, session state, and ac
     decideSalaryAdvancePageAccess({
       enabledFlag: "true",
       actor: { ok: true, actor: { app_user_id: "u1", auth_subject: "s1", capabilities: [], scopes: [] } },
+      canAccess: false,
+    }),
+    "ACCESS_DENIED"
+  );
+  assert.equal(
+    decideSalaryAdvancePageAccess({
+      enabledFlag: "true",
+      actor: { ok: true, actor: { app_user_id: "u1", auth_subject: "s1", capabilities: [], scopes: [] } },
+      canAccess: true,
+    }),
+    "ALLOW"
+  );
+  assert.equal(
+    decideSalaryAdvancePageAccess({
+      enabledFlag: "true",
+      actor: { ok: true, actor: { app_user_id: "u1", auth_subject: "s1", capabilities: [], scopes: [] } },
     }),
     "ALLOW"
   );

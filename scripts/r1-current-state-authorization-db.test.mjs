@@ -2036,3 +2036,128 @@ test("T1A: direct_entry_resolve_actor_context allowed_worker_tabs matches RPC au
     await db.close();
   }
 });
+
+test("T1A Hotfix Issue #1: direct_entry_read_projection authorizes all 5 worker directory tab audiences (uploader, recruited, managed, team, all) and overlapping scopes while denying out-of-scope actors", async () => {
+  const { db } = await buildDb();
+  try {
+    const { managerAuth, managerApp } = await seedProjectManager(db);
+    await db.query(
+      `insert into public.recruiters (recruiter_id, display_name, active)
+       values ($1, 'Synthetic Recruiter C', true)`,
+      [REC_C],
+    );
+
+    const leader = await seedStrictTeamLeader(db, {
+      auth: uuid(93),
+      app: uuid(94),
+      recruiter: REC_C,
+      team: TEAM_A,
+    });
+    const { entryId } = await insertSyntheticProjectEntry(db, "SUBMITTED");
+
+    const readProjection = async (authSubject, appUserId, targetEntryId) =>
+      (
+        await db.query(
+          "select public.direct_entry_read_projection($1::uuid, $2::uuid, $3::uuid) as projection",
+          [authSubject, appUserId, targetEntryId],
+        )
+      ).rows[0].projection;
+
+    // 1. Recruited viewer (linked to REC_A, no entry_own capability) can open detail of entryId and gets scope_kind = 'recruited'
+    const recruitedAuth = uuid(91);
+    const recruitedApp = uuid(92);
+    await addActor(db, recruitedAuth, recruitedApp, "Recruited Only Viewer");
+    await db.query(
+      `update public.direct_entry_app_user_recruiter_links
+          set app_user_id = $1
+        where app_user_id = $2 and recruiter_id = $3 and is_current`,
+      [recruitedApp, APP, REC_A],
+    );
+    const recruitedProj = await readProjection(recruitedAuth, recruitedApp, entryId);
+    assert.equal(recruitedProj.entry_id, entryId);
+    assert.equal(recruitedProj.scope_kind, "recruited");
+    assert.deepEqual(recruitedProj.documents, []);
+    assert.equal(recruitedProj.worker_portrait, null, "without document_view, portrait is null");
+
+    // 2. Managed viewer (PM on PROJECT_PM) can open detail of entryId and gets scope_kind = 'project'
+    const managedProj = await readProjection(managerAuth, managerApp, entryId);
+    assert.equal(managedProj.entry_id, entryId);
+    assert.equal(managedProj.scope_kind, "project");
+
+    // 3a. Team Leader of TEAM_A can open detail of entryId in TEAM_A and gets scope_kind = 'team'
+    const teamProj = await readProjection(leader.auth, leader.app, entryId);
+    assert.equal(teamProj.entry_id, entryId);
+    assert.equal(teamProj.scope_kind, "team");
+
+    // 3b. Actor with overlapping 'own' (entry_own) and 'team' (entry_team) draft scopes on their own entry in TEAM_A does not fail with 42501
+    await addCurrentCapability(db, leader.app, "entry_own");
+    await addCurrentCapability(db, leader.app, "entry_team");
+    await db.query(
+      `insert into public.direct_entry_scope_grants
+         (app_user_id, scope_kind, team_id, valid_from, is_current)
+       values ($1, 'own', null, '2020-01-01', true)`,
+      [leader.app],
+    );
+    const { entryId: overlapEntryId } = await insertSyntheticProjectEntry(db, "SUBMITTED", {
+      entryId: uuid(14),
+      candidateId: uuid(15),
+      submissionId: uuid(16),
+      ownerApp: leader.app,
+      employeeSuffix: "000903",
+    });
+    const overlapProj = await readProjection(leader.auth, leader.app, overlapEntryId);
+    assert.equal(overlapProj.entry_id, overlapEntryId);
+    assert.ok(["own", "team"].includes(overlapProj.scope_kind));
+
+    // 4. Uploader viewer (created entry, has own scope + submission_create, WITHOUT entry_own) can open detail of their own entry
+    const uploaderAuth = uuid(95);
+    const uploaderApp = uuid(96);
+    await addActor(db, uploaderAuth, uploaderApp, "Submission Uploader Only");
+    await addCurrentCapability(db, uploaderApp, "submission_create");
+    await db.query(
+      `insert into public.direct_entry_scope_grants
+         (app_user_id, scope_kind, team_id, valid_from, is_current)
+       values ($1, 'own', null, '2020-01-01', true)`,
+      [uploaderApp],
+    );
+    const { entryId: uploaderEntryId } = await insertSyntheticProjectEntry(db, "SUBMITTED", {
+      entryId: uuid(17),
+      candidateId: uuid(18),
+      submissionId: uuid(19),
+      ownerApp: uploaderApp,
+      employeeSuffix: "000902",
+    });
+    const uploaderProj = await readProjection(uploaderAuth, uploaderApp, uploaderEntryId);
+    assert.equal(uploaderProj.entry_id, uploaderEntryId);
+    assert.equal(uploaderProj.scope_kind, "own");
+
+    // 5. All-scope viewer (change_review @ all) can open detail of entryId and gets scope_kind = 'all'
+    const allViewerAuth = uuid(97);
+    const allViewerApp = uuid(98);
+    await addActor(db, allViewerAuth, allViewerApp, "All Scope Reviewer");
+    await addCurrentCapability(db, allViewerApp, "change_review");
+    await addCurrentCapability(db, allViewerApp, "document_view");
+    await db.query(
+      `insert into public.direct_entry_scope_grants
+         (app_user_id, scope_kind, team_id, valid_from, is_current)
+       values ($1, 'all', null, '2020-01-01', true)`,
+      [allViewerApp],
+    );
+    const allProj = await readProjection(allViewerAuth, allViewerApp, entryId);
+    assert.equal(allProj.entry_id, entryId);
+    assert.equal(allProj.scope_kind, "all");
+    assert.ok(allProj.worker_portrait !== null, "with document_view, portrait metadata is returned");
+
+    // 6. Out-of-scope actor is denied with 42501
+    const outsiderAuth = uuid(99);
+    const outsiderApp = uuid(100);
+    await addActor(db, outsiderAuth, outsiderApp, "Out Of Scope Actor");
+    await assert.rejects(
+      readProjection(outsiderAuth, outsiderApp, entryId),
+      (err) => err.code === "42501",
+      "out-of-scope actor must be denied with 42501",
+    );
+  } finally {
+    await db.close();
+  }
+});

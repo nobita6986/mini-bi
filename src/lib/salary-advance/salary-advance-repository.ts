@@ -37,6 +37,13 @@ export type SalaryAdvanceActorRef = {
   app_user_id: string;
 };
 
+export type SalaryAdvanceActorAccess = {
+  can_access: boolean;
+  is_project_manager: boolean;
+  is_project_accountant: boolean;
+  is_supervisory_viewer: boolean;
+};
+
 export type SalaryAdvanceRepoResult<T> =
   | { ok: true; data: T }
   | { ok: false; code: SalaryAdvanceErrorCode };
@@ -91,6 +98,10 @@ export type SalaryAdvanceWorkerPortraitContextRecord = {
 };
 
 export type SalaryAdvanceRepository = {
+  getActorAccess(
+    actor: SalaryAdvanceActorRef,
+  ): Promise<SalaryAdvanceRepoResult<SalaryAdvanceActorAccess>>;
+
   getActorContext(
     actor: SalaryAdvanceActorRef,
   ): Promise<SalaryAdvanceRepoResult<SalaryAdvanceActorContext>>;
@@ -349,7 +360,15 @@ export function createSalaryAdvanceRepository(
     try {
       const { data, error } = await callRpc(fn, args);
       if (error) {
-        return { ok: false, code: mapRpcError(error) };
+        const mapped = mapRpcError(error);
+        if (mapped === "SALARY_ADVANCE_ACCESS_DENIED") {
+          console.warn("[salary-advance] rpc access denied", {
+            rpc: fn,
+            pgCode: typeof error.code === "string" ? error.code : null,
+            code: mapped,
+          });
+        }
+        return { ok: false, code: mapped };
       }
       const projected = project(data);
       if (!projected) {
@@ -362,6 +381,33 @@ export function createSalaryAdvanceRepository(
   }
 
   return {
+    getActorAccess(actor) {
+      return invoke(
+        "salary_advance_get_actor_access",
+        {
+          p_auth_subject: actor.auth_subject,
+          p_app_user_id: actor.app_user_id,
+        },
+        (raw) => {
+          if (
+            !isPlainObject(raw) ||
+            typeof raw.can_access !== "boolean" ||
+            typeof raw.is_project_manager !== "boolean" ||
+            typeof raw.is_project_accountant !== "boolean" ||
+            typeof raw.is_supervisory_viewer !== "boolean"
+          ) {
+            return null;
+          }
+          return {
+            can_access: raw.can_access,
+            is_project_manager: raw.is_project_manager,
+            is_project_accountant: raw.is_project_accountant,
+            is_supervisory_viewer: raw.is_supervisory_viewer,
+          };
+        },
+      );
+    },
+
     getActorContext(actor) {
       return invoke(
         "salary_advance_get_actor_context",

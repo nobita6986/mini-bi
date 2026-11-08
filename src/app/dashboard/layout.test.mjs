@@ -77,3 +77,20 @@ test("dashboard/page.tsx keeps report retrieval but no longer owns AI actions", 
   assert.ok(!dashboardPage.includes("isAiSettingsEnabled"));
   assert.ok(!dashboardPage.includes("aiSettingsEnabled"));
 });
+
+test("T1A Hotfix Issue #4: all Dashboard outer wrappers use max-w-7xl aligned with PageShell", () => {
+  const dashboardFiles = [
+    "../../components/dashboard/dashboard-view.tsx",
+    "../../components/dashboard/bod-dashboard-tabs.tsx",
+    "../../components/dashboard/own-dashboard-view.tsx",
+    "../../components/dashboard/team-dashboard-view.tsx",
+    "../../components/dashboard/detailed-recruitment-matrix-panel.tsx",
+    "../../components/dashboard/dashboard-shared.tsx",
+    "./loading.tsx",
+  ];
+  for (const relPath of dashboardFiles) {
+    const content = readFileSync(new URL(relPath, import.meta.url), "utf8");
+    assert.match(content, /\bmax-w-7xl\b/, `${relPath} must use max-w-7xl`);
+    assert.doesNotMatch(content, /\bmax-w-6xl\b/, `${relPath} must not retain max-w-6xl`);
+  }
+});
