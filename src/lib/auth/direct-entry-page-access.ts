@@ -239,6 +239,12 @@ export function canViewOffboardingReport(actor: NavActorProjection | null): bool
   if (adminSecurityNavPredicate(actor)) return true;
   if (actor.capabilities.includes("entry_privileged_edit") && actor.scopes.some((scope) => scope.kind === "all")) return true;
   if (actor.capabilities.includes("team_manager_assign") && actor.scopes.some((scope) => scope.kind === "team")) return true;
+  if (actor.capabilities.includes("offboarding_report_view")) {
+    const allCount = actor.scopes.filter((scope) => scope.kind === "all").length;
+    const teamCount = actor.scopes.filter((scope) => scope.kind === "team").length;
+    if (allCount === 1 && teamCount <= 1) return true;
+    if (allCount === 0 && teamCount === 1) return true;
+  }
   return false;
 }
 

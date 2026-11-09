@@ -233,7 +233,7 @@ export function OffboardingReportPanel() {
     }
   }
 
-  const canPhone = list?.scope === "all";
+  const canPhone = list?.scope === "all" && list?.authority !== "offboarding_report_view";
   const canHide = list?.can_hide === true;
   const trimmedReasonLength = hideReason.trim().length;
 

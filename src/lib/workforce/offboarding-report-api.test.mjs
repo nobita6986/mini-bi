@@ -8,6 +8,7 @@ import {
   hideOffboardingWorker,
   listOffboardingReport,
 } from "./offboarding-report-api.ts";
+import { parseOffboardingReportList } from "./offboarding-report-contract.ts";
 import { createOffboardingReportRepository } from "./offboarding-report-repository.ts";
 
 const AUTH_SUBJECT = "19100000-0000-4000-8000-000000000001";
@@ -659,4 +660,150 @@ test("Offboarding UI panel, Dashboard tab, standalone page, and route handler sa
   );
   assert.match(hideRouteSource, /export async function POST\(request:\s*Request\)/);
   assert.match(hideRouteSource, /hideOffboardingWorker\(/);
+});
+
+test("offboarding_report_view read-only authority contract: allows team/all list without phone/export/hide, rejects privilege escalation payloads, and returns 403 on export/hide", async () => {
+  const viewerSession = makeSessionOk({
+    capabilities: ["report_view", "offboarding_report_view"],
+    scopes: [
+      { kind: "own", reference: APP_USER_ID, valid_from: "2026-01-01", valid_to: null },
+      { kind: "team", reference: "team-mkt", valid_from: "2026-01-01", valid_to: null },
+    ],
+  });
+
+  for (const scope of ["team", "all"]) {
+    const repository = createOffboardingReportRepository(async () => ({
+      data: {
+        scope,
+        authority: "offboarding_report_view",
+        can_export: false,
+        can_hide: false,
+        authorization_date: "2026-10-24",
+        page: 1,
+        page_size: 25,
+        total: 1,
+        has_more: false,
+        items: [
+          {
+            employee_code: "hrp-2026-000101",
+            display_name: "Nguyễn Thị Xem Báo Cáo",
+            project_id: "proj-01",
+            project_display: "Dự án A",
+            recruiter_id: RECRUITER_ID,
+            recruiter_display: "Tuyển dụng A",
+            off_effective_date: "2026-10-19",
+            days_since_off: 5,
+          },
+        ],
+      },
+      error: null,
+    }));
+
+    const listRes = await listOffboardingReport(
+      new Request("https://bi.example.com/api/workforce/offboarding?page=1&page_size=25"),
+      "true",
+      { resolveSession: async () => viewerSession, repository },
+    );
+    assert.equal(listRes.status, 200, `scope=${scope}`);
+    const body = await listRes.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.data.scope, scope);
+    assert.equal(body.data.authority, "offboarding_report_view");
+    assert.equal(body.data.can_export, false);
+    assert.equal(body.data.can_hide, false);
+    assert.equal("phone" in body.data.items[0], false);
+    assert.equal("snapshot_entry_id" in body.data.items[0], false);
+    assert.equal("snapshot_status_event_id" in body.data.items[0], false);
+  }
+
+  // Contract parser fails closed if offboarding_report_view tries to leak phone, can_export, or can_hide (even on scope=all)
+  const baseValidAllViewer = {
+    scope: "all",
+    authority: "offboarding_report_view",
+    can_export: false,
+    can_hide: false,
+    authorization_date: "2026-10-24",
+    page: 1,
+    page_size: 25,
+    total: 1,
+    has_more: false,
+    items: [
+      {
+        employee_code: "hrp-2026-000101",
+        display_name: "Nguyễn Thị Xem Báo Cáo",
+        project_id: "proj-01",
+        project_display: "Dự án A",
+        recruiter_id: RECRUITER_ID,
+        recruiter_display: "Tuyển dụng A",
+        off_effective_date: "2026-10-19",
+        days_since_off: 5,
+      },
+    ],
+  };
+  assert.ok(parseOffboardingReportList(baseValidAllViewer) !== null);
+  assert.equal(
+    parseOffboardingReportList({ ...baseValidAllViewer, can_export: true }),
+    null,
+    "offboarding_report_view must never allow can_export=true",
+  );
+  assert.equal(
+    parseOffboardingReportList({ ...baseValidAllViewer, can_hide: true }),
+    null,
+    "offboarding_report_view must never allow can_hide=true",
+  );
+  assert.equal(
+    parseOffboardingReportList({
+      ...baseValidAllViewer,
+      items: [{ ...baseValidAllViewer.items[0], phone: "0912345678" }],
+    }),
+    null,
+    "offboarding_report_view must never include phone even when scope=all",
+  );
+  assert.equal(
+    parseOffboardingReportList({
+      ...baseValidAllViewer,
+      items: [
+        {
+          ...baseValidAllViewer.items[0],
+          snapshot_entry_id: SNAPSHOT_ENTRY_ID,
+          snapshot_status_event_id: SNAPSHOT_EVENT_ID,
+        },
+      ],
+    }),
+    null,
+    "offboarding_report_view must never include snapshot hide refs",
+  );
+
+  // Export and hide endpoints return 403 for offboarding_report_view when SQL raises 42501
+  const denyRepo = createOffboardingReportRepository(async () => ({
+    data: null,
+    error: { code: "42501", message: "offboarding report export/hide denied" },
+  }));
+
+  const exportRes = await exportOffboardingReport(
+    new Request("https://bi.example.com/api/workforce/offboarding/export"),
+    "true",
+    { resolveSession: async () => viewerSession, repository: denyRepo },
+  );
+  assert.equal(exportRes.status, 403);
+  assert.deepEqual(await exportRes.json(), {
+    ok: false,
+    code: "WORKFORCE_OFFBOARDING_DENIED",
+  });
+
+  const hideRes = await hideOffboardingWorker(
+    makeHideRequest({
+      snapshot_entry_id: SNAPSHOT_ENTRY_ID,
+      snapshot_status_event_id: SNAPSHOT_EVENT_ID,
+      reason: "Thử ẩn trái phép",
+      idempotency_key: IDEMPOTENCY_KEY,
+    }),
+    "true",
+    { resolveSession: async () => viewerSession, repository: denyRepo },
+  );
+  assert.equal(hideRes.status, 403);
+  assert.deepEqual(await hideRes.json(), {
+    ok: false,
+    code: "WORKFORCE_OFFBOARDING_HIDE_DENIED",
+  });
 });

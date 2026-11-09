@@ -260,12 +260,28 @@ export const workReportsNavPredicate: NavCapabilityPredicate = (actor) =>
   workReportReviewPredicate(actor) ||
   workReportDelegationPredicate(actor);
 
-export const workforceOffboardingNavPredicate: NavCapabilityPredicate = (actor) =>
-  adminAuthorityNavPredicate(actor) ||
-  (actor.capabilities.includes("entry_privileged_edit") &&
-    actor.scopes.some((scope) => scope.kind === "all")) ||
-  (actor.capabilities.includes("team_manager_assign") &&
-    actor.scopes.some((scope) => scope.kind === "team"));
+export const workforceOffboardingNavPredicate: NavCapabilityPredicate = (actor) => {
+  if (adminAuthorityNavPredicate(actor)) return true;
+  if (
+    actor.capabilities.includes("entry_privileged_edit") &&
+    actor.scopes.some((scope) => scope.kind === "all")
+  ) {
+    return true;
+  }
+  if (
+    actor.capabilities.includes("team_manager_assign") &&
+    actor.scopes.some((scope) => scope.kind === "team")
+  ) {
+    return true;
+  }
+  if (actor.capabilities.includes("offboarding_report_view")) {
+    const allCount = actor.scopes.filter((scope) => scope.kind === "all").length;
+    const teamCount = actor.scopes.filter((scope) => scope.kind === "team").length;
+    if (allCount === 1 && teamCount <= 1) return true;
+    if (allCount === 0 && teamCount === 1) return true;
+  }
+  return false;
+};
 
 /**
  * VFIN-01 / VFIN-02: Vendor Finance navigation predicate (fail-closed).
