@@ -104,6 +104,8 @@ import {
   VFIN_05_COMBINED_PAYMENT_OFFSET_RPC_SIGNATURES,
   RECRUITMENT_LOCATION_CATALOG_MIGRATION_NAME,
   RECRUITMENT_LOCATION_CATALOG_RPC_SIGNATURES,
+  RECRUITMENT_POSTS_MIGRATION_NAME,
+  RECRUITMENT_POSTS_RPC_SIGNATURES,
   OFFBOARDING_REPORT_MIGRATION_NAME,
   OFFBOARDING_REPORT_RPC_SIGNATURES,
   migrationChecksum,
@@ -1108,7 +1110,8 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
         ...ATTENDANCE_EXPLANATIONS_WAVE2_RPC_SIGNATURES,
         ...ATTENDANCE_MULTI_SLOT_POLICY_PROFILES_RPC_SIGNATURES,
         ...WORKER_DIRECTORY_LABOR_TYPE_FILTER_RPC_SIGNATURES,
-        ...RECRUITMENT_LOCATION_CATALOG_RPC_SIGNATURES);
+        ...RECRUITMENT_LOCATION_CATALOG_RPC_SIGNATURES,
+        ...RECRUITMENT_POSTS_RPC_SIGNATURES);
       assert.ok(expectedSignatures.length > 0, "the explicit server/invoker allowlist is not empty");
       assert.equal(new Set(expectedSignatures).size, expectedSignatures.length, "the allowlist has no duplicates");
       const { rows: resolvedExpected } = await client.query(
@@ -1163,7 +1166,8 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
           ...ATTENDANCE_EXPLANATIONS_WAVE2_RPC_SIGNATURES,
           ...ATTENDANCE_MULTI_SLOT_POLICY_PROFILES_RPC_SIGNATURES,
           ...WORKER_DIRECTORY_LABOR_TYPE_FILTER_RPC_SIGNATURES,
-          ...RECRUITMENT_LOCATION_CATALOG_RPC_SIGNATURES].sort(),
+          ...RECRUITMENT_LOCATION_CATALOG_RPC_SIGNATURES,
+          ...RECRUITMENT_POSTS_RPC_SIGNATURES].sort(),
         "only explicitly reviewed post-S0 RPCs add service_role grants after the S0 baseline",
       );
       const recruitmentLocationCatalogMigration = await readFile(
@@ -1179,6 +1183,48 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
         assert.ok(
           recruitmentLocationCatalogNormalized.includes(sig.toLowerCase()),
           `recruitment location catalog migration includes signature ${sig}`,
+        );
+      }
+      const recruitmentPostsMigration = await readFile(
+        path.join(MIGRATION_DIR, RECRUITMENT_POSTS_MIGRATION_NAME),
+        "utf8",
+      );
+      const recruitmentPostsNormalized = recruitmentPostsMigration
+        .replace(/\s+/g, " ")
+        .replace(/\(\s+/g, "(")
+        .replace(/\s+\)/g, ")")
+        .toLowerCase();
+      for (const sig of RECRUITMENT_POSTS_RPC_SIGNATURES) {
+        assert.ok(
+          recruitmentPostsNormalized.includes(
+            `revoke all on function ${sig.toLowerCase()} from public, anon, authenticated, service_role;`,
+          ),
+          `recruitment posts RPC ${sig} revokes inherited RPC grants`,
+        );
+        assert.ok(
+          recruitmentPostsNormalized.includes(
+            `grant execute on function ${sig.toLowerCase()} to service_role;`,
+          ),
+          `recruitment posts RPC ${sig} grants EXECUTE only to service_role`,
+        );
+      }
+      for (const internalSig of [
+        "public.recruitment_post__internal_actor_is_full_admin_or_bod(uuid)",
+        "public.recruitment_post__internal_actor_label(uuid)",
+        "public.recruitment_post__internal_idempotency_begin(uuid, text, text, text)",
+        "public.recruitment_post__internal_filter_hash(text, uuid, uuid, text, date, date)",
+        "public.recruitment_post__internal_normalize_payload(text, jsonb)",
+        "public.recruitment_post__internal_snapshot(public.recruitment_project_briefs, text[])",
+        "public.recruitment_post__internal_projection(public.recruitment_project_briefs, uuid)",
+        "public.recruitment_post__internal_briefs_write_guard()",
+        "public.recruitment_post__internal_brief_labor_write_guard()",
+        "public.recruitment_post__internal_guard_park_province_change()",
+      ]) {
+        assert.ok(
+          recruitmentPostsNormalized.includes(
+            `revoke all on function ${internalSig.toLowerCase()} from public, anon, authenticated, service_role;`,
+          ),
+          `recruitment posts internal helper ${internalSig} revokes EXECUTE from all roles including service_role`,
         );
       }
       const attendanceSlotPolicyFourSlotMigration = await readFile(
