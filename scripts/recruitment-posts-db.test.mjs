@@ -17,6 +17,7 @@ import {
 import {
   RECRUITMENT_POSTS_MIGRATION_NAME,
   RECRUITMENT_POSTS_RPC_SIGNATURES,
+  migrationSqlForTransaction,
 } from "./lib/migration-validation.mjs";
 import { AUTH_PROLOGUE } from "./lib/s04c-read-fixture.mjs";
 
@@ -275,7 +276,39 @@ async function createDatabase() {
     `Expected migration ${RECRUITMENT_POSTS_MIGRATION_NAME}`,
   );
   for (const name of names) {
-    await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
+    const sql = await readFile(path.join(MIGRATION_DIR, name), "utf8");
+    if (name === RECRUITMENT_POSTS_MIGRATION_NAME) {
+      await db.exec(
+        "create role rp_nobypass_migrator nologin nobypassrls;" +
+          " grant postgres to rp_nobypass_migrator with admin false, inherit true, set false;",
+      );
+      await db.exec("begin");
+      let nobypassErr = null;
+      try {
+        await db.exec("set local role rp_nobypass_migrator");
+        await db.exec(migrationSqlForTransaction(sql));
+      } catch (err) {
+        nobypassErr = err;
+      } finally {
+        await db.exec("rollback; reset role;");
+      }
+      assert.ok(
+        nobypassErr,
+        "Migration must fail closed when executed by a NOBYPASSRLS role that cannot SET to the direct_entries owner",
+      );
+      assert.equal(nobypassErr.code, "55000");
+      assert.match(nobypassErr.message, /must bypass FORCE RLS/);
+
+      const { rows: rolledBackRows } = await db.query(
+        "select to_regclass('public.recruitment_project_briefs') as rel",
+      );
+      assert.equal(
+        rolledBackRows[0].rel,
+        null,
+        "Failed NOBYPASSRLS migration must roll back atomically without leaving tables behind",
+      );
+    }
+    await db.exec(sql);
   }
   return db;
 }
@@ -464,19 +497,26 @@ test("T-ACL-01, T-ACL-02 & T-AUTH-13: 6 public RPCs are service_role-only, all 1
     );
   }
 
-  // T-ACL-01: Check privileges on all 16 routines
+  // T-ACL-01: Check privileges and FORCE RLS bypass owner invariant on all 16 routines
   const { rows: privRows } = await db.query(`
     select p.proname,
+           (coalesce(r.rolsuper, false) or coalesce(r.rolbypassrls, false)) as owner_bypasses_rls,
            has_function_privilege('public', p.oid, 'EXECUTE') as pub_exec,
            has_function_privilege('anon', p.oid, 'EXECUTE') as anon_exec,
            has_function_privilege('authenticated', p.oid, 'EXECUTE') as auth_exec,
            has_function_privilege('service_role', p.oid, 'EXECUTE') as srv_exec
       from pg_proc p
       join pg_namespace n on n.oid = p.pronamespace
+      join pg_roles r on r.oid = p.proowner
      where n.nspname = 'public'
        and p.proname like 'recruitment_post%'
   `);
   for (const row of privRows) {
+    assert.equal(
+      row.owner_bypasses_rls,
+      true,
+      `${row.proname} owner must have rolsuper or rolbypassrls to read/write FORCE RLS tables`,
+    );
     assert.equal(row.pub_exec, false, `${row.proname} public EXECUTE must be false`);
     assert.equal(row.anon_exec, false, `${row.proname} anon EXECUTE must be false`);
     assert.equal(row.auth_exec, false, `${row.proname} authenticated EXECUTE must be false`);
@@ -512,6 +552,45 @@ test("T-ACL-01, T-ACL-02 & T-AUTH-13: 6 public RPCs are service_role-only, all 1
     }
     assert.ok(caught, `Expected 42501 when ${role} calls internal helper directly`);
     assert.equal(caught.code, "42501");
+  }
+
+  // T-ACL-03: Migration $self_check$ fails with 55000 if any public RPC or internal helper
+  // is owned by a NOBYPASSRLS role (`rp_nobypass_migrator`), even when tables are owned by `postgres`.
+  const migrationSql = await readFile(
+    path.join(MIGRATION_DIR, RECRUITMENT_POSTS_MIGRATION_NAME),
+    "utf8",
+  );
+  const selfCheckBlockMatch = migrationSql.match(
+    /do \$self_check\$[\s\S]*?\$self_check\$;/,
+  );
+  assert.ok(selfCheckBlockMatch, "Expected $self_check$ block in migration");
+  const selfCheckSql = selfCheckBlockMatch[0];
+
+  for (const [label, alterStmt, expectedPattern] of [
+    [
+      "public RPC owned by NOBYPASSRLS role",
+      "alter function public.recruitment_post_get_context(uuid, uuid) owner to rp_nobypass_migrator",
+      /owner of RPC public\.recruitment_post_get_context\(uuid,uuid\) must bypass FORCE RLS/,
+    ],
+    [
+      "internal helper owned by NOBYPASSRLS role",
+      "alter function public.recruitment_post__internal_actor_is_full_admin_or_bod(uuid) owner to rp_nobypass_migrator",
+      /owner of internal helper public\.recruitment_post__internal_actor_is_full_admin_or_bod\(uuid\) must bypass FORCE RLS/,
+    ],
+  ]) {
+    let selfCheckErr = null;
+    await db.exec("begin");
+    try {
+      await db.exec(alterStmt);
+      await db.exec(selfCheckSql);
+    } catch (err) {
+      selfCheckErr = err;
+    } finally {
+      await db.exec("rollback");
+    }
+    assert.ok(selfCheckErr, `Expected $self_check$ to fail for ${label}`);
+    assert.equal(selfCheckErr.code, "55000");
+    assert.match(selfCheckErr.message, expectedPattern);
   }
 });
 

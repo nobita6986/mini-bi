@@ -3084,7 +3084,8 @@ begin
    where c.oid = 'public.direct_entries'::pg_catalog.regclass;
 
   if v_base_owner is null then
-    raise exception 'Owner resolution failed for public.direct_entries';
+    raise exception 'Owner resolution failed for public.direct_entries'
+      using errcode = '55000';
   end if;
 
   foreach v_tbl in array array[
@@ -3231,20 +3232,25 @@ grant execute on function public.recruitment_post_withdraw(uuid, uuid, uuid, int
 
 -- -----------------------------------------------------------------------------
 -- 6. Self-check block verifying tables, RLS, non-unique project-published index,
---    triggers, SECDEF search_path, and fail-closed ACL for both the 6 public RPCs
---    and 10 internal helpers.
+--    triggers, SECDEF search_path, owner FORCE RLS bypass capability, and
+--    fail-closed ACL for both the 6 public RPCs and 10 internal helpers.
 -- -----------------------------------------------------------------------------
 do $self_check$
 declare
   v_rls_count integer;
+  v_table_grants integer;
+  v_policy_count integer;
+  v_non_bypass_table_owners integer;
   v_idx_count integer;
   v_proj_idx_is_unique boolean;
   v_trig_count integer;
   v_public_rpc text;
   v_internal_fn text;
   v_fn_oid oid;
+  v_fn_owner_oid oid;
   v_prosecdef boolean;
   v_proconfig text[];
+  v_owner_bypasses_rls boolean;
   v_public_rpc_list constant text[] := array[
     'public.recruitment_post_get_context(uuid,uuid)',
     'public.recruitment_post_list(uuid,uuid,text,uuid,uuid,text,date,date,text,text,integer)',
@@ -3281,7 +3287,59 @@ begin
      and c.relforcerowsecurity = true;
 
   if v_rls_count <> 3 then
-    raise exception 'Self-check failed: expected RLS + FORCE RLS on all 3 recruitment_project_brief* tables, got %', v_rls_count;
+    raise exception 'Self-check failed: expected RLS + FORCE RLS on all 3 recruitment_project_brief* tables, got %', v_rls_count
+      using errcode = '55000';
+  end if;
+
+  select count(*)::integer
+    into v_policy_count
+    from pg_catalog.pg_policy pol
+    join pg_catalog.pg_class c on c.oid = pol.polrelid
+    join pg_catalog.pg_namespace n on n.oid = c.relnamespace
+   where n.nspname = 'public'
+     and c.relname in (
+       'recruitment_project_briefs',
+       'recruitment_project_brief_labor_types',
+       'recruitment_project_brief_revisions'
+     );
+
+  if v_policy_count <> 0 then
+    raise exception 'Self-check failed: expected 0 permissive RLS policies on recruitment_project_brief* tables, got %', v_policy_count
+      using errcode = '55000';
+  end if;
+
+  select count(*)::integer
+    into v_table_grants
+    from information_schema.role_table_grants g
+   where g.table_schema = 'public'
+     and g.table_name in (
+       'recruitment_project_briefs',
+       'recruitment_project_brief_labor_types',
+       'recruitment_project_brief_revisions'
+     )
+     and g.grantee in ('PUBLIC', 'anon', 'authenticated', 'service_role');
+
+  if v_table_grants <> 0 then
+    raise exception 'Self-check failed: expected 0 table grants on recruitment_project_brief* tables for runtime roles, got %', v_table_grants
+      using errcode = '55000';
+  end if;
+
+  select count(*)::integer
+    into v_non_bypass_table_owners
+    from pg_catalog.pg_class c
+    join pg_catalog.pg_namespace n on n.oid = c.relnamespace
+    join pg_catalog.pg_roles r on r.oid = c.relowner
+   where n.nspname = 'public'
+     and c.relname in (
+       'recruitment_project_briefs',
+       'recruitment_project_brief_labor_types',
+       'recruitment_project_brief_revisions'
+     )
+     and not (coalesce(r.rolsuper, false) or coalesce(r.rolbypassrls, false));
+
+  if v_non_bypass_table_owners <> 0 then
+    raise exception 'Self-check failed: owner of recruitment_project_brief* tables must bypass FORCE RLS (% tables failed)', v_non_bypass_table_owners
+      using errcode = '55000';
   end if;
 
   select count(*)
@@ -3300,7 +3358,8 @@ begin
      );
 
   if v_idx_count <> 8 then
-    raise exception 'Self-check failed: expected 8 recruitment post indexes, got %', v_idx_count;
+    raise exception 'Self-check failed: expected 8 recruitment post indexes, got %', v_idx_count
+      using errcode = '55000';
   end if;
 
   select ix.indisunique
@@ -3312,7 +3371,8 @@ begin
      and c.relname = 'recruitment_project_briefs_project_published_idx';
 
   if v_proj_idx_is_unique is distinct from false then
-    raise exception 'Self-check failed: recruitment_project_briefs_project_published_idx must be non-unique';
+    raise exception 'Self-check failed: recruitment_project_briefs_project_published_idx must be non-unique'
+      using errcode = '55000';
   end if;
 
   select count(*)
@@ -3332,52 +3392,89 @@ begin
      );
 
   if v_trig_count <> 4 then
-    raise exception 'Self-check failed: expected 4 triggers, got %', v_trig_count;
+    raise exception 'Self-check failed: expected 4 triggers, got %', v_trig_count
+      using errcode = '55000';
   end if;
 
   foreach v_public_rpc in array v_public_rpc_list loop
     v_fn_oid := pg_catalog.to_regprocedure(v_public_rpc);
     if v_fn_oid is null then
-      raise exception 'Self-check failed: missing public RPC %', v_public_rpc;
+      raise exception 'Self-check failed: missing public RPC %', v_public_rpc
+        using errcode = '55000';
     end if;
 
-    select p.prosecdef, coalesce(p.proconfig, '{}'::text[])
-      into v_prosecdef, v_proconfig
+    select p.proowner,
+           p.prosecdef,
+           coalesce(p.proconfig, '{}'::text[]),
+           (coalesce(r.rolsuper, false) or coalesce(r.rolbypassrls, false))
+      into v_fn_owner_oid, v_prosecdef, v_proconfig, v_owner_bypasses_rls
       from pg_catalog.pg_proc p
+      join pg_catalog.pg_roles r on r.oid = p.proowner
      where p.oid = v_fn_oid;
 
-    if not v_prosecdef or not ('search_path=pg_catalog, public' = any(v_proconfig)) then
-      raise exception 'Self-check failed: RPC % must be SECURITY DEFINER with search_path=pg_catalog, public', v_public_rpc;
+    if not coalesce(v_prosecdef, false) or not ('search_path=pg_catalog, public' = any(v_proconfig)) then
+      raise exception 'Self-check failed: RPC % must be SECURITY DEFINER with search_path=pg_catalog, public', v_public_rpc
+        using errcode = '55000';
+    end if;
+
+    if not coalesce(v_owner_bypasses_rls, false)
+       or not pg_catalog.has_table_privilege(v_fn_owner_oid, 'public.recruitment_project_briefs'::pg_catalog.regclass, 'SELECT, INSERT, UPDATE')
+       or not pg_catalog.has_table_privilege(v_fn_owner_oid, 'public.recruitment_project_brief_labor_types'::pg_catalog.regclass, 'SELECT, INSERT, DELETE')
+       or not pg_catalog.has_table_privilege(v_fn_owner_oid, 'public.recruitment_project_brief_revisions'::pg_catalog.regclass, 'SELECT, INSERT')
+       or not pg_catalog.has_table_privilege(v_fn_owner_oid, 'public.industrial_parks'::pg_catalog.regclass, 'SELECT')
+       or not pg_catalog.has_table_privilege(v_fn_owner_oid, 'public.administrative_provinces'::pg_catalog.regclass, 'SELECT')
+       or not pg_catalog.has_function_privilege(v_fn_owner_oid, v_fn_oid, 'EXECUTE') then
+      raise exception 'Self-check failed: owner of RPC % must bypass FORCE RLS and hold required table privileges', v_public_rpc
+        using errcode = '55000';
     end if;
 
     if pg_catalog.has_function_privilege('public', v_fn_oid, 'EXECUTE')
        or pg_catalog.has_function_privilege('anon', v_fn_oid, 'EXECUTE')
        or pg_catalog.has_function_privilege('authenticated', v_fn_oid, 'EXECUTE')
        or not pg_catalog.has_function_privilege('service_role', v_fn_oid, 'EXECUTE') then
-      raise exception 'Self-check failed: unexpected ACL on public RPC %', v_public_rpc;
+      raise exception 'Self-check failed: unexpected ACL on public RPC %', v_public_rpc
+        using errcode = '55000';
     end if;
   end loop;
 
   foreach v_internal_fn in array v_internal_fn_list loop
     v_fn_oid := pg_catalog.to_regprocedure(v_internal_fn);
     if v_fn_oid is null then
-      raise exception 'Self-check failed: missing internal helper %', v_internal_fn;
+      raise exception 'Self-check failed: missing internal helper %', v_internal_fn
+        using errcode = '55000';
     end if;
 
-    select p.prosecdef, coalesce(p.proconfig, '{}'::text[])
-      into v_prosecdef, v_proconfig
+    select p.proowner,
+           p.prosecdef,
+           coalesce(p.proconfig, '{}'::text[]),
+           (coalesce(r.rolsuper, false) or coalesce(r.rolbypassrls, false))
+      into v_fn_owner_oid, v_prosecdef, v_proconfig, v_owner_bypasses_rls
       from pg_catalog.pg_proc p
+      join pg_catalog.pg_roles r on r.oid = p.proowner
      where p.oid = v_fn_oid;
 
-    if not v_prosecdef or not ('search_path=pg_catalog, public' = any(v_proconfig)) then
-      raise exception 'Self-check failed: internal helper % must be SECURITY DEFINER with search_path=pg_catalog, public', v_internal_fn;
+    if not coalesce(v_prosecdef, false) or not ('search_path=pg_catalog, public' = any(v_proconfig)) then
+      raise exception 'Self-check failed: internal helper % must be SECURITY DEFINER with search_path=pg_catalog, public', v_internal_fn
+        using errcode = '55000';
+    end if;
+
+    if not coalesce(v_owner_bypasses_rls, false)
+       or not pg_catalog.has_table_privilege(v_fn_owner_oid, 'public.recruitment_project_briefs'::pg_catalog.regclass, 'SELECT, INSERT, UPDATE')
+       or not pg_catalog.has_table_privilege(v_fn_owner_oid, 'public.recruitment_project_brief_labor_types'::pg_catalog.regclass, 'SELECT, INSERT, DELETE')
+       or not pg_catalog.has_table_privilege(v_fn_owner_oid, 'public.recruitment_project_brief_revisions'::pg_catalog.regclass, 'SELECT, INSERT')
+       or not pg_catalog.has_table_privilege(v_fn_owner_oid, 'public.industrial_parks'::pg_catalog.regclass, 'SELECT')
+       or not pg_catalog.has_table_privilege(v_fn_owner_oid, 'public.administrative_provinces'::pg_catalog.regclass, 'SELECT')
+       or not pg_catalog.has_function_privilege(v_fn_owner_oid, v_fn_oid, 'EXECUTE') then
+      raise exception 'Self-check failed: owner of internal helper % must bypass FORCE RLS and hold required table privileges', v_internal_fn
+        using errcode = '55000';
     end if;
 
     if pg_catalog.has_function_privilege('public', v_fn_oid, 'EXECUTE')
        or pg_catalog.has_function_privilege('anon', v_fn_oid, 'EXECUTE')
        or pg_catalog.has_function_privilege('authenticated', v_fn_oid, 'EXECUTE')
        or pg_catalog.has_function_privilege('service_role', v_fn_oid, 'EXECUTE') then
-      raise exception 'Self-check failed: internal helper % must have EXECUTE revoked from public, anon, authenticated, and service_role', v_internal_fn;
+      raise exception 'Self-check failed: internal helper % must have EXECUTE revoked from public, anon, authenticated, and service_role', v_internal_fn
+        using errcode = '55000';
     end if;
   end loop;
 end

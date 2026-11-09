@@ -30,7 +30,10 @@ import path from "node:path";
 import { test } from "node:test";
 import { Client } from "pg";
 
-import { RECRUITMENT_POSTS_MIGRATION_NAME } from "./lib/migration-validation.mjs";
+import {
+  RECRUITMENT_POSTS_MIGRATION_NAME,
+  migrationSqlForTransaction,
+} from "./lib/migration-validation.mjs";
 
 const ROOT = process.cwd();
 const MIGRATION_DIR = path.join(ROOT, "supabase", "migrations");
@@ -235,7 +238,41 @@ async function applyMigrations(client) {
     `migration inventory must include ${RECRUITMENT_POSTS_MIGRATION_NAME}`,
   );
   for (const name of names) {
-    await client.query(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
+    const sql = await readFile(path.join(MIGRATION_DIR, name), "utf8");
+    if (name === RECRUITMENT_POSTS_MIGRATION_NAME) {
+      await client.query(
+        "create role rp_nobypass_migrator nologin nobypassrls;" +
+          " grant postgres to rp_nobypass_migrator with admin false, inherit true, set false;",
+      );
+      await client.query("begin");
+      let nobypassErr = null;
+      try {
+        await client.query(
+          "set local session authorization rp_nobypass_migrator",
+        );
+        await client.query(migrationSqlForTransaction(sql));
+      } catch (err) {
+        nobypassErr = err;
+      } finally {
+        await client.query("rollback; reset session authorization;");
+      }
+      assert.ok(
+        nobypassErr,
+        "Migration must fail closed on real PostgreSQL when executed by a NOBYPASSRLS role that cannot SET to the direct_entries owner",
+      );
+      assert.equal(nobypassErr.code, "55000");
+      assert.match(nobypassErr.message, /must bypass FORCE RLS/);
+
+      const { rows: rolledBackRows } = await client.query(
+        "select to_regclass('public.recruitment_project_briefs') as rel",
+      );
+      assert.equal(
+        rolledBackRows[0].rel,
+        null,
+        "Failed NOBYPASSRLS migration must roll back atomically on real PostgreSQL",
+      );
+    }
+    await client.query(sql);
   }
 }
 
