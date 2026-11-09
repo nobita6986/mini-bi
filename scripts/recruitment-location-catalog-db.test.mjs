@@ -8,6 +8,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { PGlite } from "@electric-sql/pglite";
+import { canManageRecruitmentLocations } from "../src/lib/recruitment-locations/location-catalog-contract.ts";
 import { AUTH_PROLOGUE } from "./lib/s04c-read-fixture.mjs";
 import {
   RECRUITMENT_LOCATION_CATALOG_MIGRATION_NAME,
@@ -29,29 +30,17 @@ const LIENVU_BOD = {
   auth: "10000000-0000-4000-8000-0000000000c2",
   app: "20000000-0000-4000-8000-0000000000c2",
   email: "lienvu@hrpartner.vn",
-  display_name: "Lien Vu BOD",
-  capabilities: [
-    "entry_privileged_edit",
-    "change_review",
-    "pii_view",
-    "payment_view",
-    "worker_edit_history_view",
-  ],
+  display_name: "Lien Vu BOD (Privileged Edit)",
+  capabilities: ["entry_privileged_edit"],
   scopes: ["all"],
 };
 
-const NGATTT_BOD = {
+const BOD_EXECUTIVE_REPORTS = {
   auth: "10000000-0000-4000-8000-0000000000c3",
   app: "20000000-0000-4000-8000-0000000000c3",
-  email: "ngattt@hrpartner.vn",
-  display_name: "Nga TTT BOD",
-  capabilities: [
-    "entry_admin",
-    "change_review",
-    "pii_view",
-    "payment_view",
-    "worker_edit_history_view",
-  ],
+  email: "bod.reports@hrpartner.vn",
+  display_name: "BOD Executive Reports",
+  capabilities: ["report_analytics_view", "report_view"],
   scopes: ["all"],
 };
 
@@ -78,7 +67,12 @@ const TEAM_LEADER = {
   app: "20000000-0000-4000-8000-0000000000c6",
   email: "leader.user@hrpartner.vn",
   display_name: "Team Leader",
-  capabilities: ["entry_team", "team_manager_assign"],
+  capabilities: [
+    "entry_team",
+    "team_manager_assign",
+    "report_analytics_view",
+    "report_view",
+  ],
   scopes: ["team"],
 };
 
@@ -91,12 +85,12 @@ const REGULAR_STAFF = {
   scopes: ["own"],
 };
 
-const CATALOG_NO_ALL_SCOPE = {
+const ADMIN_TRIPLE_TEAM_ONLY = {
   auth: "10000000-0000-4000-8000-0000000000c8",
   app: "20000000-0000-4000-8000-0000000000c8",
-  email: "catalog.team@hrpartner.vn",
-  display_name: "Catalog Team Only",
-  capabilities: ["catalog_master_manage"],
+  email: "admin.team@hrpartner.vn",
+  display_name: "Full Admin Triple Without All Scope",
+  capabilities: ["entry_admin", "recruiter_master_manage", "team_master_manage"],
   scopes: ["team"],
 };
 
@@ -107,6 +101,51 @@ const DISABLED_ADMIN = {
   display_name: "Disabled Admin",
   enabled: false,
   capabilities: ["entry_admin", "recruiter_master_manage", "team_master_manage"],
+  scopes: ["all"],
+};
+
+const REVIEWER_PROJECT_ADMIN = {
+  auth: "10000000-0000-4000-8000-0000000000ca",
+  app: "20000000-0000-4000-8000-0000000000ca",
+  email: "reviewer.admin@hrpartner.vn",
+  display_name: "Reviewer + Project Admin",
+  capabilities: ["entry_admin", "change_review"],
+  scopes: ["all"],
+};
+
+const WORKER_HISTORY_VIEWER = {
+  auth: "10000000-0000-4000-8000-0000000000cb",
+  app: "20000000-0000-4000-8000-0000000000cb",
+  email: "history.viewer@hrpartner.vn",
+  display_name: "Worker Edit History Viewer",
+  capabilities: ["worker_edit_history_view"],
+  scopes: ["all"],
+};
+
+const BOD_PRIVILEGED_TEAM_ONLY = {
+  auth: "10000000-0000-4000-8000-0000000000cc",
+  app: "20000000-0000-4000-8000-0000000000cc",
+  email: "bod.priv.team@hrpartner.vn",
+  display_name: "BOD Privileged Team Only",
+  capabilities: ["entry_privileged_edit"],
+  scopes: ["team"],
+};
+
+const ANALYTICS_ONLY = {
+  auth: "10000000-0000-4000-8000-0000000000cd",
+  app: "20000000-0000-4000-8000-0000000000cd",
+  email: "analytics.only@hrpartner.vn",
+  display_name: "Analytics Only Viewer",
+  capabilities: ["report_analytics_view"],
+  scopes: ["all"],
+};
+
+const REPORT_VIEW_ONLY = {
+  auth: "10000000-0000-4000-8000-0000000000ce",
+  app: "20000000-0000-4000-8000-0000000000ce",
+  email: "report.view.only@hrpartner.vn",
+  display_name: "Report View Only Viewer",
+  capabilities: ["report_view"],
   scopes: ["all"],
 };
 
@@ -265,17 +304,24 @@ await db.exec(
    on conflict (team_id) do nothing;`,
 );
 
-for (const actor of [
+const ALL_PERSONAS = [
   NOBITA_ADMIN,
   LIENVU_BOD,
-  NGATTT_BOD,
+  BOD_EXECUTIVE_REPORTS,
   CATALOG_OPERATOR,
   PM_USER,
   TEAM_LEADER,
   REGULAR_STAFF,
-  CATALOG_NO_ALL_SCOPE,
+  ADMIN_TRIPLE_TEAM_ONLY,
   DISABLED_ADMIN,
-]) {
+  REVIEWER_PROJECT_ADMIN,
+  WORKER_HISTORY_VIEWER,
+  BOD_PRIVILEGED_TEAM_ONLY,
+  ANALYTICS_ONLY,
+  REPORT_VIEW_ONLY,
+];
+
+for (const actor of ALL_PERSONAS) {
   await addActor(db, actor);
 }
 
@@ -320,19 +366,19 @@ test("1. Seed verification & schema purity: 4 provinces and 13 industrial parks 
   assert.equal(parkList.total, 13);
 
   const expectedParks = [
-    ["VP_BA_THIEN_1", "VINH_PHUC", "Bá Thiện 1", "bathien1"],
-    ["VP_BA_THIEN_2", "VINH_PHUC", "Bá Thiện 2", "bathien2"],
-    ["VP_BINH_XUYEN_1", "VINH_PHUC", "Bình Xuyên 1", "binhxuyen1"],
-    ["VP_BINH_XUYEN_2", "VINH_PHUC", "Bình Xuyên 2", "binhxuyen2"],
-    ["VP_KHAI_QUANG", "VINH_PHUC", "Khai Quang", "khaiquang"],
-    ["VP_THANG_LONG_3", "VINH_PHUC", "Thăng Long 3", "thanglong3"],
-    ["PT_PHU_HA", "PHU_THO", "Phú Hà", "phuha"],
-    ["PT_CAM_KHE", "PHU_THO", "Cẩm Khê", "camkhe"],
-    ["PT_THUY_VAN", "PHU_THO", "Thụy Vân", "thuyvan"],
-    ["HB_LUONG_SON", "HOA_BINH", "Lương Sơn", "luongson"],
-    ["BG_QUANG_CHAU", "BAC_GIANG", "Quang Châu", "quangchau"],
-    ["BG_DINH_TRAM", "BAC_GIANG", "Đình Trám", "dinhtram"],
-    ["BG_VAN_TRUNG", "BAC_GIANG", "Vân Trung", "vantrung"],
+    ["VP_BA_THIEN_1", "VINH_PHUC", "KCN Bá Thiện 1", "bathien1"],
+    ["VP_BA_THIEN_2", "VINH_PHUC", "KCN Bá Thiện 2", "bathien2"],
+    ["VP_BINH_XUYEN_1", "VINH_PHUC", "KCN Bình Xuyên 1", "binhxuyen1"],
+    ["VP_BINH_XUYEN_2", "VINH_PHUC", "KCN Bình Xuyên 2", "binhxuyen2"],
+    ["VP_KHAI_QUANG", "VINH_PHUC", "KCN Khai Quang", "khaiquang"],
+    ["VP_THANG_LONG_3", "VINH_PHUC", "KCN Thăng Long 3", "thanglong3"],
+    ["PT_PHU_HA", "PHU_THO", "KCN Phú Hà", "phuha"],
+    ["PT_CAM_KHE", "PHU_THO", "KCN Cẩm Khê", "camkhe"],
+    ["PT_THUY_VAN", "PHU_THO", "KCN Thụy Vân", "thuyvan"],
+    ["HB_LUONG_SON", "HOA_BINH", "KCN Lương Sơn", "luongson"],
+    ["BG_QUANG_CHAU", "BAC_GIANG", "KCN Quang Châu", "quangchau"],
+    ["BG_DINH_TRAM", "BAC_GIANG", "KCN Đình Trám", "dinhtram"],
+    ["BG_VAN_TRUNG", "BAC_GIANG", "KCN Vân Trung", "vantrung"],
   ];
   const parksByCode = Object.fromEntries(
     parkList.industrial_parks.map((item) => [item.industrial_park_code, item]),
@@ -448,13 +494,38 @@ test("2. Normalization & duplicate protection: Khai Quang / KHAIQUANG / KCN Khai
   assert.equal(crossProvinceCreate.province_code, "PHU_THO");
 });
 
-test("3. Authority boundaries: Nobita (Full Admin), LienVu (BOD), NgaTTT (BOD), and Catalog Operator succeed; PM, Team Leader, regular staff, non-all scope, and disabled admin fail closed with 42501", async () => {
-  for (const allowedActor of [
-    NOBITA_ADMIN,
-    LIENVU_BOD,
-    NGATTT_BOD,
+test("3. Authority boundaries: strictly Full Admin triple, BOD (entry_privileged_edit), and BOD (report_analytics_view + report_view) with all scope succeed; missing all scope, Catalog Operator, Reviewer, Worker History Viewer, PM, Team Leader, regular staff, and disabled admin fail closed with 42501, and UI/API predicate matches SQL", async () => {
+  const allowedActors = [NOBITA_ADMIN, LIENVU_BOD, BOD_EXECUTIVE_REPORTS];
+  const deniedActors = [
     CATALOG_OPERATOR,
-  ]) {
+    REVIEWER_PROJECT_ADMIN,
+    WORKER_HISTORY_VIEWER,
+    ANALYTICS_ONLY,
+    REPORT_VIEW_ONLY,
+    PM_USER,
+    TEAM_LEADER,
+    REGULAR_STAFF,
+    ADMIN_TRIPLE_TEAM_ONLY,
+    BOD_PRIVILEGED_TEAM_ONLY,
+    DISABLED_ADMIN,
+  ];
+
+  for (const allowedActor of allowedActors) {
+    assert.equal(
+      canManageRecruitmentLocations({
+        capabilities: allowedActor.capabilities,
+        scopes: allowedActor.scopes.map((kind) => ({ kind })),
+      }),
+      true,
+      `Expected canManageRecruitmentLocations=true for ${allowedActor.email}`,
+    );
+
+    const { rows: boolRows } = await db.query(
+      "select public.recruitment_location_is_admin_or_bod($1::uuid) as allowed",
+      [allowedActor.app],
+    );
+    assert.equal(boolRows[0].allowed, true);
+
     const res = await rpc(db, "administrative_province_list_admin", {
       p_auth_subject: allowedActor.auth,
       p_app_user_id: allowedActor.app,
@@ -464,13 +535,28 @@ test("3. Authority boundaries: Nobita (Full Admin), LienVu (BOD), NgaTTT (BOD), 
     assert.ok(res.provinces.length >= 4);
   }
 
-  for (const deniedActor of [
-    PM_USER,
-    TEAM_LEADER,
-    REGULAR_STAFF,
-    CATALOG_NO_ALL_SCOPE,
-    DISABLED_ADMIN,
-  ]) {
+  for (const deniedActor of deniedActors) {
+    if (deniedActor.enabled !== false) {
+      assert.equal(
+        canManageRecruitmentLocations({
+          capabilities: deniedActor.capabilities,
+          scopes: deniedActor.scopes.map((kind) => ({ kind })),
+        }),
+        false,
+        `Expected canManageRecruitmentLocations=false for ${deniedActor.email}`,
+      );
+
+      const { rows: boolRows } = await db.query(
+        "select public.recruitment_location_is_admin_or_bod($1::uuid) as allowed",
+        [deniedActor.app],
+      );
+      assert.equal(
+        boolRows[0].allowed,
+        false,
+        `Expected SQL recruitment_location_is_admin_or_bod=false for ${deniedActor.email}`,
+      );
+    }
+
     const listErr = await rpcError(db, "administrative_province_list_admin", {
       p_auth_subject: deniedActor.auth,
       p_app_user_id: deniedActor.app,
@@ -559,10 +645,10 @@ test("4. Lifecycle, OCC expected_version, idempotency replay/conflict, soft deac
     "idempotency key reused with different input",
   );
 
-  // Update province by NgaTTT BOD
+  // Update province by BOD_EXECUTIVE_REPORTS
   const updatedProv = await rpc(db, "administrative_province_update_admin", {
-    p_auth_subject: NGATTT_BOD.auth,
-    p_app_user_id: NGATTT_BOD.app,
+    p_auth_subject: BOD_EXECUTIVE_REPORTS.auth,
+    p_app_user_id: BOD_EXECUTIVE_REPORTS.app,
     p_province_id: createdProv.province_id,
     p_expected_version: 1,
     p_display_name: "Bắc Ninh",
@@ -575,8 +661,8 @@ test("4. Lifecycle, OCC expected_version, idempotency replay/conflict, soft deac
 
   // Stale expected_version on update raises 40001
   const staleErr = await rpcError(db, "administrative_province_update_admin", {
-    p_auth_subject: NGATTT_BOD.auth,
-    p_app_user_id: NGATTT_BOD.app,
+    p_auth_subject: BOD_EXECUTIVE_REPORTS.auth,
+    p_app_user_id: BOD_EXECUTIVE_REPORTS.app,
     p_province_id: createdProv.province_id,
     p_expected_version: 1,
     p_display_name: "Bắc Ninh Stale",

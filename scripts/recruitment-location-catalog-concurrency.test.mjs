@@ -12,6 +12,7 @@
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
@@ -44,17 +45,29 @@ function binary(name) {
   return result.error ? null : candidate;
 }
 
-function run(file, args, { ignoreOutput = false } = {}) {
+function run(file, args, { ignoreOutput = false, logFile } = {}) {
   const result = spawnSync(file, args, {
     encoding: "utf8",
     windowsHide: true,
     ...(ignoreOutput ? { stdio: "ignore" } : {}),
   });
-  assert.equal(
-    result.status,
-    0,
-    `${path.basename(file)} failed:\n${result.stderr || result.stdout}`,
-  );
+  if (result.status !== 0) {
+    const details = [
+      result.stderr ? `stderr:\n${result.stderr.trim()}` : null,
+      result.stdout ? `stdout:\n${result.stdout.trim()}` : null,
+      logFile && existsSync(logFile)
+        ? `postgres.log:\n${readFileSync(logFile, "utf8").trim()}`
+        : null,
+      result.error ? `spawnError: ${result.error.message}` : null,
+    ]
+      .filter(Boolean)
+      .join("\n");
+    assert.equal(
+      result.status,
+      0,
+      `${path.basename(file)} failed (exit=${result.status}, signal=${result.signal ?? "none"}):\n${details || "(no output captured)"}`,
+    );
+  }
 }
 
 async function freePort() {
@@ -120,14 +133,13 @@ test("Real PostgreSQL concurrency: duplicate normalized_key creation race, expec
 
   try {
     run(initdb, [
-      "-D",
-      dataDir,
-      "-U",
-      "postgres",
-      "-A",
-      "trust",
+      "--username=postgres",
+      "--auth-local=trust",
+      "--auth-host=trust",
+      "--no-locale",
       "--encoding=UTF8",
-      "--locale=C",
+      "--pgdata",
+      dataDir,
     ]);
     run(
       pgCtl,
@@ -136,12 +148,12 @@ test("Real PostgreSQL concurrency: duplicate normalized_key creation race, expec
         dataDir,
         "-l",
         logFile,
-        "-w",
         "-o",
-        `-F -h 127.0.0.1 -p ${port}`,
+        `-F -h 127.0.0.1 -p ${port}${process.platform === "win32" ? "" : ` -k ${tempDir}`}`,
+        "-w",
         "start",
       ],
-      { ignoreOutput: true },
+      { ignoreOutput: process.platform === "win32", logFile },
     );
     started = true;
 

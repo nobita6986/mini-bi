@@ -336,18 +336,41 @@ alter table public.industrial_park_revisions force row level security;
 -- -----------------------------------------------------------------------------
 -- 4. Authority guard & internal lock / snapshot helpers.
 -- -----------------------------------------------------------------------------
--- Full Admin / BOD authority guard:
---   - Requires valid, enabled actor mapping (`direct_entry_assert_actor_mapping`).
+-- Reusable boolean Full Admin / BOD check:
 --   - Requires effective `all` scope (`direct_entry_has_scope(p_app_user_id, 'all')`).
---   - Accepts:
+--   - Accepts strictly one of three branches:
 --       (a) Canonical Full Admin triple (`entry_admin` + `recruiter_master_manage`
 --           + `team_master_manage`),
---       (b) Canonical catalog operator (`catalog_master_manage`),
---       (c) Canonical BOD privileged authority (`entry_privileged_edit`), or
---       (d) Canonical BOD/Accounting Reviewer+Admin bundle (`entry_admin` +
---           `change_review` + `pii_view` + `payment_view`).
---   - Zero hardcoded emails; PMs, Team Leaders, and regular BI users are denied
---     with 42501.
+--       (b) Canonical BOD privileged authority (`entry_privileged_edit`), or
+--       (c) Canonical BOD executive reports bundle (`report_analytics_view` + `report_view`).
+--   - Explicitly excludes `catalog_master_manage`, `entry_admin + change_review`,
+--     and `worker_edit_history_view`.
+--   - Zero hardcoded emails or logins.
+create or replace function public.recruitment_location_is_admin_or_bod(
+  p_app_user_id uuid
+)
+returns boolean
+language sql
+stable
+security definer
+set search_path = pg_catalog, public
+as $function$
+  select p_app_user_id is not null
+    and public.direct_entry_has_scope(p_app_user_id, 'all')
+    and (
+      (
+        public.direct_entry_has_capability(p_app_user_id, 'entry_admin')
+        and public.direct_entry_has_capability(p_app_user_id, 'recruiter_master_manage')
+        and public.direct_entry_has_capability(p_app_user_id, 'team_master_manage')
+      )
+      or public.direct_entry_has_capability(p_app_user_id, 'entry_privileged_edit')
+      or (
+        public.direct_entry_has_capability(p_app_user_id, 'report_analytics_view')
+        and public.direct_entry_has_capability(p_app_user_id, 'report_view')
+      )
+    )
+$function$;
+
 create or replace function public.recruitment_location_assert_admin_or_bod(
   p_auth_subject uuid,
   p_app_user_id uuid
@@ -358,53 +381,24 @@ stable
 security definer
 set search_path = pg_catalog, public
 as $function$
-declare
-  v_full_admin boolean;
-  v_bod_reviewer_admin boolean;
 begin
   perform public.direct_entry_assert_actor_mapping(p_auth_subject, p_app_user_id);
 
-  if not public.direct_entry_has_scope(p_app_user_id, 'all') then
-    raise exception 'location catalog requires all scope' using errcode = '42501';
+  if not public.recruitment_location_is_admin_or_bod(p_app_user_id) then
+    raise exception 'location catalog admin or bod authority denied' using errcode = '42501';
   end if;
 
-  v_full_admin :=
-    public.direct_entry_has_capability(p_app_user_id, 'entry_admin')
-    and public.direct_entry_has_capability(p_app_user_id, 'recruiter_master_manage')
-    and public.direct_entry_has_capability(p_app_user_id, 'team_master_manage');
-
-  if v_full_admin then
+  if public.direct_entry_has_capability(p_app_user_id, 'entry_admin')
+     and public.direct_entry_has_capability(p_app_user_id, 'recruiter_master_manage')
+     and public.direct_entry_has_capability(p_app_user_id, 'team_master_manage') then
     return 'entry_admin';
-  end if;
-
-  if public.direct_entry_has_capability(p_app_user_id, 'catalog_master_manage') then
-    return 'catalog_master_manage';
   end if;
 
   if public.direct_entry_has_capability(p_app_user_id, 'entry_privileged_edit') then
     return 'entry_privileged_edit';
   end if;
 
-  v_bod_reviewer_admin :=
-    (
-      public.direct_entry_has_capability(p_app_user_id, 'entry_admin')
-      and public.direct_entry_has_capability(p_app_user_id, 'change_review')
-    )
-    or public.direct_entry_has_capability(p_app_user_id, 'worker_edit_history_view')
-    or (
-      public.direct_entry_has_capability(p_app_user_id, 'report_analytics_view')
-      and public.direct_entry_has_capability(p_app_user_id, 'report_view')
-    );
-
-  if v_bod_reviewer_admin then
-    return case
-      when public.direct_entry_has_capability(p_app_user_id, 'entry_admin') then 'entry_admin'
-      when public.direct_entry_has_capability(p_app_user_id, 'worker_edit_history_view') then 'worker_edit_history_view'
-      else 'report_analytics_view'
-    end;
-  end if;
-
-  raise exception 'location catalog admin or bod authority denied' using errcode = '42501';
+  return 'report_analytics_view';
 end;
 $function$;
 
@@ -1798,19 +1792,19 @@ where public.administrative_provinces.display_name is distinct from excluded.dis
 
 with seed_parks (industrial_park_code, province_code, display_name) as (
   values
-    ('VP_BA_THIEN_1', 'VINH_PHUC', 'Bá Thiện 1'),
-    ('VP_BA_THIEN_2', 'VINH_PHUC', 'Bá Thiện 2'),
-    ('VP_BINH_XUYEN_1', 'VINH_PHUC', 'Bình Xuyên 1'),
-    ('VP_BINH_XUYEN_2', 'VINH_PHUC', 'Bình Xuyên 2'),
-    ('VP_KHAI_QUANG', 'VINH_PHUC', 'Khai Quang'),
-    ('VP_THANG_LONG_3', 'VINH_PHUC', 'Thăng Long 3'),
-    ('PT_PHU_HA', 'PHU_THO', 'Phú Hà'),
-    ('PT_CAM_KHE', 'PHU_THO', 'Cẩm Khê'),
-    ('PT_THUY_VAN', 'PHU_THO', 'Thụy Vân'),
-    ('HB_LUONG_SON', 'HOA_BINH', 'Lương Sơn'),
-    ('BG_QUANG_CHAU', 'BAC_GIANG', 'Quang Châu'),
-    ('BG_DINH_TRAM', 'BAC_GIANG', 'Đình Trám'),
-    ('BG_VAN_TRUNG', 'BAC_GIANG', 'Vân Trung')
+    ('VP_BA_THIEN_1', 'VINH_PHUC', 'KCN Bá Thiện 1'),
+    ('VP_BA_THIEN_2', 'VINH_PHUC', 'KCN Bá Thiện 2'),
+    ('VP_BINH_XUYEN_1', 'VINH_PHUC', 'KCN Bình Xuyên 1'),
+    ('VP_BINH_XUYEN_2', 'VINH_PHUC', 'KCN Bình Xuyên 2'),
+    ('VP_KHAI_QUANG', 'VINH_PHUC', 'KCN Khai Quang'),
+    ('VP_THANG_LONG_3', 'VINH_PHUC', 'KCN Thăng Long 3'),
+    ('PT_PHU_HA', 'PHU_THO', 'KCN Phú Hà'),
+    ('PT_CAM_KHE', 'PHU_THO', 'KCN Cẩm Khê'),
+    ('PT_THUY_VAN', 'PHU_THO', 'KCN Thụy Vân'),
+    ('HB_LUONG_SON', 'HOA_BINH', 'KCN Lương Sơn'),
+    ('BG_QUANG_CHAU', 'BAC_GIANG', 'KCN Quang Châu'),
+    ('BG_DINH_TRAM', 'BAC_GIANG', 'KCN Đình Trám'),
+    ('BG_VAN_TRUNG', 'BAC_GIANG', 'KCN Vân Trung')
 )
 insert into public.industrial_parks (
   industrial_park_code,
@@ -1957,6 +1951,7 @@ revoke all on function
   public.industrial_park_normalize_key(text),
   public.recruitment_location_province_write_guard(),
   public.recruitment_location_industrial_park_write_guard(),
+  public.recruitment_location_is_admin_or_bod(uuid),
   public.recruitment_location_assert_admin_or_bod(uuid, uuid),
   public.recruitment_location_province_snapshot(public.administrative_provinces),
   public.recruitment_location_industrial_park_snapshot(public.industrial_parks),
@@ -2176,7 +2171,8 @@ begin
      'BG_QUANG_CHAU',
      'BG_DINH_TRAM',
      'BG_VAN_TRUNG'
-   );
+   )
+     and display_name like 'KCN %';
 
   if v_park_seed_count <> 13 then
     raise exception 'RECRUITMENT_LOCATION_SELF_CHECK_PARK_SEED_FAILED (got %)', v_park_seed_count

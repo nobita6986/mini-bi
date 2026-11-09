@@ -6,6 +6,7 @@ import {
   hasExactKeysWithOptionalReason,
   projectOptionalActionReason,
 } from "../direct-entry/action-reason.ts";
+import { canManageRecruitmentLocations } from "./location-catalog-contract.ts";
 import type { LocationCatalogRepository } from "./location-catalog-repository.ts";
 
 const UUID_PATTERN =
@@ -152,6 +153,9 @@ async function resolveTrustedActor(
     const appUserId = actor ? readUuid(actor.app_user_id) : null;
     if (!authSubject || !appUserId) {
       return { ok: false, response: fail("ACTOR_NOT_AVAILABLE", 403) };
+    }
+    if (!canManageRecruitmentLocations(actor)) {
+      return { ok: false, response: fail("LOCATION_CATALOG_DENIED", 403) };
     }
     return {
       ok: true,

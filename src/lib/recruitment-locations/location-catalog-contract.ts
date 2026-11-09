@@ -83,6 +83,49 @@ export type AdminIndustrialParkCreateResult = AdminIndustrialParkMutation & {
   created: true;
 };
 
+export type RecruitmentLocationAuthorityActor = {
+  capabilities: readonly string[];
+  scopes: readonly { kind: string }[];
+};
+
+/**
+ * Canonical Full Admin / BOD authority predicate for managing Recruitment
+ * Provinces & Industrial Parks. Shared by UI and API layers and matches
+ * `public.recruitment_location_is_admin_or_bod` in SQL:
+ *   has_all_scope AND (
+ *     (entry_admin AND recruiter_master_manage AND team_master_manage)
+ *     OR entry_privileged_edit
+ *     OR (report_analytics_view AND report_view)
+ *   )
+ */
+export function canManageRecruitmentLocations(
+  actor: RecruitmentLocationAuthorityActor | null | undefined,
+): boolean {
+  if (
+    !actor ||
+    !Array.isArray(actor.capabilities) ||
+    !Array.isArray(actor.scopes)
+  ) {
+    return false;
+  }
+  const hasAllScope = actor.scopes.some((scope) => scope?.kind === "all");
+  if (!hasAllScope) {
+    return false;
+  }
+  const caps = new Set(actor.capabilities);
+  const isFullAdmin =
+    caps.has("entry_admin") &&
+    caps.has("recruiter_master_manage") &&
+    caps.has("team_master_manage");
+  if (isFullAdmin) {
+    return true;
+  }
+  if (caps.has("entry_privileged_edit")) {
+    return true;
+  }
+  return caps.has("report_analytics_view") && caps.has("report_view");
+}
+
 export function normalizeLocationKey(
   rawText: string,
   stripLeadingType: "none" | "province" | "industrial_park" = "none",

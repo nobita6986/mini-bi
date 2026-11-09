@@ -19,6 +19,7 @@ import {
   updateProvinceCatalog,
 } from "./location-catalog-api.ts";
 import {
+  canManageRecruitmentLocations,
   normalizeIndustrialParkKey,
   normalizeProvinceKey,
   projectAdminIndustrialPark,
@@ -38,6 +39,12 @@ import {
 const ACTOR = {
   auth_subject: "11111111-1111-4111-8111-111111111111",
   app_user_id: "22222222-2222-4222-8222-222222222222",
+  capabilities: [
+    "entry_admin",
+    "recruiter_master_manage",
+    "team_master_manage",
+  ],
+  scopes: [{ kind: "all" }],
 };
 const PROVINCE_ID = "33333333-3333-4333-8333-333333333333";
 const PARK_ID = "44444444-4444-4444-8444-444444444444";
@@ -89,7 +96,7 @@ const PARK_ITEM = {
   province_code: "VINH_PHUC",
   province_display_name: "Vĩnh Phúc",
   province_active: true,
-  display_name: "Khai Quang",
+  display_name: "KCN Khai Quang",
   normalized_key: "khaiquang",
   active: true,
   version: 1,
@@ -113,7 +120,7 @@ const PARK_MUTATION = {
   province_id: PROVINCE_ID,
   province_code: "VINH_PHUC",
   province_display_name: "Vĩnh Phúc",
-  display_name: "Khai Quang",
+  display_name: "KCN Khai Quang",
   normalized_key: "khaiquang",
   active: true,
   version: 2,
@@ -397,6 +404,70 @@ test("5. Session & repository error mapping across all 8 endpoints (200, 400, 40
   );
   assert.equal(disabledRes.status, 403);
   assert.equal((await disabledRes.json()).code, "ACTOR_NOT_AVAILABLE");
+
+  // Shared UI/API predicate & session-level 403 LOCATION_CATALOG_DENIED for non-Full-Admin/BOD personas
+  assert.equal(
+    canManageRecruitmentLocations({
+      capabilities: ["entry_admin", "recruiter_master_manage", "team_master_manage"],
+      scopes: [{ kind: "all" }],
+    }),
+    true,
+  );
+  assert.equal(
+    canManageRecruitmentLocations({
+      capabilities: ["entry_privileged_edit"],
+      scopes: [{ kind: "all" }],
+    }),
+    true,
+  );
+  assert.equal(
+    canManageRecruitmentLocations({
+      capabilities: ["report_analytics_view", "report_view"],
+      scopes: [{ kind: "all" }],
+    }),
+    true,
+  );
+
+  for (const deniedPersona of [
+    { capabilities: ["catalog_master_manage"], scopes: [{ kind: "all" }] },
+    { capabilities: ["entry_admin", "change_review"], scopes: [{ kind: "all" }] },
+    { capabilities: ["worker_edit_history_view"], scopes: [{ kind: "all" }] },
+    { capabilities: ["report_analytics_view"], scopes: [{ kind: "all" }] },
+    { capabilities: ["report_view"], scopes: [{ kind: "all" }] },
+    {
+      capabilities: ["entry_admin", "recruiter_master_manage", "team_master_manage"],
+      scopes: [{ kind: "team" }],
+    },
+    { capabilities: ["entry_privileged_edit"], scopes: [{ kind: "team" }] },
+    { capabilities: ["change_request_create"], scopes: [{ kind: "own" }] },
+    { capabilities: ["submission_create", "entry_own"], scopes: [{ kind: "own" }] },
+  ]) {
+    assert.equal(canManageRecruitmentLocations(deniedPersona), false);
+    const nonAdminDeps = makeDeps(
+      { ok: true, data: PROVINCE_LIST },
+      {
+        actor: {
+          ok: true,
+          actor: {
+            auth_subject: ACTOR.auth_subject,
+            app_user_id: ACTOR.app_user_id,
+            ...deniedPersona,
+          },
+        },
+      },
+    );
+    const nonAdminRes = await listProvincesCatalog(
+      new Request("https://app.test/api/admin/catalog/provinces"),
+      "true",
+      nonAdminDeps.dependencies,
+    );
+    assert.equal(nonAdminRes.status, 403);
+    assert.deepEqual(await nonAdminRes.json(), {
+      ok: false,
+      code: "LOCATION_CATALOG_DENIED",
+    });
+    assert.equal(nonAdminDeps.calls.rpc.length, 0);
+  }
 
   // Idempotency-Key header mismatch -> 400
   const okDeps = makeDeps({ ok: true, data: PROVINCE_MUTATION });
