@@ -268,7 +268,7 @@ async function createDelegation(
 }
 
 test("F2 contract adds exactly the two locked capabilities and RLS-protected tables", async () => {
-  assert.equal(CAPABILITIES.length, 30, "Active capability registry includes F2, VFIN-01, duplicate CCCD, worker history, and offboarding report view tokens");
+  assert.equal(CAPABILITIES.length, 29, "Active capability registry includes F2, VFIN-01, duplicate CCCD, and worker history tokens");
   assert.ok(CAPABILITIES.includes("report_review"));
   assert.ok(CAPABILITIES.includes("report_delegate"));
 
@@ -281,7 +281,7 @@ test("F2 contract adds exactly the two locked capabilities and RLS-protected tab
        and c.conname = 'direct_entry_capability_grants_capability_check'`);
   assert.equal(constraints.length, 1);
   const dbTokens = [...constraints[0].definition.matchAll(/'([^']+)'/g)].map((match) => match[1]);
-  assert.equal(dbTokens.length, 34, "DB capability vocabulary is 30 active + 4 retired compatibility tokens");
+  assert.equal(dbTokens.length, 33, "DB capability vocabulary is 29 active + 4 retired compatibility tokens");
   assert.ok(dbTokens.includes("report_review"));
   assert.ok(dbTokens.includes("report_delegate"));
 
