@@ -38,6 +38,7 @@ export const CAPABILITIES = [
   "vendor_finance_record",
   "duplicate_cccd_withdraw",
   "worker_edit_history_view",
+  "offboarding_report_view",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];

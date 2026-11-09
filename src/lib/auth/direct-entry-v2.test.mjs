@@ -25,6 +25,7 @@ test("authorization hardening is versioned", () => {
   assert.equal(CAPABILITIES.some((capability) => retired.includes(capability)), false);
   assert.ok(CAPABILITIES.includes("duplicate_cccd_withdraw"));
   assert.ok(CAPABILITIES.includes("worker_edit_history_view"));
+  assert.ok(CAPABILITIES.includes("offboarding_report_view"));
 });
 
 function repositoryFor(person) {

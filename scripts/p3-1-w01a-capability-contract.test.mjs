@@ -52,10 +52,12 @@ const VFIN_TOKENS = ["vendor_finance_view", "vendor_finance_record"];
 const DUPLICATE_CCCD_TOKENS = ["duplicate_cccd_withdraw"];
 const WORKER_EDIT_HISTORY_MIGRATION = "20261031120000_worker_edit_history_admin.sql";
 const WORKER_EDIT_HISTORY_TOKENS = ["worker_edit_history_view"];
+const OFFBOARDING_REPORT_VIEW_MIGRATION = "20261109160000_hf_tunk_offboarding_report_view.sql";
+const OFFBOARDING_REPORT_VIEW_TOKENS = ["offboarding_report_view"];
 const LEGACY_TOKEN_COUNT = 21;
 const RETIRED_TOKENS = ["pii_view", "pii_export", "payment_view", "payment_edit"];
-const TOKEN_COUNT = 33;
-const ACTIVE_TOKEN_COUNT = 29;
+const TOKEN_COUNT = 34;
+const ACTIVE_TOKEN_COUNT = 30;
 const UNKNOWN_TOKEN = "unknown_capability_probe";
 
 const AUTH_SUBJECT = "10000000-0000-4000-8000-00000000c001";
@@ -151,6 +153,7 @@ test("the auth contract is versioned as direct-entry-auth/1.7 without retired ca
   for (const token of VFIN_TOKENS) assert.ok(CAPABILITIES.includes(token), token);
   for (const token of DUPLICATE_CCCD_TOKENS) assert.ok(CAPABILITIES.includes(token), token);
   for (const token of WORKER_EDIT_HISTORY_TOKENS) assert.ok(CAPABILITIES.includes(token), token);
+  for (const token of OFFBOARDING_REPORT_VIEW_TOKENS) assert.ok(CAPABILITIES.includes(token), token);
 });
 
 test("database preserves legacy grant storage while active SQL and TypeScript agree", async () => {
@@ -173,6 +176,7 @@ test("migration 67 is append-only: the frozen foundation vocabulary is untouched
   const names = await migrationNames();
   assert.ok(names.includes(NEW_MIGRATION), "migration #67 must exist");
   assert.ok(names.includes(WORKER_EDIT_HISTORY_MIGRATION), "worker history capability migration must exist");
+  assert.ok(names.includes(OFFBOARDING_REPORT_VIEW_MIGRATION), "offboarding report view capability migration must exist");
   assert.ok(NEW_MIGRATION > FOUNDATION_MIGRATION, "migration #67 must sort after the foundation");
 
   // No historical migration was edited to know about the new tokens. Migrations
@@ -195,6 +199,14 @@ test("migration 67 is append-only: the frozen foundation vocabulary is untouched
     }
   }
 
+  for (const name of names) {
+    if (name >= OFFBOARDING_REPORT_VIEW_MIGRATION) continue;
+    const sql = await readMigration(name);
+    for (const token of OFFBOARDING_REPORT_VIEW_TOKENS) {
+      assert.equal(sql.includes(token), false, token + " must not appear in " + name);
+    }
+  }
+
   const foundationTokens = foundationVocabulary(await readMigration(FOUNDATION_MIGRATION));
   assert.equal(foundationTokens.length, LEGACY_TOKEN_COUNT);
   assert.deepEqual(
@@ -207,7 +219,8 @@ test("migration 67 is append-only: the frozen foundation vocabulary is untouched
           !F2_WORK_REPORT_TOKENS.includes(token) &&
           !VFIN_TOKENS.includes(token) &&
           !DUPLICATE_CCCD_TOKENS.includes(token) &&
-          !WORKER_EDIT_HISTORY_TOKENS.includes(token),
+          !WORKER_EDIT_HISTORY_TOKENS.includes(token) &&
+          !OFFBOARDING_REPORT_VIEW_TOKENS.includes(token),
       )
       .concat(RETIRED_TOKENS)
       .sort(),
@@ -218,7 +231,7 @@ test("migration 67 is append-only: the frozen foundation vocabulary is untouched
   assert.deepEqual(
     schemaTokens.filter((token) => !foundationTokens.includes(token)).sort(),
     [...NEW_TOKENS, ...F1_WORK_REPORT_TOKENS, ...F2_WORK_REPORT_TOKENS, ...VFIN_TOKENS,
-      ...DUPLICATE_CCCD_TOKENS, ...WORKER_EDIT_HISTORY_TOKENS].sort(),
+      ...DUPLICATE_CCCD_TOKENS, ...WORKER_EDIT_HISTORY_TOKENS, ...OFFBOARDING_REPORT_VIEW_TOKENS].sort(),
   );
   await db.close();
 });
