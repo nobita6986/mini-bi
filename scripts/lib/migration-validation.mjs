@@ -371,6 +371,18 @@ export const VFIN_05_COMBINED_PAYMENT_OFFSET_RPC_SIGNATURES = Object.freeze([
   ...VFIN_04_SHARED_VENDOR_ADVANCE_RPC_SIGNATURES,
   ...VFIN_05_COMBINED_PAYMENT_OFFSET_NEW_RPC_SIGNATURES,
 ]);
+export const RECRUITMENT_LOCATION_CATALOG_MIGRATION_NAME =
+  "20261109200000_recruitment_location_catalog_foundation.sql";
+export const RECRUITMENT_LOCATION_CATALOG_RPC_SIGNATURES = Object.freeze([
+  "public.administrative_province_list_admin(uuid, uuid, text, boolean, integer, integer)",
+  "public.administrative_province_create_admin(uuid, uuid, integer, text, text, text, text)",
+  "public.administrative_province_update_admin(uuid, uuid, uuid, integer, text, text, text)",
+  "public.administrative_province_set_active_admin(uuid, uuid, uuid, boolean, integer, text, text)",
+  "public.industrial_park_list_admin(uuid, uuid, uuid, text, boolean, integer, integer)",
+  "public.industrial_park_create_admin(uuid, uuid, integer, text, uuid, text, text, text)",
+  "public.industrial_park_update_admin(uuid, uuid, uuid, integer, uuid, text, text, text)",
+  "public.industrial_park_set_active_admin(uuid, uuid, uuid, boolean, integer, text, text)",
+]);
 export const F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES = Object.freeze([
   "public.work_report_list_templates(uuid, uuid)",
   "public.work_report_get_template(uuid, uuid, uuid)",
@@ -389,7 +401,7 @@ export const F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES = Object.freeze([
   "public.work_report_submit(uuid, uuid, uuid, jsonb, integer, text)",
 ]);
 export const S0_T1_C_TARGET_ROUTINE_PATTERN =
-  "^(direct_entry_|worker_edit_history_|work_report_|attendance_|org_department_|vendor_finance_|leave_management_|salary_advance_|hrp_sync_|ai_report_|ai_provider_config_|recruitment_|(expand|replace|reject|upsert)_daily_recruitment|record_recruitment_source_failure_|set_updated_at$)";
+  "^(direct_entry_|worker_edit_history_|work_report_|attendance_|org_department_|vendor_finance_|leave_management_|salary_advance_|hrp_sync_|ai_report_|ai_provider_config_|recruitment_|administrative_province_|industrial_park_|(expand|replace|reject|upsert)_daily_recruitment|record_recruitment_source_failure_|set_updated_at$)";
 
 export function migrationChecksum(text) {
   // Git may materialize SQL files as CRLF on Windows even though the same
@@ -621,7 +633,8 @@ export async function verifyS0T1CHistoricalCompatibility(
     workerDirectoryLaborTypeFilterApplied = false,
     vfin04SharedVendorAdvanceApplied = false,
     vfin05CombinedPaymentOffsetApplied = false,
-    t1aHotfixWorkerDetailAndSalaryAdvanceAccessApplied = false } = {},
+    t1aHotfixWorkerDetailAndSalaryAdvanceAccessApplied = false,
+    recruitmentLocationCatalogApplied = false } = {},
 ) {
   const baseAllowlist = extractS0T1CAllowlistSignatures(migrationSql);
   if (baseAllowlist.length === 0) {
@@ -730,6 +743,9 @@ export async function verifyS0T1CHistoricalCompatibility(
     ...(workerDirectoryLaborTypeFilterApplied
       ? WORKER_DIRECTORY_LABOR_TYPE_FILTER_RPC_SIGNATURES
       : []),
+    ...(recruitmentLocationCatalogApplied
+      ? RECRUITMENT_LOCATION_CATALOG_RPC_SIGNATURES
+      : []),
   ];
 
   const { rows } = await client.query(
@@ -788,7 +804,7 @@ export async function verifyS0T1CHistoricalCompatibility(
           join pg_catalog.pg_namespace n on n.oid = p.pronamespace
          where n.nspname = 'public'
            and p.prokind in ('f', 'p')
-           and p.proname ~ '^(direct_entry_|worker_edit_history_|attendance_|org_department_|vendor_finance_|leave_management_|salary_advance_|hrp_sync_)'
+           and p.proname ~ '^(direct_entry_|worker_edit_history_|attendance_|org_department_|vendor_finance_|leave_management_|salary_advance_|recruitment_location_|administrative_province_|industrial_park_|hrp_sync_)'
            and p.prosecdef
            and not coalesce(
              'search_path=pg_catalog, public' = any(p.proconfig)
@@ -1002,6 +1018,8 @@ export async function verifyAppliedMigrationChecksum(
           appliedMap.has(VFIN_05_COMBINED_PAYMENT_OFFSET_MIGRATION_NAME),
         t1aHotfixWorkerDetailAndSalaryAdvanceAccessApplied:
           appliedMap.has(T1A_HOTFIX_WORKER_DETAIL_AND_SALARY_ADVANCE_ACCESS_MIGRATION_NAME),
+        recruitmentLocationCatalogApplied:
+          appliedMap.has(RECRUITMENT_LOCATION_CATALOG_MIGRATION_NAME),
       },
     );
     if (postconditions.ok) {
