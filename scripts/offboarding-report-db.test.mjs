@@ -1091,7 +1091,62 @@ test("HF tunk.mkt offboarding_report_view: least-privilege team/all read authori
       (err) => err.code === "42501",
     );
 
-    // 2. Apply migration when tunk.mkt is provisioned -> grants offboarding_report_view ONLY to tunk.mkt, idempotent on re-run
+    // 1b. Non-canonical domain account `tunk.mkt@other.vn` alone must NEVER receive the grant
+    const TUNK_OTHER_DOMAIN = { auth: uuid(507), app: uuid(517) };
+    await db.exec("begin");
+    await db.query("delete from public.direct_entry_scope_grants where app_user_id = $1::uuid", [
+      TUNK.app,
+    ]);
+    await db.query("delete from public.direct_entry_capability_grants where app_user_id = $1::uuid", [
+      TUNK.app,
+    ]);
+    await db.query("delete from public.direct_entry_app_users where app_user_id = $1::uuid", [
+      TUNK.app,
+    ]);
+    await db.query("delete from auth.users where id = $1::uuid", [TUNK.auth]);
+    await db.query("insert into auth.users (id, email) values ($1::uuid, 'tunk.mkt@other.vn')", [
+      TUNK_OTHER_DOMAIN.auth,
+    ]);
+    await db.query(
+      `insert into public.direct_entry_app_users (app_user_id, auth_subject, enabled, display_name)
+       values ($1::uuid, $2::uuid, true, 'Tunk Other Domain')`,
+      [TUNK_OTHER_DOMAIN.app, TUNK_OTHER_DOMAIN.auth],
+    );
+    await db.query(
+      `insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from, is_current)
+       values ($1::uuid, 'team', $2::uuid, '2020-01-01', true)`,
+      [TUNK_OTHER_DOMAIN.app, TEAM_MKT],
+    );
+    await db.exec(migrationSqlForTransaction(tunkMigrationSql));
+    const wrongDomainGrantRows = (
+      await db.query(
+        `select app_user_id from public.direct_entry_capability_grants
+          where capability = 'offboarding_report_view'`,
+      )
+    ).rows;
+    assert.deepEqual(
+      wrongDomainGrantRows,
+      [],
+      "tunk.mkt@other.vn alone must never receive offboarding_report_view",
+    );
+    await db.exec("rollback");
+
+    // 2. Apply migration when canonical tunk.mkt@hrpartner.vn AND non-canonical tunk.mkt@other.vn both exist ->
+    //    tunk.mkt@other.vn is NOT treated as a duplicate of the canonical account, and ONLY tunk.mkt@hrpartner.vn receives the grant
+    await db.query("insert into auth.users (id, email) values ($1::uuid, 'tunk.mkt@other.vn')", [
+      TUNK_OTHER_DOMAIN.auth,
+    ]);
+    await db.query(
+      `insert into public.direct_entry_app_users (app_user_id, auth_subject, enabled, display_name)
+       values ($1::uuid, $2::uuid, true, 'Tunk Other Domain')`,
+      [TUNK_OTHER_DOMAIN.app, TUNK_OTHER_DOMAIN.auth],
+    );
+    await db.query(
+      `insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from, is_current)
+       values ($1::uuid, 'team', $2::uuid, '2020-01-01', true)`,
+      [TUNK_OTHER_DOMAIN.app, TEAM_MKT],
+    );
+
     await db.exec(tunkMigrationSql);
     await db.exec(tunkMigrationSql);
 
@@ -1109,6 +1164,10 @@ test("HF tunk.mkt offboarding_report_view: least-privilege team/all read authori
         is_current: true,
       },
     ]);
+    await assert.rejects(
+      () => callList(TUNK_OTHER_DOMAIN),
+      (err) => err.code === "42501",
+    );
 
     // Existing capabilities and scopes of tunk.mkt are untouched; other.mkt remains denied
     const tunkCaps = (
@@ -1147,7 +1206,7 @@ test("HF tunk.mkt offboarding_report_view: least-privilege team/all read authori
       (err) => err.code === "42501",
     );
 
-    // 4. Fail-closed migration guards if tunk.mkt is disabled or duplicated
+    // 4. Fail-closed migration guards if canonical tunk.mkt@hrpartner.vn is disabled or duplicated
     await db.exec("begin");
     await db.query(
       "update public.direct_entry_app_users set enabled = false where app_user_id = $1::uuid",
@@ -1160,9 +1219,10 @@ test("HF tunk.mkt offboarding_report_view: least-privilege team/all read authori
     await db.exec("rollback");
 
     await db.exec("begin");
-    await db.query("insert into auth.users (id, email) values ($1::uuid, 'TUNK.MKT@other.vn')", [
-      uuid(599),
-    ]);
+    await db.query(
+      "insert into auth.users (id, email) values ($1::uuid, '  TUNK.MKT@hrpartner.vn  ')",
+      [uuid(599)],
+    );
     await assert.rejects(
       () => db.exec(migrationSqlForTransaction(tunkMigrationSql)),
       (err) => err.code === "P0001",

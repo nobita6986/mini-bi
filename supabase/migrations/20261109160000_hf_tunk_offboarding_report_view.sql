@@ -289,21 +289,21 @@ begin
   select count(*)::integer
     into v_auth_Count
     from auth.users au
-   where pg_catalog.lower(pg_catalog.split_part(pg_catalog.btrim(coalesce(au.email, '')), '@', 1)) = 'tunk.mkt';
+   where pg_catalog.lower(pg_catalog.btrim(au.email)) = 'tunk.mkt@hrpartner.vn';
 
   select count(*)::integer
     into v_account_count
     from public.direct_entry_app_users u
     join auth.users au on au.id = u.auth_subject
-   where pg_catalog.lower(pg_catalog.split_part(pg_catalog.btrim(coalesce(au.email, '')), '@', 1)) = 'tunk.mkt';
+   where pg_catalog.lower(pg_catalog.btrim(au.email)) = 'tunk.mkt@hrpartner.vn';
 
   if v_auth_Count = 0 and v_account_count = 0 then
-    raise notice 'Skipping tunk.mkt offboarding_report_view grant because tunk.mkt is not provisioned in this database';
+    raise notice 'Skipping tunk.mkt offboarding_report_view grant because tunk.mkt@hrpartner.vn is not provisioned in this database';
     return;
   end if;
 
   if v_auth_Count <> 1 or v_account_count <> 1 then
-    raise exception 'expected exactly one canonical auth/app user mapping for tunk.mkt, found auth_users=% app_users=%',
+    raise exception 'expected exactly one canonical auth/app user mapping for tunk.mkt@hrpartner.vn, found auth_users=% app_users=%',
       v_auth_Count, v_account_count
       using errcode = 'P0001';
   end if;
@@ -312,7 +312,7 @@ begin
     into v_app_user_id, v_auth_subject, v_enabled
     from public.direct_entry_app_users u
     join auth.users au on au.id = u.auth_subject
-   where pg_catalog.lower(pg_catalog.split_part(pg_catalog.btrim(coalesce(au.email, '')), '@', 1)) = 'tunk.mkt';
+   where pg_catalog.lower(pg_catalog.btrim(au.email)) = 'tunk.mkt@hrpartner.vn';
 
   if not coalesce(v_enabled, false) then
     raise exception 'tunk.mkt (app_user_id=%) must be enabled to receive offboarding_report_view',
