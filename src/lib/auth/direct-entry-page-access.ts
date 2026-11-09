@@ -19,7 +19,6 @@ import {
   workReportsNavPredicate,
   workerOperationsNavPredicate,
   workerEditHistoryNavPredicate,
-  workforceOffboardingNavPredicate,
 } from "../navigation/registry-capability.ts";
 
 export type DirectEntryPageDecision =
@@ -232,13 +231,15 @@ export function decideWorkReportAnalyticsPageAccess(input: {
 
 /**
  * Offboarding / unemployed worker report visibility hint. The RPC still enforces the
- * exact authority (Full Admin triple, BoD entry_privileged_edit@all, current Team
- * Leader, or read-only offboarding_report_view within current all/single-team scope);
- * this predicate delegates to `workforceOffboardingNavPredicate` so page and nav stay aligned.
+ * exact authority (Full Admin triple, BoD entry_privileged_edit@all, or current Team
+ * Leader); this predicate only decides whether the page/nav link is shown.
  */
 export function canViewOffboardingReport(actor: NavActorProjection | null): boolean {
   if (!actor) return false;
-  return workforceOffboardingNavPredicate(actor);
+  if (adminSecurityNavPredicate(actor)) return true;
+  if (actor.capabilities.includes("entry_privileged_edit") && actor.scopes.some((scope) => scope.kind === "all")) return true;
+  if (actor.capabilities.includes("team_manager_assign") && actor.scopes.some((scope) => scope.kind === "team")) return true;
+  return false;
 }
 
 export function decideWorkforceOffboardingPageAccess(input: {

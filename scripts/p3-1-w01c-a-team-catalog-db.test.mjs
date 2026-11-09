@@ -706,7 +706,7 @@ test("W01A and W01B contracts keep their semantics", async () => {
     + " and c.conname = 'direct_entry_capability_grants_capability_check'");
   const tokens = [...String(capabilityRows[0].definition).matchAll(/'([^']+)'::text/g)]
     .map((match) => match[1]);
-  assert.equal(tokens.length, 34, "the capability vocabulary includes W01A, F1, F2, VFIN-01, duplicate CCCD, worker history, and offboarding report view tokens");
+  assert.equal(tokens.length, 33, "the capability vocabulary includes W01A, F1, F2, VFIN-01, duplicate CCCD, and worker history tokens");
   assert.ok(tokens.includes("catalog_master_manage"));
   assert.ok(tokens.includes("team_manager_assign"));
 

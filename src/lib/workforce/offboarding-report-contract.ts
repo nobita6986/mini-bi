@@ -212,8 +212,7 @@ export function parseOffboardingReportList(body: unknown): OffboardingReportList
   }
 
   const canHide = d.can_hide === true;
-  const isReadOnlyCapability = d.authority === "offboarding_report_view";
-  if ((d.scope === "team" || isReadOnlyCapability) && (d.can_export || canHide)) {
+  if (d.scope === "team" && (d.can_export || canHide)) {
     return null;
   }
 
@@ -222,7 +221,7 @@ export function parseOffboardingReportList(body: unknown): OffboardingReportList
     const item = projectItem(rawItem, {
       allowSnapshotRefs: canHide,
       requireSnapshotRefs: canHide,
-      forbidPhone: d.scope === "team" || isReadOnlyCapability,
+      forbidPhone: d.scope === "team",
     });
     if (!item) return null;
     items.push(item);

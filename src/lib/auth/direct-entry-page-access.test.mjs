@@ -3,7 +3,6 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
-  canViewOffboardingReport,
   decideAccountAccessPageAccess,
   decideAdminAreaAccess,
   decideChangeRequestsPageAccess,
@@ -14,7 +13,6 @@ import {
   decideTeamCatalogPageAccess,
   decideVendorCatalogPageAccess,
   decideWorkerOperationsPageAccess,
-  decideWorkforceOffboardingPageAccess,
   canManageProjectMasterFromActor,
   HISTORICAL_CHANGE_REQUEST_QUEUES,
   probeHistoricalChangeRequestAccess,
@@ -22,7 +20,6 @@ import {
 import {
   changeRequestsNavPredicate,
   workerOperationsNavPredicate,
-  workforceOffboardingNavPredicate,
 } from "../navigation/registry-capability.ts";
 
 function actor(capabilities) {
@@ -315,61 +312,4 @@ test("Project Operations page admits Team Leader; mapping page stays Full Admin-
   assert.match(source, /case "ACCESS_DENIED":\s*return <AccessDenied \/>/);
   const operationsPage = readFileSync(new URL("../../app/direct-entry/projects/page.tsx", import.meta.url), "utf8");
   assert.match(operationsPage, /canManageProjectMasterForEmptyList=\{canManageProjectMasterFromActor\(actor\)\}/);
-});
-
-test("Workforce Offboarding Report gate and nav predicate allow offboarding_report_view only with current all or single current team scope", () => {
-  const all = [{ kind: "all", reference: "all", valid_from: "2026-01-01", valid_to: null }];
-  const team1 = [{ kind: "team", reference: "team-1", valid_from: "2026-01-01", valid_to: null }];
-  const twoTeams = [
-    { kind: "team", reference: "team-1", valid_from: "2026-01-01", valid_to: null },
-    { kind: "team", reference: "team-2", valid_from: "2026-01-01", valid_to: null },
-  ];
-  const ownOnly = [{ kind: "own", reference: "u", valid_from: "2026-01-01", valid_to: null }];
-  const ownPlusTeam1 = [...ownOnly, ...team1];
-
-  const withScopes = (capabilities, scopes) => ({
-    ...actor(capabilities),
-    actor: { ...actor(capabilities).actor, scopes },
-  });
-
-  // 1. Canonical tunk.mkt profile: report_view + offboarding_report_view + own + single current team scope -> ALLOW
-  const tunkProfile = withScopes(["report_view", "offboarding_report_view"], ownPlusTeam1);
-  assert.equal(canViewOffboardingReport(tunkProfile.actor), true);
-  assert.equal(workforceOffboardingNavPredicate(tunkProfile.actor), true);
-  assert.equal(decideWorkforceOffboardingPageAccess({ actor: tunkProfile }), "ALLOW");
-
-  // 2. offboarding_report_view + current all scope -> ALLOW
-  const allViewer = withScopes(["offboarding_report_view"], all);
-  assert.equal(canViewOffboardingReport(allViewer.actor), true);
-  assert.equal(workforceOffboardingNavPredicate(allViewer.actor), true);
-  assert.equal(decideWorkforceOffboardingPageAccess({ actor: allViewer }), "ALLOW");
-
-  // 3. offboarding_report_view with only own scope (no team/all) -> ACCESS_DENIED
-  const ownViewer = withScopes(["offboarding_report_view"], ownOnly);
-  assert.equal(canViewOffboardingReport(ownViewer.actor), false);
-  assert.equal(workforceOffboardingNavPredicate(ownViewer.actor), false);
-  assert.equal(decideWorkforceOffboardingPageAccess({ actor: ownViewer }), "ACCESS_DENIED");
-
-  // 4. offboarding_report_view with ambiguous multiple team scopes -> ACCESS_DENIED
-  const multiTeamViewer = withScopes(["offboarding_report_view"], twoTeams);
-  assert.equal(canViewOffboardingReport(multiTeamViewer.actor), false);
-  assert.equal(workforceOffboardingNavPredicate(multiTeamViewer.actor), false);
-  assert.equal(decideWorkforceOffboardingPageAccess({ actor: multiTeamViewer }), "ACCESS_DENIED");
-
-  // 5. Generic report_view / report_analytics_view / entry_team without offboarding_report_view -> ACCESS_DENIED
-  for (const [caps, scopes] of [
-    [["report_view"], ownPlusTeam1],
-    [["report_view", "report_analytics_view"], all],
-    [["entry_team"], team1],
-    [["entry_own"], ownOnly],
-  ]) {
-    const unauthorized = withScopes(caps, scopes);
-    assert.equal(canViewOffboardingReport(unauthorized.actor), false, caps.join(","));
-    assert.equal(workforceOffboardingNavPredicate(unauthorized.actor), false, caps.join(","));
-    assert.equal(
-      decideWorkforceOffboardingPageAccess({ actor: unauthorized }),
-      "ACCESS_DENIED",
-      caps.join(","),
-    );
-  }
 });
