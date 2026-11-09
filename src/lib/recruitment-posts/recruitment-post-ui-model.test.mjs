@@ -25,7 +25,9 @@ import {
   parseRecruitmentPostContextEnvelope,
   parseRecruitmentPostDetailEnvelope,
   parseRecruitmentPostListEnvelope,
+  recruitmentPostContextErrorMessage,
   recruitmentPostErrorMessage,
+  resolveRecruitmentPostContextOutcome,
   toRecruitmentPostCardViewModel,
   toRecruitmentPostDetailViewModel,
   validateRecruitmentPostFeedFilters,
@@ -760,6 +762,42 @@ test("Envelope parsers validate context, list, and detail fail-closed, and class
   assert.equal(cleared.snapshotToken, null);
   assert.equal(cleared.nextCursor, null);
   assert.ok(recruitmentPostErrorMessage("RECRUITMENT_POST_NOT_FOUND").length > 0);
+
+  // resolveRecruitmentPostContextOutcome must surface 503 and malformed 200 payloads instead of ignoring them
+  const context503 = resolveRecruitmentPostContextOutcome({
+    status: 503,
+    payload: { ok: false, code: "RECRUITMENT_POST_UNAVAILABLE" },
+  });
+  assert.equal(context503.kind, "error");
+  assert.equal(context503.code, "RECRUITMENT_POST_UNAVAILABLE");
+  assert.equal(
+    context503.message,
+    recruitmentPostContextErrorMessage("RECRUITMENT_POST_UNAVAILABLE"),
+  );
+
+  const contextInvalid200 = resolveRecruitmentPostContextOutcome({
+    status: 200,
+    payload: { ok: true, data: { invalid_shape: true } },
+  });
+  assert.equal(contextInvalid200.kind, "error");
+  assert.equal(contextInvalid200.code, "RECRUITMENT_POST_UNAVAILABLE");
+  assert.match(contextInvalid200.message, /Không thể tải danh mục bộ lọc/);
+
+  const context401 = resolveRecruitmentPostContextOutcome({
+    status: 401,
+    payload: { ok: false, code: "UNAUTHENTICATED" },
+  });
+  assert.deepEqual(context401, {
+    kind: "access_loss",
+    accessLoss: "UNAUTHENTICATED",
+  });
+
+  const contextOk = resolveRecruitmentPostContextOutcome({
+    status: 200,
+    payload: { ok: true, data: SAMPLE_CONTEXT },
+  });
+  assert.equal(contextOk.kind, "ok");
+  assert.deepEqual(contextOk.context.filter_projects, SAMPLE_CONTEXT.filter_projects);
 });
 
 test("createLatestRequestTracker aborts stale requests on filter change or detail switch", () => {

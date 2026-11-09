@@ -21,10 +21,11 @@ import {
   extractRecruitmentPostErrorCode,
   hasActiveRecruitmentPostFilters,
   mergeUniqueRecruitmentPostItems,
-  parseRecruitmentPostContextEnvelope,
   parseRecruitmentPostDetailEnvelope,
   parseRecruitmentPostListEnvelope,
+  recruitmentPostContextErrorMessage,
   recruitmentPostErrorMessage,
+  resolveRecruitmentPostContextOutcome,
   toRecruitmentPostCardViewModel,
   toRecruitmentPostDetailViewModel,
   validateRecruitmentPostFeedFilters,
@@ -66,20 +67,55 @@ function getRequestTracker(
   return ref.current;
 }
 
-export function RecruitmentPostFeedWorkspace() {
+export type RecruitmentPostFeedWorkspaceInitialTestState = {
+  readonly filters?: RecruitmentPostFeedFilterState;
+  readonly dataState?: RecruitmentPostDataState;
+  readonly accessLoss?: RecruitmentPostAccessLossKind | null;
+  readonly contextLoading?: boolean;
+  readonly contextError?: string | null;
+  readonly initialLoading?: boolean;
+  readonly loadingMore?: boolean;
+  readonly feedError?: string | null;
+  readonly loadMoreError?: string | null;
+  readonly detailLoading?: boolean;
+};
+
+export function RecruitmentPostFeedWorkspace({
+  initialStateForTest,
+}: {
+  initialStateForTest?: RecruitmentPostFeedWorkspaceInitialTestState;
+} = {}) {
   const [filters, setFilters] = useState<RecruitmentPostFeedFilterState>(
-    EMPTY_RECRUITMENT_POST_FILTERS,
+    () => initialStateForTest?.filters ?? EMPTY_RECRUITMENT_POST_FILTERS,
   );
-  const [dataState, setDataState] = useState<RecruitmentPostDataState>(
-    createEmptyRecruitmentPostDataState,
+  const [dataState, setDataState] = useState<RecruitmentPostDataState>(() =>
+    initialStateForTest?.dataState ?? createEmptyRecruitmentPostDataState(),
   );
   const [accessLoss, setAccessLoss] =
-    useState<RecruitmentPostAccessLossKind | null>(null);
-  const [initialLoading, setInitialLoading] = useState<boolean>(true);
-  const [loadingMore, setLoadingMore] = useState<boolean>(false);
-  const [feedError, setFeedError] = useState<string | null>(null);
-  const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
-  const [detailLoading, setDetailLoading] = useState<boolean>(false);
+    useState<RecruitmentPostAccessLossKind | null>(
+      () => initialStateForTest?.accessLoss ?? null,
+    );
+  const [contextLoading, setContextLoading] = useState<boolean>(
+    () => initialStateForTest?.contextLoading ?? true,
+  );
+  const [contextError, setContextError] = useState<string | null>(
+    () => initialStateForTest?.contextError ?? null,
+  );
+  const [initialLoading, setInitialLoading] = useState<boolean>(
+    () => initialStateForTest?.initialLoading ?? true,
+  );
+  const [loadingMore, setLoadingMore] = useState<boolean>(
+    () => initialStateForTest?.loadingMore ?? false,
+  );
+  const [feedError, setFeedError] = useState<string | null>(
+    () => initialStateForTest?.feedError ?? null,
+  );
+  const [loadMoreError, setLoadMoreError] = useState<string | null>(
+    () => initialStateForTest?.loadMoreError ?? null,
+  );
+  const [detailLoading, setDetailLoading] = useState<boolean>(
+    () => initialStateForTest?.detailLoading ?? false,
+  );
 
   const contextTrackerRef = useRef<LatestRequestTracker | null>(null);
   const feedTrackerRef = useRef<LatestRequestTracker | null>(null);
@@ -91,6 +127,8 @@ export function RecruitmentPostFeedWorkspace() {
       getRequestTracker(feedTrackerRef).cancelAll();
       getRequestTracker(detailTrackerRef).cancelAll();
       setDataState(createEmptyRecruitmentPostDataState());
+      setContextLoading(false);
+      setContextError(null);
       setInitialLoading(false);
       setLoadingMore(false);
       setDetailLoading(false);
@@ -103,6 +141,8 @@ export function RecruitmentPostFeedWorkspace() {
 
   const loadContext = useCallback(async () => {
     const ticket = getRequestTracker(contextTrackerRef).begin();
+    setContextLoading(true);
+    setContextError(null);
 
     try {
       const response = await fetch("/api/recruitment-posts/context", {
@@ -116,31 +156,42 @@ export function RecruitmentPostFeedWorkspace() {
       const rawPayload = await response.json().catch(() => null);
       if (!ticket.isCurrent()) return;
 
-      const errorCode = extractRecruitmentPostErrorCode(rawPayload);
-      const revoked = classifyRecruitmentPostAccessLoss(
-        response.status,
-        errorCode,
-      );
-      if (revoked) {
-        handleAccessRevoked(revoked);
+      const outcome = resolveRecruitmentPostContextOutcome({
+        status: response.status,
+        payload: rawPayload,
+      });
+
+      if (outcome.kind === "access_loss") {
+        handleAccessRevoked(outcome.accessLoss);
         return;
       }
 
-      if (!response.ok) {
+      if (outcome.kind === "error") {
+        setContextLoading(false);
+        setContextError(outcome.message);
+        setDataState((prev) => ({
+          ...prev,
+          context: null,
+        }));
         return;
       }
 
-      const parsedContext = parseRecruitmentPostContextEnvelope(rawPayload);
-      if (!parsedContext) {
-        return;
-      }
-
+      setContextLoading(false);
+      setContextError(null);
       setDataState((prev) => ({
         ...prev,
-        context: parsedContext,
+        context: outcome.context,
       }));
     } catch (error) {
       if (isAbortError(error) || !ticket.isCurrent()) return;
+      setContextLoading(false);
+      setContextError(
+        recruitmentPostContextErrorMessage("RECRUITMENT_POST_UNAVAILABLE"),
+      );
+      setDataState((prev) => ({
+        ...prev,
+        context: null,
+      }));
     }
   }, [handleAccessRevoked]);
 
@@ -754,6 +805,30 @@ export function RecruitmentPostFeedWorkspace() {
           </div>
         </div>
       </FilterToolbar>
+
+      {contextError ? (
+        <StatusBanner
+          tone="warning"
+          title="Không thể tải ngữ cảnh bộ lọc"
+          dataTestId="recruitment-posts-context-error"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <span>{contextError}</span>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              data-testid="recruitment-posts-context-retry"
+              onClick={() => {
+                void loadContext();
+              }}
+              disabled={contextLoading}
+            >
+              {contextLoading ? "Đang tải lại…" : "Thử tải lại ngữ cảnh"}
+            </Button>
+          </div>
+        </StatusBanner>
+      ) : null}
 
       {feedError ? (
         <StatusBanner

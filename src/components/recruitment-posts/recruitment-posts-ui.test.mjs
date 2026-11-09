@@ -117,6 +117,8 @@ const {
   createEmptyRecruitmentPostDataState,
   createLatestRequestTracker,
   mergeUniqueRecruitmentPostItems,
+  recruitmentPostContextErrorMessage,
+  resolveRecruitmentPostContextOutcome,
   toRecruitmentPostCardViewModel,
   toRecruitmentPostDetailViewModel,
 } = await import("@/lib/recruitment-posts/recruitment-post-ui-model");
@@ -126,6 +128,9 @@ const { RecruitmentPostCard } = await import(
 );
 const { RecruitmentPostDetailDialog } = await import(
   "@/components/recruitment-posts/recruitment-post-detail-dialog"
+);
+const { RecruitmentPostFeedWorkspace } = await import(
+  "@/components/recruitment-posts/recruitment-post-feed-workspace"
 );
 
 const PROVINCE_VP_ID = "11111111-1111-4111-8111-111111111111";
@@ -579,6 +584,91 @@ describe("Phase 3 — Recruitment Posts UI & Architecture Gate", () => {
       merged.map((i) => i.brief_id),
       [makeBriefId(1), makeBriefId(2)],
     );
+  });
+
+  it("renders recognizable context error banner and retry button when context fails (503 or invalid payload) while feed list loads successfully", () => {
+    const outcome503 = resolveRecruitmentPostContextOutcome({
+      status: 503,
+      payload: { ok: false, code: "RECRUITMENT_POST_UNAVAILABLE" },
+    });
+    assert.equal(outcome503.kind, "error");
+
+    const outcomeInvalidJson = resolveRecruitmentPostContextOutcome({
+      status: 200,
+      payload: { ok: true, data: { corrupted: true } },
+    });
+    assert.equal(outcomeInvalidJson.kind, "error");
+    assert.equal(
+      outcomeInvalidJson.message,
+      recruitmentPostContextErrorMessage("RECRUITMENT_POST_UNAVAILABLE"),
+    );
+
+    const feedItem = makeCompleteItem();
+    const htmlWithContextFailureAndLoadedList = renderToStaticMarkup(
+      createElement(RecruitmentPostFeedWorkspace, {
+        initialStateForTest: {
+          contextLoading: false,
+          contextError: outcome503.message,
+          initialLoading: false,
+          feedError: null,
+          dataState: {
+            ...createEmptyRecruitmentPostDataState(),
+            context: null,
+            items: [feedItem],
+            hasMore: false,
+          },
+        },
+      }),
+    );
+
+    // Context error banner + retry button must be rendered and recognizable
+    assert.match(
+      htmlWithContextFailureAndLoadedList,
+      /data-testid="recruitment-posts-context-error"/,
+    );
+    assert.match(
+      htmlWithContextFailureAndLoadedList,
+      /Không thể tải ngữ cảnh bộ lọc/,
+    );
+    assert.match(
+      htmlWithContextFailureAndLoadedList,
+      /Không thể tải danh mục bộ lọc \(Dự án, Tỉnh\/Thành, KCN, Hình thức tuyển dụng\) lúc này\./,
+    );
+    assert.match(
+      htmlWithContextFailureAndLoadedList,
+      /data-testid="recruitment-posts-context-retry"/,
+    );
+    assert.match(htmlWithContextFailureAndLoadedList, /Thử tải lại ngữ cảnh/);
+
+    // At the same time, the loaded recruitment post list must still be visible without feed error
+    assert.doesNotMatch(
+      htmlWithContextFailureAndLoadedList,
+      /data-testid="recruitment-posts-feed-error"/,
+    );
+    assert.match(
+      htmlWithContextFailureAndLoadedList,
+      /data-testid="recruitment-posts-list"/,
+    );
+    assert.match(htmlWithContextFailureAndLoadedList, /Dự án Điện tử ABC/);
+
+    // When retrying context, button shows loading state and is disabled
+    const retryingHtml = renderToStaticMarkup(
+      createElement(RecruitmentPostFeedWorkspace, {
+        initialStateForTest: {
+          contextLoading: true,
+          contextError: outcomeInvalidJson.message,
+          initialLoading: false,
+          feedError: null,
+          dataState: {
+            ...createEmptyRecruitmentPostDataState(),
+            context: null,
+            items: [feedItem],
+            hasMore: false,
+          },
+        },
+      }),
+    );
+    assert.match(retryingHtml, /Đang tải lại…/);
   });
 
   it("contains zero hard-coded admin/BOD emails across all recruitment-posts modules", () => {

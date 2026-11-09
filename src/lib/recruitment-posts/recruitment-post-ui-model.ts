@@ -1032,6 +1032,80 @@ export function createEmptyRecruitmentPostDataState(): RecruitmentPostDataState 
   };
 }
 
+export type RecruitmentPostContextOutcome =
+  | {
+      readonly kind: "ok";
+      readonly context: RecruitmentPostContext;
+    }
+  | {
+      readonly kind: "access_loss";
+      readonly accessLoss: RecruitmentPostAccessLossKind;
+    }
+  | {
+      readonly kind: "error";
+      readonly code: string;
+      readonly message: string;
+    };
+
+export function recruitmentPostContextErrorMessage(
+  code: string | null,
+): string {
+  switch (code) {
+    case "UNAUTHENTICATED":
+      return "Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.";
+    case "ACTOR_NOT_AVAILABLE":
+      return "Tài khoản hiện không khả dụng.";
+    case "RECRUITMENT_POST_ACCESS_DENIED":
+      return "Bạn không có quyền truy cập ngữ cảnh bộ lọc tin tuyển dụng.";
+    case "RECRUITMENT_POST_UNAVAILABLE":
+    default:
+      return "Không thể tải danh mục bộ lọc (Dự án, Tỉnh/Thành, KCN, Hình thức tuyển dụng) lúc này. Vui lòng thử tải lại ngữ cảnh.";
+  }
+}
+
+/**
+ * Evaluates the HTTP status + parsed JSON body of `GET /api/recruitment-posts/context`
+ * fail-closed so `503` or malformed `200` payloads never fail silently while the feed list renders.
+ */
+export function resolveRecruitmentPostContextOutcome(input: {
+  readonly status: number;
+  readonly payload: unknown;
+}): RecruitmentPostContextOutcome {
+  const errorCode = extractRecruitmentPostErrorCode(input.payload);
+  const accessLoss = classifyRecruitmentPostAccessLoss(input.status, errorCode);
+  if (accessLoss) {
+    return {
+      kind: "access_loss",
+      accessLoss,
+    };
+  }
+
+  if (input.status < 200 || input.status >= 300) {
+    const resolvedCode = errorCode ?? "RECRUITMENT_POST_UNAVAILABLE";
+    return {
+      kind: "error",
+      code: resolvedCode,
+      message: recruitmentPostContextErrorMessage(resolvedCode),
+    };
+  }
+
+  const parsedContext = parseRecruitmentPostContextEnvelope(input.payload);
+  if (!parsedContext) {
+    return {
+      kind: "error",
+      code: "RECRUITMENT_POST_UNAVAILABLE",
+      message: recruitmentPostContextErrorMessage(
+        "RECRUITMENT_POST_UNAVAILABLE",
+      ),
+    };
+  }
+
+  return {
+    kind: "ok",
+    context: parsedContext,
+  };
+}
+
 export function recruitmentPostErrorMessage(code: string | null): string {
   switch (code) {
     case "UNAUTHENTICATED":
