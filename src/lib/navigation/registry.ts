@@ -238,6 +238,18 @@ export const NAV_ENTRIES: ReadonlyArray<NavEntry> = [
     visibility: { desktop: true, mobile: true },
   },
   {
+    id: "recruitment-posts",
+    label: "Tin tuyển dụng",
+    path: "/recruitment-posts",
+    description:
+      "Tra cứu tin tuyển dụng đang hiệu lực theo dự án, khu công nghiệp và hình thức tuyển dụng.",
+    icon: ClipboardList,
+    status: "current",
+    capability: "any",
+    group: "my-work",
+    visibility: { desktop: true, mobile: true },
+  },
+  {
     id: "finance",
     label: "Tài chính",
     path: "/finance",
@@ -391,6 +403,7 @@ export function filterEntriesForActor(input: {
   return CURRENT_NAV_ENTRIES.filter((entry) => {
     if (!entry.visibility[input.viewport]) return false;
     if (isDirectEntryRoute(entry) && !input.directEntryEnabled) return false;
+    if (input.actor === null && entry.id !== "dashboard") return false;
     return input.decide(entry);
   });
 }
