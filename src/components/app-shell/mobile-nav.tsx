@@ -45,6 +45,7 @@ const NAV_ICONS: Record<string, typeof LayoutDashboard> = {
   leave: CalendarDays,
   "leave-admin": CalendarDays,
   "salary-advances": Landmark,
+  "recruitment-posts": ClipboardList,
   admin: ShieldCheck,
 } as const;
 

@@ -1,0 +1,36 @@
+import { notFound, redirect } from "next/navigation";
+import { connection } from "next/server";
+
+import { AccountUnavailable } from "@/components/auth/access-denied";
+import { TemporaryUnavailable } from "@/components/auth/temporary-unavailable";
+import { RecruitmentPostFeedWorkspace } from "@/components/recruitment-posts/recruitment-post-feed-workspace";
+import { resolveActorForRequest } from "@/lib/navigation/resolve-nav-actor";
+import { decideRecruitmentPostsPageAccess } from "@/lib/recruitment-posts/recruitment-post-ui-model";
+
+export const dynamic = "force-dynamic";
+
+export const metadata = {
+  title: "Tin tuyển dụng — Hệ thống báo cáo HRP",
+};
+
+export default async function RecruitmentPostsPage() {
+  await connection();
+  const actor = await resolveActorForRequest().catch(() => null);
+  const decision = decideRecruitmentPostsPageAccess({
+    enabledFlag: process.env.DIRECT_ENTRY_API_ENABLED,
+    actor,
+  });
+
+  switch (decision) {
+    case "NOT_FOUND":
+      notFound();
+    case "REDIRECT_LOGIN":
+      redirect("/login?next=%2Frecruitment-posts");
+    case "ACCOUNT_UNAVAILABLE":
+      return <AccountUnavailable />;
+    case "TEMPORARY_UNAVAILABLE":
+      return <TemporaryUnavailable />;
+    case "ALLOW":
+      return <RecruitmentPostFeedWorkspace />;
+  }
+}

@@ -79,11 +79,13 @@ export async function AppShell({
   const directEntryEnabled = isDirectEntryUiEnabled(process.env.DIRECT_ENTRY_UI_ENABLED);
   const workReportsEnabled = process.env.WORK_REPORTS_API_ENABLED === "true";
   const vendorFinanceEnabled = process.env.DIRECT_ENTRY_API_ENABLED === "true";
+  const recruitmentPostsEnabled = process.env.DIRECT_ENTRY_API_ENABLED === "true";
   const isEntryFeatureEnabled = (entry: { id: string }) =>
     (!WORK_REPORTS_NAV_ENTRY_IDS.has(entry.id) || workReportsEnabled) &&
     (entry.id !== "finance" || vendorFinanceEnabled) &&
     ((entry.id !== "leave" && entry.id !== "leave-admin") || vendorFinanceEnabled) &&
-    (entry.id !== "salary-advances" || vendorFinanceEnabled);
+    (entry.id !== "salary-advances" || vendorFinanceEnabled) &&
+    (entry.id !== "recruitment-posts" || recruitmentPostsEnabled);
 
   // P3-W06A R1: phan tach ro rang tang viewport va tang capability.
   // - `filterEntriesForActor` chiu trach nhiem viewport/visibility: loc

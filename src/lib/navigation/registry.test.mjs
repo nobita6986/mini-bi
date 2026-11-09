@@ -17,7 +17,7 @@ const {
 const { isDirectEntryUiEnabled } = await import("../direct-entry/ui-model.ts");
 
 test("CURRENT_NAV_ENTRIES chứa các entry hiện hành trong một registry", () => {
-  assert.equal(CURRENT_NAV_ENTRIES.length, 15, "phải có đúng 15 entries current");
+  assert.equal(CURRENT_NAV_ENTRIES.length, 16, "phải có đúng 16 entries current");
   const ids = CURRENT_NAV_ENTRIES.map((e) => e.id).sort();
   assert.deepEqual(
     ids,
@@ -31,6 +31,7 @@ test("CURRENT_NAV_ENTRIES chứa các entry hiện hành trong một registry", 
       "leave",
       "leave-admin",
       "project-operations",
+      "recruitment-posts",
       "salary-advances",
       "work-report-analytics",
       "work-report-assignments",
@@ -54,7 +55,14 @@ test("Global IA nav groups separate 'Công việc của tôi' and 'Quản trị'
     {
       id: "my-work",
       label: "Công việc của tôi",
-      children: ["direct-entry", "worker-operations", "work-reports", "leave", "salary-advances"],
+      children: [
+        "direct-entry",
+        "worker-operations",
+        "work-reports",
+        "leave",
+        "salary-advances",
+        "recruitment-posts",
+      ],
     },
     {
       id: "management",
@@ -190,6 +198,7 @@ test("Desktop viewport theo feature flag, luôn giữ Dashboard và không có P
       "work-reports",
       "leave",
       "salary-advances",
+      "recruitment-posts",
       "finance",
       "leave-admin",
       "work-report-assignments",
@@ -211,6 +220,7 @@ test("Mobile viewport theo feature flag, luôn giữ Dashboard và không có Pi
       "work-reports",
       "leave",
       "salary-advances",
+      "recruitment-posts",
       "finance",
       "leave-admin",
       "work-report-assignments",
@@ -227,6 +237,7 @@ test("feature flag Direct Entry chỉ mở với giá trị chính xác true", (
     "work-reports",
     "leave",
     "salary-advances",
+    "recruitment-posts",
     "finance",
     "leave-admin",
     "work-report-assignments",
@@ -353,6 +364,7 @@ test("findEntryByPath('/work-reports') trả về Work Reports entry và route c
   assert.equal(findEntryByPath("/work-reports/analytics/detail")?.id, "work-report-analytics");
   assert.equal(findEntryByPath("/leave")?.id, "leave");
   assert.equal(findEntryByPath("/salary-advances")?.id, "salary-advances");
+  assert.equal(findEntryByPath("/recruitment-posts")?.id, "recruitment-posts");
   assert.equal(findEntryByPath("/admin/attendance")?.id, "attendance-report");
   assert.equal(findEntryByPath("/admin/catalog/personnel")?.id, "admin");
 });
