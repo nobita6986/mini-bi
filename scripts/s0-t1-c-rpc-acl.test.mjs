@@ -1217,7 +1217,7 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
         "public.recruitment_post__internal_snapshot(public.recruitment_project_briefs, text[])",
         "public.recruitment_post__internal_projection(public.recruitment_project_briefs, uuid)",
         "public.recruitment_post__internal_briefs_write_guard()",
-        "public.recruitment_post__internal_labor_types_write_guard()",
+        "public.recruitment_post__internal_brief_labor_write_guard()",
         "public.recruitment_post__internal_guard_park_province_change()",
       ]) {
         assert.ok(

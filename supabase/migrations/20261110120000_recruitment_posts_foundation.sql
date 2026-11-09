@@ -1592,7 +1592,7 @@ create trigger recruitment_project_briefs_write_guard
   for each row execute function public.recruitment_post__internal_briefs_write_guard();
 
 -- Helper 9: Write guard trigger function for `recruitment_project_brief_labor_types`.
-create or replace function public.recruitment_post__internal_labor_types_write_guard()
+create or replace function public.recruitment_post__internal_brief_labor_write_guard()
 returns trigger
 language plpgsql
 security definer
@@ -1632,7 +1632,7 @@ $function$;
 
 create trigger recruitment_project_brief_labor_types_write_guard
   before insert or update or delete on public.recruitment_project_brief_labor_types
-  for each row execute function public.recruitment_post__internal_labor_types_write_guard();
+  for each row execute function public.recruitment_post__internal_brief_labor_write_guard();
 
 create trigger recruitment_project_brief_revisions_immutable
   before update or delete on public.recruitment_project_brief_revisions
@@ -3112,7 +3112,7 @@ begin
     'public.recruitment_post__internal_snapshot(public.recruitment_project_briefs,text[])'::pg_catalog.regprocedure,
     'public.recruitment_post__internal_projection(public.recruitment_project_briefs,uuid)'::pg_catalog.regprocedure,
     'public.recruitment_post__internal_briefs_write_guard()'::pg_catalog.regprocedure,
-    'public.recruitment_post__internal_labor_types_write_guard()'::pg_catalog.regprocedure,
+    'public.recruitment_post__internal_brief_labor_write_guard()'::pg_catalog.regprocedure,
     'public.recruitment_post__internal_guard_park_province_change()'::pg_catalog.regprocedure,
     'public.recruitment_post_get_context(uuid,uuid)'::pg_catalog.regprocedure,
     'public.recruitment_post_list(uuid,uuid,text,uuid,uuid,text,date,date,text,text,integer)'::pg_catalog.regprocedure,
@@ -3197,7 +3197,7 @@ revoke all on function public.recruitment_post__internal_projection(public.recru
   from public, anon, authenticated, service_role;
 revoke all on function public.recruitment_post__internal_briefs_write_guard()
   from public, anon, authenticated, service_role;
-revoke all on function public.recruitment_post__internal_labor_types_write_guard()
+revoke all on function public.recruitment_post__internal_brief_labor_write_guard()
   from public, anon, authenticated, service_role;
 revoke all on function public.recruitment_post__internal_guard_park_province_change()
   from public, anon, authenticated, service_role;
@@ -3262,7 +3262,7 @@ declare
     'public.recruitment_post__internal_snapshot(public.recruitment_project_briefs,text[])',
     'public.recruitment_post__internal_projection(public.recruitment_project_briefs,uuid)',
     'public.recruitment_post__internal_briefs_write_guard()',
-    'public.recruitment_post__internal_labor_types_write_guard()',
+    'public.recruitment_post__internal_brief_labor_write_guard()',
     'public.recruitment_post__internal_guard_park_province_change()'
   ];
 begin
