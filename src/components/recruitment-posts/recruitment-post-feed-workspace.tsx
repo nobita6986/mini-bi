@@ -14,6 +14,7 @@ import {
   EMPTY_RECRUITMENT_POST_FILTERS,
   applyIndustrialParkFilterChange,
   applyProvinceFilterChange,
+  beginRecruitmentPostContextRequest,
   buildRecruitmentPostListUrl,
   classifyRecruitmentPostAccessLoss,
   createEmptyRecruitmentPostDataState,
@@ -26,6 +27,7 @@ import {
   recruitmentPostContextErrorMessage,
   recruitmentPostErrorMessage,
   resolveRecruitmentPostContextOutcome,
+  settleRecruitmentPostContextRequest,
   toRecruitmentPostCardViewModel,
   toRecruitmentPostDetailViewModel,
   validateRecruitmentPostFeedFilters,
@@ -34,6 +36,7 @@ import {
   visibleProvincesForFilter,
   type LatestRequestTracker,
   type RecruitmentPostAccessLossKind,
+  type RecruitmentPostContextRequestState,
   type RecruitmentPostDataState,
   type RecruitmentPostFeedFilterState,
 } from "@/lib/recruitment-posts/recruitment-post-ui-model";
@@ -95,12 +98,12 @@ export function RecruitmentPostFeedWorkspace({
     useState<RecruitmentPostAccessLossKind | null>(
       () => initialStateForTest?.accessLoss ?? null,
     );
-  const [contextLoading, setContextLoading] = useState<boolean>(
-    () => initialStateForTest?.contextLoading ?? true,
-  );
-  const [contextError, setContextError] = useState<string | null>(
-    () => initialStateForTest?.contextError ?? null,
-  );
+  const [contextRequestState, setContextRequestState] =
+    useState<RecruitmentPostContextRequestState>(() => ({
+      contextLoading: initialStateForTest?.contextLoading ?? true,
+      contextError: initialStateForTest?.contextError ?? null,
+    }));
+  const { contextLoading, contextError } = contextRequestState;
   const [initialLoading, setInitialLoading] = useState<boolean>(
     () => initialStateForTest?.initialLoading ?? true,
   );
@@ -127,8 +130,10 @@ export function RecruitmentPostFeedWorkspace({
       getRequestTracker(feedTrackerRef).cancelAll();
       getRequestTracker(detailTrackerRef).cancelAll();
       setDataState(createEmptyRecruitmentPostDataState());
-      setContextLoading(false);
-      setContextError(null);
+      setContextRequestState({
+        contextLoading: false,
+        contextError: null,
+      });
       setInitialLoading(false);
       setLoadingMore(false);
       setDetailLoading(false);
@@ -141,8 +146,7 @@ export function RecruitmentPostFeedWorkspace({
 
   const loadContext = useCallback(async () => {
     const ticket = getRequestTracker(contextTrackerRef).begin();
-    setContextLoading(true);
-    setContextError(null);
+    setContextRequestState((prev) => beginRecruitmentPostContextRequest(prev));
 
     try {
       const response = await fetch("/api/recruitment-posts/context", {
@@ -166,9 +170,9 @@ export function RecruitmentPostFeedWorkspace({
         return;
       }
 
+      setContextRequestState(settleRecruitmentPostContextRequest(outcome));
+
       if (outcome.kind === "error") {
-        setContextLoading(false);
-        setContextError(outcome.message);
         setDataState((prev) => ({
           ...prev,
           context: null,
@@ -176,17 +180,20 @@ export function RecruitmentPostFeedWorkspace({
         return;
       }
 
-      setContextLoading(false);
-      setContextError(null);
       setDataState((prev) => ({
         ...prev,
         context: outcome.context,
       }));
     } catch (error) {
       if (isAbortError(error) || !ticket.isCurrent()) return;
-      setContextLoading(false);
-      setContextError(
-        recruitmentPostContextErrorMessage("RECRUITMENT_POST_UNAVAILABLE"),
+      setContextRequestState(
+        settleRecruitmentPostContextRequest({
+          kind: "error",
+          code: "RECRUITMENT_POST_UNAVAILABLE",
+          message: recruitmentPostContextErrorMessage(
+            "RECRUITMENT_POST_UNAVAILABLE",
+          ),
+        }),
       );
       setDataState((prev) => ({
         ...prev,

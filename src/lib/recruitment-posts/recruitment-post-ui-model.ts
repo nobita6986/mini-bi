@@ -1106,6 +1106,46 @@ export function resolveRecruitmentPostContextOutcome(input: {
   };
 }
 
+export type RecruitmentPostContextRequestState = {
+  readonly contextLoading: boolean;
+  readonly contextError: string | null;
+};
+
+/**
+ * Transitions context request state when `loadContext()` starts:
+ * - On initial mount (`previous.contextError === null`), keeps `contextError: null` so no banner flashes.
+ * - On retry after an error (`previous.contextError !== null`), preserves `contextError` while
+ *   setting `contextLoading: true` so the banner stays visible and displays `"Đang tải lại…"`.
+ */
+export function beginRecruitmentPostContextRequest(
+  previous: RecruitmentPostContextRequestState,
+): RecruitmentPostContextRequestState {
+  return {
+    contextLoading: true,
+    contextError: previous.contextError,
+  };
+}
+
+/**
+ * Transitions context request state when `loadContext()` finishes:
+ * - On `error`, stops loading and sets `contextError` to `outcome.message`.
+ * - On `ok` or `access_loss`, stops loading and clears `contextError` to `null`.
+ */
+export function settleRecruitmentPostContextRequest(
+  outcome: RecruitmentPostContextOutcome,
+): RecruitmentPostContextRequestState {
+  if (outcome.kind === "error") {
+    return {
+      contextLoading: false,
+      contextError: outcome.message,
+    };
+  }
+  return {
+    contextLoading: false,
+    contextError: null,
+  };
+}
+
 export function recruitmentPostErrorMessage(code: string | null): string {
   switch (code) {
     case "UNAUTHENTICATED":

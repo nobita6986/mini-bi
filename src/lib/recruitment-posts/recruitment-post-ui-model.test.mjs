@@ -8,6 +8,7 @@ import {
   RECRUITMENT_POST_UNPROVIDED_LABEL,
   applyIndustrialParkFilterChange,
   applyProvinceFilterChange,
+  beginRecruitmentPostContextRequest,
   buildRecruitmentPostListUrl,
   classifyRecruitmentPostAccessLoss,
   createEmptyRecruitmentPostDataState,
@@ -28,6 +29,7 @@ import {
   recruitmentPostContextErrorMessage,
   recruitmentPostErrorMessage,
   resolveRecruitmentPostContextOutcome,
+  settleRecruitmentPostContextRequest,
   toRecruitmentPostCardViewModel,
   toRecruitmentPostDetailViewModel,
   validateRecruitmentPostFeedFilters,
@@ -798,6 +800,34 @@ test("Envelope parsers validate context, list, and detail fail-closed, and class
   });
   assert.equal(contextOk.kind, "ok");
   assert.deepEqual(contextOk.context.filter_projects, SAMPLE_CONTEXT.filter_projects);
+
+  // State transition sequence: initial load -> 503 failure -> retry in-flight preserves error -> retry ok clears error
+  const initialMountState = beginRecruitmentPostContextRequest({
+    contextLoading: true,
+    contextError: null,
+  });
+  assert.deepEqual(initialMountState, {
+    contextLoading: true,
+    contextError: null,
+  });
+
+  const failedState = settleRecruitmentPostContextRequest(context503);
+  assert.deepEqual(failedState, {
+    contextLoading: false,
+    contextError: context503.message,
+  });
+
+  const retryInFlightState = beginRecruitmentPostContextRequest(failedState);
+  assert.deepEqual(retryInFlightState, {
+    contextLoading: true,
+    contextError: context503.message,
+  });
+
+  const recoveredState = settleRecruitmentPostContextRequest(contextOk);
+  assert.deepEqual(recoveredState, {
+    contextLoading: false,
+    contextError: null,
+  });
 });
 
 test("createLatestRequestTracker aborts stale requests on filter change or detail switch", () => {

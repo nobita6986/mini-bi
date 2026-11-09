@@ -113,12 +113,14 @@ const Dialog = {
 
 const {
   RECRUITMENT_POST_UNPROVIDED_LABEL,
+  beginRecruitmentPostContextRequest,
   classifyRecruitmentPostAccessLoss,
   createEmptyRecruitmentPostDataState,
   createLatestRequestTracker,
   mergeUniqueRecruitmentPostItems,
   recruitmentPostContextErrorMessage,
   resolveRecruitmentPostContextOutcome,
+  settleRecruitmentPostContextRequest,
   toRecruitmentPostCardViewModel,
   toRecruitmentPostDetailViewModel,
 } = await import("@/lib/recruitment-posts/recruitment-post-ui-model");
@@ -586,7 +588,19 @@ describe("Phase 3 — Recruitment Posts UI & Architecture Gate", () => {
     );
   });
 
-  it("renders recognizable context error banner and retry button when context fails (503 or invalid payload) while feed list loads successfully", () => {
+  it("renders recognizable context error banner and retry button when context fails (503 or invalid payload) while feed list loads successfully, and preserves banner during retry transition", () => {
+    const workspaceSrc = readRel(
+      "src/components/recruitment-posts/recruitment-post-feed-workspace.tsx",
+    );
+    assert.match(
+      workspaceSrc,
+      /setContextRequestState\(\(prev\) => beginRecruitmentPostContextRequest\(prev\)\)/,
+    );
+    assert.match(
+      workspaceSrc,
+      /setContextRequestState\(settleRecruitmentPostContextRequest\(outcome\)\)/,
+    );
+
     const outcome503 = resolveRecruitmentPostContextOutcome({
       status: 503,
       payload: { ok: false, code: "RECRUITMENT_POST_UNAVAILABLE" },
@@ -604,11 +618,50 @@ describe("Phase 3 — Recruitment Posts UI & Architecture Gate", () => {
     );
 
     const feedItem = makeCompleteItem();
+
+    // 1. Initial load begins: contextError is null, so banner does not flash while loading
+    const initialContextState = beginRecruitmentPostContextRequest({
+      contextLoading: true,
+      contextError: null,
+    });
+    assert.deepEqual(initialContextState, {
+      contextLoading: true,
+      contextError: null,
+    });
+    const initialHtml = renderToStaticMarkup(
+      createElement(RecruitmentPostFeedWorkspace, {
+        initialStateForTest: {
+          ...initialContextState,
+          initialLoading: false,
+          feedError: null,
+          dataState: {
+            ...createEmptyRecruitmentPostDataState(),
+            context: null,
+            items: [feedItem],
+            hasMore: false,
+          },
+        },
+      }),
+    );
+    assert.doesNotMatch(
+      initialHtml,
+      /data-testid="recruitment-posts-context-error"/,
+    );
+
+    // 2. Context request settles with 503 error while feed list succeeded
+    const settledAfter503State = settleRecruitmentPostContextOutcomeState(outcome503);
+    function settleRecruitmentPostContextOutcomeState(outcome) {
+      return settleRecruitmentPostContextRequest(outcome);
+    }
+    assert.deepEqual(settledAfter503State, {
+      contextLoading: false,
+      contextError: outcome503.message,
+    });
+
     const htmlWithContextFailureAndLoadedList = renderToStaticMarkup(
       createElement(RecruitmentPostFeedWorkspace, {
         initialStateForTest: {
-          contextLoading: false,
-          contextError: outcome503.message,
+          ...settledAfter503State,
           initialLoading: false,
           feedError: null,
           dataState: {
@@ -651,12 +704,19 @@ describe("Phase 3 — Recruitment Posts UI & Architecture Gate", () => {
     );
     assert.match(htmlWithContextFailureAndLoadedList, /Dự án Điện tử ABC/);
 
-    // When retrying context, button shows loading state and is disabled
+    // 3. User clicks "Thử tải lại ngữ cảnh" -> loadContext() calls beginRecruitmentPostContextRequest(settledAfter503State)
+    // which MUST preserve contextError while setting contextLoading: true so the banner stays visible and shows "Đang tải lại…"
+    const retryInFlightState =
+      beginRecruitmentPostContextRequest(settledAfter503State);
+    assert.deepEqual(retryInFlightState, {
+      contextLoading: true,
+      contextError: outcome503.message,
+    });
+
     const retryingHtml = renderToStaticMarkup(
       createElement(RecruitmentPostFeedWorkspace, {
         initialStateForTest: {
-          contextLoading: true,
-          contextError: outcomeInvalidJson.message,
+          ...retryInFlightState,
           initialLoading: false,
           feedError: null,
           dataState: {
@@ -668,7 +728,81 @@ describe("Phase 3 — Recruitment Posts UI & Architecture Gate", () => {
         },
       }),
     );
-    assert.match(retryingHtml, /Đang tải lại…/);
+    assert.match(
+      retryingHtml,
+      /data-testid="recruitment-posts-context-error"/,
+    );
+    assert.match(
+      retryingHtml,
+      /<button[^>]*disabled=""[^>]*data-testid="recruitment-posts-context-retry">Đang tải lại…<\/button>/,
+    );
+
+    // 4. Retry succeeds -> settleRecruitmentPostContextRequest clears contextError and hides the banner
+    const outcomeOk = resolveRecruitmentPostContextOutcome({
+      status: 200,
+      payload: {
+        ok: true,
+        data: {
+          can_create: false,
+          managed_projects: [],
+          filter_projects: [
+            { project_id: "PROJ_ABC", display_name: "Dự án Điện tử ABC" },
+          ],
+          provinces: [
+            {
+              province_id: PROVINCE_VP_ID,
+              province_code: "VINH_PHUC",
+              display_name: "Vĩnh Phúc",
+              active: true,
+            },
+          ],
+          industrial_parks: [
+            {
+              industrial_park_id: PARK_KHAI_QUANG_ID,
+              industrial_park_code: "KCN_KHAI_QUANG",
+              province_id: PROVINCE_VP_ID,
+              display_name: "KCN Khai Quang",
+              active: true,
+            },
+          ],
+          labor_types: [
+            {
+              labor_type_key: "CHINH_THUC",
+              display_name: "Chính thức",
+              active: true,
+            },
+          ],
+        },
+      },
+    });
+    assert.equal(outcomeOk.kind, "ok");
+    const recoveredState = settleRecruitmentPostContextRequest(outcomeOk);
+    assert.deepEqual(recoveredState, {
+      contextLoading: false,
+      contextError: null,
+    });
+
+    const recoveredHtml = renderToStaticMarkup(
+      createElement(RecruitmentPostFeedWorkspace, {
+        initialStateForTest: {
+          ...recoveredState,
+          initialLoading: false,
+          feedError: null,
+          dataState: {
+            ...createEmptyRecruitmentPostDataState(),
+            context: outcomeOk.context,
+            items: [feedItem],
+            hasMore: false,
+          },
+        },
+      }),
+    );
+    assert.doesNotMatch(
+      recoveredHtml,
+      /data-testid="recruitment-posts-context-error"/,
+    );
+    assert.match(recoveredHtml, /<option value="PROJ_ABC">Dự án Điện tử ABC<\/option>/);
+    assert.match(recoveredHtml, /<option value="CHINH_THUC">Chính thức<\/option>/);
   });
 
   it("contains zero hard-coded admin/BOD emails across all recruitment-posts modules", () => {
