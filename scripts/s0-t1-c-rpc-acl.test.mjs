@@ -102,6 +102,8 @@ import {
   VFIN_05_COMBINED_PAYMENT_OFFSET_MIGRATION_NAME,
   VFIN_05_COMBINED_PAYMENT_OFFSET_NEW_RPC_SIGNATURES,
   VFIN_05_COMBINED_PAYMENT_OFFSET_RPC_SIGNATURES,
+  RECRUITMENT_LOCATION_CATALOG_MIGRATION_NAME,
+  RECRUITMENT_LOCATION_CATALOG_RPC_SIGNATURES,
   OFFBOARDING_REPORT_MIGRATION_NAME,
   OFFBOARDING_REPORT_RPC_SIGNATURES,
   migrationChecksum,
@@ -118,7 +120,7 @@ const R1_2_MIGRATION = "20261021100000_r1_2_worker_management_uat_fixes.sql";
 const R2_1_MIGRATION = "20261021120000_r2_1_change_request_queues_and_project_team_guard.sql";
 const R1_2_SERVICE_RPC =
   "public.direct_entry_list_workers(uuid, uuid, text, text, uuid, text, text, integer, text)";
-const TARGET_PATTERN = "^(direct_entry_|worker_edit_history_|work_report_|attendance_|org_department_|vendor_finance_|leave_management_|salary_advance_|hrp_sync_|ai_report_|ai_provider_config_|recruitment_|(expand|replace|reject|upsert)_daily_recruitment|record_recruitment_source_failure_|set_updated_at$)";
+const TARGET_PATTERN = "^(direct_entry_|worker_edit_history_|work_report_|attendance_|org_department_|vendor_finance_|leave_management_|salary_advance_|hrp_sync_|ai_report_|ai_provider_config_|recruitment_|administrative_province_|industrial_park_|(expand|replace|reject|upsert)_daily_recruitment|record_recruitment_source_failure_|set_updated_at$)";
 
 function binary(name) {
   const binDir = process.env.P3_1_W02A_PG_BIN
@@ -1105,7 +1107,8 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
         ...ATTENDANCE_FLEXIBLE_SLOT_POLICY_RPC_SIGNATURES,
         ...ATTENDANCE_EXPLANATIONS_WAVE2_RPC_SIGNATURES,
         ...ATTENDANCE_MULTI_SLOT_POLICY_PROFILES_RPC_SIGNATURES,
-        ...WORKER_DIRECTORY_LABOR_TYPE_FILTER_RPC_SIGNATURES);
+        ...WORKER_DIRECTORY_LABOR_TYPE_FILTER_RPC_SIGNATURES,
+        ...RECRUITMENT_LOCATION_CATALOG_RPC_SIGNATURES);
       assert.ok(expectedSignatures.length > 0, "the explicit server/invoker allowlist is not empty");
       assert.equal(new Set(expectedSignatures).size, expectedSignatures.length, "the allowlist has no duplicates");
       const { rows: resolvedExpected } = await client.query(
@@ -1159,9 +1162,25 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
           ...ATTENDANCE_FLEXIBLE_SLOT_POLICY_RPC_SIGNATURES,
           ...ATTENDANCE_EXPLANATIONS_WAVE2_RPC_SIGNATURES,
           ...ATTENDANCE_MULTI_SLOT_POLICY_PROFILES_RPC_SIGNATURES,
-          ...WORKER_DIRECTORY_LABOR_TYPE_FILTER_RPC_SIGNATURES].sort(),
+          ...WORKER_DIRECTORY_LABOR_TYPE_FILTER_RPC_SIGNATURES,
+          ...RECRUITMENT_LOCATION_CATALOG_RPC_SIGNATURES].sort(),
         "only explicitly reviewed post-S0 RPCs add service_role grants after the S0 baseline",
       );
+      const recruitmentLocationCatalogMigration = await readFile(
+        path.join(MIGRATION_DIR, RECRUITMENT_LOCATION_CATALOG_MIGRATION_NAME),
+        "utf8",
+      );
+      const recruitmentLocationCatalogNormalized = recruitmentLocationCatalogMigration
+        .replace(/\s+/g, " ")
+        .replace(/\(\s+/g, "(")
+        .replace(/\s+\)/g, ")")
+        .toLowerCase();
+      for (const sig of RECRUITMENT_LOCATION_CATALOG_RPC_SIGNATURES) {
+        assert.ok(
+          recruitmentLocationCatalogNormalized.includes(sig.toLowerCase()),
+          `recruitment location catalog migration includes signature ${sig}`,
+        );
+      }
       const attendanceSlotPolicyFourSlotMigration = await readFile(
         path.join(MIGRATION_DIR, ATTENDANCE_SLOT_POLICY_AND_FOUR_SLOT_MATRIX_MIGRATION_NAME),
         "utf8",
