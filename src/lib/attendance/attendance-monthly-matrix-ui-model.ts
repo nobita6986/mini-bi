@@ -196,6 +196,110 @@ export type MatrixDayCellTone = "emerald" | "red" | "amber" | "sky";
 
 export type MatrixSlotTone = "emerald" | "amber" | "sky" | "red";
 
+export const ATTENDANCE_TIME_VERIFIED_HINT = "Đã xác minh (Mốc máy chủ)";
+export const ATTENDANCE_TIME_UNVERIFIED_HINT = "Chưa xác minh (Đồng hồ thiết bị)";
+
+export type AttendanceVerificationVisualKind =
+  | "VERIFIED"
+  | "UNVERIFIED"
+  | "ALL_VERIFIED"
+  | "PARTIAL_VERIFIED"
+  | "NONE_VERIFIED";
+
+export type AttendanceVerificationIconKind =
+  | "check"
+  | "clock-warning"
+  | "alert-warning";
+
+export type AttendanceVerificationTone = "emerald" | "amber" | "red";
+
+export type AttendanceVerificationIndicatorView = {
+  kind: AttendanceVerificationVisualKind;
+  icon: AttendanceVerificationIconKind;
+  tone: AttendanceVerificationTone;
+  hint: string;
+  ariaLabel: string;
+  verifiedCount?: number;
+  unverifiedCount?: number;
+  totalCount?: number;
+};
+
+export function describeAttendanceTimeVerification(
+  timeVerified: boolean,
+): AttendanceVerificationIndicatorView {
+  if (timeVerified) {
+    return {
+      kind: "VERIFIED",
+      icon: "check",
+      tone: "emerald",
+      hint: ATTENDANCE_TIME_VERIFIED_HINT,
+      ariaLabel: ATTENDANCE_TIME_VERIFIED_HINT,
+    };
+  }
+  return {
+    kind: "UNVERIFIED",
+    icon: "clock-warning",
+    tone: "amber",
+    hint: ATTENDANCE_TIME_UNVERIFIED_HINT,
+    ariaLabel: ATTENDANCE_TIME_UNVERIFIED_HINT,
+  };
+}
+
+export function describeMatrixDayVerification(
+  cell: Pick<
+    AttendanceMonthlyMatrixDayCellProjection,
+    "has_checkin" | "checkin_count" | "verified_checkin_count" | "unverified_checkin_count"
+  >,
+): AttendanceVerificationIndicatorView | null {
+  if (!cell.has_checkin || cell.checkin_count <= 0) {
+    return null;
+  }
+  const totalCount = cell.checkin_count;
+  const verifiedCount = cell.verified_checkin_count;
+  const unverifiedCount = cell.unverified_checkin_count;
+
+  if (unverifiedCount === 0 && verifiedCount > 0) {
+    const hint = `Tất cả lượt đã xác thực (${verifiedCount}/${totalCount} lượt) — ${ATTENDANCE_TIME_VERIFIED_HINT}`;
+    return {
+      kind: "ALL_VERIFIED",
+      icon: "check",
+      tone: "emerald",
+      hint,
+      ariaLabel: hint,
+      verifiedCount,
+      unverifiedCount,
+      totalCount,
+    };
+  }
+
+  if (verifiedCount > 0 && unverifiedCount > 0) {
+    const hint = `Xác thực một phần (${verifiedCount}/${totalCount} lượt): ${verifiedCount} lượt đã xác minh (Mốc máy chủ), ${unverifiedCount} lượt chưa xác minh (Đồng hồ thiết bị)`;
+    return {
+      kind: "PARTIAL_VERIFIED",
+      icon: "clock-warning",
+      tone: "amber",
+      hint,
+      ariaLabel: hint,
+      verifiedCount,
+      unverifiedCount,
+      totalCount,
+    };
+  }
+
+  const effectiveUnverified = unverifiedCount > 0 ? unverifiedCount : totalCount;
+  const hint = `Chưa có lượt nào được xác thực (0/${totalCount} lượt): ${effectiveUnverified} lượt chưa xác minh (Đồng hồ thiết bị)`;
+  return {
+    kind: "NONE_VERIFIED",
+    icon: "alert-warning",
+    tone: "red",
+    hint,
+    ariaLabel: hint,
+    verifiedCount: 0,
+    unverifiedCount: effectiveUnverified,
+    totalCount,
+  };
+}
+
 export type MatrixLeaveBadgeView = {
   requestId: string;
   leaveType: AttendanceMatrixLeaveType;
@@ -256,6 +360,7 @@ export type MatrixDayCellPresentation = {
   missingSlotCount: number;
   lateOrEarlyCheckinCount: number;
   timeRangeLabel: string | null;
+  verification: AttendanceVerificationIndicatorView | null;
   verificationLabel: string | null;
   distanceLabel: string | null;
   targetBadgeLabel: string | null;
@@ -845,7 +950,8 @@ export function describeMatrixDayCell(
   }
 
   let timeRangeLabel: string | null = null;
-  let verificationLabel: string | null = null;
+  const verification = describeMatrixDayVerification(cell);
+  const verificationLabel = verification ? verification.hint : null;
   if (cell.has_checkin) {
     const first = cell.first_time_local ?? "--:--";
     const last = cell.last_time_local ?? first;
@@ -855,14 +961,6 @@ export function describeMatrixDayCell(
         : cell.checkin_count > 1
           ? `${first} (${cell.checkin_count} lượt)`
           : `${first} (1 lượt)`;
-
-    if (cell.unverified_checkin_count === 0 && cell.verified_checkin_count > 0) {
-      verificationLabel = `Đã xác thực (${cell.verified_checkin_count}/${cell.checkin_count})`;
-    } else if (cell.verified_checkin_count > 0 && cell.unverified_checkin_count > 0) {
-      verificationLabel = `Xác thực ${cell.verified_checkin_count}/${cell.checkin_count}`;
-    } else {
-      verificationLabel = `Chưa xác thực (${cell.unverified_checkin_count})`;
-    }
   }
 
   const targetBadgeLabel = formatMatrixDistanceTargetLabel(
@@ -895,6 +993,7 @@ export function describeMatrixDayCell(
     missingSlotCount: resolvedSlots.missingSlotCount,
     lateOrEarlyCheckinCount: resolvedSlots.lateOrEarlyCheckinCount,
     timeRangeLabel,
+    verification,
     verificationLabel,
     distanceLabel,
     targetBadgeLabel,
