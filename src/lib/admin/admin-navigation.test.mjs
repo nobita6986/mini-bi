@@ -96,6 +96,43 @@ test("Admin internal navigation exposes mapping, departments, and worker edit hi
   // Canonical BoD (entry_privileged_edit @ all or report_analytics_view + report_view @ all) sees Provinces, Industrial Parks, and Attendance Report.
   assert.deepEqual(visibleAdminSections({ capabilities: ["entry_privileged_edit"], scopes: [{ kind: "all" }] }), bodSections);
   assert.deepEqual(visibleAdminSections({ capabilities: ["report_analytics_view", "report_view"], scopes: [{ kind: "all" }] }), bodSections);
+  // Canonical Team Leader (team_manager_assign + report_view + report_analytics_view @ team) sees ONLY Attendance Report, never Provinces or Industrial Parks.
+  assert.deepEqual(
+    visibleAdminSections({
+      capabilities: ["team_manager_assign", "report_view", "report_analytics_view"],
+      scopes: [{ kind: "team" }],
+    }),
+    [{ id: "attendance", label: "Báo cáo chấm công", href: "/admin/attendance" }],
+  );
+  // Incomplete Team Leader bundles or wrong scopes see nothing.
+  assert.deepEqual(
+    visibleAdminSections({
+      capabilities: ["team_manager_assign", "report_view"],
+      scopes: [{ kind: "team" }],
+    }),
+    [],
+  );
+  assert.deepEqual(
+    visibleAdminSections({
+      capabilities: ["report_view", "report_analytics_view"],
+      scopes: [{ kind: "team" }],
+    }),
+    [],
+  );
+  assert.deepEqual(
+    visibleAdminSections({
+      capabilities: ["team_manager_assign"],
+      scopes: [{ kind: "team" }],
+    }),
+    [],
+  );
+  assert.deepEqual(
+    visibleAdminSections({
+      capabilities: ["team_manager_assign", "report_view", "report_analytics_view"],
+      scopes: [{ kind: "own" }],
+    }),
+    [],
+  );
   // Aggregate-only or submission-only report viewers do not receive Attendance Report access.
   assert.deepEqual(visibleAdminSections({ capabilities: ["report_analytics_view"], scopes: [{ kind: "all" }] }), []);
   assert.deepEqual(visibleAdminSections({ capabilities: ["report_view"], scopes: [{ kind: "all" }] }), []);

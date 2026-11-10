@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   decideAccountAccessPageAccess,
   decideAdminAreaAccess,
+  decideAttendanceReportPageAccess,
   decidePersonnelCatalogPageAccess,
   decideRecruitmentLocationCatalogPageAccess,
 } from "../../lib/auth/direct-entry-page-access.ts";
@@ -55,6 +56,8 @@ test("both Admin URL surfaces resolve actor server-side and use explicit access 
   const vendorPage = readFileSync(new URL("./catalog/vendors/page.tsx", import.meta.url), "utf8");
   assert.match(layout, /resolveActorForRequest\(\)/);
   assert.match(layout, /decideAdminAreaAccess/);
+  assert.match(layout, /mx-auto w-full max-w-7xl px-4 py-6 sm:px-6/);
+  assert.doesNotMatch(layout, /max-w-6xl/);
   assert.match(adminPage, /resolveActorForRequest\(\)/);
   assert.match(adminPage, /decideAdminAreaAccess/);
   assert.match(personnelPage, /resolveActorForRequest\(\)/);
@@ -102,6 +105,16 @@ test("/admin/catalog/provinces and /admin/catalog/industrial-parks allow Full Ad
   assert.equal(decideRecruitmentLocationCatalogPageAccess({ actor: bodReporting }), "ALLOW");
   assert.equal(decideRecruitmentLocationCatalogPageAccess({ actor: catalogOperator }), "ACCESS_DENIED");
   assert.equal(decideRecruitmentLocationCatalogPageAccess({ actor: actor(["entry_admin"]) }), "ACCESS_DENIED");
+
+  const teamLeader = actor(
+    ["team_manager_assign", "report_view", "report_analytics_view"],
+    [{ kind: "team", reference: "team-fixture" }],
+  );
+  assert.equal(decideAdminAreaAccess({ actor: teamLeader }), "ALLOW");
+  assert.equal(decideAttendanceReportPageAccess({ actor: teamLeader }), "ALLOW");
+  assert.equal(decideRecruitmentLocationCatalogPageAccess({ actor: teamLeader }), "ACCESS_DENIED");
+  assert.equal(decidePersonnelCatalogPageAccess({ actor: teamLeader }), "ACCESS_DENIED");
+  assert.equal(decideAccountAccessPageAccess({ actor: teamLeader }), "ACCESS_DENIED");
 
   const provincesPage = readFileSync(new URL("./catalog/provinces/page.tsx", import.meta.url), "utf8");
   const parksPage = readFileSync(new URL("./catalog/industrial-parks/page.tsx", import.meta.url), "utf8");

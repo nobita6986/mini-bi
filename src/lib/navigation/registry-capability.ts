@@ -91,16 +91,15 @@ export const workerEditHistoryNavPredicate: NavCapabilityPredicate = (actor) =>
   actor.scopes.some((scope) => scope.kind === "all");
 
 /**
- * Canonical BoD executive report reader authority (requires effective `all` scope):
- * - `entry_privileged_edit` (Direct Entry / P3.1 BoD executive capability), OR
- * - BOTH `report_analytics_view` AND `report_view` (Work Reports F0 §2 BoD executive bundle).
+ * Canonical Full Admin or BoD executive authority (requires effective `all` scope):
+ * - Full Admin triple (`entry_admin` + `recruiter_master_manage` + `team_master_manage` @ `all`), OR
+ * - `entry_privileged_edit` (Direct Entry / P3.1 BoD executive capability) @ `all`, OR
+ * - BOTH `report_analytics_view` AND `report_view` (Work Reports F0 §2 BoD executive bundle) @ `all`.
  *
- * Aggregate-only (`report_analytics_view` without `report_view`), submission-only (`report_view`
- * without `report_analytics_view`), Form Admin (`report_form_manage`), Accounting (`catalog_master_manage`),
- * Project Admin (`entry_admin` without Full Admin triple), Reviewer (`change_review`), Team Leader
- * (`@ team`), and Staff (`@ own`) are denied so raw check-in GPS & notes remain Admin/BoD-only.
+ * Used for Provinces & Industrial Parks catalog (`/admin/catalog/provinces`, `/admin/catalog/industrial-parks`)
+ * and global attendance admin configuration / branch / slot-policy surfaces.
  */
-export const attendanceReportNavPredicate: NavCapabilityPredicate = (actor) => {
+export const recruitmentLocationCatalogNavPredicate: NavCapabilityPredicate = (actor) => {
   if (adminSecurityNavPredicate(actor)) return true;
   if (!actor.scopes.some((scope) => scope.kind === "all")) return false;
   if (actor.capabilities.includes("entry_privileged_edit")) return true;
@@ -110,7 +109,30 @@ export const attendanceReportNavPredicate: NavCapabilityPredicate = (actor) => {
   );
 };
 
-/** Top-level Admin panel shell admits catalog operators, Full Admin, Attendance Report readers (BoD), or Worker Edit History readers. */
+export const attendanceFullAdminOrBodNavPredicate = recruitmentLocationCatalogNavPredicate;
+
+/**
+ * Canonical Team Leader bundle for viewing team-scoped attendance reports:
+ * - `team_manager_assign` + `report_view` + `report_analytics_view`
+ * - effective `team` scope
+ * Database remains the final authority via `direct_entry_assert_team_leader_current_team`.
+ */
+export const attendanceTeamLeaderReportNavPredicate: NavCapabilityPredicate = (actor) =>
+  actor.scopes.some((scope) => scope.kind === "team") &&
+  actor.capabilities.includes("team_manager_assign") &&
+  actor.capabilities.includes("report_view") &&
+  actor.capabilities.includes("report_analytics_view");
+
+/**
+ * Attendance report viewer predicate (`/admin/attendance`):
+ * - Full Admin or BoD (`recruitmentLocationCatalogNavPredicate`), OR
+ * - Canonical Team Leader bundle (`attendanceTeamLeaderReportNavPredicate`).
+ */
+export const attendanceReportNavPredicate: NavCapabilityPredicate = (actor) =>
+  recruitmentLocationCatalogNavPredicate(actor) ||
+  attendanceTeamLeaderReportNavPredicate(actor);
+
+/** Top-level Admin panel shell admits catalog operators, Full Admin, Attendance Report readers (BoD or Team Leader), or Worker Edit History readers. */
 export const adminPanelNavPredicate: NavCapabilityPredicate = (actor) =>
   adminAreaNavPredicate(actor) || attendanceReportNavPredicate(actor) || workerEditHistoryNavPredicate(actor);
 

@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { AttendanceReportManager } from "@/components/admin/attendance-report-manager";
 import { AccessDenied, AccountUnavailable } from "@/components/auth/access-denied";
 import { TemporaryUnavailable } from "@/components/auth/temporary-unavailable";
+import { resolveAttendanceAdminWorkspaceMode } from "@/lib/attendance/attendance-monthly-matrix-ui-model";
 import { decideAttendanceReportPageAccess } from "@/lib/auth/direct-entry-page-access";
 import { resolveActorForRequest } from "@/lib/navigation/resolve-nav-actor";
 
@@ -20,7 +21,11 @@ export default async function AdminAttendanceReportPage() {
     case "ACCESS_DENIED":
     case "NOT_FOUND":
       return <AccessDenied />;
-    case "ALLOW":
-      return <AttendanceReportManager />;
+    case "ALLOW": {
+      const workspaceMode = resolveAttendanceAdminWorkspaceMode(
+        actor?.ok ? actor.actor : null,
+      );
+      return <AttendanceReportManager workspaceMode={workspaceMode} />;
+    }
   }
 }

@@ -13,8 +13,11 @@ import {
   resolveAttendanceEmployeeDisplayIdentity,
 } from "./attendance-report-contract.ts";
 import {
+  ATTENDANCE_TIME_UNVERIFIED_HINT,
+  ATTENDANCE_TIME_VERIFIED_HINT,
   DEFAULT_TABLE_HORIZONTAL_STEP_PX,
   DEFAULT_TABLE_VERTICAL_STEP_PX,
+  FULL_ATTENDANCE_ADMIN_WORKSPACE_TABS,
   MATRIX_EXPLAINED_APPROVED_LABEL,
   MATRIX_EXPLANATION_PENDING_LABEL,
   MATRIX_EXPLANATION_REJECTED_LABEL,
@@ -24,6 +27,7 @@ import {
   TABLE_HORIZONTAL_SCROLL_STEP_SCALE,
   TABLE_SCROLL_HORIZONTAL_VIEWPORT_STEP_RATIO,
   TABLE_SCROLL_VERTICAL_VIEWPORT_STEP_RATIO,
+  TEAM_LEADER_ATTENDANCE_WORKSPACE_TABS,
   buildAssignEmployeeToBranchPayload,
   buildAssignEmployeeToSlotPolicyPayload,
   buildCreateSlotPolicyPayload,
@@ -39,18 +43,23 @@ import {
   computeClampedTableScrollTarget,
   computeTableScrollAvailability,
   computeTableScrollStepPx,
+  describeAttendanceTimeVerification,
   describeBranchAssignmentStatus,
   describeMatrixDayCell,
+  describeMatrixDayVerification,
   describeSlotPolicyAssignmentStatus,
   formatEmployeeSlotPolicySummaryLabel,
   formatMatrixDistanceStatusLabel,
   formatMatrixWeekdayLabel,
+  getAllowedAttendanceAdminWorkspaceTabs,
   getVietnamCurrentYearMonth,
   mapAttendanceExplanationMutationError,
   mapBranchAdminMutationError,
   mapMonthlyMatrixExportError,
   mapMonthlyMatrixReportError,
   mapSlotPolicyMutationError,
+  resolveAttendanceAdminWorkspaceMode,
+  resolveEffectiveAttendanceAdminWorkspaceTab,
   resolveFloatingTableNavPositionClass,
   resolveMutualExclusiveEmployeeOrSearch,
   validateMonthlyMatrixFilters,
@@ -260,7 +269,20 @@ test("monthly matrix day cell presentation: renders CHECKED_IN, APPROVED_LEAVE, 
   assert.equal(checkedIn.tone, "emerald");
   assert.equal(checkedIn.isRedHighlight, false);
   assert.equal(checkedIn.timeRangeLabel, "08:02 – 17:35 (2 lượt)");
-  assert.equal(checkedIn.verificationLabel, "Đã xác thực (2/2)");
+  assert.equal(
+    checkedIn.verificationLabel,
+    "Tất cả lượt đã xác thực (2/2 lượt) — Đã xác minh (Mốc máy chủ)",
+  );
+  assert.deepEqual(checkedIn.verification, {
+    kind: "ALL_VERIFIED",
+    icon: "check",
+    tone: "emerald",
+    hint: "Tất cả lượt đã xác thực (2/2 lượt) — Đã xác minh (Mốc máy chủ)",
+    ariaLabel: "Tất cả lượt đã xác thực (2/2 lượt) — Đã xác minh (Mốc máy chủ)",
+    verifiedCount: 2,
+    unverifiedCount: 0,
+    totalCount: 2,
+  });
   assert.equal(checkedIn.distanceLabel, "CN: HN-CG · 145 m");
 
   // 4. CHECKED_IN_AND_LEAVE -> amber tone, both check-in and leave info
@@ -1853,12 +1875,12 @@ test("Attendance Config Hotfix: dedicated 'Cấu hình chấm công' tab, slot p
   // 2. Separate 'Cấu hình chấm công' tab at the end of the tab row; no duplication in report tabs
   assert.match(
     managerSource,
-    /id="attendance-tab-branches"[\s\S]*?Chi nhánh HRP[\s\S]*?<\/button>\s*<button[\s\S]*?id="attendance-tab-config"[\s\S]*?aria-controls="attendance-panel-config"[\s\S]*?Cấu hình chấm công\s*<\/button>/,
+    /id="attendance-tab-branches"[\s\S]*?Chi nhánh HRP[\s\S]*?<\/button>[\s\S]*?allowedTabs\.includes\("config"\)[\s\S]*?<button[\s\S]*?id="attendance-tab-config"[\s\S]*?aria-controls="attendance-panel-config"[\s\S]*?Cấu hình chấm công\s*<\/button>/,
     "'Cấu hình chấm công' tab must be at the end of the tab row after 'Chi nhánh HRP'",
   );
   assert.match(
     managerSource,
-    /activeTab === "config"\s*\?\s*\(\s*<div\s+id="attendance-panel-config"\s+role="tabpanel"\s+aria-labelledby="attendance-tab-config"[\s\S]*?title="Vị trí trụ sở tính khoảng cách"[\s\S]*?<AttendanceSlotPolicySummaryCard/,
+    /effectiveTab === "config" && allowedTabs\.includes\("config"\)\s*\?\s*\(\s*<div\s+id="attendance-panel-config"\s+role="tabpanel"\s+aria-labelledby="attendance-tab-config"[\s\S]*?title="Vị trí trụ sở tính khoảng cách"[\s\S]*?<AttendanceSlotPolicySummaryCard/,
     "Both Headquarters Location card and Slot Policy configuration card must render inside #attendance-panel-config",
   );
   const monthlyMatrixSectionSource =
@@ -1936,4 +1958,254 @@ test("Attendance Config Hotfix: dedicated 'Cấu hình chấm công' tab, slot p
     /<GpsDetailCell item=\{item\} \/>[\s\S]*?<DistanceCell item=\{item\} \/>/,
     "Individual check-in rows preserve GpsDetailCell and DistanceCell display",
   );
+});
+
+test("Team Leader attendance workspace mode: restricts tabs to checkins and monthly-matrix, never renders or mounts explanations/branches/config, and fails closed to checkins", () => {
+  const attendancePageSource = readFileSync(
+    new URL("../../app/admin/attendance/page.tsx", import.meta.url),
+    "utf8",
+  );
+
+  // 1. Server-derived workspace mode resolution
+  assert.equal(
+    resolveAttendanceAdminWorkspaceMode({
+      capabilities: ["entry_admin", "recruiter_master_manage", "team_master_manage"],
+      scopes: [{ kind: "all" }],
+    }),
+    "full",
+  );
+  assert.equal(
+    resolveAttendanceAdminWorkspaceMode({
+      capabilities: ["entry_privileged_edit"],
+      scopes: [{ kind: "all" }],
+    }),
+    "full",
+  );
+  assert.equal(
+    resolveAttendanceAdminWorkspaceMode({
+      capabilities: ["report_analytics_view", "report_view"],
+      scopes: [{ kind: "all" }],
+    }),
+    "full",
+  );
+  assert.equal(
+    resolveAttendanceAdminWorkspaceMode({
+      capabilities: ["team_manager_assign", "report_view", "report_analytics_view"],
+      scopes: [{ kind: "team" }],
+    }),
+    "team-leader",
+  );
+
+  // 2. Allowed tabs per mode & fail-closed tab fallback
+  assert.deepEqual(getAllowedAttendanceAdminWorkspaceTabs("full"), [
+    "checkins",
+    "monthly-matrix",
+    "explanations",
+    "branches",
+    "config",
+  ]);
+  assert.deepEqual(FULL_ATTENDANCE_ADMIN_WORKSPACE_TABS, [
+    "checkins",
+    "monthly-matrix",
+    "explanations",
+    "branches",
+    "config",
+  ]);
+  assert.deepEqual(getAllowedAttendanceAdminWorkspaceTabs("team-leader"), [
+    "checkins",
+    "monthly-matrix",
+  ]);
+  assert.deepEqual(TEAM_LEADER_ATTENDANCE_WORKSPACE_TABS, ["checkins", "monthly-matrix"]);
+
+  assert.equal(resolveEffectiveAttendanceAdminWorkspaceTab("checkins", "team-leader"), "checkins");
+  assert.equal(
+    resolveEffectiveAttendanceAdminWorkspaceTab("monthly-matrix", "team-leader"),
+    "monthly-matrix",
+  );
+  for (const forbiddenTab of ["explanations", "branches", "config"]) {
+    assert.equal(
+      resolveEffectiveAttendanceAdminWorkspaceTab(forbiddenTab, "team-leader"),
+      "checkins",
+      `forbidden tab ${forbiddenTab} must fall back to checkins in team-leader mode`,
+    );
+    assert.equal(
+      resolveEffectiveAttendanceAdminWorkspaceTab(forbiddenTab, "full"),
+      forbiddenTab,
+      `tab ${forbiddenTab} remains allowed in full mode`,
+    );
+  }
+
+  // 3. Page and manager wiring ensure unallowed tabs are neither rendered nor mounted
+  assert.match(attendancePageSource, /resolveAttendanceAdminWorkspaceMode\(/);
+  assert.match(
+    attendancePageSource,
+    /<AttendanceReportManager workspaceMode=\{workspaceMode\} \/>/,
+  );
+  assert.match(
+    managerSource,
+    /getAllowedAttendanceAdminWorkspaceTabs\(workspaceMode\)/,
+  );
+  assert.match(
+    managerSource,
+    /resolveEffectiveAttendanceAdminWorkspaceTab\(\s*activeTab,\s*workspaceMode/,
+  );
+  assert.match(
+    managerSource,
+    /effectiveTab === "explanations" && allowedTabs\.includes\("explanations"\)/,
+  );
+  assert.match(
+    managerSource,
+    /effectiveTab === "branches" && allowedTabs\.includes\("branches"\)/,
+  );
+  assert.match(
+    managerSource,
+    /effectiveTab === "config" && allowedTabs\.includes\("config"\)/,
+  );
+});
+
+test("Compact /admin/attendance header & shared AttendanceVerificationBadge icon-with-tooltip across check-in and monthly matrix tables", () => {
+  const verificationBadgeSource = readFileSync(
+    new URL("../../components/attendance/attendance-verification-badge.tsx", import.meta.url),
+    "utf8",
+  );
+  const adminNavSource = readFileSync(
+    new URL("../admin/admin-navigation.ts", import.meta.url),
+    "utf8",
+  );
+
+  // 1. /admin/attendance top header removes 'Báo cáo chấm công' h1 and description line while keeping Admin subnav tab and 'Làm mới' button
+  assert.equal(/<h1[^>]*>[\s\S]*?Báo cáo chấm công[\s\S]*?<\/h1>/.test(managerSource), false);
+  assert.equal(
+    managerSource.includes("Tổng quan và chi tiết lượt chấm công theo ngày nghiệp vụ hệ thống"),
+    false,
+  );
+  assert.match(adminNavSource, /label:\s*"Báo cáo chấm công"/);
+  assert.match(adminNavSource, /href:\s*"\/admin\/attendance"/);
+  assert.match(managerSource, /onClick=\{requestReload\}/);
+  assert.match(managerSource, /\? "Đang tải\.\.\." : "Làm mới"/);
+  assert.match(managerSource, /role="tablist"/);
+
+  // 2. Single check-in verification indicator model (VERIFIED vs UNVERIFIED)
+  assert.equal(ATTENDANCE_TIME_VERIFIED_HINT, "Đã xác minh (Mốc máy chủ)");
+  assert.equal(ATTENDANCE_TIME_UNVERIFIED_HINT, "Chưa xác minh (Đồng hồ thiết bị)");
+  assert.deepEqual(describeAttendanceTimeVerification(true), {
+    kind: "VERIFIED",
+    icon: "check",
+    tone: "emerald",
+    hint: "Đã xác minh (Mốc máy chủ)",
+    ariaLabel: "Đã xác minh (Mốc máy chủ)",
+  });
+  assert.deepEqual(describeAttendanceTimeVerification(false), {
+    kind: "UNVERIFIED",
+    icon: "clock-warning",
+    tone: "amber",
+    hint: "Chưa xác minh (Đồng hồ thiết bị)",
+    ariaLabel: "Chưa xác minh (Đồng hồ thiết bị)",
+  });
+
+  // 3. Monthly matrix day aggregate verification distinguishes ALL_VERIFIED, PARTIAL_VERIFIED, NONE_VERIFIED, and null when no check-in
+  assert.equal(
+    describeMatrixDayVerification({
+      has_checkin: false,
+      checkin_count: 0,
+      verified_checkin_count: 0,
+      unverified_checkin_count: 0,
+    }),
+    null,
+  );
+
+  const allVerified = describeMatrixDayVerification({
+    has_checkin: true,
+    checkin_count: 3,
+    verified_checkin_count: 3,
+    unverified_checkin_count: 0,
+  });
+  assert.deepEqual(allVerified, {
+    kind: "ALL_VERIFIED",
+    icon: "check",
+    tone: "emerald",
+    hint: "Tất cả lượt đã xác thực (3/3 lượt) — Đã xác minh (Mốc máy chủ)",
+    ariaLabel: "Tất cả lượt đã xác thực (3/3 lượt) — Đã xác minh (Mốc máy chủ)",
+    verifiedCount: 3,
+    unverifiedCount: 0,
+    totalCount: 3,
+  });
+
+  const partialVerified = describeMatrixDayVerification({
+    has_checkin: true,
+    checkin_count: 3,
+    verified_checkin_count: 2,
+    unverified_checkin_count: 1,
+  });
+  assert.deepEqual(partialVerified, {
+    kind: "PARTIAL_VERIFIED",
+    icon: "clock-warning",
+    tone: "amber",
+    hint: "Xác thực một phần (2/3 lượt): 2 lượt đã xác minh (Mốc máy chủ), 1 lượt chưa xác minh (Đồng hồ thiết bị)",
+    ariaLabel:
+      "Xác thực một phần (2/3 lượt): 2 lượt đã xác minh (Mốc máy chủ), 1 lượt chưa xác minh (Đồng hồ thiết bị)",
+    verifiedCount: 2,
+    unverifiedCount: 1,
+    totalCount: 3,
+  });
+
+  const noneVerified = describeMatrixDayVerification({
+    has_checkin: true,
+    checkin_count: 2,
+    verified_checkin_count: 0,
+    unverified_checkin_count: 2,
+  });
+  assert.deepEqual(noneVerified, {
+    kind: "NONE_VERIFIED",
+    icon: "alert-warning",
+    tone: "red",
+    hint: "Chưa có lượt nào được xác thực (0/2 lượt): 2 lượt chưa xác minh (Đồng hồ thiết bị)",
+    ariaLabel:
+      "Chưa có lượt nào được xác thực (0/2 lượt): 2 lượt chưa xác minh (Đồng hồ thiết bị)",
+    verifiedCount: 0,
+    unverifiedCount: 2,
+    totalCount: 2,
+  });
+
+  // 4. Shared AttendanceVerificationBadge component uses existing Radix Tooltip & Lucide icons (single hint via Tooltip without duplicate native title or uncontained sr-only) and preserves sync delay note
+  const dataTableSource = readFileSync(
+    new URL("../../components/ui/data-table.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.match(verificationBadgeSource, /from "lucide-react"/);
+  assert.match(verificationBadgeSource, /from "radix-ui"/);
+  assert.match(verificationBadgeSource, /Tooltip\.Provider/);
+  assert.match(verificationBadgeSource, /Tooltip\.Trigger asChild/);
+  assert.match(verificationBadgeSource, /Tooltip\.Content/);
+  assert.match(verificationBadgeSource, /aria-label=\{indicator\.ariaLabel\}/);
+  assert.equal(verificationBadgeSource.includes("title={indicator.hint}"), false);
+  assert.equal(verificationBadgeSource.includes('className="sr-only"'), false);
+  assert.match(dataTableSource, /relative overflow-hidden rounded-xl/);
+  assert.match(dataTableSource, /relative overflow-x-auto/);
+
+  assert.match(
+    managerSource,
+    /<th scope="col" className=\{cn\(DATA_TABLE_TH_CLASS, "text-center"\)\}>\s*Thời gian\s*<\/th>/,
+  );
+  assert.match(
+    managerSource,
+    /<td\s+data-label="Thời gian"\s+className=\{cn\(DATA_TABLE_TD_CLASS, "text-center"\)\}\s*>/,
+  );
+
+  const timeVerificationCellBlock =
+    managerSource.match(/function TimeVerificationCell[\s\S]*?\n}\n/)?.[0] ?? "";
+  assert.match(
+    timeVerificationCellBlock,
+    /className="flex flex-col items-center justify-center gap-1 text-center"/,
+  );
+  assert.match(timeVerificationCellBlock, /<AttendanceVerificationBadge indicator=\{verification\} \/>/);
+  assert.match(timeVerificationCellBlock, /formatSyncDelayNote\(item\.sync_delay_seconds\)/);
+
+  const matrixDayCellBlock =
+    matrixPanelSource.match(/function MatrixDayCell[\s\S]*?\n}\n/)?.[0] ?? "";
+  assert.match(
+    matrixDayCellBlock,
+    /<AttendanceVerificationBadge indicator=\{presentation\.verification\} \/>/,
+  );
+  assert.equal(matrixDayCellBlock.includes("{presentation.verificationLabel}"), false);
 });

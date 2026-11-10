@@ -10,6 +10,7 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 
+import { AttendanceVerificationBadge } from "@/components/attendance/attendance-verification-badge";
 import { EmptyState } from "@/components/reporting/empty-state";
 import { ErrorState } from "@/components/reporting/error-state";
 import { Alert } from "@/components/ui/alert";
@@ -270,9 +271,9 @@ function MatrixDayCell({ cell }: { cell: AttendanceMonthlyMatrixDayCellProjectio
       </div>
 
       {presentation.hasCheckin ? (
-        <div className="space-y-0.5 border-t border-current/15 pt-1">
-          {presentation.verificationLabel ? (
-            <p className="text-[11px] opacity-85">{presentation.verificationLabel}</p>
+        <div className="flex items-center justify-between gap-1.5 border-t border-current/15 pt-1">
+          {presentation.verification ? (
+            <AttendanceVerificationBadge indicator={presentation.verification} />
           ) : null}
           {presentation.distanceLabel ? (
             <p className="font-mono text-[11px] font-medium opacity-90">

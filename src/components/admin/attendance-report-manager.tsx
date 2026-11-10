@@ -63,9 +63,14 @@ import {
   AttendanceSlotPolicySummaryCard,
 } from "@/components/admin/attendance-monthly-matrix-panel";
 import { AttendanceExplanationWorkspace } from "@/components/attendance/attendance-explanation-workspace";
+import { AttendanceVerificationBadge } from "@/components/attendance/attendance-verification-badge";
 import { FloatingTableNav } from "@/components/ui/floating-table-nav";
 import {
   buildGoogleMapsCoordinatesUrl,
+  describeAttendanceTimeVerification,
+  getAllowedAttendanceAdminWorkspaceTabs,
+  resolveEffectiveAttendanceAdminWorkspaceTab,
+  type AttendanceAdminWorkspaceMode,
   type AttendanceAdminWorkspaceTab,
 } from "@/lib/attendance/attendance-monthly-matrix-ui-model";
 import { cn } from "@/lib/utils";
@@ -501,17 +506,10 @@ function DistanceCell({ item }: { item: AttendanceReportItemProjection }) {
 
 function TimeVerificationCell({ item }: { item: AttendanceReportItemProjection }) {
   const syncNote = formatSyncDelayNote(item.sync_delay_seconds);
+  const verification = describeAttendanceTimeVerification(item.time_verified);
   return (
-    <div className="space-y-1">
-      {item.time_verified ? (
-        <StatusBadge tone="success" dot>
-          Đã xác minh (Mốc máy chủ)
-        </StatusBadge>
-      ) : (
-        <StatusBadge tone="warning" dot>
-          Chưa xác minh (Đồng hồ thiết bị)
-        </StatusBadge>
-      )}
+    <div className="flex flex-col items-center justify-center gap-1 text-center">
+      <AttendanceVerificationBadge indicator={verification} />
       {syncNote ? <p className="text-xs text-muted">{syncNote}</p> : null}
     </div>
   );
@@ -690,15 +688,9 @@ function AttendanceCheckinDetailBody({
           <div>
             <dt className="text-xs text-muted">Trạng thái xác minh thời gian</dt>
             <dd className="mt-1">
-              {item.time_verified ? (
-                <StatusBadge tone="success" dot>
-                  Đã xác minh
-                </StatusBadge>
-              ) : (
-                <StatusBadge tone="warning" dot>
-                  Chưa xác minh
-                </StatusBadge>
-              )}
+              <AttendanceVerificationBadge
+                indicator={describeAttendanceTimeVerification(item.time_verified)}
+              />
             </dd>
           </div>
           <div>
@@ -858,7 +850,13 @@ function AttendanceCheckinDetailBody({
   );
 }
 
-export function AttendanceReportManager() {
+export type AttendanceReportManagerProps = {
+  workspaceMode?: AttendanceAdminWorkspaceMode;
+};
+
+export function AttendanceReportManager({
+  workspaceMode = "full",
+}: AttendanceReportManagerProps = {}) {
   const router = useRouter();
   const notify = useNotify();
   const initialToday = getVietnamTodayIsoDate();
@@ -866,6 +864,14 @@ export function AttendanceReportManager() {
 
   const [activeTab, setActiveTab] =
     useState<AttendanceAdminWorkspaceTab>("checkins");
+  const allowedTabs = useMemo(
+    () => getAllowedAttendanceAdminWorkspaceTabs(workspaceMode),
+    [workspaceMode],
+  );
+  const effectiveTab = resolveEffectiveAttendanceAdminWorkspaceTab(
+    activeTab,
+    workspaceMode,
+  );
   const [fromInput, setFromInput] = useState(initialFrom);
   const [toInput, setToInput] = useState(initialToday);
   const [employeeIdInput, setEmployeeIdInput] = useState("");
@@ -1413,15 +1419,98 @@ export function AttendanceReportManager() {
 
   return (
     <div className="space-y-6">
-      <header className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight text-foreground sm:text-2xl">
-            Báo cáo chấm công
-          </h1>
-          <p className="mt-1 text-sm text-muted">
-            Tổng quan và chi tiết lượt chấm công theo ngày nghiệp vụ hệ thống (
-            <span className="font-mono">{ATTENDANCE_BUSINESS_TIMEZONE}</span>).
-          </p>
+      <header className="flex flex-wrap items-center justify-between gap-2">
+        <div
+          role="tablist"
+          aria-label="Chế độ xem quản trị chấm công"
+          className="flex flex-wrap gap-2 rounded-xl border border-border bg-surface p-1.5 shadow-2xs"
+        >
+          <button
+            type="button"
+            role="tab"
+            id="attendance-tab-checkins"
+            aria-selected={effectiveTab === "checkins"}
+            aria-controls="attendance-panel-checkins"
+            onClick={() => setActiveTab("checkins")}
+            className={cn(
+              "min-h-10 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors",
+              effectiveTab === "checkins"
+                ? "bg-accent text-on-primary shadow-2xs"
+                : "text-muted hover:bg-surface-muted/70 hover:text-foreground",
+            )}
+          >
+            Chi tiết lượt chấm công
+          </button>
+          <button
+            type="button"
+            role="tab"
+            id="attendance-tab-monthly-matrix"
+            aria-selected={effectiveTab === "monthly-matrix"}
+            aria-controls="attendance-panel-monthly-matrix"
+            onClick={() => setActiveTab("monthly-matrix")}
+            className={cn(
+              "min-h-10 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors",
+              effectiveTab === "monthly-matrix"
+                ? "bg-accent text-on-primary shadow-2xs"
+                : "text-muted hover:bg-surface-muted/70 hover:text-foreground",
+            )}
+          >
+            Báo cáo tháng
+          </button>
+          {allowedTabs.includes("explanations") ? (
+            <button
+              type="button"
+              role="tab"
+              id="attendance-tab-explanations"
+              aria-selected={effectiveTab === "explanations"}
+              aria-controls="attendance-panel-explanations"
+              onClick={() => setActiveTab("explanations")}
+              className={cn(
+                "min-h-10 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors",
+                effectiveTab === "explanations"
+                  ? "bg-accent text-on-primary shadow-2xs"
+                  : "text-muted hover:bg-surface-muted/70 hover:text-foreground",
+              )}
+            >
+              Giải trình chấm công
+            </button>
+          ) : null}
+          {allowedTabs.includes("branches") ? (
+            <button
+              type="button"
+              role="tab"
+              id="attendance-tab-branches"
+              aria-selected={effectiveTab === "branches"}
+              aria-controls="attendance-panel-branches"
+              onClick={() => setActiveTab("branches")}
+              className={cn(
+                "min-h-10 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors",
+                effectiveTab === "branches"
+                  ? "bg-accent text-on-primary shadow-2xs"
+                  : "text-muted hover:bg-surface-muted/70 hover:text-foreground",
+              )}
+            >
+              Chi nhánh HRP
+            </button>
+          ) : null}
+          {allowedTabs.includes("config") ? (
+            <button
+              type="button"
+              role="tab"
+              id="attendance-tab-config"
+              aria-selected={effectiveTab === "config"}
+              aria-controls="attendance-panel-config"
+              onClick={() => setActiveTab("config")}
+              className={cn(
+                "min-h-10 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors",
+                effectiveTab === "config"
+                  ? "bg-accent text-on-primary shadow-2xs"
+                  : "text-muted hover:bg-surface-muted/70 hover:text-foreground",
+              )}
+            >
+              Cấu hình chấm công
+            </button>
+          ) : null}
         </div>
         <div className="flex items-center gap-2">
           <Button
@@ -1435,100 +1524,13 @@ export function AttendanceReportManager() {
         </div>
       </header>
 
-      <div
-        role="tablist"
-        aria-label="Chế độ xem quản trị chấm công"
-        className="flex flex-wrap gap-2 rounded-xl border border-border bg-surface p-1.5 shadow-2xs"
-      >
-        <button
-          type="button"
-          role="tab"
-          id="attendance-tab-checkins"
-          aria-selected={activeTab === "checkins"}
-          aria-controls="attendance-panel-checkins"
-          onClick={() => setActiveTab("checkins")}
-          className={cn(
-            "min-h-10 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors",
-            activeTab === "checkins"
-              ? "bg-accent text-on-primary shadow-2xs"
-              : "text-muted hover:bg-surface-muted/70 hover:text-foreground",
-          )}
-        >
-          Chi tiết lượt chấm công
-        </button>
-        <button
-          type="button"
-          role="tab"
-          id="attendance-tab-monthly-matrix"
-          aria-selected={activeTab === "monthly-matrix"}
-          aria-controls="attendance-panel-monthly-matrix"
-          onClick={() => setActiveTab("monthly-matrix")}
-          className={cn(
-            "min-h-10 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors",
-            activeTab === "monthly-matrix"
-              ? "bg-accent text-on-primary shadow-2xs"
-              : "text-muted hover:bg-surface-muted/70 hover:text-foreground",
-          )}
-        >
-          Báo cáo tháng
-        </button>
-        <button
-          type="button"
-          role="tab"
-          id="attendance-tab-explanations"
-          aria-selected={activeTab === "explanations"}
-          aria-controls="attendance-panel-explanations"
-          onClick={() => setActiveTab("explanations")}
-          className={cn(
-            "min-h-10 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors",
-            activeTab === "explanations"
-              ? "bg-accent text-on-primary shadow-2xs"
-              : "text-muted hover:bg-surface-muted/70 hover:text-foreground",
-          )}
-        >
-          Giải trình chấm công
-        </button>
-        <button
-          type="button"
-          role="tab"
-          id="attendance-tab-branches"
-          aria-selected={activeTab === "branches"}
-          aria-controls="attendance-panel-branches"
-          onClick={() => setActiveTab("branches")}
-          className={cn(
-            "min-h-10 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors",
-            activeTab === "branches"
-              ? "bg-accent text-on-primary shadow-2xs"
-              : "text-muted hover:bg-surface-muted/70 hover:text-foreground",
-          )}
-        >
-          Chi nhánh HRP
-        </button>
-        <button
-          type="button"
-          role="tab"
-          id="attendance-tab-config"
-          aria-selected={activeTab === "config"}
-          aria-controls="attendance-panel-config"
-          onClick={() => setActiveTab("config")}
-          className={cn(
-            "min-h-10 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors",
-            activeTab === "config"
-              ? "bg-accent text-on-primary shadow-2xs"
-              : "text-muted hover:bg-surface-muted/70 hover:text-foreground",
-          )}
-        >
-          Cấu hình chấm công
-        </button>
-      </div>
-
       {loadState.kind === "error" ? (
         <Alert tone="error" role="alert" title="Không thể làm mới báo cáo">
           <p>{loadState.detail}</p>
         </Alert>
       ) : null}
 
-      {activeTab === "config" ? (
+      {effectiveTab === "config" && allowedTabs.includes("config") ? (
         <div
           id="attendance-panel-config"
           role="tabpanel"
@@ -1713,7 +1715,7 @@ export function AttendanceReportManager() {
         </div>
       ) : null}
 
-      {activeTab === "monthly-matrix" ? (
+      {effectiveTab === "monthly-matrix" ? (
         <div
           id="attendance-panel-monthly-matrix"
           role="tabpanel"
@@ -1723,7 +1725,7 @@ export function AttendanceReportManager() {
         </div>
       ) : null}
 
-      {activeTab === "explanations" ? (
+      {effectiveTab === "explanations" && allowedTabs.includes("explanations") ? (
         <div
           id="attendance-panel-explanations"
           role="tabpanel"
@@ -1733,7 +1735,7 @@ export function AttendanceReportManager() {
         </div>
       ) : null}
 
-      {activeTab === "branches" ? (
+      {effectiveTab === "branches" && allowedTabs.includes("branches") ? (
         <div
           id="attendance-panel-branches"
           role="tabpanel"
@@ -1743,7 +1745,7 @@ export function AttendanceReportManager() {
         </div>
       ) : null}
 
-      {activeTab === "checkins" ? (
+      {effectiveTab === "checkins" ? (
       <div
         id="attendance-panel-checkins"
         role="tabpanel"
@@ -1959,8 +1961,8 @@ export function AttendanceReportManager() {
                     <th scope="col" className={DATA_TABLE_TH_CLASS}>
                       Ngày &amp; giờ chấm công
                     </th>
-                    <th scope="col" className={DATA_TABLE_TH_CLASS}>
-                      Xác minh thời gian
+                    <th scope="col" className={cn(DATA_TABLE_TH_CLASS, "text-center")}>
+                      Thời gian
                     </th>
                     <th scope="col" className={DATA_TABLE_TH_CLASS}>
                       Tọa độ GPS &amp; ghi chú
@@ -2009,8 +2011,8 @@ export function AttendanceReportManager() {
                           </div>
                         </td>
                         <td
-                          data-label="Xác minh thời gian"
-                          className={DATA_TABLE_TD_CLASS}
+                          data-label="Thời gian"
+                          className={cn(DATA_TABLE_TD_CLASS, "text-center")}
                         >
                           <TimeVerificationCell item={item} />
                         </td>
