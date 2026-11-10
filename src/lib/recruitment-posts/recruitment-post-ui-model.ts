@@ -1052,11 +1052,38 @@ export function applyWithdrawnPostToFeedItems(
   return items.filter((item) => item.brief_id !== withdrawnPost.brief_id);
 }
 
+export function isSourceProjectManagedForRepost(
+  projectId: string,
+  managedProjects:
+    | ReadonlyArray<{ readonly project_id: string }>
+    | null
+    | undefined,
+): boolean {
+  const normalizedProjectId = projectId.trim();
+  if (!normalizedProjectId || !Array.isArray(managedProjects)) {
+    return false;
+  }
+  return managedProjects.some(
+    (project) => project.project_id === normalizedProjectId,
+  );
+}
+
 export function canRepostWithdrawnRecruitmentPost(input: {
   readonly tab: RecruitmentPostFeedTab;
   readonly status: RecruitmentPostStatus;
+  readonly projectId: string;
+  readonly managedProjects:
+    | ReadonlyArray<{ readonly project_id: string }>
+    | null
+    | undefined;
 }): boolean {
-  return input.tab === "mine" && input.status === "WITHDRAWN";
+  if (input.tab !== "mine" || input.status !== "WITHDRAWN") {
+    return false;
+  }
+  return isSourceProjectManagedForRepost(
+    input.projectId,
+    input.managedProjects,
+  );
 }
 
 /**
@@ -1154,6 +1181,97 @@ export function createEmptyRecruitmentPostDataState(): RecruitmentPostDataState 
     nextCursor: null,
     snapshotToken: null,
     hasMore: false,
+  };
+}
+
+/**
+ * Clears feed items, pagination tokens, and any open/selected detail state belonging to the
+ * previous feed or tab while preserving the loaded catalog `context` (if valid).
+ */
+export function clearRecruitmentPostFeedItemsPreservingContext(
+  prev: RecruitmentPostDataState,
+): RecruitmentPostDataState {
+  return {
+    ...prev,
+    items: [],
+    selectedDetail: null,
+    detailOpen: false,
+    detailBriefId: null,
+    detailError: null,
+    nextCursor: null,
+    snapshotToken: null,
+    hasMore: false,
+  };
+}
+
+export type RecruitmentPostListOutcome =
+  | {
+      readonly kind: "ok";
+      readonly list: RecruitmentPostList;
+    }
+  | {
+      readonly kind: "access_loss";
+      readonly accessLoss: RecruitmentPostAccessLossKind;
+    }
+  | {
+      readonly kind: "error";
+      readonly code: string;
+      readonly message: string;
+    };
+
+export function resolveRecruitmentPostListOutcome(input: {
+  readonly status: number;
+  readonly payload: unknown;
+}): RecruitmentPostListOutcome {
+  const errorCode = extractRecruitmentPostErrorCode(input.payload);
+  const accessLoss = classifyRecruitmentPostAccessLoss(input.status, errorCode);
+  if (accessLoss) {
+    return {
+      kind: "access_loss",
+      accessLoss,
+    };
+  }
+
+  if (input.status < 200 || input.status >= 300) {
+    const resolvedCode = errorCode ?? "RECRUITMENT_POST_UNAVAILABLE";
+    return {
+      kind: "error",
+      code: resolvedCode,
+      message: recruitmentPostErrorMessage(resolvedCode),
+    };
+  }
+
+  const parsedList = parseRecruitmentPostListEnvelope(input.payload);
+  if (!parsedList) {
+    return {
+      kind: "error",
+      code: "RECRUITMENT_POST_UNAVAILABLE",
+      message: recruitmentPostErrorMessage("RECRUITMENT_POST_UNAVAILABLE"),
+    };
+  }
+
+  return {
+    kind: "ok",
+    list: parsedList,
+  };
+}
+
+export function applyRecruitmentPostFirstPageOutcome(
+  prev: RecruitmentPostDataState,
+  outcome: RecruitmentPostListOutcome,
+): RecruitmentPostDataState {
+  if (outcome.kind === "access_loss") {
+    return createEmptyRecruitmentPostDataState();
+  }
+  if (outcome.kind === "error") {
+    return clearRecruitmentPostFeedItemsPreservingContext(prev);
+  }
+  return {
+    ...clearRecruitmentPostFeedItemsPreservingContext(prev),
+    items: mergeUniqueRecruitmentPostItems([], outcome.list.items),
+    nextCursor: outcome.list.next_cursor,
+    snapshotToken: outcome.list.snapshot_token,
+    hasMore: outcome.list.has_more && outcome.list.next_cursor !== null,
   };
 }
 
@@ -1544,7 +1662,7 @@ export const RECRUITMENT_POST_REPOST_BANNER_TEXT =
   "Đang tạo tin mới từ một tin đã rút";
 
 export const RECRUITMENT_POST_REPOST_UNMANAGED_PROJECT_MESSAGE =
-  "Bạn không còn phụ trách dự án này. Vui lòng chọn dự án đang quản lý hoặc quay lại.";
+  "Bạn không còn phụ trách dự án của tin tuyển dụng này nên không còn quyền đăng lại.";
 
 export const RECRUITMENT_POST_UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -1574,6 +1692,7 @@ export type RecruitmentPostCopyFromOutcome =
 export function resolveRecruitmentPostCopyFromOutcome(input: {
   readonly status: number;
   readonly payload: unknown;
+  readonly context?: RecruitmentPostContext | null;
 }): RecruitmentPostCopyFromOutcome {
   const errorCode = extractRecruitmentPostErrorCode(input.payload);
   const accessLoss = classifyRecruitmentPostAccessLoss(input.status, errorCode);
@@ -1608,6 +1727,20 @@ export function resolveRecruitmentPostCopyFromOutcome(input: {
       kind: "invalid_source",
       code: "RECRUITMENT_POST_COPY_SOURCE_NOT_WITHDRAWN",
       message: "Chỉ có thể đăng lại từ tin tuyển dụng ở trạng thái Đã rút.",
+    };
+  }
+
+  if (
+    input.context !== undefined &&
+    !isSourceProjectManagedForRepost(
+      parsedDetail.post.project.project_id,
+      input.context?.managed_projects,
+    )
+  ) {
+    return {
+      kind: "invalid_source",
+      code: "RECRUITMENT_POST_REPOST_PROJECT_NOT_MANAGED",
+      message: RECRUITMENT_POST_REPOST_UNMANAGED_PROJECT_MESSAGE,
     };
   }
 
@@ -2031,30 +2164,35 @@ export function inspectRepostDraftCompatibility(
 ): RepostDraftCompatibility {
   const isRepost =
     draft.mode === "create" && Boolean(draft.repostFromBriefId);
-  if (!isRepost || !context) {
+  if (!isRepost) {
     return {
-      isRepost,
+      isRepost: false,
       projectNotManaged: false,
       industrialParkInactive: false,
       inactiveLaborTypeKeys: [],
       warnings: [],
     };
   }
+  if (!context) {
+    return {
+      isRepost: true,
+      projectNotManaged: true,
+      industrialParkInactive: false,
+      inactiveLaborTypeKeys: [],
+      warnings: [RECRUITMENT_POST_REPOST_UNMANAGED_PROJECT_MESSAGE],
+    };
+  }
 
   const warnings: string[] = [];
 
-  const sourceProjectId = draft.repostSourceProjectId ?? "";
-  const sourceProjectManaged =
-    sourceProjectId !== "" &&
-    context.managed_projects.some(
-      (project) => project.project_id === sourceProjectId,
-    );
-  const currentProjectManaged =
-    draft.projectId.trim() !== "" &&
-    context.managed_projects.some(
-      (project) => project.project_id === draft.projectId.trim(),
-    );
-  const projectNotManaged = !sourceProjectManaged && !currentProjectManaged;
+  const sourceProjectId = (
+    draft.repostSourceProjectId ?? draft.projectId
+  ).trim();
+  const sourceProjectManaged = isSourceProjectManagedForRepost(
+    sourceProjectId,
+    context.managed_projects,
+  );
+  const projectNotManaged = !sourceProjectManaged;
   if (projectNotManaged) {
     warnings.push(RECRUITMENT_POST_REPOST_UNMANAGED_PROJECT_MESSAGE);
   }

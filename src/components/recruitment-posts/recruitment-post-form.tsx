@@ -480,6 +480,7 @@ export function RecruitmentPostForm({
         const copyOutcome = resolveRecruitmentPostCopyFromOutcome({
           status: detailResponse.status,
           payload: rawCopyPayload,
+          context: contextOutcome.context,
         });
 
         if (copyOutcome.kind === "access_loss") {
@@ -986,7 +987,15 @@ export function RecruitmentPostForm({
     );
   }
 
-  if (mode === "create" && copyFromError) {
+  const canCreateAnyProject =
+    Boolean(context?.can_create) && (context?.managed_projects.length ?? 0) > 0;
+  const effectiveCopyFromError =
+    copyFromError ??
+    (mode === "create" && repostCompatibility.projectNotManaged
+      ? RECRUITMENT_POST_REPOST_UNMANAGED_PROJECT_MESSAGE
+      : null);
+
+  if (mode === "create" && effectiveCopyFromError) {
     return (
       <PageShell dataTestId="recruitment-post-copy-from-error">
         <PageHeader
@@ -1007,7 +1016,7 @@ export function RecruitmentPostForm({
           dataTestId="recruitment-post-copy-from-error-banner"
         >
           <div className="space-y-3">
-            <p>{copyFromError}</p>
+            <p>{effectiveCopyFromError}</p>
             <div className="flex flex-wrap items-center gap-2">
               <Link
                 href="/recruitment-posts?tab=mine"
@@ -1015,15 +1024,17 @@ export function RecruitmentPostForm({
               >
                 Quay lại Tin của tôi
               </Link>
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                data-testid="recruitment-post-copy-from-start-blank"
-                onClick={handleStartBlankFromCopyError}
-              >
-                Tạo tin mới trống
-              </Button>
+              {canCreateAnyProject ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  data-testid="recruitment-post-copy-from-start-blank"
+                  onClick={handleStartBlankFromCopyError}
+                >
+                  Tạo tin mới trống
+                </Button>
+              ) : null}
             </div>
           </div>
         </StatusBanner>

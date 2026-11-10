@@ -22,8 +22,7 @@ export function RecruitmentPostCard({
 }) {
   const isPublished = card.status === "PUBLISHED";
   const isWithdrawn = card.status === "WITHDRAWN";
-  const allowRepost =
-    canRepost !== undefined ? canRepost : showStatusBadge && isWithdrawn;
+  const allowRepost = Boolean(canRepost) && isWithdrawn;
 
   return (
     <Card className="flex h-full flex-col gap-4 rounded-xl p-4 sm:p-5">

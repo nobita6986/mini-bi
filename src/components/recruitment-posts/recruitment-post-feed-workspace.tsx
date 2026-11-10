@@ -20,6 +20,7 @@ import {
   RECRUITMENT_POST_FEED_TAB_LABELS,
   applyIndustrialParkFilterChange,
   applyProvinceFilterChange,
+  applyRecruitmentPostFirstPageOutcome,
   applyWithdrawnPostToFeedItems,
   beginRecruitmentPostContextRequest,
   buildRecruitmentPostFeedTabHref,
@@ -27,6 +28,7 @@ import {
   buildRecruitmentPostMineListUrl,
   canRepostWithdrawnRecruitmentPost,
   classifyRecruitmentPostAccessLoss,
+  clearRecruitmentPostFeedItemsPreservingContext,
   createEmptyRecruitmentPostDataState,
   createLatestRequestTracker,
   exportRecruitmentPostDetailMarkdown,
@@ -39,6 +41,7 @@ import {
   recruitmentPostContextErrorMessage,
   recruitmentPostErrorMessage,
   resolveRecruitmentPostContextOutcome,
+  resolveRecruitmentPostListOutcome,
   settleRecruitmentPostContextRequest,
   toRecruitmentPostCardViewModel,
   toRecruitmentPostDetailViewModel,
@@ -306,9 +309,16 @@ export function RecruitmentPostFeedWorkspace({
       }
       if (nextTab === activeTab) return;
       getRequestTracker(feedTrackerRef).cancelAll();
+      getRequestTracker(detailTrackerRef).cancelAll();
+      setDetailLoading(false);
+      setWithdrawTarget(null);
       setWithdrawSuccessBanner(null);
+      setExportError(null);
       setFeedError(null);
       setLoadMoreError(null);
+      setDataState((prev) =>
+        clearRecruitmentPostFeedItemsPreservingContext(prev),
+      );
       setActiveTab(nextTab);
       const href = buildRecruitmentPostFeedTabHref(nextTab);
       if (router) {
@@ -364,6 +374,9 @@ export function RecruitmentPostFeedWorkspace({
       activeFilters: RecruitmentPostFeedFilterState,
       tab: RecruitmentPostFeedTab,
     ) => {
+      getRequestTracker(detailTrackerRef).cancelAll();
+      setDetailLoading(false);
+
       if (tab === "published") {
         const validation = validateRecruitmentPostFeedFilters(activeFilters);
         if (!validation.ok) {
@@ -372,6 +385,9 @@ export function RecruitmentPostFeedWorkspace({
           setLoadingMore(false);
           setFeedError(validation.message);
           setLoadMoreError(null);
+          setDataState((prev) =>
+            clearRecruitmentPostFeedItemsPreservingContext(prev),
+          );
           return;
         }
       }
@@ -382,12 +398,9 @@ export function RecruitmentPostFeedWorkspace({
       setLoadingMore(false);
       setFeedError(null);
       setLoadMoreError(null);
-      setDataState((prev) => ({
-        ...prev,
-        nextCursor: null,
-        snapshotToken: null,
-        hasMore: false,
-      }));
+      setDataState((prev) =>
+        clearRecruitmentPostFeedItemsPreservingContext(prev),
+      );
 
       const url =
         tab === "mine"
@@ -410,27 +423,21 @@ export function RecruitmentPostFeedWorkspace({
         const rawPayload = await response.json().catch(() => null);
         if (!ticket.isCurrent()) return;
 
-        const errorCode = extractRecruitmentPostErrorCode(rawPayload);
-        const revoked = classifyRecruitmentPostAccessLoss(
-          response.status,
-          errorCode,
-        );
-        if (revoked) {
-          handleAccessRevoked(revoked);
+        const outcome = resolveRecruitmentPostListOutcome({
+          status: response.status,
+          payload: rawPayload,
+        });
+
+        if (outcome.kind === "access_loss") {
+          handleAccessRevoked(outcome.accessLoss);
           return;
         }
 
-        if (!response.ok) {
+        if (outcome.kind === "error") {
           setInitialLoading(false);
-          setFeedError(recruitmentPostErrorMessage(errorCode));
-          return;
-        }
-
-        const parsedList = parseRecruitmentPostListEnvelope(rawPayload);
-        if (!parsedList) {
-          setInitialLoading(false);
-          setFeedError(
-            recruitmentPostErrorMessage("RECRUITMENT_POST_UNAVAILABLE"),
+          setFeedError(outcome.message);
+          setDataState((prev) =>
+            applyRecruitmentPostFirstPageOutcome(prev, outcome),
           );
           return;
         }
@@ -438,18 +445,17 @@ export function RecruitmentPostFeedWorkspace({
         setAccessLoss(null);
         setInitialLoading(false);
         setFeedError(null);
-        setDataState((prev) => ({
-          ...prev,
-          items: mergeUniqueRecruitmentPostItems([], parsedList.items),
-          nextCursor: parsedList.next_cursor,
-          snapshotToken: parsedList.snapshot_token,
-          hasMore: parsedList.has_more && parsedList.next_cursor !== null,
-        }));
+        setDataState((prev) =>
+          applyRecruitmentPostFirstPageOutcome(prev, outcome),
+        );
       } catch (error) {
         if (isAbortError(error) || !ticket.isCurrent()) return;
         setInitialLoading(false);
         setFeedError(
           recruitmentPostErrorMessage("RECRUITMENT_POST_UNAVAILABLE"),
+        );
+        setDataState((prev) =>
+          clearRecruitmentPostFeedItemsPreservingContext(prev),
         );
       }
     },
@@ -1329,6 +1335,8 @@ export function RecruitmentPostFeedWorkspace({
                   canRepost={canRepostWithdrawnRecruitmentPost({
                     tab: activeTab,
                     status: card.status,
+                    projectId: card.projectId,
+                    managedProjects: dataState.context?.managed_projects,
                   })}
                 />
               ))}

@@ -8,11 +8,13 @@ import {
 import {
   DEFAULT_RECRUITMENT_POST_PAGE_SIZE,
   EMPTY_RECRUITMENT_POST_FILTERS,
+  RECRUITMENT_POST_REPOST_UNMANAGED_PROJECT_MESSAGE,
   RECRUITMENT_POST_UNPROVIDED_LABEL,
   applyCreateFormContextDefaults,
   applyCreateFormProjectSelection,
   applyIndustrialParkFilterChange,
   applyProvinceFilterChange,
+  applyRecruitmentPostFirstPageOutcome,
   applyWithdrawnPostToFeedItems,
   beginRecruitmentPostContextRequest,
   buildRecruitmentPostFeedTabHref,
@@ -21,7 +23,9 @@ import {
   buildRecruitmentPostMineListUrl,
   buildRecruitmentPostPreSubmitSummary,
   buildWithdrawRecruitmentPostRequestBody,
+  canRepostWithdrawnRecruitmentPost,
   classifyRecruitmentPostAccessLoss,
+  clearRecruitmentPostFeedItemsPreservingContext,
   createCreateRecruitmentPostFormDraftFromItem,
   createEditRecruitmentPostFormDraftFromItem,
   createEmptyRecruitmentPostDataState,
@@ -39,6 +43,7 @@ import {
   formatRecruitmentPostVnd,
   hasActiveRecruitmentPostFilters,
   inspectRepostDraftCompatibility,
+  isSourceProjectManagedForRepost,
   isValidRecruitmentPostUuid,
   mergeUniqueRecruitmentPostItems,
   normalizeRecruitmentPostVndInput,
@@ -51,6 +56,7 @@ import {
   resolveRecruitmentPostContextOutcome,
   resolveRecruitmentPostCopyFromOutcome,
   resolveRecruitmentPostExportOutcome,
+  resolveRecruitmentPostListOutcome,
   resolveRecruitmentPostMutationOutcome,
   sanitizeRecruitmentPostExportFilename,
   selectableIndustrialParksForCreate,
@@ -1627,7 +1633,7 @@ test("createCreateRecruitmentPostFormDraftFromItem, inspectRepostDraftCompatibil
     );
   }
 
-  // 2. Actor is no longer PM of PROJ_ABC -> projectId is cleared so auto-repost is blocked until user selects a managed project
+  // 2. Actor is no longer PM of PROJ_ABC -> projectId is cleared and projectNotManaged is true (fail-closed)
   const otherPmContext = {
     ...SAMPLE_CONTEXT,
     can_create: true,
@@ -1650,23 +1656,90 @@ test("createCreateRecruitmentPostFormDraftFromItem, inspectRepostDraftCompatibil
   assert.equal(compatUnmanaged.projectNotManaged, true);
   assert.equal(
     compatUnmanaged.warnings.includes(
-      "Bạn không còn phụ trách dự án này. Vui lòng chọn dự án đang quản lý hoặc quay lại.",
+      RECRUITMENT_POST_REPOST_UNMANAGED_PROJECT_MESSAGE,
     ),
     true,
   );
-  const blockedBuild = validateAndBuildRecruitmentPostWritePayload(
-    unmanagedDraft,
-    { context: otherPmContext },
+  // Even if draft.projectId were mutated to PROJ_XYZ, repostSourceProjectId (PROJ_ABC) is not managed -> still projectNotManaged
+  assert.equal(
+    inspectRepostDraftCompatibility(
+      { ...unmanagedDraft, projectId: "PROJ_XYZ" },
+      otherPmContext,
+    ).projectNotManaged,
+    true,
   );
-  assert.equal(blockedBuild.ok, false);
-  if (!blockedBuild.ok) {
-    assert.equal(
-      blockedBuild.fieldErrors.projectId,
-      "Bạn không còn phụ trách dự án này. Vui lòng chọn dự án đang quản lý hoặc quay lại.",
-    );
-  }
+  // And if context is null (context load failed), inspectRepostDraftCompatibility is fail-closed
+  assert.equal(
+    inspectRepostDraftCompatibility(draft, null).projectNotManaged,
+    true,
+  );
 
-  // 3. Old KCN or labor type is inactive -> not silently kept; user must re-select active KCN / labor types
+  // 3. canRepostWithdrawnRecruitmentPost requires tab="mine", status="WITHDRAWN", and projectId in managedProjects
+  assert.equal(
+    canRepostWithdrawnRecruitmentPost({
+      tab: "mine",
+      status: "WITHDRAWN",
+      projectId: "PROJ_ABC",
+      managedProjects: pmContext.managed_projects,
+    }),
+    true,
+  );
+  assert.equal(
+    canRepostWithdrawnRecruitmentPost({
+      tab: "published",
+      status: "WITHDRAWN",
+      projectId: "PROJ_ABC",
+      managedProjects: pmContext.managed_projects,
+    }),
+    false,
+  );
+  assert.equal(
+    canRepostWithdrawnRecruitmentPost({
+      tab: "mine",
+      status: "PUBLISHED",
+      projectId: "PROJ_ABC",
+      managedProjects: pmContext.managed_projects,
+    }),
+    false,
+  );
+  assert.equal(
+    canRepostWithdrawnRecruitmentPost({
+      tab: "mine",
+      status: "WITHDRAWN",
+      projectId: "PROJ_ABC",
+      managedProjects: otherPmContext.managed_projects,
+    }),
+    false,
+  );
+  assert.equal(
+    canRepostWithdrawnRecruitmentPost({
+      tab: "mine",
+      status: "WITHDRAWN",
+      projectId: "PROJ_ABC",
+      managedProjects: [],
+    }),
+    false,
+  );
+  assert.equal(
+    canRepostWithdrawnRecruitmentPost({
+      tab: "mine",
+      status: "WITHDRAWN",
+      projectId: "PROJ_ABC",
+      managedProjects: null,
+    }),
+    false,
+  );
+  assert.equal(
+    isSourceProjectManagedForRepost("PROJ_ABC", pmContext.managed_projects),
+    true,
+  );
+  assert.equal(
+    isSourceProjectManagedForRepost("PROJ_ABC", otherPmContext.managed_projects),
+    false,
+  );
+  assert.equal(isSourceProjectManagedForRepost("PROJ_ABC", null), false);
+
+  // 4. Old KCN or labor type is inactive -> not silently kept; user must re-select active KCN / labor types
   const itemWithInactiveCatalog = makeCompleteItem({
     status: "WITHDRAWN",
     industrial_park: {
@@ -1698,7 +1771,7 @@ test("createCreateRecruitmentPostFormDraftFromItem, inspectRepostDraftCompatibil
   assert.deepEqual(compatInactive.inactiveLaborTypeKeys, ["INACTIVE_LT"]);
   assert.equal(compatInactive.warnings.length, 2);
 
-  // 4. isValidRecruitmentPostUuid and resolveRecruitmentPostCopyFromOutcome validate UUID and enforce status === "WITHDRAWN"
+  // 5. isValidRecruitmentPostUuid and resolveRecruitmentPostCopyFromOutcome validate UUID, enforce status === "WITHDRAWN", and enforce source project in context.managed_projects
   assert.equal(isValidRecruitmentPostUuid("not-a-uuid"), false);
   assert.equal(isValidRecruitmentPostUuid(makeBriefId(1)), true);
 
@@ -1708,6 +1781,7 @@ test("createCreateRecruitmentPostFormDraftFromItem, inspectRepostDraftCompatibil
       ok: true,
       data: { post: makeCompleteItem({ status: "PUBLISHED" }) },
     },
+    context: pmContext,
   });
   assert.equal(publishedCopyOutcome.kind, "invalid_source");
   if (publishedCopyOutcome.kind === "invalid_source") {
@@ -1715,18 +1789,45 @@ test("createCreateRecruitmentPostFormDraftFromItem, inspectRepostDraftCompatibil
       publishedCopyOutcome.code,
       "RECRUITMENT_POST_COPY_SOURCE_NOT_WITHDRAWN",
     );
-    assert.match(publishedCopyOutcome.message, /Chỉ có thể đăng lại từ tin tuyển dụng ở trạng thái Đã rút/);
+    assert.match(
+      publishedCopyOutcome.message,
+      /Chỉ có thể đăng lại từ tin tuyển dụng ở trạng thái Đã rút/,
+    );
   }
+
+  const unmanagedProjectCopyOutcome = resolveRecruitmentPostCopyFromOutcome({
+    status: 200,
+    payload: { ok: true, data: { post: sourceWithdrawnItem } },
+    context: otherPmContext,
+  });
+  assert.deepEqual(unmanagedProjectCopyOutcome, {
+    kind: "invalid_source",
+    code: "RECRUITMENT_POST_REPOST_PROJECT_NOT_MANAGED",
+    message: RECRUITMENT_POST_REPOST_UNMANAGED_PROJECT_MESSAGE,
+  });
+
+  const nullContextCopyOutcome = resolveRecruitmentPostCopyFromOutcome({
+    status: 200,
+    payload: { ok: true, data: { post: sourceWithdrawnItem } },
+    context: null,
+  });
+  assert.deepEqual(nullContextCopyOutcome, {
+    kind: "invalid_source",
+    code: "RECRUITMENT_POST_REPOST_PROJECT_NOT_MANAGED",
+    message: RECRUITMENT_POST_REPOST_UNMANAGED_PROJECT_MESSAGE,
+  });
 
   const notFoundCopyOutcome = resolveRecruitmentPostCopyFromOutcome({
     status: 404,
     payload: { ok: false, code: "RECRUITMENT_POST_NOT_FOUND" },
+    context: pmContext,
   });
   assert.equal(notFoundCopyOutcome.kind, "invalid_source");
 
   const forbiddenCopyOutcome = resolveRecruitmentPostCopyFromOutcome({
     status: 403,
     payload: { ok: false, code: "RECRUITMENT_POST_ACCESS_DENIED" },
+    context: pmContext,
   });
   assert.deepEqual(forbiddenCopyOutcome, {
     kind: "access_loss",
@@ -1736,6 +1837,7 @@ test("createCreateRecruitmentPostFormDraftFromItem, inspectRepostDraftCompatibil
   const unauthCopyOutcome = resolveRecruitmentPostCopyFromOutcome({
     status: 401,
     payload: { ok: false, code: "UNAUTHENTICATED" },
+    context: pmContext,
   });
   assert.deepEqual(unauthCopyOutcome, {
     kind: "access_loss",
@@ -1745,11 +1847,97 @@ test("createCreateRecruitmentPostFormDraftFromItem, inspectRepostDraftCompatibil
   const validWithdrawnOutcome = resolveRecruitmentPostCopyFromOutcome({
     status: 200,
     payload: { ok: true, data: { post: sourceWithdrawnItem } },
+    context: pmContext,
   });
   assert.equal(validWithdrawnOutcome.kind, "ok");
   if (validWithdrawnOutcome.kind === "ok") {
-    assert.equal(validWithdrawnOutcome.post.brief_id, sourceWithdrawnItem.brief_id);
+    assert.equal(
+      validWithdrawnOutcome.post.brief_id,
+      sourceWithdrawnItem.brief_id,
+    );
     assert.equal(validWithdrawnOutcome.post.status, "WITHDRAWN");
   }
 });
+
+test("clearRecruitmentPostFeedItemsPreservingContext, resolveRecruitmentPostListOutcome, and applyRecruitmentPostFirstPageOutcome wipe previous tab items on tab switch or error while preserving valid context", () => {
+  const withdrawnMineItem = makeCompleteItem({
+    brief_id: makeBriefId(401),
+    status: "WITHDRAWN",
+    withdrawn_at: "2026-11-10T09:00:00.000000Z",
+    withdrawn_by_display_name: "Nguyễn Văn Quản Lý",
+    allowed_actions: { can_edit: false, can_withdraw: false },
+  });
+  const publishedFeedItem = makeCompleteItem({
+    brief_id: makeBriefId(402),
+    status: "PUBLISHED",
+    allowed_actions: { can_edit: true, can_withdraw: true },
+  });
+
+  // 1. Have WITHDRAWN card in mine -> switch to published -> API returns 503: old items & detail state wiped, context preserved
+  const stateInMine = {
+    context: SAMPLE_CONTEXT,
+    items: [withdrawnMineItem],
+    selectedDetail: withdrawnMineItem,
+    detailOpen: true,
+    detailBriefId: withdrawnMineItem.brief_id,
+    detailError: null,
+    nextCursor: `C1.10.0123456789abcdef0123456789abcdef.1762684800000000.${withdrawnMineItem.brief_id}`,
+    snapshotToken: "S1.10.0123456789abcdef0123456789abcdef",
+    hasMore: true,
+  };
+
+  const stateOnSwitchToPublished =
+    clearRecruitmentPostFeedItemsPreservingContext(stateInMine);
+  assert.deepEqual(stateOnSwitchToPublished.items, []);
+  assert.equal(stateOnSwitchToPublished.selectedDetail, null);
+  assert.equal(stateOnSwitchToPublished.detailOpen, false);
+  assert.equal(stateOnSwitchToPublished.detailBriefId, null);
+  assert.equal(stateOnSwitchToPublished.nextCursor, null);
+  assert.equal(stateOnSwitchToPublished.snapshotToken, null);
+  assert.equal(stateOnSwitchToPublished.hasMore, false);
+  assert.equal(stateOnSwitchToPublished.context, SAMPLE_CONTEXT);
+
+  const outcome503 = resolveRecruitmentPostListOutcome({
+    status: 503,
+    payload: { ok: false, code: "RECRUITMENT_POST_UNAVAILABLE" },
+  });
+  assert.equal(outcome503.kind, "error");
+  const stateAfterPublished503 = applyRecruitmentPostFirstPageOutcome(
+    stateInMine,
+    outcome503,
+  );
+  assert.deepEqual(stateAfterPublished503.items, []);
+  assert.equal(stateAfterPublished503.selectedDetail, null);
+  assert.equal(stateAfterPublished503.detailOpen, false);
+  assert.equal(stateAfterPublished503.context, SAMPLE_CONTEXT);
+
+  // 2. Have PUBLISHED card in published -> switch to mine -> API returns 503: old items & detail state wiped, context preserved
+  const stateInPublished = {
+    context: SAMPLE_CONTEXT,
+    items: [publishedFeedItem],
+    selectedDetail: publishedFeedItem,
+    detailOpen: true,
+    detailBriefId: publishedFeedItem.brief_id,
+    detailError: null,
+    nextCursor: null,
+    snapshotToken: "S1.11.0123456789abcdef0123456789abcdef",
+    hasMore: false,
+  };
+  const stateOnSwitchToMine =
+    clearRecruitmentPostFeedItemsPreservingContext(stateInPublished);
+  assert.deepEqual(stateOnSwitchToMine.items, []);
+  assert.equal(stateOnSwitchToMine.selectedDetail, null);
+  assert.equal(stateOnSwitchToMine.detailOpen, false);
+  assert.equal(stateOnSwitchToMine.context, SAMPLE_CONTEXT);
+
+  const stateAfterMine503 = applyRecruitmentPostFirstPageOutcome(
+    stateInPublished,
+    outcome503,
+  );
+  assert.deepEqual(stateAfterMine503.items, []);
+  assert.equal(stateAfterMine503.selectedDetail, null);
+  assert.equal(stateAfterMine503.detailOpen, false);
+  assert.equal(stateAfterMine503.context, SAMPLE_CONTEXT);
+});
+
 

@@ -113,8 +113,11 @@ const Dialog = {
 
 const {
   RECRUITMENT_POST_UNPROVIDED_LABEL,
+  applyRecruitmentPostFirstPageOutcome,
   beginRecruitmentPostContextRequest,
+  canRepostWithdrawnRecruitmentPost,
   classifyRecruitmentPostAccessLoss,
+  clearRecruitmentPostFeedItemsPreservingContext,
   createCreateRecruitmentPostFormDraftFromItem,
   createEditRecruitmentPostFormDraftFromItem,
   createEmptyRecruitmentPostDataState,
@@ -124,6 +127,8 @@ const {
   mergeUniqueRecruitmentPostItems,
   recruitmentPostContextErrorMessage,
   resolveRecruitmentPostContextOutcome,
+  resolveRecruitmentPostCopyFromOutcome,
+  resolveRecruitmentPostListOutcome,
   settleRecruitmentPostContextRequest,
   toRecruitmentPostCardViewModel,
   toRecruitmentPostDetailViewModel,
@@ -1714,7 +1719,41 @@ describe("Phase 3 — Recruitment Posts UI & Architecture Gate", () => {
       /data-testid="recruitment-posts-load-more-error"/,
     );
 
-    // 2. "Tin của tôi" tab: hides filters, shows status badges ("Đang tuyển" / "Đã rút"),
+    const pmContextManagingAbc = {
+      can_create: true,
+      managed_projects: [
+        { project_id: "PROJ_ABC", display_name: "Dự án Điện tử ABC" },
+      ],
+      filter_projects: [
+        { project_id: "PROJ_ABC", display_name: "Dự án Điện tử ABC" },
+      ],
+      provinces: [
+        {
+          province_id: PROVINCE_VP_ID,
+          province_code: "VINH_PHUC",
+          display_name: "Vĩnh Phúc",
+          active: true,
+        },
+      ],
+      industrial_parks: [
+        {
+          industrial_park_id: PARK_KHAI_QUANG_ID,
+          industrial_park_code: "VP_KHAI_QUANG",
+          province_id: PROVINCE_VP_ID,
+          display_name: "KCN Khai Quang",
+          active: true,
+        },
+      ],
+      labor_types: [
+        {
+          labor_type_key: "CHINH_THUC",
+          display_name: "Chính thức",
+          active: true,
+        },
+      ],
+    };
+
+    // 2. "Tin của tôi" tab when PM still manages PROJ_ABC: hides filters, shows status badges ("Đang tuyển" / "Đã rút"),
     // shows "Đăng lại" link on WITHDRAWN card, and never shows "Sửa" or "Rút tin" on WITHDRAWN card
     const mineTabHtml = renderToStaticMarkup(
       createElement(RecruitmentPostFeedWorkspace, {
@@ -1727,6 +1766,7 @@ describe("Phase 3 — Recruitment Posts UI & Architecture Gate", () => {
           feedError: null,
           dataState: {
             ...createEmptyRecruitmentPostDataState(),
+            context: pmContextManagingAbc,
             items: [publishedPost, withdrawnPost],
             hasMore: false,
           },
@@ -1761,11 +1801,75 @@ describe("Phase 3 — Recruitment Posts UI & Architecture Gate", () => {
     );
     assert.match(mineTabHtml, />Đăng lại</);
 
-    // Render individual WITHDRAWN card in mine tab to verify Sửa & Rút tin are absent while Xem chi tiết, Xuất bản tin, Đăng lại are present
+    // 2b. "Tin của tôi" tab when PM lost management of PROJ_ABC (manages PROJ_XYZ instead) or when context failed to load (context=null):
+    // MUST NOT render "Đăng lại" on WITHDRAWN card of PROJ_ABC
+    const mineTabUnmanagedProjectHtml = renderToStaticMarkup(
+      createElement(RecruitmentPostFeedWorkspace, {
+        initialTab: "mine",
+        initialStateForTest: {
+          activeTab: "mine",
+          contextLoading: false,
+          contextError: null,
+          initialLoading: false,
+          feedError: null,
+          dataState: {
+            ...createEmptyRecruitmentPostDataState(),
+            context: {
+              ...pmContextManagingAbc,
+              managed_projects: [
+                { project_id: "PROJ_XYZ", display_name: "Dự án Cơ khí XYZ" },
+              ],
+            },
+            items: [withdrawnPost],
+            hasMore: false,
+          },
+        },
+      }),
+    );
+    assert.doesNotMatch(
+      mineTabUnmanagedProjectHtml,
+      new RegExp(`data-testid="recruitment-post-repost-${withdrawnPost.brief_id}"`),
+    );
+    assert.doesNotMatch(mineTabUnmanagedProjectHtml, />Đăng lại</);
+
+    const mineTabContextErrorHtml = renderToStaticMarkup(
+      createElement(RecruitmentPostFeedWorkspace, {
+        initialTab: "mine",
+        initialStateForTest: {
+          activeTab: "mine",
+          contextLoading: false,
+          contextError: recruitmentPostContextErrorMessage("RECRUITMENT_POST_UNAVAILABLE"),
+          initialLoading: false,
+          feedError: null,
+          dataState: {
+            ...createEmptyRecruitmentPostDataState(),
+            context: null,
+            items: [withdrawnPost],
+            hasMore: false,
+          },
+        },
+      }),
+    );
+    assert.match(
+      mineTabContextErrorHtml,
+      /data-testid="recruitment-posts-context-error"/,
+    );
+    assert.doesNotMatch(
+      mineTabContextErrorHtml,
+      new RegExp(`data-testid="recruitment-post-repost-${withdrawnPost.brief_id}"`),
+    );
+
+    // Render individual WITHDRAWN card in mine tab to verify Sửa & Rút tin are absent while Xem chi tiết, Xuất bản tin, Đăng lại (when canRepost=true) are present
     const withdrawnCardHtml = renderToStaticMarkup(
       createElement(RecruitmentPostCard, {
         card: toRecruitmentPostCardViewModel(withdrawnPost),
         showStatusBadge: true,
+        canRepost: canRepostWithdrawnRecruitmentPost({
+          tab: "mine",
+          status: withdrawnPost.status,
+          projectId: withdrawnPost.project.project_id,
+          managedProjects: pmContextManagingAbc.managed_projects,
+        }),
         onViewDetail: () => {},
         onExport: () => {},
         onWithdraw: () => {},
@@ -1794,6 +1898,19 @@ describe("Phase 3 — Recruitment Posts UI & Architecture Gate", () => {
       new RegExp(`data-testid="recruitment-post-withdraw-${withdrawnPost.brief_id}"`),
     );
 
+    // Default RecruitmentPostCard without explicit canRepost=true is fail-closed (no Đăng lại button)
+    const defaultWithdrawnCardHtml = renderToStaticMarkup(
+      createElement(RecruitmentPostCard, {
+        card: toRecruitmentPostCardViewModel(withdrawnPost),
+        showStatusBadge: true,
+        onViewDetail: () => {},
+      }),
+    );
+    assert.doesNotMatch(
+      defaultWithdrawnCardHtml,
+      new RegExp(`data-testid="recruitment-post-repost-${withdrawnPost.brief_id}"`),
+    );
+
     // 3. Empty state in "Tin của tôi" tab
     const emptyMineHtml = renderToStaticMarkup(
       createElement(RecruitmentPostFeedWorkspace, {
@@ -1811,7 +1928,227 @@ describe("Phase 3 — Recruitment Posts UI & Architecture Gate", () => {
     assert.match(emptyMineHtml, /Bạn chưa tạo phiếu tuyển dụng nào\./);
   });
 
-  it("renders 'Đăng lại' copy_from flow on RecruitmentPostForm, blocks unmanaged project auto-repost, rejects non-WITHDRAWN copy_from, and redirects to /recruitment-posts?tab=mine with toast after create", () => {
+  it("wipes old tab items and detail state when switching tabs and new tab returns 503, preserves valid catalog context, and rejects stale responses from previous tab", () => {
+    const workspaceSrc = readRel(
+      "src/components/recruitment-posts/recruitment-post-feed-workspace.tsx",
+    );
+    assert.match(
+      workspaceSrc,
+      /clearRecruitmentPostFeedItemsPreservingContext/,
+    );
+    assert.match(
+      workspaceSrc,
+      /applyRecruitmentPostFirstPageOutcome/,
+    );
+
+    const validContext = {
+      can_create: true,
+      managed_projects: [
+        { project_id: "PROJ_ABC", display_name: "Dự án Điện tử ABC" },
+      ],
+      filter_projects: [
+        { project_id: "PROJ_ABC", display_name: "Dự án Điện tử ABC" },
+      ],
+      provinces: [
+        {
+          province_id: PROVINCE_VP_ID,
+          province_code: "VINH_PHUC",
+          display_name: "Vĩnh Phúc",
+          active: true,
+        },
+      ],
+      industrial_parks: [
+        {
+          industrial_park_id: PARK_KHAI_QUANG_ID,
+          industrial_park_code: "VP_KHAI_QUANG",
+          province_id: PROVINCE_VP_ID,
+          display_name: "KCN Khai Quang",
+          active: true,
+        },
+      ],
+      labor_types: [
+        {
+          labor_type_key: "CHINH_THUC",
+          display_name: "Chính thức",
+          active: true,
+        },
+      ],
+    };
+
+    const withdrawnMineCard = makeCompleteItem({
+      brief_id: makeBriefId(501),
+      status: "WITHDRAWN",
+      withdrawn_at: "2026-11-10T10:00:00.000Z",
+      withdrawn_by_display_name: "Nguyễn Văn Quản Lý",
+      general: {
+        ...makeCompleteItem().general,
+        customer_name: "Công ty Đã Rút Ở Tab Mine",
+      },
+      allowed_actions: { can_edit: false, can_withdraw: false },
+    });
+
+    const publishedFeedCard = makeCompleteItem({
+      brief_id: makeBriefId(502),
+      status: "PUBLISHED",
+      general: {
+        ...makeCompleteItem().general,
+        customer_name: "Công ty Công Khai Ở Tab Published",
+      },
+      allowed_actions: { can_edit: true, can_withdraw: true },
+    });
+
+    // Case 1: Had WITHDRAWN card in `mine` -> switch to `published` -> API returns 503:
+    // Old WITHDRAWN card and detail state are wiped, catalog context is preserved, feedError is rendered
+    const initialMineDataState = {
+      ...createEmptyRecruitmentPostDataState(),
+      context: validContext,
+      items: [withdrawnMineCard],
+      selectedDetail: withdrawnMineCard,
+      detailOpen: true,
+      detailBriefId: withdrawnMineCard.brief_id,
+    };
+    const clearedForPublished =
+      clearRecruitmentPostFeedItemsPreservingContext(initialMineDataState);
+    const outcome503 = resolveRecruitmentPostListOutcome({
+      status: 503,
+      payload: { ok: false, code: "RECRUITMENT_POST_UNAVAILABLE" },
+    });
+    assert.equal(outcome503.kind, "error");
+    const publishedAfter503DataState = applyRecruitmentPostFirstPageOutcome(
+      clearedForPublished,
+      outcome503,
+    );
+    assert.deepEqual(publishedAfter503DataState.items, []);
+    assert.equal(publishedAfter503DataState.detailOpen, false);
+    assert.equal(publishedAfter503DataState.selectedDetail, null);
+    assert.equal(publishedAfter503DataState.context, validContext);
+
+    const published503Html = renderToStaticMarkup(
+      createElement(RecruitmentPostFeedWorkspace, {
+        initialTab: "published",
+        initialStateForTest: {
+          activeTab: "published",
+          contextLoading: false,
+          contextError: null,
+          initialLoading: false,
+          feedError: outcome503.message,
+          dataState: publishedAfter503DataState,
+        },
+      }),
+    );
+    assert.match(
+      published503Html,
+      /data-testid="recruitment-posts-tab-published"[^>]*aria-selected="true"/,
+    );
+    assert.match(
+      published503Html,
+      /data-testid="recruitment-posts-feed-error"/,
+    );
+    assert.doesNotMatch(
+      published503Html,
+      /data-testid="recruitment-posts-list"/,
+    );
+    assert.doesNotMatch(published503Html, new RegExp(withdrawnMineCard.brief_id));
+    assert.doesNotMatch(published503Html, /Công ty Đã Rút Ở Tab Mine/);
+    // Catalog context remains intact (filter project option still rendered, no context error banner)
+    assert.doesNotMatch(
+      published503Html,
+      /data-testid="recruitment-posts-context-error"/,
+    );
+    assert.match(
+      published503Html,
+      /<option value="PROJ_ABC">Dự án Điện tử ABC<\/option>/,
+    );
+
+    // Case 2: Had PUBLISHED card in `published` -> switch to `mine` -> API returns 503:
+    // Old PUBLISHED card and detail state are wiped, catalog context is preserved, feedError is rendered
+    const initialPublishedDataState = {
+      ...createEmptyRecruitmentPostDataState(),
+      context: validContext,
+      items: [publishedFeedCard],
+      selectedDetail: publishedFeedCard,
+      detailOpen: true,
+      detailBriefId: publishedFeedCard.brief_id,
+    };
+    const clearedForMine = clearRecruitmentPostFeedItemsPreservingContext(
+      initialPublishedDataState,
+    );
+    const mineAfter503DataState = applyRecruitmentPostFirstPageOutcome(
+      clearedForMine,
+      outcome503,
+    );
+    assert.deepEqual(mineAfter503DataState.items, []);
+    assert.equal(mineAfter503DataState.detailOpen, false);
+    assert.equal(mineAfter503DataState.selectedDetail, null);
+    assert.equal(mineAfter503DataState.context, validContext);
+
+    const mine503Html = renderToStaticMarkup(
+      createElement(RecruitmentPostFeedWorkspace, {
+        initialTab: "mine",
+        initialStateForTest: {
+          activeTab: "mine",
+          contextLoading: false,
+          contextError: null,
+          initialLoading: false,
+          feedError: outcome503.message,
+          dataState: mineAfter503DataState,
+        },
+      }),
+    );
+    assert.match(
+      mine503Html,
+      /data-testid="recruitment-posts-tab-mine"[^>]*aria-selected="true"/,
+    );
+    assert.match(mine503Html, /data-testid="recruitment-posts-feed-error"/);
+    assert.doesNotMatch(mine503Html, /data-testid="recruitment-posts-list"/);
+    assert.doesNotMatch(mine503Html, new RegExp(publishedFeedCard.brief_id));
+    assert.doesNotMatch(mine503Html, /Công ty Công Khai Ở Tab Published/);
+    assert.doesNotMatch(
+      mine503Html,
+      /data-testid="recruitment-posts-context-error"/,
+    );
+
+    // Case 3: Stale response from previous tab (`published`) resolving after user switches to `mine` is never committed
+    const feedTracker = createLatestRequestTracker();
+    const publishedTicket = feedTracker.begin();
+    // User switches tab -> handleSelectTab cancels tracker and loadFirstPage("mine") begins a new ticket
+    feedTracker.cancelAll();
+    const mineTicket = feedTracker.begin();
+    assert.equal(publishedTicket.signal.aborted, true);
+    assert.equal(publishedTicket.isCurrent(), false);
+    assert.equal(mineTicket.isCurrent(), true);
+
+    let committedState = clearRecruitmentPostFeedItemsPreservingContext(
+      initialPublishedDataState,
+    );
+    // Late response from `published` arrives:
+    const stalePublishedOutcome = resolveRecruitmentPostListOutcome({
+      status: 200,
+      payload: {
+        ok: true,
+        data: {
+          items: [publishedFeedCard],
+          page_size: 15,
+          has_more: false,
+          next_cursor: null,
+          snapshot_token: "S1.1.0123456789abcdef0123456789abcdef",
+        },
+      },
+    });
+    if (publishedTicket.isCurrent()) {
+      committedState = applyRecruitmentPostFirstPageOutcome(
+        committedState,
+        stalePublishedOutcome,
+      );
+    }
+    assert.deepEqual(
+      committedState.items,
+      [],
+      "Stale response from previous tab must not be committed",
+    );
+  });
+
+  it("renders 'Đăng lại' copy_from flow on RecruitmentPostForm only when actor still manages source project, fails closed on unmanaged project deep-link or context error, and redirects to /recruitment-posts?tab=mine with toast after create", () => {
     const sampleContext = {
       can_create: true,
       managed_projects: [
@@ -1866,7 +2203,7 @@ describe("Phase 3 — Recruitment Posts UI & Architecture Gate", () => {
       allowed_actions: { can_edit: false, can_withdraw: false },
     });
 
-    // 1. Valid WITHDRAWN copy_from renders repost banner and prefills 4 sections into mode="create" with current actorDisplayName
+    // 1. Valid WITHDRAWN copy_from when PM still manages PROJ_ABC renders repost banner and prefills 4 sections into mode="create" with current actorDisplayName
     const repostDraft = createCreateRecruitmentPostFormDraftFromItem(
       withdrawnSource,
       {
@@ -1898,13 +2235,21 @@ describe("Phase 3 — Recruitment Posts UI & Architecture Gate", () => {
       /Công ty TNHH Linh Kiện Điện Tử ABC/,
     );
 
-    // 2. When actor is no longer PM of source project, renders unmanaged project warning and clears project selection
+    // 2. Manual deep-link (/recruitment-posts/new?copy_from=<briefId>) when actor no longer manages PROJ_ABC (even if managing PROJ_XYZ):
+    // MUST fail-closed: shows error screen, does NOT open copied form allowing project switch, and offers "Tạo tin mới trống"
     const unmanagedContext = {
       ...sampleContext,
       managed_projects: [
         { project_id: "PROJ_XYZ", display_name: "Dự án Cơ khí XYZ" },
       ],
     };
+    const deepLinkOutcome = resolveRecruitmentPostCopyFromOutcome({
+      status: 200,
+      payload: { ok: true, data: { post: withdrawnSource } },
+      context: unmanagedContext,
+    });
+    assert.equal(deepLinkOutcome.kind, "invalid_source");
+
     const unmanagedDraft = createCreateRecruitmentPostFormDraftFromItem(
       withdrawnSource,
       {
@@ -1921,22 +2266,80 @@ describe("Phase 3 — Recruitment Posts UI & Architecture Gate", () => {
           initialLoading: false,
           context: unmanagedContext,
           repostSourcePost: withdrawnSource,
-          repostProjectUnmanagedWarning: true,
-          repostCatalogNotice:
-            "Khu công nghiệp của tin cũ đã ngừng hoạt động. Vui lòng chọn lại KCN đang hoạt động.",
           draft: unmanagedDraft,
         },
       }),
     );
     assert.match(
       unmanagedHtml,
-      /data-testid="recruitment-post-repost-warning"/,
+      /data-testid="recruitment-post-copy-from-error"/,
     );
     assert.match(
       unmanagedHtml,
-      /Bạn không còn phụ trách dự án này\. Vui lòng chọn dự án đang quản lý hoặc quay lại\./,
+      /Bạn không còn phụ trách dự án của tin tuyển dụng này nên không còn quyền đăng lại\./,
     );
     assert.match(unmanagedHtml, /href="\/recruitment-posts\?tab=mine"/);
+    assert.match(
+      unmanagedHtml,
+      /data-testid="recruitment-post-copy-from-start-blank"/,
+    );
+    assert.doesNotMatch(unmanagedHtml, /data-testid="recruitment-post-form"/);
+    assert.doesNotMatch(unmanagedHtml, /0977888999/);
+
+    // 2b. Manual deep-link when former PM manages 0 projects (can_create=false):
+    // Fails closed with error screen and does NOT offer "Tạo tin mới trống"
+    const zeroProjectContext = {
+      ...sampleContext,
+      can_create: false,
+      managed_projects: [],
+    };
+    const zeroProjectRepostHtml = renderToStaticMarkup(
+      createElement(RecruitmentPostForm, {
+        mode: "create",
+        actorDisplayName: "Phạm Thị PM Hiện Tại",
+        copyFromBriefId: withdrawnSource.brief_id,
+        initialStateForTest: {
+          initialLoading: false,
+          context: zeroProjectContext,
+          repostSourcePost: withdrawnSource,
+        },
+      }),
+    );
+    assert.match(
+      zeroProjectRepostHtml,
+      /data-testid="recruitment-post-copy-from-error"/,
+    );
+    assert.doesNotMatch(
+      zeroProjectRepostHtml,
+      /data-testid="recruitment-post-copy-from-start-blank"/,
+    );
+    assert.doesNotMatch(
+      zeroProjectRepostHtml,
+      /data-testid="recruitment-post-form"/,
+    );
+
+    // 2c. Context fails to load (503) on /recruitment-posts/new?copy_from=<briefId>:
+    // Fails closed with load-error banner and does NOT open the copied form
+    const contextLoadErrorHtml = renderToStaticMarkup(
+      createElement(RecruitmentPostForm, {
+        mode: "create",
+        actorDisplayName: "Phạm Thị PM Hiện Tại",
+        copyFromBriefId: withdrawnSource.brief_id,
+        initialStateForTest: {
+          initialLoading: false,
+          context: null,
+          loadError: recruitmentPostContextErrorMessage("RECRUITMENT_POST_UNAVAILABLE"),
+        },
+      }),
+    );
+    assert.match(
+      contextLoadErrorHtml,
+      /data-testid="recruitment-post-form-load-error"/,
+    );
+    assert.doesNotMatch(
+      contextLoadErrorHtml,
+      /data-testid="recruitment-post-form"/,
+    );
 
     // 3. Invalid or PUBLISHED copy_from renders safe error banner and does not prefill form
     const copyErrorHtml = renderToStaticMarkup(
