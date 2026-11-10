@@ -33,6 +33,7 @@ import {
   parseAssignSlotPolicyBody,
   parseAttendanceExplanationApprovalInboxQuery,
   parseAttendanceExplanationsQuery,
+  parseAttendanceMonthlyMatrixExportQuery,
   parseAttendanceMonthlyMatrixQuery,
   parseCreateSlotPolicyBody,
   parseDecideAttendanceExplanationBody,
@@ -351,6 +352,16 @@ test("parseAttendanceMonthlyMatrixQuery validates year_month, filters, and bound
   if (!oversizePage.ok) {
     assert.equal(oversizePage.code, "ATTENDANCE_REPORT_PAGINATION_INVALID");
   }
+
+  const teamIdRejected = parseAttendanceMonthlyMatrixQuery(
+    new URL("https://bi.example.com/api/admin/attendance/monthly-matrix?year_month=2026-10&team_id=59000000-0000-4000-8000-0000000000e1"),
+  );
+  assert.deepEqual(teamIdRejected, { ok: false, code: "ATTENDANCE_REPORT_QUERY_INVALID" });
+
+  const exportTeamIdRejected = parseAttendanceMonthlyMatrixExportQuery(
+    new URL("https://bi.example.com/api/admin/attendance/monthly-matrix/export?year_month=2026-10&team_id=59000000-0000-4000-8000-0000000000e1"),
+  );
+  assert.deepEqual(exportTeamIdRejected, { ok: false, code: "ATTENDANCE_REPORT_QUERY_INVALID" });
 });
 
 test("GET /api/admin/attendance/monthly-matrix enforces Attendance Report reader authority and projects response", async () => {
@@ -2555,8 +2566,248 @@ test("report projection accepts historical 1-char profile codes while write pars
       code: "ATTENDANCE_REPORT_UNAVAILABLE",
       sqlstate: "57014",
     });
+    assert.DoesNotMatch?.(JSON.stringify(logged), /sensitive_user|Nguyễn|19000000|29000000/);
     assert.doesNotMatch(JSON.stringify(logged), /sensitive_user|Nguyễn|19000000|29000000/);
   } finally {
     console.error = origConsoleError;
   }
+});
+
+test("Team Leader authority: allowed on monthly-matrix report and XLSX export (including 100->25 fallback), denied on branches and slot-policies admin endpoints", async () => {
+  const TEAM_SCOPE = [
+    { kind: "team", reference: "59000000-0000-4000-8000-0000000000e1", valid_from: "2026-01-01", valid_to: null },
+  ];
+  const TEAM_LEADER_CAPS = ["team_manager_assign", "report_view", "report_analytics_view"];
+
+  // 1. Canonical Team Leader can call GET /api/admin/attendance/monthly-matrix
+  const matrixRes = await getAttendanceMonthlyMatrixReport(
+    new Request("https://bi.example.com/api/admin/attendance/monthly-matrix?year_month=2026-10"),
+    {
+      resolveSession: async () => makeSessionOk(TEAM_LEADER_CAPS, TEAM_SCOPE),
+      repository: {
+        getMonthlyMatrixReport: async () => ({
+          ok: true,
+          report: buildValidMonthlyMatrixReport({
+            viewer: { can_configure_hq: false, can_manage_branches: false },
+          }),
+        }),
+        listBranchesAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        upsertBranchAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        assignEmployeeBranchAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        unassignEmployeeBranchAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+      },
+    },
+  );
+  assert.equal(matrixRes.status, 200);
+  const matrixJson = await matrixRes.json();
+  assert.equal(matrixJson.ok, true);
+  assert.equal(matrixJson.report.viewer.can_configure_hq, false);
+  assert.equal(matrixJson.report.viewer.can_manage_branches, false);
+
+  // 2. Canonical Team Leader can call GET /api/admin/attendance/monthly-matrix/export (including 100->25 fallback)
+  const exportCalls = [];
+  const exportRes = await exportAttendanceMonthlyMatrixXlsx(
+    new Request("https://bi.example.com/api/admin/attendance/monthly-matrix/export?year_month=2026-10"),
+    {
+      resolveSession: async () => makeSessionOk(TEAM_LEADER_CAPS, TEAM_SCOPE),
+      repository: {
+        getMonthlyMatrixReport: async (input) => {
+          exportCalls.push({ page: input.page, page_size: input.page_size, phase: input.phase });
+          if (input.page_size === ATTENDANCE_MONTHLY_MATRIX_EXPORT_PAGE_SIZE) {
+            return { ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" };
+          }
+          return {
+            ok: true,
+            report: buildValidMonthlyMatrixReport({
+              viewer: { can_configure_hq: false, can_manage_branches: false },
+              pagination: {
+                page: 1,
+                page_size: ATTENDANCE_MONTHLY_MATRIX_EXPORT_FALLBACK_PAGE_SIZE,
+                total_rows: 1,
+                total_pages: 1,
+                has_more: false,
+                snapshot_token: "d".repeat(32),
+              },
+            }),
+          };
+        },
+        listBranchesAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        upsertBranchAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        assignEmployeeBranchAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        unassignEmployeeBranchAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+      },
+    },
+  );
+  assert.equal(exportRes.status, 200);
+  assert.deepEqual(exportCalls, [
+    { page: 1, page_size: 100, phase: "export_page_1" },
+    { page: 1, page_size: 25, phase: "export_fallback_page_1" },
+  ]);
+
+  // 3. Incomplete Team Leader (missing report bundle) is denied on monthly-matrix and export before RPC
+  for (const caps of [["team_manager_assign"], ["report_view", "report_analytics_view"]]) {
+    const deniedMatrix = await getAttendanceMonthlyMatrixReport(
+      new Request("https://bi.example.com/api/admin/attendance/monthly-matrix?year_month=2026-10"),
+      {
+        resolveSession: async () => makeSessionOk(caps, TEAM_SCOPE),
+        repository: {
+          getMonthlyMatrixReport: async () => {
+            throw new Error("must not call RPC for incomplete team leader");
+          },
+          listBranchesAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+          upsertBranchAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+          assignEmployeeBranchAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+          unassignEmployeeBranchAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
+        },
+      },
+    );
+    assert.equal(deniedMatrix.status, 403);
+    assert.equal((await deniedMatrix.json()).code, "ATTENDANCE_REPORT_ACCESS_DENIED");
+  }
+
+  // 4. Canonical Team Leader is denied (403) on all branch admin and slot-policy admin endpoints before RPC
+  const forbiddenRepo = {
+    getMonthlyMatrixReport: async () => {
+      throw new Error("unexpected RPC");
+    },
+    listBranchesAdmin: async () => {
+      throw new Error("Team Leader must not reach listBranchesAdmin RPC");
+    },
+    upsertBranchAdmin: async () => {
+      throw new Error("Team Leader must not reach upsertBranchAdmin RPC");
+    },
+    assignEmployeeBranchAdmin: async () => {
+      throw new Error("Team Leader must not reach assignEmployeeBranchAdmin RPC");
+    },
+    unassignEmployeeBranchAdmin: async () => {
+      throw new Error("Team Leader must not reach unassignEmployeeBranchAdmin RPC");
+    },
+    listSlotPoliciesAdmin: async () => {
+      throw new Error("Team Leader must not reach listSlotPoliciesAdmin RPC");
+    },
+    createSlotPolicyAdmin: async () => {
+      throw new Error("Team Leader must not reach createSlotPolicyAdmin RPC");
+    },
+    upsertSlotPolicyProfileAdmin: async () => {
+      throw new Error("Team Leader must not reach upsertSlotPolicyProfileAdmin RPC");
+    },
+    assignEmployeeSlotPolicyAdmin: async () => {
+      throw new Error("Team Leader must not reach assignEmployeeSlotPolicyAdmin RPC");
+    },
+    unassignEmployeeSlotPolicyAdmin: async () => {
+      throw new Error("Team Leader must not reach unassignEmployeeSlotPolicyAdmin RPC");
+    },
+  };
+
+  const tlBranchesList = await getAttendanceBranchesAdmin(
+    new Request("https://bi.example.com/api/admin/attendance/branches"),
+    { resolveSession: async () => makeSessionOk(TEAM_LEADER_CAPS, TEAM_SCOPE), repository: forbiddenRepo },
+  );
+  assert.equal(tlBranchesList.status, 403);
+  assert.equal((await tlBranchesList.json()).code, "ATTENDANCE_REPORT_ACCESS_DENIED");
+
+  const tlBranchUpsert = await postOrPutAttendanceBranchAdmin(
+    makeJsonRequest("https://bi.example.com/api/admin/attendance/branches", "POST", {
+      branch_code: "BN01",
+      display_name: "Chi nhánh Bắc Ninh",
+      address: "TP Bắc Ninh",
+      latitude: 21.186082,
+      longitude: 106.076314,
+      active: true,
+      expected_version: 0,
+      idempotency_key: IDEMPOTENCY_KEY,
+    }),
+    null,
+    { resolveSession: async () => makeSessionOk(TEAM_LEADER_CAPS, TEAM_SCOPE), repository: forbiddenRepo },
+  );
+  assert.equal(tlBranchUpsert.status, 403);
+  assert.equal((await tlBranchUpsert.json()).code, "ATTENDANCE_BRANCH_WRITE_DENIED");
+
+  const tlBranchAssign = await postAttendanceBranchAssignmentAdmin(
+    makeJsonRequest("https://bi.example.com/api/admin/attendance/branches/assignments", "POST", {
+      app_user_id: STAFF_USER_ID,
+      branch_id: BRANCH_ID,
+      valid_from: "2026-10-01",
+      expected_version: 1,
+      idempotency_key: IDEMPOTENCY_KEY,
+    }),
+    { resolveSession: async () => makeSessionOk(TEAM_LEADER_CAPS, TEAM_SCOPE), repository: forbiddenRepo },
+  );
+  assert.equal(tlBranchAssign.status, 403);
+  assert.equal((await tlBranchAssign.json()).code, "ATTENDANCE_BRANCH_WRITE_DENIED");
+
+  const tlBranchUnassign = await postAttendanceBranchUnassignAdmin(
+    makeJsonRequest(
+      `https://bi.example.com/api/admin/attendance/branches/assignments/${ASSIGNMENT_ID}/unassign`,
+      "POST",
+      { valid_to: "2026-10-31", expected_version: 1, idempotency_key: IDEMPOTENCY_KEY },
+    ),
+    ASSIGNMENT_ID,
+    { resolveSession: async () => makeSessionOk(TEAM_LEADER_CAPS, TEAM_SCOPE), repository: forbiddenRepo },
+  );
+  assert.equal(tlBranchUnassign.status, 403);
+  assert.equal((await tlBranchUnassign.json()).code, "ATTENDANCE_BRANCH_WRITE_DENIED");
+
+  const tlSlotPoliciesList = await getAttendanceSlotPoliciesAdmin(
+    new Request("https://bi.example.com/api/admin/attendance/slot-policies"),
+    { resolveSession: async () => makeSessionOk(TEAM_LEADER_CAPS, TEAM_SCOPE), repository: forbiddenRepo },
+  );
+  assert.equal(tlSlotPoliciesList.status, 403);
+  assert.equal((await tlSlotPoliciesList.json()).code, "ATTENDANCE_REPORT_ACCESS_DENIED");
+
+  const tlSlotPolicyCreate = await postAttendanceSlotPolicyAdmin(
+    makeJsonRequest("https://bi.example.com/api/admin/attendance/slot-policies", "POST", {
+      effective_from_date: "2026-11-01",
+      slots: [
+        { slot_label: "Ca sáng", target_time: "08:00", grace_before_minutes: 15, grace_after_minutes: 15 },
+      ],
+      expected_version: 1,
+      idempotency_key: IDEMPOTENCY_KEY,
+    }),
+    { resolveSession: async () => makeSessionOk(TEAM_LEADER_CAPS, TEAM_SCOPE), repository: forbiddenRepo },
+  );
+  assert.equal(tlSlotPolicyCreate.status, 403);
+  assert.equal((await tlSlotPolicyCreate.json()).code, "ATTENDANCE_SLOT_POLICY_WRITE_DENIED");
+
+  const tlSlotProfileUpsert = await postOrPutAttendanceSlotPolicyProfileAdmin(
+    makeJsonRequest("https://bi.example.com/api/admin/attendance/slot-policies", "POST", {
+      profile_code: "HANH_CHINH",
+      display_name: "Hành chính",
+      active: true,
+      effective_from_date: "2026-11-01",
+      slots: [
+        { slot_label: "Ca sáng", target_time: "08:00", grace_before_minutes: 15, grace_after_minutes: 15 },
+      ],
+      idempotency_key: IDEMPOTENCY_KEY,
+    }),
+    null,
+    { resolveSession: async () => makeSessionOk(TEAM_LEADER_CAPS, TEAM_SCOPE), repository: forbiddenRepo },
+  );
+  assert.equal(tlSlotProfileUpsert.status, 403);
+  assert.equal((await tlSlotProfileUpsert.json()).code, "ATTENDANCE_SLOT_POLICY_WRITE_DENIED");
+
+  const tlSlotAssign = await postAttendanceSlotPolicyAssignmentAdmin(
+    makeJsonRequest("https://bi.example.com/api/admin/attendance/slot-policies/assignments", "POST", {
+      app_user_id: STAFF_USER_ID,
+      profile_id: DEFAULT_ATTENDANCE_SLOT_POLICY_PROFILE_ID,
+      valid_from: "2026-10-25",
+      expected_version: 1,
+      idempotency_key: IDEMPOTENCY_KEY,
+    }),
+    { resolveSession: async () => makeSessionOk(TEAM_LEADER_CAPS, TEAM_SCOPE), repository: forbiddenRepo },
+  );
+  assert.equal(tlSlotAssign.status, 403);
+  assert.equal((await tlSlotAssign.json()).code, "ATTENDANCE_SLOT_POLICY_WRITE_DENIED");
+
+  const tlSlotUnassign = await postAttendanceSlotPolicyUnassignAdmin(
+    makeJsonRequest(
+      `https://bi.example.com/api/admin/attendance/slot-policies/assignments/${ASSIGNMENT_ID}/unassign`,
+      "POST",
+      { valid_to: "2026-10-25", expected_version: 1, idempotency_key: IDEMPOTENCY_KEY },
+    ),
+    ASSIGNMENT_ID,
+    { resolveSession: async () => makeSessionOk(TEAM_LEADER_CAPS, TEAM_SCOPE), repository: forbiddenRepo },
+  );
+  assert.equal(tlSlotUnassign.status, 403);
+  assert.equal((await tlSlotUnassign.json()).code, "ATTENDANCE_SLOT_POLICY_WRITE_DENIED");
 });

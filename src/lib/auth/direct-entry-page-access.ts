@@ -13,6 +13,7 @@ import {
   attendanceReportNavPredicate,
   changeRequestsNavPredicate,
   projectAdminNavPredicate,
+  recruitmentLocationCatalogNavPredicate,
   workReportAnalyticsPredicate,
   workReportAssignmentPredicate,
   workReportTemplateManagePredicate,
@@ -96,8 +97,8 @@ export function decideLaborTypeCatalogPageAccess(input: {
 }
 
 /**
- * Separate direct-URL gate for `/admin/attendance` (Admin and BoD only).
- * Catalog-only operators (`catalog_master_manage`) and Team Leaders are denied.
+ * Separate direct-URL gate for `/admin/attendance` (Full Admin, BoD, and canonical Team Leader).
+ * Catalog-only operators (`catalog_master_manage`) and incomplete team/report roles are denied.
  */
 export function decideAttendanceReportPageAccess(input: {
   actor: ActorResolution | null;
@@ -118,7 +119,7 @@ export function decideRecruitmentLocationCatalogPageAccess(input: {
 }): DirectEntryPageDecision {
   return decideCapabilityPageAccess({
     actor: input.actor,
-    allowed: attendanceReportNavPredicate,
+    allowed: recruitmentLocationCatalogNavPredicate,
   });
 }
 

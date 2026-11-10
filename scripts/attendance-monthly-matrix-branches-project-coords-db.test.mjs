@@ -2654,6 +2654,372 @@ test("HRP Branches, Branch Check-In Distance Snapshot Immutability, Project Coor
     const staffBToday = staffBCur.days.find((d) => d.business_date === todayVn);
     assert.ok(staffBToday);
     assert.equal(staffBToday.policy_profile_code_used, "A");
+
+    // -------------------------------------------------------------------------
+    // 10. Team Leader Monthly Matrix Scope, Branch Options Isolation, Admin RPC Denial & Revocation
+    // -------------------------------------------------------------------------
+    const TEAM_BETA = "32000000-0000-4000-8000-0000000000b2";
+    await db.query(
+      `insert into public.teams (team_id, code, display_name, active)
+       values ($1::uuid, 'MAT_BETA', 'Nhóm Tuyển Dụng Beta', true)`,
+      [TEAM_BETA],
+    );
+    // Ensure TEAM_LEADER has active hrp provider membership + TEAM_ALPHA membership (already linked + leader-assigned in section 8)
+    await db.query(
+      `insert into public.recruiter_provider_memberships (recruiter_id, provider_type, valid_from, is_current)
+       values ($1::uuid, 'hrp', '2026-01-01', true)
+       on conflict do nothing`,
+      [teamLeaderRecruiterId],
+    );
+    await db.query(
+      `insert into public.recruiter_team_memberships (recruiter_id, team_id, valid_from, is_current)
+       values ($1::uuid, $2::uuid, '2026-01-01', true)
+       on conflict do nothing`,
+      [teamLeaderRecruiterId, TEAM_ALPHA],
+    );
+    // Move STAFF_B to TEAM_BETA so STAFF_A + TEAM_LEADER are on TEAM_ALPHA and STAFF_B is on TEAM_BETA
+    await db.query(
+      `update public.recruiter_team_memberships
+          set team_id = $2::uuid
+        where recruiter_id = $1::uuid
+          and is_current = true`,
+      [ACTORS.STAFF_B.recruiter, TEAM_BETA],
+    );
+
+    // Create a branch for TEAM_BETA (HP_BETA_01), assign STAFF_B to it, and create an unassigned branch (CT_UNASSIGNED_01)
+    const hpCreateBody = {
+      app_user_id: ACTORS.FULL_ADMIN.app,
+      branch_id: null,
+      branch_code: "HP_BETA_01",
+      display_name: "Chi nhánh Hải Phòng (Nhóm Beta)",
+      address: "Ngô Quyền, Hải Phòng",
+      latitude: 20.844912,
+      longitude: 106.688084,
+      active: true,
+      expected_version: 0,
+    };
+    const hpCreated = projectUpsertBranchResult(
+      await callAsServiceRole(
+        db,
+        `select public.attendance_upsert_branch_admin(
+          $1::uuid, $2::uuid, null, 'HP_BETA_01', 'Chi nhánh Hải Phòng (Nhóm Beta)', 'Ngô Quyền, Hải Phòng',
+          20.844912::double precision, 106.688084::double precision, true, 0, $3::uuid, $4::text
+        ) as data`,
+        [
+          ACTORS.FULL_ADMIN.auth,
+          ACTORS.FULL_ADMIN.app,
+          nextUuid(),
+          computeBranchUpsertRequestFingerprint(hpCreateBody),
+        ],
+      ),
+    );
+    assert.ok(hpCreated);
+    const hpBetaBranchId = hpCreated.branch.branch_id;
+
+    const assignBetaBranchBody = {
+      app_user_id: ACTORS.FULL_ADMIN.app,
+      target_app_user_id: ACTORS.STAFF_B.app,
+      branch_id: hpBetaBranchId,
+      valid_from: "2026-11-01",
+      expected_version: 1,
+    };
+    await callAsServiceRole(
+      db,
+      `select public.attendance_assign_employee_branch_admin(
+        $1::uuid, $2::uuid, $3::uuid, $4::uuid, '2026-11-01'::date, 1, $5::uuid, $6::text
+      ) as data`,
+      [
+        ACTORS.FULL_ADMIN.auth,
+        ACTORS.FULL_ADMIN.app,
+        ACTORS.STAFF_B.app,
+        hpBetaBranchId,
+        nextUuid(),
+        computeBranchAssignRequestFingerprint(assignBetaBranchBody),
+      ],
+    );
+
+    const ctCreateBody = {
+      app_user_id: ACTORS.FULL_ADMIN.app,
+      branch_id: null,
+      branch_code: "CT_UNASSIGNED_01",
+      display_name: "Chi nhánh Cần Thơ (Không gắn nhân sự)",
+      address: "Ninh Kiều, Cần Thơ",
+      latitude: 10.045162,
+      longitude: 105.746857,
+      active: true,
+      expected_version: 0,
+    };
+    const ctCreated = projectUpsertBranchResult(
+      await callAsServiceRole(
+        db,
+        `select public.attendance_upsert_branch_admin(
+          $1::uuid, $2::uuid, null, 'CT_UNASSIGNED_01', 'Chi nhánh Cần Thơ (Không gắn nhân sự)', 'Ninh Kiều, Cần Thơ',
+          10.045162::double precision, 105.746857::double precision, true, 0, $3::uuid, $4::text
+        ) as data`,
+        [
+          ACTORS.FULL_ADMIN.auth,
+          ACTORS.FULL_ADMIN.app,
+          nextUuid(),
+          computeBranchUpsertRequestFingerprint(ctCreateBody),
+        ],
+      ),
+    );
+    assert.ok(ctCreated);
+    const ctUnassignedBranchId = ctCreated.branch.branch_id;
+
+    // 10a. TEAM_LEADER reads November 2026 monthly matrix: sees only TEAM_ALPHA members & TEAM_ALPHA branches
+    const tlNovMatrix = projectAttendanceMonthlyMatrixReport(
+      await callAsServiceRole(
+        db,
+        `select public.attendance_monthly_matrix_report(
+          $1::uuid, $2::uuid, '2026-11', null, null, null, 1, 25
+        ) as data`,
+        [ACTORS.TEAM_LEADER.auth, ACTORS.TEAM_LEADER.app],
+      ),
+    );
+    assert.ok(tlNovMatrix, "Team Leader monthly matrix report projects cleanly");
+    assert.deepEqual(tlNovMatrix.viewer, {
+      can_configure_hq: false,
+      can_manage_branches: false,
+      can_manage_slot_policy: false,
+    });
+    assert.deepEqual(
+      tlNovMatrix.employee_options.map((opt) => opt.app_user_id).sort(),
+      [ACTORS.STAFF_A.app, ACTORS.TEAM_LEADER.app].sort(),
+      "Team Leader employee_options must contain only current TEAM_ALPHA members",
+    );
+    assert.deepEqual(
+      tlNovMatrix.items.map((item) => item.app_user_id).sort(),
+      [ACTORS.STAFF_A.app, ACTORS.TEAM_LEADER.app].sort(),
+      "Team Leader items must contain only current TEAM_ALPHA members",
+    );
+    assert.equal(tlNovMatrix.overview.total_employees, 2);
+    assert.equal(tlNovMatrix.pagination.total_rows, 2);
+    assert.deepEqual(
+      tlNovMatrix.branch_options.map((b) => b.branch_id).sort(),
+      [bnBranchId, dnBranchId].sort(),
+      "Team Leader branch_options must include only branches associated with TEAM_ALPHA members, never HP_BETA_01 or CT_UNASSIGNED_01",
+    );
+    assert.equal(
+      tlNovMatrix.branch_options.some(
+        (b) => b.branch_id === hpBetaBranchId || b.branch_id === ctUnassignedBranchId,
+      ),
+      false,
+    );
+
+    // 10b. Cross-team filter isolation on monthly matrix
+    const tlSearchStaffB = projectAttendanceMonthlyMatrixReport(
+      await callAsServiceRole(
+        db,
+        `select public.attendance_monthly_matrix_report(
+          $1::uuid, $2::uuid, '2026-11', null, null, $3::text, 1, 25
+        ) as data`,
+        [ACTORS.TEAM_LEADER.auth, ACTORS.TEAM_LEADER.app, ACTORS.STAFF_B.code],
+      ),
+    );
+    assert.ok(tlSearchStaffB);
+    assert.equal(tlSearchStaffB.pagination.total_rows, 0);
+    assert.deepEqual(tlSearchStaffB.items, []);
+
+    const tlFilterBetaBranch = projectAttendanceMonthlyMatrixReport(
+      await callAsServiceRole(
+        db,
+        `select public.attendance_monthly_matrix_report(
+          $1::uuid, $2::uuid, '2026-11', $3::uuid, null, null, 1, 25
+        ) as data`,
+        [ACTORS.TEAM_LEADER.auth, ACTORS.TEAM_LEADER.app, hpBetaBranchId],
+      ),
+    );
+    assert.ok(tlFilterBetaBranch);
+    assert.equal(tlFilterBetaBranch.pagination.total_rows, 0);
+    assert.deepEqual(tlFilterBetaBranch.items, []);
+
+    await assert.rejects(
+      () =>
+        callAsServiceRole(
+          db,
+          `select public.attendance_monthly_matrix_report(
+            $1::uuid, $2::uuid, '2026-11', null, $3::uuid, null, 1, 25
+          ) as data`,
+          [ACTORS.TEAM_LEADER.auth, ACTORS.TEAM_LEADER.app, ACTORS.STAFF_B.app],
+        ),
+      (err) =>
+        err.code === "42501" &&
+        String(err.message).includes("ATTENDANCE_REPORT_ACCESS_DENIED"),
+      "Filtering monthly matrix by another team's employee_id must fail closed with 42501",
+    );
+
+    // 10c. Snapshot token stability across pages & page_size=25 vs 100 for TEAM_LEADER, and distinctness from FULL_ADMIN
+    const tlPage1 = projectAttendanceMonthlyMatrixReport(
+      await callAsServiceRole(
+        db,
+        `select public.attendance_monthly_matrix_report(
+          $1::uuid, $2::uuid, '2026-11', null, null, null, 1, 1
+        ) as data`,
+        [ACTORS.TEAM_LEADER.auth, ACTORS.TEAM_LEADER.app],
+      ),
+    );
+    const tlPage2 = projectAttendanceMonthlyMatrixReport(
+      await callAsServiceRole(
+        db,
+        `select public.attendance_monthly_matrix_report(
+          $1::uuid, $2::uuid, '2026-11', null, null, null, 2, 1
+        ) as data`,
+        [ACTORS.TEAM_LEADER.auth, ACTORS.TEAM_LEADER.app],
+      ),
+    );
+    const tlPage100 = projectAttendanceMonthlyMatrixReport(
+      await callAsServiceRole(
+        db,
+        `select public.attendance_monthly_matrix_report(
+          $1::uuid, $2::uuid, '2026-11', null, null, null, 1, 100
+        ) as data`,
+        [ACTORS.TEAM_LEADER.auth, ACTORS.TEAM_LEADER.app],
+      ),
+    );
+    const adminNovMatrix = projectAttendanceMonthlyMatrixReport(
+      await callAsServiceRole(
+        db,
+        `select public.attendance_monthly_matrix_report(
+          $1::uuid, $2::uuid, '2026-11', null, null, null, 1, 25
+        ) as data`,
+        [ACTORS.FULL_ADMIN.auth, ACTORS.FULL_ADMIN.app],
+      ),
+    );
+    assert.ok(tlPage1 && tlPage2 && tlPage100 && adminNovMatrix);
+    assert.equal(tlPage1.pagination.snapshot_token, tlPage2.pagination.snapshot_token);
+    assert.equal(tlNovMatrix.pagination.snapshot_token, tlPage100.pagination.snapshot_token);
+    assert.notEqual(
+      tlNovMatrix.pagination.snapshot_token,
+      adminNovMatrix.pagination.snapshot_token,
+      "Team-scoped snapshot_token must be distinct from all-scope Full Admin snapshot_token",
+    );
+
+    // 10d. TEAM_LEADER is denied (42501) on all branch admin and slot policy admin RPCs
+    for (const [label, sql, params] of [
+      [
+        "attendance_list_branches_admin",
+        "select public.attendance_list_branches_admin($1::uuid, $2::uuid, true) as data",
+        [ACTORS.TEAM_LEADER.auth, ACTORS.TEAM_LEADER.app],
+      ],
+      [
+        "attendance_upsert_branch_admin",
+        "select public.attendance_upsert_branch_admin($1::uuid, $2::uuid, null, 'TL_DENY', 'Deny', 'Deny', null, null, true, 0, $3::uuid, $4::text) as data",
+        [ACTORS.TEAM_LEADER.auth, ACTORS.TEAM_LEADER.app, nextUuid(), "a".repeat(64)],
+      ],
+      [
+        "attendance_assign_employee_branch_admin",
+        "select public.attendance_assign_employee_branch_admin($1::uuid, $2::uuid, $3::uuid, $4::uuid, '2026-11-01'::date, 1, $5::uuid, $6::text) as data",
+        [ACTORS.TEAM_LEADER.auth, ACTORS.TEAM_LEADER.app, ACTORS.STAFF_A.app, bnBranchId, nextUuid(), "b".repeat(64)],
+      ],
+      [
+        "attendance_unassign_employee_branch_admin",
+        "select public.attendance_unassign_employee_branch_admin($1::uuid, $2::uuid, $3::uuid, '2026-11-20'::date, 1, $4::uuid, $5::text) as data",
+        [ACTORS.TEAM_LEADER.auth, ACTORS.TEAM_LEADER.app, nextUuid(), nextUuid(), "c".repeat(64)],
+      ],
+      [
+        "attendance_get_slot_policies_admin",
+        "select public.attendance_get_slot_policies_admin($1::uuid, $2::uuid) as data",
+        [ACTORS.TEAM_LEADER.auth, ACTORS.TEAM_LEADER.app],
+      ],
+      [
+        "attendance_create_slot_policy_admin",
+        "select public.attendance_create_slot_policy_admin($1::uuid, $2::uuid, $3::date, '[]'::jsonb, 1, $4::uuid, $5::text) as data",
+        [ACTORS.TEAM_LEADER.auth, ACTORS.TEAM_LEADER.app, todayVn, nextUuid(), "d".repeat(64)],
+      ],
+      [
+        "attendance_upsert_slot_policy_profile_admin",
+        "select public.attendance_upsert_slot_policy_profile_admin($1::uuid, $2::uuid, null::uuid, 'TL_DENY', 'Deny', null, true, $3::date, '[]'::jsonb, 0, 0, $4::uuid, $5::text) as data",
+        [ACTORS.TEAM_LEADER.auth, ACTORS.TEAM_LEADER.app, todayVn, nextUuid(), "e".repeat(64)],
+      ],
+      [
+        "attendance_assign_employee_slot_policy_admin",
+        "select public.attendance_assign_employee_slot_policy_admin($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::date, 0, $6::uuid, $7::text) as data",
+        [ACTORS.TEAM_LEADER.auth, ACTORS.TEAM_LEADER.app, ACTORS.STAFF_A.app, hcProfileId, todayVn, nextUuid(), "f".repeat(64)],
+      ],
+      [
+        "attendance_unassign_employee_slot_policy_admin",
+        "select public.attendance_unassign_employee_slot_policy_admin($1::uuid, $2::uuid, $3::uuid, $4::date, 1, $5::uuid, $6::text) as data",
+        [ACTORS.TEAM_LEADER.auth, ACTORS.TEAM_LEADER.app, nextUuid(), todayVn, nextUuid(), "0".repeat(64)],
+      ],
+    ]) {
+      await assert.rejects(
+        () => callAsServiceRole(db, sql, params),
+        (err) => err.code === "42501",
+        `Team Leader must be denied 42501 on ${label}`,
+      );
+    }
+
+    // 10e. Immediate revocation when STAFF_A transfers to TEAM_BETA, or when leader assignment / scope / report capability is revoked
+    await db.query(
+      `update public.recruiter_team_memberships
+          set team_id = $2::uuid
+        where recruiter_id = $1::uuid
+          and is_current = true`,
+      [ACTORS.STAFF_A.recruiter, TEAM_BETA],
+    );
+    const tlAfterStaffATransfer = projectAttendanceMonthlyMatrixReport(
+      await callAsServiceRole(
+        db,
+        `select public.attendance_monthly_matrix_report(
+          $1::uuid, $2::uuid, '2026-11', null, null, null, 1, 25
+        ) as data`,
+        [ACTORS.TEAM_LEADER.auth, ACTORS.TEAM_LEADER.app],
+      ),
+    );
+    assert.ok(tlAfterStaffATransfer);
+    assert.deepEqual(
+      tlAfterStaffATransfer.items.map((item) => item.app_user_id),
+      [ACTORS.TEAM_LEADER.app],
+    );
+    assert.deepEqual(tlAfterStaffATransfer.branch_options, []);
+
+    await db.query(
+      `update public.direct_entry_team_leader_assignments
+          set is_current = false
+        where leader_app_user_id = $1::uuid`,
+      [ACTORS.TEAM_LEADER.app],
+    );
+    await assert.rejects(
+      () =>
+        callAsServiceRole(
+          db,
+          `select public.attendance_monthly_matrix_report(
+            $1::uuid, $2::uuid, '2026-11', null, null, null, 1, 25
+          ) as data`,
+          [ACTORS.TEAM_LEADER.auth, ACTORS.TEAM_LEADER.app],
+        ),
+      (err) =>
+        err.code === "42501" &&
+        String(err.message).includes("ATTENDANCE_REPORT_ACCESS_DENIED"),
+    );
+    await db.query(
+      `update public.direct_entry_team_leader_assignments
+          set is_current = true
+        where leader_app_user_id = $1::uuid`,
+      [ACTORS.TEAM_LEADER.app],
+    );
+
+    await db.query(
+      `update public.direct_entry_scope_grants
+          set valid_to = '2026-01-02',
+              is_current = false
+        where app_user_id = $1::uuid`,
+      [ACTORS.TEAM_LEADER.app],
+    );
+    await assert.rejects(
+      () =>
+        callAsServiceRole(
+          db,
+          `select public.attendance_monthly_matrix_report(
+            $1::uuid, $2::uuid, '2026-11', null, null, null, 1, 25
+          ) as data`,
+          [ACTORS.TEAM_LEADER.auth, ACTORS.TEAM_LEADER.app],
+        ),
+      (err) =>
+        err.code === "42501" &&
+        String(err.message).includes("ATTENDANCE_REPORT_ACCESS_DENIED"),
+    );
   } finally {
     await db.close();
   }

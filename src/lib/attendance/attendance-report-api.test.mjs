@@ -8,6 +8,7 @@ import {
   decideAdminAreaAccess,
   decideAttendanceReportPageAccess,
   decidePersonnelCatalogPageAccess,
+  decideRecruitmentLocationCatalogPageAccess,
 } from "../auth/direct-entry-page-access.ts";
 import {
   adminPanelNavPredicate,
@@ -300,6 +301,36 @@ test("Attendance Report navigation, Admin shell, and page-gate matrix enforces A
       name: "Team Leader (team_manager_assign + report_* @ team)",
       caps: TEAM_LEADER_CAPS,
       scopes: TEAM_SCOPE,
+      reportAllowed: true,
+      adminShellAllowed: true,
+      personnelAllowed: false,
+      accountsAllowed: false,
+      expectedSections: [{ id: "attendance", label: "Báo cáo chấm công", href: "/admin/attendance" }],
+    },
+    {
+      name: "Team Leader without report bundle (team_manager_assign @ team)",
+      caps: ["team_manager_assign"],
+      scopes: TEAM_SCOPE,
+      reportAllowed: false,
+      adminShellAllowed: false,
+      personnelAllowed: false,
+      accountsAllowed: false,
+      expectedSections: [],
+    },
+    {
+      name: "Team report viewer without team_manager_assign (report_view + report_analytics_view @ team)",
+      caps: ["report_view", "report_analytics_view"],
+      scopes: TEAM_SCOPE,
+      reportAllowed: false,
+      adminShellAllowed: false,
+      personnelAllowed: false,
+      accountsAllowed: false,
+      expectedSections: [],
+    },
+    {
+      name: "Team Leader caps at @ own only (missing team scope)",
+      caps: TEAM_LEADER_CAPS,
+      scopes: OWN_SCOPE,
       reportAllowed: false,
       adminShellAllowed: false,
       personnelAllowed: false,
@@ -392,6 +423,14 @@ test("Attendance Report navigation, Admin shell, and page-gate matrix enforces A
       row.accountsAllowed ? "ALLOW" : "ACCESS_DENIED",
       `${row.name}: /admin/access/accounts`,
     );
+    const expectedRecruitmentCatalogAllowed = row.expectedSections.some(
+      (s) => s.id === "provinces" || s.id === "industrial-parks",
+    );
+    assert.equal(
+      decideRecruitmentLocationCatalogPageAccess({ actor: resolved }),
+      expectedRecruitmentCatalogAllowed ? "ALLOW" : "ACCESS_DENIED",
+      `${row.name}: /admin/catalog/provinces`,
+    );
     assert.deepEqual(visibleAdminSections(resolved.actor), row.expectedSections, row.name);
   }
 
@@ -431,11 +470,12 @@ test("Attendance Report navigation, Admin shell, and page-gate matrix enforces A
   assert.match(adminRootSource, /redirect\("\/admin\/attendance"\)/);
 });
 
-test("GET /api/admin/attendance/report allows Full Admin & canonical BoD and denies all non-Admin/non-BoD roles before RPC", async () => {
-  for (const [label, caps, canConfigureHq] of [
-    ["Full Admin", FULL_ADMIN_CAPS, true],
-    ["BoD privileged", BOD_PRIVILEGED_CAPS, false],
-    ["BoD executive reports", BOD_WORK_REPORTS_CAPS, false],
+test("GET /api/admin/attendance/report allows Full Admin, canonical BoD & canonical Team Leader and denies unauthorized roles before RPC", async () => {
+  for (const [label, caps, scopes, canConfigureHq] of [
+    ["Full Admin", FULL_ADMIN_CAPS, ALL_SCOPE, true],
+    ["BoD privileged", BOD_PRIVILEGED_CAPS, ALL_SCOPE, false],
+    ["BoD executive reports", BOD_WORK_REPORTS_CAPS, ALL_SCOPE, false],
+    ["Team Leader", TEAM_LEADER_CAPS, TEAM_SCOPE, false],
   ]) {
     const rpcCalls = [];
     const repository = createServiceAttendanceAdminReportRepository(async (name, args) => {
@@ -451,7 +491,7 @@ test("GET /api/admin/attendance/report allows Full Admin & canonical BoD and den
         "https://bi.example.com/api/admin/attendance/report?from_date=2026-10-17&to_date=2026-10-23&page=1&page_size=25&search=%20NV001%20",
       ),
       {
-        resolveSession: async () => makeSessionOk(caps, ALL_SCOPE),
+        resolveSession: async () => makeSessionOk(caps, scopes),
         repository,
       },
     );
@@ -478,7 +518,9 @@ test("GET /api/admin/attendance/report allows Full Admin & canonical BoD and den
   }
 
   for (const [label, caps, scopes] of [
-    ["Team Leader", TEAM_LEADER_CAPS, TEAM_SCOPE],
+    ["Team Leader missing report bundle", ["team_manager_assign"], TEAM_SCOPE],
+    ["Team report viewer missing team_manager_assign", ["report_view", "report_analytics_view"], TEAM_SCOPE],
+    ["Team Leader caps @ own", TEAM_LEADER_CAPS, OWN_SCOPE],
     ["Accounting", ACCOUNTING_CAPS, ALL_SCOPE],
     ["Project Admin", ["entry_admin"], ALL_SCOPE],
     ["Form Admin", ["report_form_manage"], ALL_SCOPE],
@@ -1144,12 +1186,42 @@ test("Attendance photo endpoint resolves a private R2 key only for Admin/BoD and
   }]);
   assert.equal(response.headers.get("photo-storage-key"), null);
 
+  // Team Leader can fetch photo for own team's check-in, and receives 403 when DB denies cross-team check-in
+  const tlResponse = await getAttendanceCheckInPhoto(
+    new Request(`https://bi.example.com/api/admin/attendance/checkins/${CHECKIN_ID}/photo`),
+    CHECKIN_ID,
+    {
+      resolveSession: async () => makeSessionOk(TEAM_LEADER_CAPS, TEAM_SCOPE),
+      repository,
+      storage,
+    },
+  );
+  assert.equal(tlResponse.status, 200);
+
+  const tlCrossTeamDenied = await getAttendanceCheckInPhoto(
+    new Request(`https://bi.example.com/api/admin/attendance/checkins/${CHECKIN_ID}/photo`),
+    CHECKIN_ID,
+    {
+      resolveSession: async () => makeSessionOk(TEAM_LEADER_CAPS, TEAM_SCOPE),
+      repository: createServiceAttendanceAdminReportRepository(async () => ({
+        data: null,
+        error: { code: "42501", message: "ATTENDANCE_REPORT_ACCESS_DENIED" },
+      })),
+      storage,
+    },
+  );
+  assert.equal(tlCrossTeamDenied.status, 403);
+  assert.deepEqual(await tlCrossTeamDenied.json(), {
+    ok: false,
+    code: "ATTENDANCE_REPORT_ACCESS_DENIED",
+  });
+
   let deniedRepoCalled = false;
   const denied = await getAttendanceCheckInPhoto(
     new Request(`https://bi.example.com/api/admin/attendance/checkins/${CHECKIN_ID}/photo`),
     CHECKIN_ID,
     {
-      resolveSession: async () => makeSessionOk(TEAM_LEADER_CAPS, TEAM_SCOPE),
+      resolveSession: async () => makeSessionOk(["team_manager_assign"], TEAM_SCOPE),
       repository: {
         async getCheckInPhotoStorageKey() {
           deniedRepoCalled = true;

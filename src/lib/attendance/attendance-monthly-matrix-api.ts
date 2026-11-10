@@ -6,6 +6,7 @@ import { isSameOriginAuthRequest } from "../auth/same-origin-auth-request.ts";
 import { failJson, isUuid, noStoreJson } from "../http/direct-entry-api-guard.ts";
 import {
   adminAuthorityNavPredicate,
+  attendanceFullAdminOrBodNavPredicate,
   attendanceReportNavPredicate,
   type NavActorProjection,
 } from "../navigation/registry-capability.ts";
@@ -754,7 +755,7 @@ export async function getAttendanceBranchesAdmin(
     return actorResult.response;
   }
 
-  if (!attendanceReportNavPredicate(actorResult.nav_actor)) {
+  if (!attendanceFullAdminOrBodNavPredicate(actorResult.nav_actor)) {
     return matrixError("ATTENDANCE_REPORT_ACCESS_DENIED");
   }
 
@@ -1078,7 +1079,7 @@ export async function getAttendanceSlotPoliciesAdmin(
     return actorResult.response;
   }
 
-  if (!attendanceReportNavPredicate(actorResult.nav_actor)) {
+  if (!attendanceFullAdminOrBodNavPredicate(actorResult.nav_actor)) {
     return matrixError("ATTENDANCE_REPORT_ACCESS_DENIED");
   }
 

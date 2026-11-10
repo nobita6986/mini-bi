@@ -53,6 +53,67 @@ export type AttendanceAdminWorkspaceTab =
   | "branches"
   | "config";
 
+export type AttendanceAdminWorkspaceMode = "full" | "team-leader";
+
+export const FULL_ATTENDANCE_ADMIN_WORKSPACE_TABS: readonly AttendanceAdminWorkspaceTab[] = [
+  "checkins",
+  "monthly-matrix",
+  "explanations",
+  "branches",
+  "config",
+] as const;
+
+export const TEAM_LEADER_ATTENDANCE_WORKSPACE_TABS: readonly AttendanceAdminWorkspaceTab[] = [
+  "checkins",
+  "monthly-matrix",
+] as const;
+
+export function resolveAttendanceAdminWorkspaceMode(
+  actor:
+    | {
+        readonly capabilities: readonly string[];
+        readonly scopes: readonly { readonly kind: string }[];
+      }
+    | null
+    | undefined,
+): AttendanceAdminWorkspaceMode {
+  if (!actor) return "team-leader";
+  const hasAllScope = actor.scopes.some((scope) => scope.kind === "all");
+  const isFullAdmin =
+    hasAllScope &&
+    actor.capabilities.includes("entry_admin") &&
+    actor.capabilities.includes("recruiter_master_manage") &&
+    actor.capabilities.includes("team_master_manage");
+  const isBod =
+    hasAllScope &&
+    (actor.capabilities.includes("entry_privileged_edit") ||
+      (actor.capabilities.includes("report_analytics_view") &&
+        actor.capabilities.includes("report_view")));
+  return isFullAdmin || isBod ? "full" : "team-leader";
+}
+
+export function getAllowedAttendanceAdminWorkspaceTabs(
+  mode: AttendanceAdminWorkspaceMode,
+): readonly AttendanceAdminWorkspaceTab[] {
+  return mode === "full"
+    ? FULL_ATTENDANCE_ADMIN_WORKSPACE_TABS
+    : TEAM_LEADER_ATTENDANCE_WORKSPACE_TABS;
+}
+
+export function resolveEffectiveAttendanceAdminWorkspaceTab(
+  activeTab: AttendanceAdminWorkspaceTab | string | null | undefined,
+  mode: AttendanceAdminWorkspaceMode,
+): AttendanceAdminWorkspaceTab {
+  const allowed = getAllowedAttendanceAdminWorkspaceTabs(mode);
+  if (
+    typeof activeTab === "string" &&
+    (allowed as readonly string[]).includes(activeTab)
+  ) {
+    return activeTab as AttendanceAdminWorkspaceTab;
+  }
+  return "checkins";
+}
+
 export type MatrixEmployeeFilterMode = "employee" | "search";
 
 export const MATRIX_MISSING_SLOT_LABEL = "Chưa có lượt chấm";

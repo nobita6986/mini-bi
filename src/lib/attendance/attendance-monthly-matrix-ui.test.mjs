@@ -15,6 +15,7 @@ import {
 import {
   DEFAULT_TABLE_HORIZONTAL_STEP_PX,
   DEFAULT_TABLE_VERTICAL_STEP_PX,
+  FULL_ATTENDANCE_ADMIN_WORKSPACE_TABS,
   MATRIX_EXPLAINED_APPROVED_LABEL,
   MATRIX_EXPLANATION_PENDING_LABEL,
   MATRIX_EXPLANATION_REJECTED_LABEL,
@@ -24,6 +25,7 @@ import {
   TABLE_HORIZONTAL_SCROLL_STEP_SCALE,
   TABLE_SCROLL_HORIZONTAL_VIEWPORT_STEP_RATIO,
   TABLE_SCROLL_VERTICAL_VIEWPORT_STEP_RATIO,
+  TEAM_LEADER_ATTENDANCE_WORKSPACE_TABS,
   buildAssignEmployeeToBranchPayload,
   buildAssignEmployeeToSlotPolicyPayload,
   buildCreateSlotPolicyPayload,
@@ -45,12 +47,15 @@ import {
   formatEmployeeSlotPolicySummaryLabel,
   formatMatrixDistanceStatusLabel,
   formatMatrixWeekdayLabel,
+  getAllowedAttendanceAdminWorkspaceTabs,
   getVietnamCurrentYearMonth,
   mapAttendanceExplanationMutationError,
   mapBranchAdminMutationError,
   mapMonthlyMatrixExportError,
   mapMonthlyMatrixReportError,
   mapSlotPolicyMutationError,
+  resolveAttendanceAdminWorkspaceMode,
+  resolveEffectiveAttendanceAdminWorkspaceTab,
   resolveFloatingTableNavPositionClass,
   resolveMutualExclusiveEmployeeOrSearch,
   validateMonthlyMatrixFilters,
@@ -1853,12 +1858,12 @@ test("Attendance Config Hotfix: dedicated 'Cấu hình chấm công' tab, slot p
   // 2. Separate 'Cấu hình chấm công' tab at the end of the tab row; no duplication in report tabs
   assert.match(
     managerSource,
-    /id="attendance-tab-branches"[\s\S]*?Chi nhánh HRP[\s\S]*?<\/button>\s*<button[\s\S]*?id="attendance-tab-config"[\s\S]*?aria-controls="attendance-panel-config"[\s\S]*?Cấu hình chấm công\s*<\/button>/,
+    /id="attendance-tab-branches"[\s\S]*?Chi nhánh HRP[\s\S]*?<\/button>[\s\S]*?allowedTabs\.includes\("config"\)[\s\S]*?<button[\s\S]*?id="attendance-tab-config"[\s\S]*?aria-controls="attendance-panel-config"[\s\S]*?Cấu hình chấm công\s*<\/button>/,
     "'Cấu hình chấm công' tab must be at the end of the tab row after 'Chi nhánh HRP'",
   );
   assert.match(
     managerSource,
-    /activeTab === "config"\s*\?\s*\(\s*<div\s+id="attendance-panel-config"\s+role="tabpanel"\s+aria-labelledby="attendance-tab-config"[\s\S]*?title="Vị trí trụ sở tính khoảng cách"[\s\S]*?<AttendanceSlotPolicySummaryCard/,
+    /effectiveTab === "config" && allowedTabs\.includes\("config"\)\s*\?\s*\(\s*<div\s+id="attendance-panel-config"\s+role="tabpanel"\s+aria-labelledby="attendance-tab-config"[\s\S]*?title="Vị trí trụ sở tính khoảng cách"[\s\S]*?<AttendanceSlotPolicySummaryCard/,
     "Both Headquarters Location card and Slot Policy configuration card must render inside #attendance-panel-config",
   );
   const monthlyMatrixSectionSource =
@@ -1935,5 +1940,108 @@ test("Attendance Config Hotfix: dedicated 'Cấu hình chấm công' tab, slot p
     managerSource,
     /<GpsDetailCell item=\{item\} \/>[\s\S]*?<DistanceCell item=\{item\} \/>/,
     "Individual check-in rows preserve GpsDetailCell and DistanceCell display",
+  );
+});
+
+test("Team Leader attendance workspace mode: restricts tabs to checkins and monthly-matrix, never renders or mounts explanations/branches/config, and fails closed to checkins", () => {
+  const attendancePageSource = readFileSync(
+    new URL("../../app/admin/attendance/page.tsx", import.meta.url),
+    "utf8",
+  );
+
+  // 1. Server-derived workspace mode resolution
+  assert.equal(
+    resolveAttendanceAdminWorkspaceMode({
+      capabilities: ["entry_admin", "recruiter_master_manage", "team_master_manage"],
+      scopes: [{ kind: "all" }],
+    }),
+    "full",
+  );
+  assert.equal(
+    resolveAttendanceAdminWorkspaceMode({
+      capabilities: ["entry_privileged_edit"],
+      scopes: [{ kind: "all" }],
+    }),
+    "full",
+  );
+  assert.equal(
+    resolveAttendanceAdminWorkspaceMode({
+      capabilities: ["report_analytics_view", "report_view"],
+      scopes: [{ kind: "all" }],
+    }),
+    "full",
+  );
+  assert.equal(
+    resolveAttendanceAdminWorkspaceMode({
+      capabilities: ["team_manager_assign", "report_view", "report_analytics_view"],
+      scopes: [{ kind: "team" }],
+    }),
+    "team-leader",
+  );
+
+  // 2. Allowed tabs per mode & fail-closed tab fallback
+  assert.deepEqual(getAllowedAttendanceAdminWorkspaceTabs("full"), [
+    "checkins",
+    "monthly-matrix",
+    "explanations",
+    "branches",
+    "config",
+  ]);
+  assert.deepEqual(FULL_ATTENDANCE_ADMIN_WORKSPACE_TABS, [
+    "checkins",
+    "monthly-matrix",
+    "explanations",
+    "branches",
+    "config",
+  ]);
+  assert.deepEqual(getAllowedAttendanceAdminWorkspaceTabs("team-leader"), [
+    "checkins",
+    "monthly-matrix",
+  ]);
+  assert.deepEqual(TEAM_LEADER_ATTENDANCE_WORKSPACE_TABS, ["checkins", "monthly-matrix"]);
+
+  assert.equal(resolveEffectiveAttendanceAdminWorkspaceTab("checkins", "team-leader"), "checkins");
+  assert.equal(
+    resolveEffectiveAttendanceAdminWorkspaceTab("monthly-matrix", "team-leader"),
+    "monthly-matrix",
+  );
+  for (const forbiddenTab of ["explanations", "branches", "config"]) {
+    assert.equal(
+      resolveEffectiveAttendanceAdminWorkspaceTab(forbiddenTab, "team-leader"),
+      "checkins",
+      `forbidden tab ${forbiddenTab} must fall back to checkins in team-leader mode`,
+    );
+    assert.equal(
+      resolveEffectiveAttendanceAdminWorkspaceTab(forbiddenTab, "full"),
+      forbiddenTab,
+      `tab ${forbiddenTab} remains allowed in full mode`,
+    );
+  }
+
+  // 3. Page and manager wiring ensure unallowed tabs are neither rendered nor mounted
+  assert.match(attendancePageSource, /resolveAttendanceAdminWorkspaceMode\(/);
+  assert.match(
+    attendancePageSource,
+    /<AttendanceReportManager workspaceMode=\{workspaceMode\} \/>/,
+  );
+  assert.match(
+    managerSource,
+    /getAllowedAttendanceAdminWorkspaceTabs\(workspaceMode\)/,
+  );
+  assert.match(
+    managerSource,
+    /resolveEffectiveAttendanceAdminWorkspaceTab\(\s*activeTab,\s*workspaceMode/,
+  );
+  assert.match(
+    managerSource,
+    /effectiveTab === "explanations" && allowedTabs\.includes\("explanations"\)/,
+  );
+  assert.match(
+    managerSource,
+    /effectiveTab === "branches" && allowedTabs\.includes\("branches"\)/,
+  );
+  assert.match(
+    managerSource,
+    /effectiveTab === "config" && allowedTabs\.includes\("config"\)/,
   );
 });

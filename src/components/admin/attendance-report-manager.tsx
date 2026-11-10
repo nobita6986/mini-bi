@@ -66,6 +66,9 @@ import { AttendanceExplanationWorkspace } from "@/components/attendance/attendan
 import { FloatingTableNav } from "@/components/ui/floating-table-nav";
 import {
   buildGoogleMapsCoordinatesUrl,
+  getAllowedAttendanceAdminWorkspaceTabs,
+  resolveEffectiveAttendanceAdminWorkspaceTab,
+  type AttendanceAdminWorkspaceMode,
   type AttendanceAdminWorkspaceTab,
 } from "@/lib/attendance/attendance-monthly-matrix-ui-model";
 import { cn } from "@/lib/utils";
@@ -858,7 +861,13 @@ function AttendanceCheckinDetailBody({
   );
 }
 
-export function AttendanceReportManager() {
+export type AttendanceReportManagerProps = {
+  workspaceMode?: AttendanceAdminWorkspaceMode;
+};
+
+export function AttendanceReportManager({
+  workspaceMode = "full",
+}: AttendanceReportManagerProps = {}) {
   const router = useRouter();
   const notify = useNotify();
   const initialToday = getVietnamTodayIsoDate();
@@ -866,6 +875,14 @@ export function AttendanceReportManager() {
 
   const [activeTab, setActiveTab] =
     useState<AttendanceAdminWorkspaceTab>("checkins");
+  const allowedTabs = useMemo(
+    () => getAllowedAttendanceAdminWorkspaceTabs(workspaceMode),
+    [workspaceMode],
+  );
+  const effectiveTab = resolveEffectiveAttendanceAdminWorkspaceTab(
+    activeTab,
+    workspaceMode,
+  );
   const [fromInput, setFromInput] = useState(initialFrom);
   const [toInput, setToInput] = useState(initialToday);
   const [employeeIdInput, setEmployeeIdInput] = useState("");
@@ -1444,12 +1461,12 @@ export function AttendanceReportManager() {
           type="button"
           role="tab"
           id="attendance-tab-checkins"
-          aria-selected={activeTab === "checkins"}
+          aria-selected={effectiveTab === "checkins"}
           aria-controls="attendance-panel-checkins"
           onClick={() => setActiveTab("checkins")}
           className={cn(
             "min-h-10 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors",
-            activeTab === "checkins"
+            effectiveTab === "checkins"
               ? "bg-accent text-on-primary shadow-2xs"
               : "text-muted hover:bg-surface-muted/70 hover:text-foreground",
           )}
@@ -1460,66 +1477,72 @@ export function AttendanceReportManager() {
           type="button"
           role="tab"
           id="attendance-tab-monthly-matrix"
-          aria-selected={activeTab === "monthly-matrix"}
+          aria-selected={effectiveTab === "monthly-matrix"}
           aria-controls="attendance-panel-monthly-matrix"
           onClick={() => setActiveTab("monthly-matrix")}
           className={cn(
             "min-h-10 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors",
-            activeTab === "monthly-matrix"
+            effectiveTab === "monthly-matrix"
               ? "bg-accent text-on-primary shadow-2xs"
               : "text-muted hover:bg-surface-muted/70 hover:text-foreground",
           )}
         >
           Báo cáo tháng
         </button>
-        <button
-          type="button"
-          role="tab"
-          id="attendance-tab-explanations"
-          aria-selected={activeTab === "explanations"}
-          aria-controls="attendance-panel-explanations"
-          onClick={() => setActiveTab("explanations")}
-          className={cn(
-            "min-h-10 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors",
-            activeTab === "explanations"
-              ? "bg-accent text-on-primary shadow-2xs"
-              : "text-muted hover:bg-surface-muted/70 hover:text-foreground",
-          )}
-        >
-          Giải trình chấm công
-        </button>
-        <button
-          type="button"
-          role="tab"
-          id="attendance-tab-branches"
-          aria-selected={activeTab === "branches"}
-          aria-controls="attendance-panel-branches"
-          onClick={() => setActiveTab("branches")}
-          className={cn(
-            "min-h-10 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors",
-            activeTab === "branches"
-              ? "bg-accent text-on-primary shadow-2xs"
-              : "text-muted hover:bg-surface-muted/70 hover:text-foreground",
-          )}
-        >
-          Chi nhánh HRP
-        </button>
-        <button
-          type="button"
-          role="tab"
-          id="attendance-tab-config"
-          aria-selected={activeTab === "config"}
-          aria-controls="attendance-panel-config"
-          onClick={() => setActiveTab("config")}
-          className={cn(
-            "min-h-10 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors",
-            activeTab === "config"
-              ? "bg-accent text-on-primary shadow-2xs"
-              : "text-muted hover:bg-surface-muted/70 hover:text-foreground",
-          )}
-        >
-          Cấu hình chấm công
-        </button>
+        {allowedTabs.includes("explanations") ? (
+          <button
+            type="button"
+            role="tab"
+            id="attendance-tab-explanations"
+            aria-selected={effectiveTab === "explanations"}
+            aria-controls="attendance-panel-explanations"
+            onClick={() => setActiveTab("explanations")}
+            className={cn(
+              "min-h-10 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors",
+              effectiveTab === "explanations"
+                ? "bg-accent text-on-primary shadow-2xs"
+                : "text-muted hover:bg-surface-muted/70 hover:text-foreground",
+            )}
+          >
+            Giải trình chấm công
+          </button>
+        ) : null}
+        {allowedTabs.includes("branches") ? (
+          <button
+            type="button"
+            role="tab"
+            id="attendance-tab-branches"
+            aria-selected={effectiveTab === "branches"}
+            aria-controls="attendance-panel-branches"
+            onClick={() => setActiveTab("branches")}
+            className={cn(
+              "min-h-10 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors",
+              effectiveTab === "branches"
+                ? "bg-accent text-on-primary shadow-2xs"
+                : "text-muted hover:bg-surface-muted/70 hover:text-foreground",
+            )}
+          >
+            Chi nhánh HRP
+          </button>
+        ) : null}
+        {allowedTabs.includes("config") ? (
+          <button
+            type="button"
+            role="tab"
+            id="attendance-tab-config"
+            aria-selected={effectiveTab === "config"}
+            aria-controls="attendance-panel-config"
+            onClick={() => setActiveTab("config")}
+            className={cn(
+              "min-h-10 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors",
+              effectiveTab === "config"
+                ? "bg-accent text-on-primary shadow-2xs"
+                : "text-muted hover:bg-surface-muted/70 hover:text-foreground",
+            )}
+          >
+            Cấu hình chấm công
+          </button>
+        ) : null}
       </div>
 
       {loadState.kind === "error" ? (
@@ -1528,7 +1551,7 @@ export function AttendanceReportManager() {
         </Alert>
       ) : null}
 
-      {activeTab === "config" ? (
+      {effectiveTab === "config" && allowedTabs.includes("config") ? (
         <div
           id="attendance-panel-config"
           role="tabpanel"
@@ -1713,7 +1736,7 @@ export function AttendanceReportManager() {
         </div>
       ) : null}
 
-      {activeTab === "monthly-matrix" ? (
+      {effectiveTab === "monthly-matrix" ? (
         <div
           id="attendance-panel-monthly-matrix"
           role="tabpanel"
@@ -1723,7 +1746,7 @@ export function AttendanceReportManager() {
         </div>
       ) : null}
 
-      {activeTab === "explanations" ? (
+      {effectiveTab === "explanations" && allowedTabs.includes("explanations") ? (
         <div
           id="attendance-panel-explanations"
           role="tabpanel"
@@ -1733,7 +1756,7 @@ export function AttendanceReportManager() {
         </div>
       ) : null}
 
-      {activeTab === "branches" ? (
+      {effectiveTab === "branches" && allowedTabs.includes("branches") ? (
         <div
           id="attendance-panel-branches"
           role="tabpanel"
@@ -1743,7 +1766,7 @@ export function AttendanceReportManager() {
         </div>
       ) : null}
 
-      {activeTab === "checkins" ? (
+      {effectiveTab === "checkins" ? (
       <div
         id="attendance-panel-checkins"
         role="tabpanel"

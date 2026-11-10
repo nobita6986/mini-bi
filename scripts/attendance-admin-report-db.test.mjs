@@ -1400,6 +1400,349 @@ test("Attendance Admin Report SQL enforces ACL/immutability, role matrix, HQ rev
     assert.equal(JSON.stringify(fullReport.items).includes(ACTORS.STAFF_A.app), false);
     assert.equal(serialized.includes(ACTORS.STAFF_A.auth), false);
     assert.equal(serialized.includes(TOKEN_DIGEST), false);
+
+    // -------------------------------------------------------------------------
+    // 10. Team Leader current-team scope, cross-team denial, photo guard & immediate revocation
+    // -------------------------------------------------------------------------
+    const TEAM_BETA = "31000000-0000-4000-8000-0000000000b2";
+    const LEADER_RECRUITER_ID = "41000000-0000-4000-8000-000000000006";
+    const STAFF_B_RECRUITER_ID = "41000000-0000-4000-8000-000000000012";
+
+    // Internal scope resolver helper must not be directly executable by anon, authenticated, or service_role
+    for (const role of ["anon", "authenticated", "service_role"]) {
+      await assert.rejects(
+        async () => {
+          await db.exec(`begin; set local role ${role};`);
+          try {
+            await db.query(
+              "select public.attendance__internal_resolve_report_scope($1::uuid, $2::uuid)",
+              [ACTORS.FULL_ADMIN.auth, ACTORS.FULL_ADMIN.app],
+            );
+            await db.exec("commit;");
+          } catch (err) {
+            await db.exec("rollback;");
+            throw err;
+          }
+        },
+        (err) => err.code === "42501",
+        `${role} must not have EXECUTE on public.attendance__internal_resolve_report_scope`,
+      );
+    }
+
+    await db.query(
+      `insert into public.teams (team_id, code, display_name, active)
+       values ($1::uuid, 'ATT_BETA', 'Nhóm Chấm Công Beta', true)`,
+      [TEAM_BETA],
+    );
+
+    // Provision STAFF_A on TEAM_ALPHA and STAFF_B on TEAM_BETA, plus TEAM_LEADER as leader of TEAM_ALPHA
+    await db.query(
+      `insert into public.recruiters (recruiter_id, display_name, personnel_code, personnel_position, active)
+       values ($1::uuid, $2, 'NV_TL_ALPHA', 'TEAM_LEADER', true),
+              ($3::uuid, $4, 'NV_ATT_02', 'STAFF', true)`,
+      [LEADER_RECRUITER_ID, ACTORS.TEAM_LEADER.name, STAFF_B_RECRUITER_ID, ACTORS.STAFF_B.name],
+    );
+    await db.query(
+      `insert into public.direct_entry_app_user_recruiter_links
+         (app_user_id, recruiter_id, verified, valid_from, is_current)
+       values ($1::uuid, $2::uuid, true, '2026-01-01', true),
+              ($3::uuid, $4::uuid, true, '2026-01-01', true)`,
+      [ACTORS.TEAM_LEADER.app, LEADER_RECRUITER_ID, ACTORS.STAFF_B.app, STAFF_B_RECRUITER_ID],
+    );
+    await db.query(
+      `insert into public.recruiter_provider_memberships (recruiter_id, provider_type, valid_from, is_current)
+       values ($1::uuid, 'hrp', '2026-01-01', true),
+              ($2::uuid, 'hrp', '2026-01-01', true),
+              ($3::uuid, 'hrp', '2026-01-01', true)`,
+      [ACTORS.STAFF_A.recruiter, LEADER_RECRUITER_ID, STAFF_B_RECRUITER_ID],
+    );
+    await db.query(
+      `insert into public.recruiter_team_memberships (recruiter_id, team_id, valid_from, is_current)
+       values ($1::uuid, $2::uuid, '2026-01-01', true),
+              ($3::uuid, $2::uuid, '2026-01-01', true),
+              ($4::uuid, $5::uuid, '2026-01-01', true)`,
+      [ACTORS.STAFF_A.recruiter, TEAM_ALPHA, LEADER_RECRUITER_ID, STAFF_B_RECRUITER_ID, TEAM_BETA],
+    );
+    await db.query(
+      `insert into public.direct_entry_team_leader_assignments
+         (team_id, leader_app_user_id, leader_recruiter_id, valid_from, is_current)
+       values ($1::uuid, $2::uuid, $3::uuid, '2026-01-01', true)`,
+      [TEAM_ALPHA, ACTORS.TEAM_LEADER.app, LEADER_RECRUITER_ID],
+    );
+
+    // Record a check-in for TEAM_LEADER (who is also a current member of TEAM_ALPHA)
+    const cLeaderAlpha = await recordCheckInAsServiceRole(db, {
+      actor: ACTORS.TEAM_LEADER,
+      latitude: HQ_HCMC.latitude,
+      longitude: HQ_HCMC.longitude,
+      captured_at: `${maxDate}T02:00:00.000Z`,
+      note: "Check-in trưởng nhóm Alpha",
+    });
+
+    // 10a. TEAM_LEADER sees ONLY current members of TEAM_ALPHA (STAFF_A + TEAM_LEADER), never STAFF_B (TEAM_BETA)
+    const tlReportRaw = await callReportAsServiceRole(db, {
+      auth_subject: ACTORS.TEAM_LEADER.auth,
+      app_user_id: ACTORS.TEAM_LEADER.app,
+      from_date: minDate,
+      to_date: maxDate,
+      page: 1,
+      page_size: 25,
+    });
+    const tlReport = projectAttendanceAdminReport(tlReportRaw);
+    assert.ok(tlReport, "Team Leader report must pass strict projection");
+    assert.equal(tlReport.viewer.can_configure_hq, false);
+    assert.deepEqual(
+      tlReport.employee_options.map((opt) => opt.app_user_id).sort(),
+      [ACTORS.STAFF_A.app, ACTORS.TEAM_LEADER.app].sort(),
+      "employee_options for Team Leader must contain only current TEAM_ALPHA members",
+    );
+    assert.equal(
+      tlReport.employee_options.some((opt) => opt.app_user_id === ACTORS.STAFF_B.app),
+      false,
+    );
+    assert.equal(tlReport.overview.total_checkins, 5); // 4 from STAFF_A + 1 from TEAM_LEADER
+    assert.equal(tlReport.overview.unique_employees, 2);
+    assert.equal(tlReport.pagination.total_rows, 5);
+    assert.ok(
+      tlReport.items.every((item) =>
+        [ACTORS.STAFF_A.name, ACTORS.TEAM_LEADER.name].includes(item.employee_display_name),
+      ),
+    );
+    assert.equal(
+      tlReport.items.some((item) => item.employee_display_name === ACTORS.STAFF_B.name),
+      false,
+    );
+
+    // 10b. Searching for STAFF_B (TEAM_BETA) as TEAM_LEADER returns 0 rows
+    const tlSearchBeta = await callReportAsServiceRole(db, {
+      auth_subject: ACTORS.TEAM_LEADER.auth,
+      app_user_id: ACTORS.TEAM_LEADER.app,
+      from_date: minDate,
+      to_date: maxDate,
+      search: "Phạm Thị B",
+    });
+    assert.equal(tlSearchBeta.overview.total_checkins, 0);
+    assert.equal(tlSearchBeta.pagination.total_rows, 0);
+    assert.deepEqual(tlSearchBeta.items, []);
+
+    // 10c. Filtering by own-team employee_id succeeds; filtering by TEAM_BETA or unlinked employee_id raises 42501
+    const tlOwnEmpFiltered = await callReportAsServiceRole(db, {
+      auth_subject: ACTORS.TEAM_LEADER.auth,
+      app_user_id: ACTORS.TEAM_LEADER.app,
+      from_date: minDate,
+      to_date: maxDate,
+      employee_id: ACTORS.STAFF_A.app,
+    });
+    assert.equal(tlOwnEmpFiltered.overview.total_checkins, 4);
+    assert.equal(tlOwnEmpFiltered.pagination.total_rows, 4);
+
+    for (const crossEmployeeId of [ACTORS.STAFF_B.app, ACTORS.FULL_ADMIN.app]) {
+      await assert.rejects(
+        () =>
+          callReportAsServiceRole(db, {
+            auth_subject: ACTORS.TEAM_LEADER.auth,
+            app_user_id: ACTORS.TEAM_LEADER.app,
+            from_date: minDate,
+            to_date: maxDate,
+            employee_id: crossEmployeeId,
+          }),
+        (err) =>
+          err.code === "42501" &&
+          String(err.message).includes("ATTENDANCE_REPORT_ACCESS_DENIED"),
+      );
+    }
+
+    // 10d. Photo access: TEAM_LEADER can read TEAM_ALPHA check-in photos (STAFF_A + self), denied 42501 on TEAM_BETA check-in photo
+    const tlAlphaPhoto = await callPhotoAsServiceRole(db, {
+      auth_subject: ACTORS.TEAM_LEADER.auth,
+      app_user_id: ACTORS.TEAM_LEADER.app,
+      checkin_id: c0PreHq.checkin_id,
+    });
+    assert.equal(tlAlphaPhoto.found, true);
+
+    const tlSelfPhoto = await callPhotoAsServiceRole(db, {
+      auth_subject: ACTORS.TEAM_LEADER.auth,
+      app_user_id: ACTORS.TEAM_LEADER.app,
+      checkin_id: cLeaderAlpha.checkin_id,
+    });
+    assert.equal(tlSelfPhoto.found, true);
+
+    await assert.rejects(
+      () =>
+        callPhotoAsServiceRole(db, {
+          auth_subject: ACTORS.TEAM_LEADER.auth,
+          app_user_id: ACTORS.TEAM_LEADER.app,
+          checkin_id: c2OffsetV1.checkin_id, // belongs to STAFF_B (TEAM_BETA)
+        }),
+      (err) =>
+        err.code === "42501" &&
+        String(err.message).includes("ATTENDANCE_REPORT_ACCESS_DENIED"),
+      "Team Leader must receive 42501 (not found:false) for another team's check-in photo",
+    );
+
+    // 10e. Provisioned TEAM_LEADER is still denied on attendance_set_hq_location
+    await assert.rejects(
+      () =>
+        callSetHqAsServiceRole(db, {
+          auth_subject: ACTORS.TEAM_LEADER.auth,
+          app_user_id: ACTORS.TEAM_LEADER.app,
+          latitude: HQ_HANOI.latitude,
+          longitude: HQ_HANOI.longitude,
+          expected_version: 2,
+          idempotency_key: nextUuid(),
+        }),
+      (err) => err.code === "42501",
+    );
+
+    // 10f. When STAFF_A transfers from TEAM_ALPHA to TEAM_BETA, TEAM_ALPHA leader immediately loses access to STAFF_A's rows & photos
+    await db.query(
+      `update public.recruiter_team_memberships
+          set team_id = $2::uuid
+        where recruiter_id = $1::uuid
+          and is_current = true`,
+      [ACTORS.STAFF_A.recruiter, TEAM_BETA],
+    );
+    const tlAfterTransfer = await callReportAsServiceRole(db, {
+      auth_subject: ACTORS.TEAM_LEADER.auth,
+      app_user_id: ACTORS.TEAM_LEADER.app,
+      from_date: minDate,
+      to_date: maxDate,
+    });
+    assert.deepEqual(
+      tlAfterTransfer.employee_options.map((opt) => opt.app_user_id),
+      [ACTORS.TEAM_LEADER.app],
+    );
+    assert.equal(tlAfterTransfer.overview.total_checkins, 1);
+    assert.equal(tlAfterTransfer.pagination.total_rows, 1);
+    await assert.rejects(
+      () =>
+        callPhotoAsServiceRole(db, {
+          auth_subject: ACTORS.TEAM_LEADER.auth,
+          app_user_id: ACTORS.TEAM_LEADER.app,
+          checkin_id: c0PreHq.checkin_id,
+        }),
+      (err) =>
+        err.code === "42501" &&
+        String(err.message).includes("ATTENDANCE_REPORT_ACCESS_DENIED"),
+    );
+    // Restore STAFF_A to TEAM_ALPHA
+    await db.query(
+      `update public.recruiter_team_memberships
+          set team_id = $2::uuid
+        where recruiter_id = $1::uuid
+          and is_current = true`,
+      [ACTORS.STAFF_A.recruiter, TEAM_ALPHA],
+    );
+
+    // 10g. Missing report bundle (report_view or report_analytics_view) or revoked leader assignment / link / membership / duplicate assignment fails closed with 42501
+    for (const missingCap of ["report_view", "report_analytics_view"]) {
+      await db.query(
+        `update public.direct_entry_capability_grants
+            set is_current = false
+          where app_user_id = $1::uuid
+            and capability = $2`,
+        [ACTORS.TEAM_LEADER.app, missingCap],
+      );
+      await assert.rejects(
+        () =>
+          callReportAsServiceRole(db, {
+            auth_subject: ACTORS.TEAM_LEADER.auth,
+            app_user_id: ACTORS.TEAM_LEADER.app,
+          }),
+        (err) =>
+          err.code === "42501" &&
+          String(err.message).includes("ATTENDANCE_REPORT_ACCESS_DENIED"),
+        `Team Leader missing ${missingCap} must fail closed`,
+      );
+      await db.query(
+        `update public.direct_entry_capability_grants
+            set is_current = true
+          where app_user_id = $1::uuid
+            and capability = $2`,
+        [ACTORS.TEAM_LEADER.app, missingCap],
+      );
+    }
+
+    // Revoke direct_entry_team_leader_assignments -> immediate 42501
+    await db.query(
+      `update public.direct_entry_team_leader_assignments
+          set is_current = false
+        where leader_app_user_id = $1::uuid`,
+      [ACTORS.TEAM_LEADER.app],
+    );
+    await assert.rejects(
+      () =>
+        callReportAsServiceRole(db, {
+          auth_subject: ACTORS.TEAM_LEADER.auth,
+          app_user_id: ACTORS.TEAM_LEADER.app,
+        }),
+      (err) =>
+        err.code === "42501" &&
+        String(err.message).includes("ATTENDANCE_REPORT_ACCESS_DENIED"),
+    );
+    await db.query(
+      `update public.direct_entry_team_leader_assignments
+          set is_current = true
+        where leader_app_user_id = $1::uuid`,
+      [ACTORS.TEAM_LEADER.app],
+    );
+
+    // Revoke verified recruiter link -> immediate 42501
+    await db.query(
+      "alter table public.direct_entry_app_user_recruiter_links disable trigger user",
+    );
+    await db.query(
+      `update public.direct_entry_app_user_recruiter_links
+          set verified = false
+        where app_user_id = $1::uuid`,
+      [ACTORS.TEAM_LEADER.app],
+    );
+    await db.query(
+      "alter table public.direct_entry_app_user_recruiter_links enable trigger user",
+    );
+    await assert.rejects(
+      () =>
+        callReportAsServiceRole(db, {
+          auth_subject: ACTORS.TEAM_LEADER.auth,
+          app_user_id: ACTORS.TEAM_LEADER.app,
+        }),
+      (err) =>
+        err.code === "42501" &&
+        String(err.message).includes("ATTENDANCE_REPORT_ACCESS_DENIED"),
+    );
+    await db.query(
+      "alter table public.direct_entry_app_user_recruiter_links disable trigger user",
+    );
+    await db.query(
+      `update public.direct_entry_app_user_recruiter_links
+          set verified = true
+        where app_user_id = $1::uuid`,
+      [ACTORS.TEAM_LEADER.app],
+    );
+    await db.query(
+      "alter table public.direct_entry_app_user_recruiter_links enable trigger user",
+    );
+
+    // Ambiguous / multi-team scope for leader -> fail closed with 42501
+    await db.query(
+      `insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from, is_current)
+       values ($1::uuid, 'team', $2::uuid, '2026-01-01', true)`,
+      [ACTORS.TEAM_LEADER.app, TEAM_BETA],
+    );
+    await assert.rejects(
+      () =>
+        callReportAsServiceRole(db, {
+          auth_subject: ACTORS.TEAM_LEADER.auth,
+          app_user_id: ACTORS.TEAM_LEADER.app,
+        }),
+      (err) =>
+        err.code === "42501" &&
+        String(err.message).includes("ATTENDANCE_REPORT_ACCESS_DENIED"),
+    );
+    await db.query(
+      "delete from public.direct_entry_scope_grants where app_user_id = $1::uuid and team_id = $2::uuid",
+      [ACTORS.TEAM_LEADER.app, TEAM_BETA],
+    );
   } finally {
     await db.close();
   }
