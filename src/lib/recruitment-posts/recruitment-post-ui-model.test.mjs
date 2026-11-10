@@ -5,16 +5,23 @@ import { parseListRecruitmentPostsQuery } from "./contract.ts";
 import {
   DEFAULT_RECRUITMENT_POST_PAGE_SIZE,
   EMPTY_RECRUITMENT_POST_FILTERS,
+  RECRUITMENT_POST_MISSING_INDUSTRIAL_PARK_HELP_TEXT,
   RECRUITMENT_POST_UNPROVIDED_LABEL,
   applyIndustrialParkFilterChange,
   applyProvinceFilterChange,
   beginRecruitmentPostContextRequest,
   buildRecruitmentPostListUrl,
+  buildRecruitmentPostPreSubmitSummary,
+  buildWithdrawRecruitmentPostRequestBody,
   classifyRecruitmentPostAccessLoss,
+  createEditRecruitmentPostFormDraftFromItem,
   createEmptyRecruitmentPostDataState,
+  createEmptyRecruitmentPostFormDraft,
   createLatestRequestTracker,
   decideRecruitmentPostsPageAccess,
+  deriveProvinceDisplayNameForDraft,
   extractRecruitmentPostErrorCode,
+  filterCreateFormIndustrialParks,
   formatRecruitmentPostAgeRange,
   formatRecruitmentPostHeadcount,
   formatRecruitmentPostIncomeRange,
@@ -23,15 +30,27 @@ import {
   formatRecruitmentPostVnd,
   hasActiveRecruitmentPostFilters,
   mergeUniqueRecruitmentPostItems,
+  normalizeRecruitmentPostVndInput,
   parseRecruitmentPostContextEnvelope,
   parseRecruitmentPostDetailEnvelope,
   parseRecruitmentPostListEnvelope,
   recruitmentPostContextErrorMessage,
   recruitmentPostErrorMessage,
   resolveRecruitmentPostContextOutcome,
+  resolveRecruitmentPostMutationOutcome,
+  selectableLaborTypesForDraft,
+  setRecruitmentPostExperienceRequired,
+  setRecruitmentPostPpeProvided,
+  setRecruitmentPostRequireOtherDocuments,
+  setRecruitmentPostSalaryAdvanceAvailable,
+  setRecruitmentPostWeeklySalaryAvailable,
   settleRecruitmentPostContextRequest,
   toRecruitmentPostCardViewModel,
   toRecruitmentPostDetailViewModel,
+  toggleRecruitmentPostEnvironmentType,
+  toggleRecruitmentPostLaborTypeKey,
+  toggleRecruitmentPostWorkPosture,
+  validateAndBuildRecruitmentPostWritePayload,
   validateRecruitmentPostFeedFilters,
   visibleIndustrialParksForFilter,
   visibleLaborTypesForFilter,
@@ -845,3 +864,208 @@ test("createLatestRequestTracker aborts stale requests on filter change or detai
   assert.equal(secondTicket.isCurrent(), false);
   assert.equal(secondTicket.signal.aborted, true);
 });
+
+test("Phase 4: Authoring draft state, dependent field clearing, KCN search & province auto-derivation, and historical labor type retention", () => {
+  assert.equal(
+    RECRUITMENT_POST_MISSING_INDUSTRIAL_PARK_HELP_TEXT,
+    "KCN chưa có trong danh mục. Vui lòng liên hệ Admin/BOD để bổ sung.",
+  );
+
+  let createDraft = createEmptyRecruitmentPostFormDraft("create");
+  assert.equal(createDraft.mode, "create");
+  assert.equal(createDraft.expectedVersion, 1);
+
+  createDraft = toggleRecruitmentPostEnvironmentType(createDraft, "CLEAN_ROOM");
+  createDraft = toggleRecruitmentPostWorkPosture(createDraft, "SITTING");
+  createDraft = toggleRecruitmentPostLaborTypeKey(createDraft, "CHINH_THUC");
+  assert.deepEqual(createDraft.environmentTypes, ["CLEAN_ROOM"]);
+  assert.deepEqual(createDraft.workPostures, ["SITTING"]);
+  assert.deepEqual(createDraft.laborTypeKeys, ["CHINH_THUC"]);
+
+  // Dependent fields clear when parent toggles are turned off
+  createDraft = {
+    ...createDraft,
+    experienceRequired: true,
+    experienceDetails: "6 tháng SMT",
+    salaryAdvanceAvailable: true,
+    salaryAdvanceAmountVnd: "500000",
+    salaryAdvanceSchedule: "Sau 7 công",
+    weeklySalaryAvailable: true,
+    weeklySalaryPaymentSchedule: "Thứ 6",
+    ppeProvided: true,
+    ppeDetails: "Áo phòng sạch",
+    requireOtherDocuments: true,
+    otherDocumentsText: "CT07",
+  };
+  createDraft = setRecruitmentPostExperienceRequired(createDraft, false);
+  assert.equal(createDraft.experienceDetails, "");
+  createDraft = setRecruitmentPostSalaryAdvanceAvailable(createDraft, false);
+  assert.equal(createDraft.salaryAdvanceAmountVnd, "");
+  assert.equal(createDraft.salaryAdvanceSchedule, "");
+  createDraft = setRecruitmentPostWeeklySalaryAvailable(createDraft, false);
+  assert.equal(createDraft.weeklySalaryPaymentSchedule, "");
+  createDraft = setRecruitmentPostPpeProvided(createDraft, false);
+  assert.equal(createDraft.ppeDetails, "");
+  createDraft = setRecruitmentPostRequireOtherDocuments(createDraft, false);
+  assert.equal(createDraft.otherDocumentsText, "");
+
+  // KCN search filters active parks and auto-derives province display name
+  const filteredParks = filterCreateFormIndustrialParks(
+    SAMPLE_CONTEXT.industrial_parks,
+    SAMPLE_CONTEXT.provinces,
+    "khai quang",
+  );
+  assert.deepEqual(
+    filteredParks.map((p) => p.industrial_park_id),
+    [PARK_KHAI_QUANG_ID],
+  );
+  const draftWithPark = {
+    ...createDraft,
+    projectId: "PROJ_COMPAL",
+    industrialParkId: PARK_QUANG_CHAU_ID,
+  };
+  assert.equal(
+    deriveProvinceDisplayNameForDraft(
+      draftWithPark,
+      SAMPLE_CONTEXT.industrial_parks,
+      SAMPLE_CONTEXT.provinces,
+    ),
+    "Bắc Giang",
+  );
+
+  // Edit draft preserves locked project, locked KCN, locked province, and historical inactive labor types
+  const itemWithHistoricalLabor = makeCompleteItem({
+    version: 4,
+    general: {
+      ...makeCompleteItem().general,
+      labor_types: [
+        { labor_type_key: "CHINH_THUC", display_name: "Chính thức" },
+        { labor_type_key: "KHOAN_CU", display_name: "Khoán cũ" },
+      ],
+    },
+  });
+  const editDraft = createEditRecruitmentPostFormDraftFromItem(
+    itemWithHistoricalLabor,
+  );
+  assert.equal(editDraft.mode, "edit");
+  assert.equal(editDraft.expectedVersion, 4);
+  assert.equal(editDraft.lockedProjectDisplayName, "Dự án Điện tử ABC");
+  assert.equal(editDraft.lockedIndustrialParkDisplayName, "KCN Khai Quang");
+  assert.equal(editDraft.lockedProvinceDisplayName, "Vĩnh Phúc");
+
+  const selectable = selectableLaborTypesForDraft(
+    SAMPLE_CONTEXT.labor_types,
+    editDraft,
+  );
+  assert.ok(selectable.some((lt) => lt.labor_type_key === "KHOAN_CU"));
+});
+
+test("Phase 4: Pre-submit 6-item confirmation block, write payload validation, withdraw payload, and mutation outcome classification", () => {
+  // VND normalization must never leak vendor-finance error codes or double currency unit
+  const validVnd = normalizeRecruitmentPostVndInput("5500000", "Lương cơ bản");
+  assert.deepEqual(validVnd, {
+    ok: true,
+    canonical: "5500000",
+    formatted: "5.500.000 ₫",
+  });
+  const invalidVnd = normalizeRecruitmentPostVndInput("-100", "Lương cơ bản");
+  assert.equal(invalidVnd.ok, false);
+  assert.equal(
+    invalidVnd.message.includes("VENDOR_FINANCE"),
+    false,
+    "never leaks vendor-finance error code",
+  );
+
+  const editItem = makeCompleteItem({ version: 2 });
+  const editDraft = createEditRecruitmentPostFormDraftFromItem(editItem);
+  const summary = buildRecruitmentPostPreSubmitSummary({
+    draft: editDraft,
+    managedProjects: SAMPLE_CONTEXT.managed_projects,
+    industrialParks: SAMPLE_CONTEXT.industrial_parks,
+    provinces: SAMPLE_CONTEXT.provinces,
+  });
+  assert.deepEqual(summary, {
+    projectDisplay: "Dự án Điện tử ABC",
+    industrialParkAndProvinceDisplay: "KCN Khai Quang — Vĩnh Phúc",
+    jobDescriptionDisplay:
+      "Lắp ráp bảng mạch, kiểm tra ngoại quan bằng kính hiển vi.",
+    expectedHeadcountDisplay: "150 người",
+    expectedIncomeDisplay: "9.500.000 ₫ – 13.500.000 ₫",
+    managerContactDisplay: "Trần Thị PM · 0912345678",
+  });
+
+  // Valid create payload
+  const createDraft = {
+    ...editDraft,
+    mode: "create",
+    projectId: "PROJ_ABC",
+    industrialParkId: PARK_KHAI_QUANG_ID,
+  };
+  const builtCreate = validateAndBuildRecruitmentPostWritePayload(createDraft);
+  assert.equal(builtCreate.ok, true);
+  if (builtCreate.ok && builtCreate.mode === "create") {
+    assert.equal(builtCreate.requestBody.project_id, "PROJ_ABC");
+    assert.equal(
+      builtCreate.requestBody.industrial_park_id,
+      PARK_KHAI_QUANG_ID,
+    );
+    assert.equal(
+      builtCreate.requestBody.content.general.customer_name,
+      "Công ty TNHH Linh Kiện Điện Tử ABC",
+    );
+  }
+
+  // Valid edit payload sends expected_version + content (never project_id or industrial_park_id)
+  const builtEdit = validateAndBuildRecruitmentPostWritePayload(editDraft);
+  assert.equal(builtEdit.ok, true);
+  if (builtEdit.ok && builtEdit.mode === "edit") {
+    assert.equal(builtEdit.requestBody.expected_version, 2);
+    assert.equal("project_id" in builtEdit.requestBody, false);
+    assert.equal("industrial_park_id" in builtEdit.requestBody, false);
+  }
+
+  // Withdraw body
+  const withdrawBuilt = buildWithdrawRecruitmentPostRequestBody(3);
+  assert.deepEqual(withdrawBuilt, {
+    ok: true,
+    requestBody: { expected_version: 3 },
+  });
+
+  // Mutation outcome classification: ok, 409 stale, 409 already withdrawn, 503/network ambiguous retry lock, 403 access loss
+  const okOutcome = resolveRecruitmentPostMutationOutcome({
+    status: 200,
+    payload: {
+      ok: true,
+      data: { post: editItem, changed: true, replayed: false },
+    },
+  });
+  assert.equal(okOutcome.kind, "ok");
+
+  const staleOutcome = resolveRecruitmentPostMutationOutcome({
+    status: 409,
+    payload: { ok: false, code: "RECRUITMENT_POST_STALE" },
+  });
+  assert.equal(staleOutcome.kind, "conflict_stale");
+
+  const withdrawnOutcome = resolveRecruitmentPostMutationOutcome({
+    status: 409,
+    payload: { ok: false, code: "RECRUITMENT_POST_ALREADY_WITHDRAWN" },
+  });
+  assert.equal(withdrawnOutcome.kind, "already_withdrawn");
+
+  const ambiguousNetwork = resolveRecruitmentPostMutationOutcome({
+    status: 0,
+    payload: null,
+  });
+  assert.equal(ambiguousNetwork.kind, "ambiguous_retry_lock");
+
+  const accessDenied = resolveRecruitmentPostMutationOutcome({
+    status: 403,
+    payload: { ok: false, code: "RECRUITMENT_POST_ACCESS_DENIED" },
+  });
+  assert.deepEqual(accessDenied, {
+    kind: "access_loss",
+    accessLoss: "ACCESS_DENIED",
+  });
+});
+

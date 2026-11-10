@@ -115,7 +115,9 @@ const {
   RECRUITMENT_POST_UNPROVIDED_LABEL,
   beginRecruitmentPostContextRequest,
   classifyRecruitmentPostAccessLoss,
+  createEditRecruitmentPostFormDraftFromItem,
   createEmptyRecruitmentPostDataState,
+  createEmptyRecruitmentPostFormDraft,
   createLatestRequestTracker,
   mergeUniqueRecruitmentPostItems,
   recruitmentPostContextErrorMessage,
@@ -133,6 +135,18 @@ const { RecruitmentPostDetailDialog } = await import(
 );
 const { RecruitmentPostFeedWorkspace } = await import(
   "@/components/recruitment-posts/recruitment-post-feed-workspace"
+);
+const { RecruitmentPostForm } = await import(
+  "@/components/recruitment-posts/recruitment-post-form"
+);
+const { RecruitmentPostWithdrawDialog } = await import(
+  "@/components/recruitment-posts/recruitment-post-withdraw-dialog"
+);
+const { ProvinceCatalogManager } = await import(
+  "@/components/admin/province-catalog-manager"
+);
+const { IndustrialParkCatalogManager } = await import(
+  "@/components/admin/industrial-park-catalog-manager"
 );
 
 const PROVINCE_VP_ID = "11111111-1111-4111-8111-111111111111";
@@ -400,18 +414,18 @@ describe("Phase 3 — Recruitment Posts UI & Architecture Gate", () => {
     assert.doesNotMatch(html, />Sửa</);
     assert.doesNotMatch(html, />Rút tin</);
 
-    // Sparse item fallback
+    // Sparse item fallback + Phase 4 allowedActions rendering
     const sparseCard = toRecruitmentPostCardViewModel(makeSparseItem());
     const sparseHtml = renderToStaticMarkup(
       createElement(RecruitmentPostCard, {
         card: sparseCard,
         onViewDetail: () => {},
+        onWithdraw: () => {},
       }),
     );
     assert.match(sparseHtml, new RegExp(RECRUITMENT_POST_UNPROVIDED_LABEL));
-    // Even if backend permissions have can_edit/can_withdraw true, Phase 3 card is read-only
-    assert.doesNotMatch(sparseHtml, />Sửa</);
-    assert.doesNotMatch(sparseHtml, />Rút tin</);
+    assert.match(sparseHtml, />Sửa</);
+    assert.match(sparseHtml, />Rút tin</);
   });
 
   it("renders RecruitmentPostDetailDialog with all 4 BOD sections, 8 shift wages, loading and error states", () => {
@@ -811,8 +825,17 @@ describe("Phase 3 — Recruitment Posts UI & Architecture Gate", () => {
       "src/components/recruitment-posts/recruitment-post-card.tsx",
       "src/components/recruitment-posts/recruitment-post-detail-dialog.tsx",
       "src/components/recruitment-posts/recruitment-post-feed-workspace.tsx",
+      "src/components/recruitment-posts/recruitment-post-form.tsx",
+      "src/components/recruitment-posts/recruitment-post-withdraw-dialog.tsx",
       "src/app/recruitment-posts/layout.tsx",
       "src/app/recruitment-posts/page.tsx",
+      "src/app/recruitment-posts/new/page.tsx",
+      "src/app/recruitment-posts/[briefId]/edit/page.tsx",
+      "src/lib/admin/location-catalog-model.ts",
+      "src/components/admin/province-catalog-manager.tsx",
+      "src/components/admin/industrial-park-catalog-manager.tsx",
+      "src/app/admin/catalog/provinces/page.tsx",
+      "src/app/admin/catalog/industrial-parks/page.tsx",
     ];
 
     const emailRegex = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i;
@@ -825,4 +848,348 @@ describe("Phase 3 — Recruitment Posts UI & Architecture Gate", () => {
       );
     }
   });
+
+  it("Phase 4: renders 'Tạo phiếu tuyển dụng' in feed only when can_create && managed_projects.length > 0, and renders Sửa/Rút tin on DetailDialog when allowed", () => {
+    const sampleContextForPm = {
+      can_create: true,
+      managed_projects: [
+        { project_id: "PROJ_ABC", display_name: "Dự án Điện tử ABC" },
+      ],
+      filter_projects: [
+        { project_id: "PROJ_ABC", display_name: "Dự án Điện tử ABC" },
+      ],
+      provinces: [
+        {
+          province_id: PROVINCE_VP_ID,
+          province_code: "VINH_PHUC",
+          display_name: "Vĩnh Phúc",
+          active: true,
+        },
+      ],
+      industrial_parks: [
+        {
+          industrial_park_id: PARK_KHAI_QUANG_ID,
+          industrial_park_code: "KCN_KHAI_QUANG",
+          province_id: PROVINCE_VP_ID,
+          display_name: "KCN Khai Quang",
+          active: true,
+        },
+      ],
+      labor_types: [
+        {
+          labor_type_key: "CHINH_THUC",
+          display_name: "Chính thức",
+          active: true,
+        },
+      ],
+    };
+
+    const pmWorkspaceHtml = renderToStaticMarkup(
+      createElement(RecruitmentPostFeedWorkspace, {
+        initialStateForTest: {
+          contextLoading: false,
+          contextError: null,
+          initialLoading: false,
+          feedError: null,
+          dataState: {
+            ...createEmptyRecruitmentPostDataState(),
+            context: sampleContextForPm,
+            items: [
+              makeCompleteItem({
+                allowed_actions: { can_edit: true, can_withdraw: true },
+              }),
+            ],
+            hasMore: false,
+          },
+        },
+      }),
+    );
+    assert.match(pmWorkspaceHtml, /data-testid="recruitment-posts-create-button"/);
+    assert.match(pmWorkspaceHtml, /Tạo phiếu tuyển dụng/);
+    assert.match(pmWorkspaceHtml, />Sửa</);
+    assert.match(pmWorkspaceHtml, />Rút tin</);
+
+    // Admin/BOD who is not a PM (can_create: false, managed_projects: []) must NOT see "Tạo phiếu tuyển dụng"
+    const adminNonPmWorkspaceHtml = renderToStaticMarkup(
+      createElement(RecruitmentPostFeedWorkspace, {
+        initialStateForTest: {
+          contextLoading: false,
+          contextError: null,
+          initialLoading: false,
+          feedError: null,
+          dataState: {
+            ...createEmptyRecruitmentPostDataState(),
+            context: {
+              ...sampleContextForPm,
+              can_create: false,
+              managed_projects: [],
+            },
+            items: [
+              makeCompleteItem({
+                allowed_actions: { can_edit: true, can_withdraw: true },
+              }),
+            ],
+            hasMore: false,
+          },
+        },
+      }),
+    );
+    assert.doesNotMatch(
+      adminNonPmWorkspaceHtml,
+      /data-testid="recruitment-posts-create-button"/,
+    );
+    assert.match(adminNonPmWorkspaceHtml, />Sửa</);
+    assert.match(adminNonPmWorkspaceHtml, />Rút tin</);
+
+    // Detail dialog with canEdit & canWithdraw
+    const editableDetail = toRecruitmentPostDetailViewModel(
+      makeCompleteItem({
+        allowed_actions: { can_edit: true, can_withdraw: true },
+      }),
+    );
+    const editableDetailHtml = renderToStaticMarkup(
+      createElement(RecruitmentPostDetailDialog, {
+        open: true,
+        onOpenChange: () => {},
+        detail: editableDetail,
+        loading: false,
+        error: null,
+        onRetry: () => {},
+        onWithdraw: () => {},
+      }),
+    );
+    assert.match(editableDetailHtml, /Sửa tin/);
+    assert.match(editableDetailHtml, /Rút tin/);
+  });
+
+  it("Phase 4: renders RecruitmentPostForm (Create & Edit), 6-item pre-submit confirmation block, locked Project/KCN in Edit, OCC 409 reload-to-compare, ambiguous retry lock, and 403 read-only preservation", () => {
+    const sampleContext = {
+      can_create: true,
+      managed_projects: [
+        { project_id: "PROJ_ABC", display_name: "Dự án Điện tử ABC" },
+      ],
+      filter_projects: [
+        { project_id: "PROJ_ABC", display_name: "Dự án Điện tử ABC" },
+      ],
+      provinces: [
+        {
+          province_id: PROVINCE_VP_ID,
+          province_code: "VINH_PHUC",
+          display_name: "Vĩnh Phúc",
+          active: true,
+        },
+      ],
+      industrial_parks: [
+        {
+          industrial_park_id: PARK_KHAI_QUANG_ID,
+          industrial_park_code: "KCN_KHAI_QUANG",
+          province_id: PROVINCE_VP_ID,
+          display_name: "KCN Khai Quang",
+          active: true,
+        },
+      ],
+      labor_types: [
+        {
+          labor_type_key: "CHINH_THUC",
+          display_name: "Chính thức",
+          active: true,
+        },
+      ],
+    };
+
+    const createDraft = {
+      ...createEmptyRecruitmentPostFormDraft("create"),
+      projectId: "PROJ_ABC",
+      industrialParkId: PARK_KHAI_QUANG_ID,
+      customerName: "Công ty ABC",
+      jobDescription: "Lắp ráp bo mạch điện tử",
+      expectedHeadcount: "120",
+      averageIncomeMinVnd: "9500000",
+      averageIncomeMaxVnd: "12500000",
+      managerName: "Trần Thị PM",
+      managerPhone: "0912345678",
+    };
+
+    const createHtml = renderToStaticMarkup(
+      createElement(RecruitmentPostForm, {
+        mode: "create",
+        initialStateForTest: {
+          initialLoading: false,
+          context: sampleContext,
+          draft: createDraft,
+        },
+      }),
+    );
+
+    // 4 BOD sections + missing KCN helper text + auto-derived province + 6-item pre-submit confirmation block
+    assert.match(createHtml, /1\. Thông tin chung dự án/);
+    assert.match(createHtml, /2\. Yêu cầu ứng viên/);
+    assert.match(createHtml, /3\. Lương, thưởng và phúc lợi/);
+    assert.match(createHtml, /4\. Hồ sơ ứng viên cần chuẩn bị/);
+    assert.match(
+      createHtml,
+      /KCN chưa có trong danh mục\. Vui lòng liên hệ Admin\/BOD để bổ sung\./,
+    );
+    assert.match(createHtml, /data-testid="recruitment-post-derived-province"/);
+    assert.match(createHtml, /value="Vĩnh Phúc"/);
+    assert.match(createHtml, /data-testid="recruitment-post-pre-submit-summary"/);
+    assert.match(createHtml, /1\. Dự án/);
+    assert.match(createHtml, /2\. Khu công nghiệp &amp; Tỉnh\/Thành/);
+    assert.match(createHtml, /KCN Khai Quang — Vĩnh Phúc/);
+    assert.match(createHtml, /3\. Công việc/);
+    assert.match(createHtml, /4\. Số lượng dự kiến/);
+    assert.match(createHtml, /120 người/);
+    assert.match(createHtml, /5\. Thu nhập bình quân dự kiến/);
+    assert.match(createHtml, /9\.500\.000\s*₫\s*–\s*12\.500\.000\s*₫/);
+    assert.match(createHtml, /6\. Liên hệ người phụ trách/);
+    assert.match(createHtml, /Trần Thị PM · 0912345678/);
+
+    // Edit mode locks Project and Industrial Park, handles 409 OCC stale + compared server post without auto-resubmitting
+    const existingPost = makeCompleteItem({
+      version: 3,
+      allowed_actions: { can_edit: true, can_withdraw: true },
+    });
+    const newerServerPost = makeCompleteItem({
+      version: 4,
+      general: {
+        ...existingPost.general,
+        job_description: "Công việc mới cập nhật trên máy chủ v4",
+      },
+      allowed_actions: { can_edit: true, can_withdraw: true },
+    });
+
+    const editStaleHtml = renderToStaticMarkup(
+      createElement(RecruitmentPostForm, {
+        mode: "edit",
+        briefId: existingPost.brief_id,
+        initialStateForTest: {
+          initialLoading: false,
+          context: sampleContext,
+          loadedPost: existingPost,
+          draft: createEditRecruitmentPostFormDraftFromItem(existingPost),
+          staleConflictMessage:
+            "Tin tuyển dụng đã thay đổi phiên bản. Vui lòng tải lại dữ liệu mới nhất trước khi thực hiện lại.",
+          comparedServerPost: newerServerPost,
+        },
+      }),
+    );
+
+    assert.match(editStaleHtml, /data-testid="recruitment-post-locked-project"/);
+    assert.match(editStaleHtml, /data-testid="recruitment-post-locked-park"/);
+    assert.match(editStaleHtml, /data-testid="recruitment-post-stale-conflict"/);
+    assert.match(editStaleHtml, /Tải bản mới nhất để đối chiếu/);
+    assert.match(
+      editStaleHtml,
+      /data-testid="recruitment-post-compared-server-card"/,
+    );
+    assert.match(editStaleHtml, /Công việc mới cập nhật trên máy chủ v4/);
+
+    // Ambiguous retry lock + mid-form 403 permission revocation preserving draft in read-only mode
+    const revokedAndAmbiguousHtml = renderToStaticMarkup(
+      createElement(RecruitmentPostForm, {
+        mode: "edit",
+        briefId: existingPost.brief_id,
+        initialStateForTest: {
+          initialLoading: false,
+          context: sampleContext,
+          loadedPost: existingPost,
+          draft: createEditRecruitmentPostFormDraftFromItem(existingPost),
+          writePermissionRevokedMessage:
+            "Quyền tạo/chỉnh sửa phiếu tuyển dụng trên dự án này vừa bị thu hồi. Nội dung bạn đã nhập vẫn được giữ ở chế độ chỉ đọc để bạn sao chép lưu lại.",
+          ambiguousLockMessage:
+            "Mất kết nối hoặc chưa xác nhận được kết quả xử lý trên máy chủ.",
+          pendingIntent: {
+            mode: "edit",
+            briefId: existingPost.brief_id,
+            idempotencyKey: "idem-test-123",
+            requestBody: {
+              expected_version: 3,
+              content: {
+                general: {
+                  ...existingPost.general,
+                  labor_type_keys: ["CHINH_THUC"],
+                },
+                candidate: existingPost.candidate,
+                compensation: existingPost.compensation,
+                documents: existingPost.documents,
+              },
+            },
+          },
+        },
+      }),
+    );
+
+    assert.match(
+      revokedAndAmbiguousHtml,
+      /data-testid="recruitment-post-permission-revoked-readonly"/,
+    );
+    assert.match(
+      revokedAndAmbiguousHtml,
+      /data-testid="recruitment-post-ambiguous-lock"/,
+    );
+    assert.match(revokedAndAmbiguousHtml, /Gửi lại đúng yêu cầu/);
+  });
+
+  it("Phase 4: renders RecruitmentPostWithdrawDialog and Full Admin/BOD Province & Industrial Park Catalog Managers", () => {
+    const withdrawHtml = renderToStaticMarkup(
+      createElement(RecruitmentPostWithdrawDialog, {
+        open: true,
+        target: {
+          briefId: makeBriefId(1),
+          expectedVersion: 2,
+          projectName: "Dự án Điện tử ABC",
+          industrialParkName: "KCN Khai Quang",
+          provinceName: "Vĩnh Phúc",
+          jobDescriptionDisplay: "Lắp ráp linh kiện điện tử",
+        },
+        onOpenChange: () => {},
+        onWithdrawn: () => {},
+        onAccessRevoked: () => {},
+      }),
+    );
+    assert.match(withdrawHtml, /Xác nhận rút phiếu tuyển dụng/);
+    assert.match(withdrawHtml, /data-testid="recruitment-post-withdraw-confirm"/);
+    assert.match(withdrawHtml, /Xác nhận rút tin/);
+
+    const provinceManagerHtml = renderToStaticMarkup(
+      createElement(ProvinceCatalogManager),
+    );
+    assert.match(provinceManagerHtml, /data-testid="province-catalog-manager"/);
+
+    const parkManagerHtml = renderToStaticMarkup(
+      createElement(IndustrialParkCatalogManager),
+    );
+    assert.match(
+      parkManagerHtml,
+      /data-testid="industrial-park-catalog-manager"/,
+    );
+
+    const newPageSrc = readRel("src/app/recruitment-posts/new/page.tsx");
+    const editPageSrc = readRel(
+      "src/app/recruitment-posts/[briefId]/edit/page.tsx",
+    );
+    const adminProvincesPageSrc = readRel(
+      "src/app/admin/catalog/provinces/page.tsx",
+    );
+    const adminParksPageSrc = readRel(
+      "src/app/admin/catalog/industrial-parks/page.tsx",
+    );
+
+    assert.match(newPageSrc, /<RecruitmentPostForm mode="create" \/>/);
+    assert.match(
+      editPageSrc,
+      /<RecruitmentPostForm mode="edit" briefId=\{normalizedBriefId\} \/>/,
+    );
+    assert.match(
+      adminProvincesPageSrc,
+      /decideRecruitmentLocationCatalogPageAccess/,
+    );
+    assert.match(adminProvincesPageSrc, /<ProvinceCatalogManager \/>/);
+    assert.match(
+      adminParksPageSrc,
+      /decideRecruitmentLocationCatalogPageAccess/,
+    );
+    assert.match(adminParksPageSrc, /<IndustrialParkCatalogManager \/>/);
+  });
 });
+

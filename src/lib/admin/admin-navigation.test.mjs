@@ -61,6 +61,8 @@ test("Admin internal navigation exposes mapping, departments, and worker edit hi
     { id: "personnel", href: "/admin/catalog/personnel" },
     { id: "teams", href: "/admin/catalog/teams" },
     { id: "labor-types", href: "/admin/catalog/labor-types" },
+    { id: "provinces", href: "/admin/catalog/provinces" },
+    { id: "industrial-parks", href: "/admin/catalog/industrial-parks" },
     { id: "project-team-scopes", href: "/admin/catalog/project-team-scopes" },
     { id: "vendors", href: "/admin/catalog/vendors" },
     { id: "departments", href: "/admin/departments" },
@@ -72,6 +74,8 @@ test("Admin internal navigation exposes mapping, departments, and worker edit hi
     { id: "personnel", label: "Nhân sự" },
     { id: "teams", label: "Nhóm" },
     { id: "labor-types", label: "Loại hình lao động" },
+    { id: "provinces", label: "Tỉnh/Thành" },
+    { id: "industrial-parks", label: "Khu công nghiệp" },
     { id: "project-team-scopes", label: "Mapping Dự án ↔ Nhóm" },
     { id: "vendors", label: "Vendor (NCC)" },
     { id: "departments", label: "Phòng ban" },
@@ -80,18 +84,18 @@ test("Admin internal navigation exposes mapping, departments, and worker edit hi
     { id: "worker-edit-history", label: "Lịch sử chỉnh sửa NLĐ" },
   ]);
   const serializableSections = ADMIN_SECTIONS.map(({ id, label, href }) => ({ id, label, href }));
-  const catalogOnly = serializableSections.filter(({ id }) => !["departments", "accounts", "project-team-scopes", "attendance", "worker-edit-history"].includes(id));
-  const attendanceOnly = serializableSections.filter(({ id }) => id === "attendance");
+  const catalogOnly = serializableSections.filter(({ id }) => !["provinces", "industrial-parks", "departments", "accounts", "project-team-scopes", "attendance", "worker-edit-history"].includes(id));
+  const bodSections = serializableSections.filter(({ id }) => ["provinces", "industrial-parks", "attendance"].includes(id));
   const fullAdminWithoutHistory = serializableSections.filter(({ id }) => id !== "worker-edit-history");
   const allowlistedAdmin = {
     capabilities: [...fullAdmin.capabilities, "worker_edit_history_view"],
     scopes: [{ kind: "all" }],
   };
-  // Accounting (catalog operator) sees catalog sections, never departments, accounts, project mappings, attendance, or worker edit history.
+  // Accounting (catalog operator) sees catalog sections, never provinces, industrial-parks, departments, accounts, project mappings, attendance, or worker edit history.
   assert.deepEqual(visibleAdminSections(accountingCatalog), catalogOnly);
-  // Canonical BoD (entry_privileged_edit @ all or report_analytics_view + report_view @ all) sees only Attendance Report.
-  assert.deepEqual(visibleAdminSections({ capabilities: ["entry_privileged_edit"], scopes: [{ kind: "all" }] }), attendanceOnly);
-  assert.deepEqual(visibleAdminSections({ capabilities: ["report_analytics_view", "report_view"], scopes: [{ kind: "all" }] }), attendanceOnly);
+  // Canonical BoD (entry_privileged_edit @ all or report_analytics_view + report_view @ all) sees Provinces, Industrial Parks, and Attendance Report.
+  assert.deepEqual(visibleAdminSections({ capabilities: ["entry_privileged_edit"], scopes: [{ kind: "all" }] }), bodSections);
+  assert.deepEqual(visibleAdminSections({ capabilities: ["report_analytics_view", "report_view"], scopes: [{ kind: "all" }] }), bodSections);
   // Aggregate-only or submission-only report viewers do not receive Attendance Report access.
   assert.deepEqual(visibleAdminSections({ capabilities: ["report_analytics_view"], scopes: [{ kind: "all" }] }), []);
   assert.deepEqual(visibleAdminSections({ capabilities: ["report_view"], scopes: [{ kind: "all" }] }), []);
@@ -114,6 +118,8 @@ test("catalog and access paths highlight exactly one internal tab", () => {
     ["/admin/catalog/vendors/record", "vendors"],
     ["/admin/catalog/labor-types", "labor-types"],
     ["/admin/catalog/labor-types/record", "labor-types"],
+    ["/admin/catalog/provinces", "provinces"],
+    ["/admin/catalog/industrial-parks", "industrial-parks"],
     ["/admin/departments", "departments"],
     ["/admin/departments/40000000-0000-4000-8000-000000000003", "departments"],
     ["/admin/access/accounts", "accounts"],
@@ -134,6 +140,8 @@ test("top-level Admin remains the active registry entry across catalog and acces
   assert.equal(findEntryByPath("/admin/catalog/teams/nested")?.id, "admin");
   assert.equal(findEntryByPath("/admin/catalog/vendors")?.id, "admin");
   assert.equal(findEntryByPath("/admin/catalog/labor-types")?.id, "admin");
+  assert.equal(findEntryByPath("/admin/catalog/provinces")?.id, "admin");
+  assert.equal(findEntryByPath("/admin/catalog/industrial-parks")?.id, "admin");
   assert.equal(findEntryByPath("/admin/departments")?.id, "admin");
   assert.equal(findEntryByPath("/admin/departments/40000000-0000-4000-8000-000000000003")?.id, "admin");
   assert.equal(findEntryByPath("/admin/access/accounts")?.id, "admin");

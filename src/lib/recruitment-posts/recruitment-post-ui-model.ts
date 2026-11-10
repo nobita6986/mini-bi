@@ -4,22 +4,39 @@ import {
   decideSessionPageAccess,
   type SessionPageDecision,
 } from "../auth/session-page-access.ts";
+import { newIdempotencyKey } from "../direct-entry/project-operations-model.ts";
 import {
   createLatestRequestTracker,
   type LatestRequestTicket,
   type LatestRequestTracker,
 } from "../salary-advance/salary-advance-ui-model.ts";
-import { formatVndMinor } from "../vendor-finance/ui-model.ts";
+import {
+  formatVndMinor,
+  normalizeNonNegativeVndInput,
+} from "../vendor-finance/ui-model.ts";
 import {
   DEFAULT_RECRUITMENT_POST_PAGE_SIZE,
   MAX_RECRUITMENT_POST_PAGE_SIZE,
+  RECRUITMENT_POST_AGE_MAX,
+  RECRUITMENT_POST_AGE_MIN,
   RECRUITMENT_POST_CURSOR_PATTERN,
+  RECRUITMENT_POST_EDUCATION_REQUIREMENTS,
+  RECRUITMENT_POST_ENVIRONMENT_TYPES,
+  RECRUITMENT_POST_GENDER_REQUIREMENTS,
+  RECRUITMENT_POST_MAX_EXPECTED_HEADCOUNT,
+  RECRUITMENT_POST_SHIFT_PATTERNS,
   RECRUITMENT_POST_SNAPSHOT_TOKEN_PATTERN,
+  RECRUITMENT_POST_WORK_POSTURES,
   VND_STRING_PATTERN,
+  parseCreateRecruitmentPostBody,
+  parseUpdateRecruitmentPostBody,
+  parseWithdrawRecruitmentPostBody,
   projectRecruitmentPostContext,
   projectRecruitmentPostGet,
   projectRecruitmentPostItem,
   projectRecruitmentPostList,
+  projectRecruitmentPostMutation,
+  type RecruitmentPostContentInput,
   type RecruitmentPostContext,
   type RecruitmentPostEducationRequirement,
   type RecruitmentPostEnvironmentType,
@@ -30,6 +47,7 @@ import {
   type RecruitmentPostItem,
   type RecruitmentPostLaborTypeOption,
   type RecruitmentPostList,
+  type RecruitmentPostMutationResult,
   type RecruitmentPostProjectOption,
   type RecruitmentPostProvinceOption,
   type RecruitmentPostShiftPattern,
@@ -40,18 +58,29 @@ import {
 export {
   DEFAULT_RECRUITMENT_POST_PAGE_SIZE,
   MAX_RECRUITMENT_POST_PAGE_SIZE,
+  RECRUITMENT_POST_AGE_MAX,
+  RECRUITMENT_POST_AGE_MIN,
   RECRUITMENT_POST_CURSOR_PATTERN,
+  RECRUITMENT_POST_EDUCATION_REQUIREMENTS,
+  RECRUITMENT_POST_ENVIRONMENT_TYPES,
+  RECRUITMENT_POST_GENDER_REQUIREMENTS,
+  RECRUITMENT_POST_MAX_EXPECTED_HEADCOUNT,
+  RECRUITMENT_POST_SHIFT_PATTERNS,
   RECRUITMENT_POST_SNAPSHOT_TOKEN_PATTERN,
+  RECRUITMENT_POST_WORK_POSTURES,
   createLatestRequestTracker,
+  newIdempotencyKey,
   projectRecruitmentPostContext,
   projectRecruitmentPostGet,
   projectRecruitmentPostItem,
   projectRecruitmentPostList,
+  projectRecruitmentPostMutation,
 };
 
 export type {
   LatestRequestTicket,
   LatestRequestTracker,
+  RecruitmentPostContentInput,
   RecruitmentPostContext,
   RecruitmentPostEducationRequirement,
   RecruitmentPostEnvironmentType,
@@ -62,6 +91,7 @@ export type {
   RecruitmentPostItem,
   RecruitmentPostLaborTypeOption,
   RecruitmentPostList,
+  RecruitmentPostMutationResult,
   RecruitmentPostProjectOption,
   RecruitmentPostProvinceOption,
   RecruitmentPostShiftPattern,
@@ -70,6 +100,9 @@ export type {
 };
 
 export const RECRUITMENT_POST_UNPROVIDED_LABEL = "Chưa cung cấp";
+
+export const RECRUITMENT_POST_MISSING_INDUSTRIAL_PARK_HELP_TEXT =
+  "KCN chưa có trong danh mục. Vui lòng liên hệ Admin/BOD để bổ sung.";
 
 export const ENVIRONMENT_TYPE_LABELS: Readonly<
   Record<RecruitmentPostEnvironmentType, string>
@@ -1156,11 +1189,1153 @@ export function recruitmentPostErrorMessage(code: string | null): string {
       return "Bạn không có quyền thực hiện thao tác này.";
     case "RECRUITMENT_POST_NOT_FOUND":
       return "Tin tuyển dụng không tồn tại hoặc đã bị rút.";
+    case "RECRUITMENT_POST_STALE":
+      return "Dữ liệu phiếu tuyển dụng đã được cập nhật ở nơi khác. Vui lòng tải bản mới nhất để đối chiếu trước khi gửi lại.";
+    case "RECRUITMENT_POST_ALREADY_WITHDRAWN":
+      return "Phiếu tuyển dụng này đã được rút và không thể chỉnh sửa hoặc rút lại.";
+    case "RECRUITMENT_POST_IDEMPOTENCY_CONFLICT":
+      return "Khóa định danh thao tác đang được sử dụng cho một nội dung khác.";
     case "RECRUITMENT_POST_INPUT_INVALID":
     case "RECRUITMENT_POST_CONTENT_INVALID":
-      return "Tham số truy vấn không hợp lệ.";
+      return "Dữ liệu biểu mẫu chưa hợp lệ hoặc còn thiếu trường bắt buộc. Vui lòng kiểm tra lại.";
     case "RECRUITMENT_POST_UNAVAILABLE":
     default:
       return "Không thể tải dữ liệu tin tuyển dụng lúc này. Vui lòng thử lại.";
   }
+}
+
+// =============================================================================
+// PHASE 4 — Authoring Form Draft, Pre-Submit Confirmation, Write Payloads & OCC
+// =============================================================================
+
+export type RecruitmentPostFormMode = "create" | "edit";
+
+export type CreateRecruitmentPostRequestBody = {
+  readonly project_id: string;
+  readonly industrial_park_id: string;
+  readonly content: RecruitmentPostContentInput;
+};
+
+export type UpdateRecruitmentPostRequestBody = {
+  readonly expected_version: number;
+  readonly content: RecruitmentPostContentInput;
+};
+
+export type WithdrawRecruitmentPostRequestBody = {
+  readonly expected_version: number;
+};
+
+export type RecruitmentPostFormDraftState = {
+  readonly mode: RecruitmentPostFormMode;
+  readonly expectedVersion: number;
+  readonly projectId: string;
+  readonly industrialParkId: string;
+  readonly lockedProjectDisplayName: string;
+  readonly lockedIndustrialParkDisplayName: string;
+  readonly lockedProvinceDisplayName: string;
+  readonly lockedHistoricalLaborTypes: ReadonlyArray<{
+    readonly labor_type_key: string;
+    readonly display_name: string;
+  }>;
+  // Section 1: Thông tin chung dự án
+  readonly customerName: string;
+  readonly investmentOrigin: string;
+  readonly manufacturingIndustry: string;
+  readonly jobDescription: string;
+  readonly environmentTypes: readonly RecruitmentPostEnvironmentType[];
+  readonly workPostures: readonly RecruitmentPostWorkPosture[];
+  readonly shiftPattern: RecruitmentPostShiftPattern;
+  readonly shiftDetails: string;
+  readonly managerName: string;
+  readonly managerPhone: string;
+  readonly laborTypeKeys: readonly string[];
+  readonly supplyScheduleText: string;
+  readonly expectedHeadcount: string;
+  // Section 2: Yêu cầu ứng viên
+  readonly ageMin: string;
+  readonly ageMax: string;
+  readonly genderRequirement: RecruitmentPostGenderRequirement;
+  readonly educationRequirement: RecruitmentPostEducationRequirement;
+  readonly experienceRequired: boolean;
+  readonly experienceDetails: string;
+  readonly acceptFormerCustomerWorkers: boolean;
+  readonly entryAssessmentText: string;
+  readonly otherRequirementsText: string;
+  // Section 3: Lương, thưởng và phúc lợi
+  readonly baseSalaryVnd: string;
+  readonly baseSalaryConditions: string;
+  readonly attendanceBonusVnd: string;
+  readonly attendanceBonusConditions: string;
+  readonly livingAllowanceVnd: string;
+  readonly livingAllowanceConditions: string;
+  readonly seniorityAllowanceVnd: string;
+  readonly seniorityAllowanceConditions: string;
+  readonly eyesightAllowanceVnd: string;
+  readonly eyesightAllowanceConditions: string;
+  readonly otherAllowanceText: string;
+  readonly averageIncomeMinVnd: string;
+  readonly averageIncomeMaxVnd: string;
+  readonly salaryPaymentSchedule: string;
+  readonly salaryAdvanceAvailable: boolean;
+  readonly salaryAdvanceAmountVnd: string;
+  readonly salaryAdvanceSchedule: string;
+  readonly weeklySalaryAvailable: boolean;
+  readonly weeklySalaryPaymentSchedule: string;
+  readonly dayShift8hVnd: string;
+  readonly dayShift11hVnd: string;
+  readonly nightShift8hVnd: string;
+  readonly nightShift11hVnd: string;
+  readonly sundayDay11hVnd: string;
+  readonly sundayNight11hVnd: string;
+  readonly holidayDay11hVnd: string;
+  readonly holidayNight11hVnd: string;
+  readonly ppeProvided: boolean;
+  readonly ppeDetails: string;
+  readonly otherBenefits: string;
+  // Section 4: Hồ sơ ứng viên cần chuẩn bị
+  readonly requireOriginalCccdAndCopy: boolean;
+  readonly requireCertifiedResume: boolean;
+  readonly requireHealthCertificateWithin6Months: boolean;
+  readonly requirePhoto3x4: boolean;
+  readonly requireDegreeOrCertificate: boolean;
+  readonly requireSocialInsuranceBook: boolean;
+  readonly requireOtherDocuments: boolean;
+  readonly otherDocumentsText: string;
+};
+
+export function createEmptyRecruitmentPostFormDraft(
+  mode: RecruitmentPostFormMode = "create",
+): RecruitmentPostFormDraftState {
+  return {
+    mode,
+    expectedVersion: 1,
+    projectId: "",
+    industrialParkId: "",
+    lockedProjectDisplayName: "",
+    lockedIndustrialParkDisplayName: "",
+    lockedProvinceDisplayName: "",
+    lockedHistoricalLaborTypes: [],
+    customerName: "",
+    investmentOrigin: "",
+    manufacturingIndustry: "",
+    jobDescription: "",
+    environmentTypes: [],
+    workPostures: [],
+    shiftPattern: "TWO_SHIFTS",
+    shiftDetails: "",
+    managerName: "",
+    managerPhone: "",
+    laborTypeKeys: [],
+    supplyScheduleText: "",
+    expectedHeadcount: "",
+    ageMin: "18",
+    ageMax: "40",
+    genderRequirement: "ANY",
+    educationRequirement: "NONE",
+    experienceRequired: false,
+    experienceDetails: "",
+    acceptFormerCustomerWorkers: true,
+    entryAssessmentText: "",
+    otherRequirementsText: "",
+    baseSalaryVnd: "",
+    baseSalaryConditions: "",
+    attendanceBonusVnd: "",
+    attendanceBonusConditions: "",
+    livingAllowanceVnd: "",
+    livingAllowanceConditions: "",
+    seniorityAllowanceVnd: "",
+    seniorityAllowanceConditions: "",
+    eyesightAllowanceVnd: "",
+    eyesightAllowanceConditions: "",
+    otherAllowanceText: "",
+    averageIncomeMinVnd: "",
+    averageIncomeMaxVnd: "",
+    salaryPaymentSchedule: "",
+    salaryAdvanceAvailable: false,
+    salaryAdvanceAmountVnd: "",
+    salaryAdvanceSchedule: "",
+    weeklySalaryAvailable: false,
+    weeklySalaryPaymentSchedule: "",
+    dayShift8hVnd: "",
+    dayShift11hVnd: "",
+    nightShift8hVnd: "",
+    nightShift11hVnd: "",
+    sundayDay11hVnd: "",
+    sundayNight11hVnd: "",
+    holidayDay11hVnd: "",
+    holidayNight11hVnd: "",
+    ppeProvided: false,
+    ppeDetails: "",
+    otherBenefits: "",
+    requireOriginalCccdAndCopy: true,
+    requireCertifiedResume: false,
+    requireHealthCertificateWithin6Months: false,
+    requirePhoto3x4: false,
+    requireDegreeOrCertificate: false,
+    requireSocialInsuranceBook: false,
+    requireOtherDocuments: false,
+    otherDocumentsText: "",
+  };
+}
+
+export function createEditRecruitmentPostFormDraftFromItem(
+  item: RecruitmentPostItem,
+): RecruitmentPostFormDraftState {
+  return {
+    mode: "edit",
+    expectedVersion: item.version,
+    projectId: item.project.project_id,
+    industrialParkId: item.industrial_park.industrial_park_id,
+    lockedProjectDisplayName: item.project.display_name,
+    lockedIndustrialParkDisplayName: item.industrial_park.display_name,
+    lockedProvinceDisplayName: item.province.display_name,
+    lockedHistoricalLaborTypes: item.general.labor_types.map((lt) => ({
+      labor_type_key: lt.labor_type_key,
+      display_name: lt.display_name,
+    })),
+    customerName: item.general.customer_name,
+    investmentOrigin: item.general.investment_origin ?? "",
+    manufacturingIndustry: item.general.manufacturing_industry ?? "",
+    jobDescription: item.general.job_description,
+    environmentTypes: [...item.general.environment_types],
+    workPostures: [...item.general.work_postures],
+    shiftPattern: item.general.shift_pattern,
+    shiftDetails: item.general.shift_details ?? "",
+    managerName: item.general.manager_name,
+    managerPhone: item.general.manager_phone,
+    laborTypeKeys: item.general.labor_types.map((lt) => lt.labor_type_key),
+    supplyScheduleText: item.general.supply_schedule_text ?? "",
+    expectedHeadcount:
+      item.general.expected_headcount !== null
+        ? String(item.general.expected_headcount)
+        : "",
+    ageMin: item.candidate.age_min !== null ? String(item.candidate.age_min) : "",
+    ageMax: item.candidate.age_max !== null ? String(item.candidate.age_max) : "",
+    genderRequirement: item.candidate.gender_requirement,
+    educationRequirement: item.candidate.education_requirement,
+    experienceRequired: item.candidate.experience_required,
+    experienceDetails: item.candidate.experience_details ?? "",
+    acceptFormerCustomerWorkers: item.candidate.accept_former_customer_workers,
+    entryAssessmentText: item.candidate.entry_assessment_text ?? "",
+    otherRequirementsText: item.candidate.other_requirements_text ?? "",
+    baseSalaryVnd: item.compensation.base_salary_vnd ?? "",
+    baseSalaryConditions: item.compensation.base_salary_conditions ?? "",
+    attendanceBonusVnd: item.compensation.attendance_bonus_vnd ?? "",
+    attendanceBonusConditions:
+      item.compensation.attendance_bonus_conditions ?? "",
+    livingAllowanceVnd: item.compensation.living_allowance_vnd ?? "",
+    livingAllowanceConditions:
+      item.compensation.living_allowance_conditions ?? "",
+    seniorityAllowanceVnd: item.compensation.seniority_allowance_vnd ?? "",
+    seniorityAllowanceConditions:
+      item.compensation.seniority_allowance_conditions ?? "",
+    eyesightAllowanceVnd: item.compensation.eyesight_allowance_vnd ?? "",
+    eyesightAllowanceConditions:
+      item.compensation.eyesight_allowance_conditions ?? "",
+    otherAllowanceText: item.compensation.other_allowance_text ?? "",
+    averageIncomeMinVnd: item.compensation.average_income_min_vnd ?? "",
+    averageIncomeMaxVnd: item.compensation.average_income_max_vnd ?? "",
+    salaryPaymentSchedule: item.compensation.salary_payment_schedule ?? "",
+    salaryAdvanceAvailable: item.compensation.salary_advance_available,
+    salaryAdvanceAmountVnd: item.compensation.salary_advance_amount_vnd ?? "",
+    salaryAdvanceSchedule: item.compensation.salary_advance_schedule ?? "",
+    weeklySalaryAvailable: item.compensation.weekly_salary_available,
+    weeklySalaryPaymentSchedule:
+      item.compensation.weekly_salary_payment_schedule ?? "",
+    dayShift8hVnd: item.compensation.day_shift_8h_vnd ?? "",
+    dayShift11hVnd: item.compensation.day_shift_11h_vnd ?? "",
+    nightShift8hVnd: item.compensation.night_shift_8h_vnd ?? "",
+    nightShift11hVnd: item.compensation.night_shift_11h_vnd ?? "",
+    sundayDay11hVnd: item.compensation.sunday_day_11h_vnd ?? "",
+    sundayNight11hVnd: item.compensation.sunday_night_11h_vnd ?? "",
+    holidayDay11hVnd: item.compensation.holiday_day_11h_vnd ?? "",
+    holidayNight11hVnd: item.compensation.holiday_night_11h_vnd ?? "",
+    ppeProvided: item.compensation.ppe_provided,
+    ppeDetails: item.compensation.ppe_details ?? "",
+    otherBenefits: item.compensation.other_benefits ?? "",
+    requireOriginalCccdAndCopy: item.documents.require_original_cccd_and_copy,
+    requireCertifiedResume: item.documents.require_certified_resume,
+    requireHealthCertificateWithin6Months:
+      item.documents.require_health_certificate_within_6_months,
+    requirePhoto3x4: item.documents.require_photo_3x4,
+    requireDegreeOrCertificate: item.documents.require_degree_or_certificate,
+    requireSocialInsuranceBook: item.documents.require_social_insurance_book,
+    requireOtherDocuments: item.documents.require_other_documents,
+    otherDocumentsText: item.documents.other_documents_text ?? "",
+  };
+}
+
+export function setRecruitmentPostExperienceRequired(
+  draft: RecruitmentPostFormDraftState,
+  experienceRequired: boolean,
+): RecruitmentPostFormDraftState {
+  return {
+    ...draft,
+    experienceRequired,
+    experienceDetails: experienceRequired ? draft.experienceDetails : "",
+  };
+}
+
+export function setRecruitmentPostSalaryAdvanceAvailable(
+  draft: RecruitmentPostFormDraftState,
+  salaryAdvanceAvailable: boolean,
+): RecruitmentPostFormDraftState {
+  return {
+    ...draft,
+    salaryAdvanceAvailable,
+    salaryAdvanceAmountVnd: salaryAdvanceAvailable
+      ? draft.salaryAdvanceAmountVnd
+      : "",
+    salaryAdvanceSchedule: salaryAdvanceAvailable
+      ? draft.salaryAdvanceSchedule
+      : "",
+  };
+}
+
+export function setRecruitmentPostWeeklySalaryAvailable(
+  draft: RecruitmentPostFormDraftState,
+  weeklySalaryAvailable: boolean,
+): RecruitmentPostFormDraftState {
+  return {
+    ...draft,
+    weeklySalaryAvailable,
+    weeklySalaryPaymentSchedule: weeklySalaryAvailable
+      ? draft.weeklySalaryPaymentSchedule
+      : "",
+  };
+}
+
+export function setRecruitmentPostPpeProvided(
+  draft: RecruitmentPostFormDraftState,
+  ppeProvided: boolean,
+): RecruitmentPostFormDraftState {
+  return {
+    ...draft,
+    ppeProvided,
+    ppeDetails: ppeProvided ? draft.ppeDetails : "",
+  };
+}
+
+export function setRecruitmentPostRequireOtherDocuments(
+  draft: RecruitmentPostFormDraftState,
+  requireOtherDocuments: boolean,
+): RecruitmentPostFormDraftState {
+  return {
+    ...draft,
+    requireOtherDocuments,
+    otherDocumentsText: requireOtherDocuments ? draft.otherDocumentsText : "",
+  };
+}
+
+export function toggleRecruitmentPostEnvironmentType(
+  draft: RecruitmentPostFormDraftState,
+  envType: RecruitmentPostEnvironmentType,
+): RecruitmentPostFormDraftState {
+  const exists = draft.environmentTypes.includes(envType);
+  const next = exists
+    ? draft.environmentTypes.filter((item) => item !== envType)
+    : [...draft.environmentTypes, envType];
+  return { ...draft, environmentTypes: next };
+}
+
+export function toggleRecruitmentPostWorkPosture(
+  draft: RecruitmentPostFormDraftState,
+  posture: RecruitmentPostWorkPosture,
+): RecruitmentPostFormDraftState {
+  const exists = draft.workPostures.includes(posture);
+  const next = exists
+    ? draft.workPostures.filter((item) => item !== posture)
+    : [...draft.workPostures, posture];
+  return { ...draft, workPostures: next };
+}
+
+export function toggleRecruitmentPostLaborTypeKey(
+  draft: RecruitmentPostFormDraftState,
+  laborTypeKey: string,
+): RecruitmentPostFormDraftState {
+  const normalized = laborTypeKey.trim();
+  if (!normalized) return draft;
+  const exists = draft.laborTypeKeys.includes(normalized);
+  const next = exists
+    ? draft.laborTypeKeys.filter((item) => item !== normalized)
+    : [...draft.laborTypeKeys, normalized];
+  return { ...draft, laborTypeKeys: next };
+}
+
+function foldVietnameseSearchText(raw: string): string {
+  return raw
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[đĐ]/g, "d")
+    .toLowerCase()
+    .trim();
+}
+
+export function filterCreateFormIndustrialParks(
+  industrialParks: readonly RecruitmentPostIndustrialParkOption[],
+  provinces: readonly RecruitmentPostProvinceOption[],
+  searchQuery: string,
+): RecruitmentPostIndustrialParkOption[] {
+  const activeProvinceIds = new Set(
+    provinces.filter((p) => p.active).map((p) => p.province_id),
+  );
+  const provinceNameById = new Map(
+    provinces.map((p) => [p.province_id, p.display_name]),
+  );
+  const activeParks = industrialParks.filter(
+    (park) => park.active && activeProvinceIds.has(park.province_id),
+  );
+  const foldedQuery = foldVietnameseSearchText(searchQuery);
+  if (!foldedQuery) return activeParks;
+
+  return activeParks.filter((park) => {
+    const parkName = foldVietnameseSearchText(park.display_name);
+    const parkCode = foldVietnameseSearchText(park.industrial_park_code);
+    const provinceName = foldVietnameseSearchText(
+      provinceNameById.get(park.province_id) ?? "",
+    );
+    return (
+      parkName.includes(foldedQuery) ||
+      parkCode.includes(foldedQuery) ||
+      provinceName.includes(foldedQuery)
+    );
+  });
+}
+
+export function deriveProvinceDisplayNameForDraft(
+  draft: RecruitmentPostFormDraftState,
+  industrialParks: readonly RecruitmentPostIndustrialParkOption[],
+  provinces: readonly RecruitmentPostProvinceOption[],
+): string {
+  if (draft.mode === "edit") {
+    return draft.lockedProvinceDisplayName;
+  }
+  const parkId = draft.industrialParkId.trim().toLowerCase();
+  if (!parkId) return "";
+  const matchedPark = industrialParks.find(
+    (park) => park.industrial_park_id.toLowerCase() === parkId,
+  );
+  if (!matchedPark) return "";
+  const matchedProvince = provinces.find(
+    (province) =>
+      province.province_id.toLowerCase() ===
+      matchedPark.province_id.toLowerCase(),
+  );
+  return matchedProvince?.display_name ?? "";
+}
+
+export function selectableLaborTypesForDraft(
+  contextLaborTypes: readonly RecruitmentPostLaborTypeOption[],
+  draft: RecruitmentPostFormDraftState,
+): RecruitmentPostLaborTypeOption[] {
+  const activeList = contextLaborTypes.filter((item) => item.active);
+  if (draft.mode !== "edit") {
+    return activeList;
+  }
+  const seenKeys = new Set(activeList.map((item) => item.labor_type_key));
+  const merged = [...activeList];
+  for (const hist of draft.lockedHistoricalLaborTypes) {
+    if (!seenKeys.has(hist.labor_type_key)) {
+      const fromCatalog = contextLaborTypes.find(
+        (item) => item.labor_type_key === hist.labor_type_key,
+      );
+      merged.push(
+        fromCatalog ?? {
+          labor_type_key: hist.labor_type_key,
+          display_name: hist.display_name,
+          active: false,
+        },
+      );
+      seenKeys.add(hist.labor_type_key);
+    }
+  }
+  return merged;
+}
+
+export type NormalizedRecruitmentPostVndResult =
+  | {
+      readonly ok: true;
+      readonly canonical: string;
+      readonly formatted: string;
+    }
+  | {
+      readonly ok: false;
+      readonly code: "RECRUITMENT_POST_VND_INVALID";
+      readonly message: string;
+    };
+
+export function normalizeRecruitmentPostVndInput(
+  raw: string,
+  fieldLabel = "Số tiền",
+): NormalizedRecruitmentPostVndResult {
+  const res = normalizeNonNegativeVndInput(raw);
+  if (!res.ok) {
+    return {
+      ok: false,
+      code: "RECRUITMENT_POST_VND_INVALID",
+      message: `${fieldLabel} phải là số nguyên đồng VNĐ không âm hợp lệ.`,
+    };
+  }
+  return {
+    ok: true,
+    canonical: res.canonical,
+    formatted: formatVndMinor(res.canonical),
+  };
+}
+
+export type RecruitmentPostPreSubmitSummaryViewModel = {
+  readonly projectDisplay: string;
+  readonly industrialParkAndProvinceDisplay: string;
+  readonly jobDescriptionDisplay: string;
+  readonly expectedHeadcountDisplay: string;
+  readonly expectedIncomeDisplay: string;
+  readonly managerContactDisplay: string;
+};
+
+/**
+ * Builds the 6-item pre-submit confirmation summary block locked in Master Plan lines 601–608:
+ * 1. Dự án
+ * 2. Khu công nghiệp & Tỉnh/Thành
+ * 3. Công việc
+ * 4. Số lượng dự kiến
+ * 5. Thu nhập bình quân dự kiến
+ * 6. Liên hệ người phụ trách
+ */
+export function buildRecruitmentPostPreSubmitSummary(input: {
+  readonly draft: RecruitmentPostFormDraftState;
+  readonly managedProjects: readonly RecruitmentPostProjectOption[];
+  readonly industrialParks: readonly RecruitmentPostIndustrialParkOption[];
+  readonly provinces: readonly RecruitmentPostProvinceOption[];
+}): RecruitmentPostPreSubmitSummaryViewModel {
+  const { draft, managedProjects, industrialParks, provinces } = input;
+
+  let projectDisplay = "Chưa chọn dự án";
+  if (draft.mode === "edit") {
+    projectDisplay = draft.lockedProjectDisplayName || "Chưa chọn dự án";
+  } else if (draft.projectId.trim()) {
+    const matchedProject = managedProjects.find(
+      (project) => project.project_id === draft.projectId.trim(),
+    );
+    projectDisplay = matchedProject
+      ? matchedProject.display_name
+      : draft.projectId.trim();
+  }
+
+  let industrialParkAndProvinceDisplay = "Chưa chọn Khu công nghiệp";
+  if (draft.mode === "edit") {
+    industrialParkAndProvinceDisplay =
+      draft.lockedIndustrialParkDisplayName && draft.lockedProvinceDisplayName
+        ? `${draft.lockedIndustrialParkDisplayName} — ${draft.lockedProvinceDisplayName}`
+        : draft.lockedIndustrialParkDisplayName || "Chưa chọn Khu công nghiệp";
+  } else if (draft.industrialParkId.trim()) {
+    const matchedPark = industrialParks.find(
+      (park) =>
+        park.industrial_park_id.toLowerCase() ===
+        draft.industrialParkId.trim().toLowerCase(),
+    );
+    if (matchedPark) {
+      const matchedProvince = provinces.find(
+        (prov) =>
+          prov.province_id.toLowerCase() ===
+          matchedPark.province_id.toLowerCase(),
+      );
+      industrialParkAndProvinceDisplay = matchedProvince
+        ? `${matchedPark.display_name} — ${matchedProvince.display_name}`
+        : matchedPark.display_name;
+    }
+  }
+
+  const jobDescriptionDisplay =
+    draft.jobDescription.trim() || "Chưa nhập mô tả công việc";
+
+  const trimmedHeadcount = draft.expectedHeadcount.trim();
+  const expectedHeadcountDisplay =
+    /^\d+$/.test(trimmedHeadcount) && Number(trimmedHeadcount) >= 0
+      ? formatRecruitmentPostHeadcount(Number(trimmedHeadcount))
+      : RECRUITMENT_POST_UNPROVIDED_LABEL;
+
+  const minRes = draft.averageIncomeMinVnd.trim()
+    ? normalizeRecruitmentPostVndInput(draft.averageIncomeMinVnd)
+    : null;
+  const maxRes = draft.averageIncomeMaxVnd.trim()
+    ? normalizeRecruitmentPostVndInput(draft.averageIncomeMaxVnd)
+    : null;
+  const expectedIncomeDisplay = formatRecruitmentPostIncomeRange(
+    minRes?.ok ? minRes.canonical : null,
+    maxRes?.ok ? maxRes.canonical : null,
+  );
+
+  const managerName = draft.managerName.trim();
+  const managerPhone = draft.managerPhone.trim();
+  const managerContactDisplay =
+    managerName && managerPhone
+      ? `${managerName} · ${managerPhone}`
+      : managerName || managerPhone || "Chưa nhập người phụ trách";
+
+  return {
+    projectDisplay,
+    industrialParkAndProvinceDisplay,
+    jobDescriptionDisplay,
+    expectedHeadcountDisplay,
+    expectedIncomeDisplay,
+    managerContactDisplay,
+  };
+}
+
+export type BuiltRecruitmentPostWriteRequest =
+  | {
+      readonly ok: true;
+      readonly mode: "create";
+      readonly requestBody: CreateRecruitmentPostRequestBody;
+    }
+  | {
+      readonly ok: true;
+      readonly mode: "edit";
+      readonly requestBody: UpdateRecruitmentPostRequestBody;
+    }
+  | {
+      readonly ok: false;
+      readonly code: RecruitmentPostErrorCode;
+      readonly message: string;
+      readonly fieldErrors: Readonly<Record<string, string>>;
+    };
+
+function normalizeOptionalDraftText(raw: string): string | null {
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function normalizeOptionalDraftVnd(
+  raw: string,
+  fieldKey: string,
+  fieldLabel: string,
+  fieldErrors: Record<string, string>,
+): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const res = normalizeRecruitmentPostVndInput(trimmed, fieldLabel);
+  if (!res.ok) {
+    fieldErrors[fieldKey] = res.message;
+    return null;
+  }
+  return res.canonical;
+}
+
+export function validateAndBuildRecruitmentPostWritePayload(
+  draft: RecruitmentPostFormDraftState,
+): BuiltRecruitmentPostWriteRequest {
+  const fieldErrors: Record<string, string> = {};
+
+  if (draft.mode === "create") {
+    if (!draft.projectId.trim()) {
+      fieldErrors.projectId = "Vui lòng chọn dự án bạn đang quản lý.";
+    }
+    if (!draft.industrialParkId.trim()) {
+      fieldErrors.industrialParkId = "Vui lòng chọn Khu công nghiệp.";
+    }
+  } else if (
+    !Number.isSafeInteger(draft.expectedVersion) ||
+    draft.expectedVersion < 1
+  ) {
+    fieldErrors.expectedVersion = "Phiên bản đối chiếu không hợp lệ.";
+  }
+
+  if (!draft.customerName.trim()) {
+    fieldErrors.customerName = "Vui lòng nhập tên khách hàng.";
+  }
+  if (!draft.jobDescription.trim()) {
+    fieldErrors.jobDescription = "Vui lòng nhập mô tả công việc.";
+  }
+  if (draft.shiftPattern === "OTHER" && !draft.shiftDetails.trim()) {
+    fieldErrors.shiftDetails =
+      "Vui lòng nhập chi tiết ca làm việc khi chọn Khác.";
+  }
+  if (!draft.managerName.trim()) {
+    fieldErrors.managerName = "Vui lòng nhập tên người phụ trách dự án.";
+  }
+  const phoneDigits = draft.managerPhone.trim().replace(/[^0-9]/g, "");
+  if (!draft.managerPhone.trim() || phoneDigits.length < 6) {
+    fieldErrors.managerPhone =
+      "Vui lòng nhập số điện thoại liên hệ hợp lệ (tối thiểu 6 chữ số).";
+  }
+  if (draft.laborTypeKeys.length === 0) {
+    fieldErrors.laborTypeKeys =
+      "Vui lòng chọn ít nhất một hình thức tuyển dụng.";
+  }
+
+  let expectedHeadcount: number | null = null;
+  const trimmedHeadcount = draft.expectedHeadcount.trim();
+  if (trimmedHeadcount !== "") {
+    if (
+      !/^\d+$/.test(trimmedHeadcount) ||
+      Number(trimmedHeadcount) < 0 ||
+      Number(trimmedHeadcount) > RECRUITMENT_POST_MAX_EXPECTED_HEADCOUNT
+    ) {
+      fieldErrors.expectedHeadcount = `Số lượng dự kiến phải là số nguyên từ 0 đến ${RECRUITMENT_POST_MAX_EXPECTED_HEADCOUNT}.`;
+    } else {
+      expectedHeadcount = Number(trimmedHeadcount);
+    }
+  }
+
+  let ageMin: number | null = null;
+  const trimmedAgeMin = draft.ageMin.trim();
+  if (trimmedAgeMin !== "") {
+    if (
+      !/^\d+$/.test(trimmedAgeMin) ||
+      Number(trimmedAgeMin) < RECRUITMENT_POST_AGE_MIN ||
+      Number(trimmedAgeMin) > RECRUITMENT_POST_AGE_MAX
+    ) {
+      fieldErrors.ageMin = `Độ tuổi tối thiểu phải từ ${RECRUITMENT_POST_AGE_MIN} đến ${RECRUITMENT_POST_AGE_MAX}.`;
+    } else {
+      ageMin = Number(trimmedAgeMin);
+    }
+  }
+
+  let ageMax: number | null = null;
+  const trimmedAgeMax = draft.ageMax.trim();
+  if (trimmedAgeMax !== "") {
+    if (
+      !/^\d+$/.test(trimmedAgeMax) ||
+      Number(trimmedAgeMax) < RECRUITMENT_POST_AGE_MIN ||
+      Number(trimmedAgeMax) > RECRUITMENT_POST_AGE_MAX
+    ) {
+      fieldErrors.ageMax = `Độ tuổi tối đa phải từ ${RECRUITMENT_POST_AGE_MIN} đến ${RECRUITMENT_POST_AGE_MAX}.`;
+    } else {
+      ageMax = Number(trimmedAgeMax);
+    }
+  }
+
+  if (ageMin !== null && ageMax !== null && ageMax < ageMin) {
+    fieldErrors.ageMax =
+      "Độ tuổi tối đa phải lớn hơn hoặc bằng độ tuổi tối thiểu.";
+  }
+
+  if (draft.experienceRequired && !draft.experienceDetails.trim()) {
+    fieldErrors.experienceDetails =
+      "Vui lòng nhập chi tiết yêu cầu kinh nghiệm.";
+  }
+
+  const baseSalaryVnd = normalizeOptionalDraftVnd(
+    draft.baseSalaryVnd,
+    "baseSalaryVnd",
+    "Lương cơ bản",
+    fieldErrors,
+  );
+  const attendanceBonusVnd = normalizeOptionalDraftVnd(
+    draft.attendanceBonusVnd,
+    "attendanceBonusVnd",
+    "Thưởng chuyên cần",
+    fieldErrors,
+  );
+  const livingAllowanceVnd = normalizeOptionalDraftVnd(
+    draft.livingAllowanceVnd,
+    "livingAllowanceVnd",
+    "Phụ cấp đời sống",
+    fieldErrors,
+  );
+  const seniorityAllowanceVnd = normalizeOptionalDraftVnd(
+    draft.seniorityAllowanceVnd,
+    "seniorityAllowanceVnd",
+    "Phụ cấp thâm niên",
+    fieldErrors,
+  );
+  const eyesightAllowanceVnd = normalizeOptionalDraftVnd(
+    draft.eyesightAllowanceVnd,
+    "eyesightAllowanceVnd",
+    "Phụ cấp soi kính",
+    fieldErrors,
+  );
+  const averageIncomeMinVnd = normalizeOptionalDraftVnd(
+    draft.averageIncomeMinVnd,
+    "averageIncomeMinVnd",
+    "Thu nhập bình quân tối thiểu",
+    fieldErrors,
+  );
+  const averageIncomeMaxVnd = normalizeOptionalDraftVnd(
+    draft.averageIncomeMaxVnd,
+    "averageIncomeMaxVnd",
+    "Thu nhập bình quân tối đa",
+    fieldErrors,
+  );
+  if (
+    averageIncomeMinVnd !== null &&
+    averageIncomeMaxVnd !== null &&
+    BigInt(averageIncomeMaxVnd) < BigInt(averageIncomeMinVnd)
+  ) {
+    fieldErrors.averageIncomeMaxVnd =
+      "Thu nhập bình quân tối đa phải lớn hơn hoặc bằng mức tối thiểu.";
+  }
+
+  const salaryAdvanceAmountVnd = draft.salaryAdvanceAvailable
+    ? normalizeOptionalDraftVnd(
+        draft.salaryAdvanceAmountVnd,
+        "salaryAdvanceAmountVnd",
+        "Mức ứng lương",
+        fieldErrors,
+      )
+    : null;
+
+  const dayShift8hVnd = normalizeOptionalDraftVnd(
+    draft.dayShift8hVnd,
+    "dayShift8hVnd",
+    "Ca ngày 8 giờ",
+    fieldErrors,
+  );
+  const dayShift11hVnd = normalizeOptionalDraftVnd(
+    draft.dayShift11hVnd,
+    "dayShift11hVnd",
+    "Ca ngày 11 giờ",
+    fieldErrors,
+  );
+  const nightShift8hVnd = normalizeOptionalDraftVnd(
+    draft.nightShift8hVnd,
+    "nightShift8hVnd",
+    "Ca đêm 8 giờ",
+    fieldErrors,
+  );
+  const nightShift11hVnd = normalizeOptionalDraftVnd(
+    draft.nightShift11hVnd,
+    "nightShift11hVnd",
+    "Ca đêm 11 giờ",
+    fieldErrors,
+  );
+  const sundayDay11hVnd = normalizeOptionalDraftVnd(
+    draft.sundayDay11hVnd,
+    "sundayDay11hVnd",
+    "Chủ nhật ngày 11 giờ",
+    fieldErrors,
+  );
+  const sundayNight11hVnd = normalizeOptionalDraftVnd(
+    draft.sundayNight11hVnd,
+    "sundayNight11hVnd",
+    "Chủ nhật đêm 11 giờ",
+    fieldErrors,
+  );
+  const holidayDay11hVnd = normalizeOptionalDraftVnd(
+    draft.holidayDay11hVnd,
+    "holidayDay11hVnd",
+    "Lễ ngày 11 giờ",
+    fieldErrors,
+  );
+  const holidayNight11hVnd = normalizeOptionalDraftVnd(
+    draft.holidayNight11hVnd,
+    "holidayNight11hVnd",
+    "Lễ đêm 11 giờ",
+    fieldErrors,
+  );
+
+  if (draft.requireOtherDocuments && !draft.otherDocumentsText.trim()) {
+    fieldErrors.otherDocumentsText =
+      "Vui lòng nhập nội dung giấy tờ khác cần chuẩn bị.";
+  }
+
+  if (Object.keys(fieldErrors).length > 0) {
+    const firstMessage = Object.values(fieldErrors)[0];
+    return {
+      ok: false,
+      code: "RECRUITMENT_POST_CONTENT_INVALID",
+      message: firstMessage,
+      fieldErrors,
+    };
+  }
+
+  const contentCandidate: RecruitmentPostContentInput = {
+    general: {
+      customer_name: draft.customerName.trim(),
+      investment_origin: normalizeOptionalDraftText(draft.investmentOrigin),
+      manufacturing_industry: normalizeOptionalDraftText(
+        draft.manufacturingIndustry,
+      ),
+      job_description: draft.jobDescription.trim(),
+      environment_types: [...draft.environmentTypes],
+      work_postures: [...draft.workPostures],
+      shift_pattern: draft.shiftPattern,
+      shift_details: normalizeOptionalDraftText(draft.shiftDetails),
+      manager_name: draft.managerName.trim(),
+      manager_phone: draft.managerPhone.trim(),
+      labor_type_keys: [...draft.laborTypeKeys],
+      supply_schedule_text: normalizeOptionalDraftText(
+        draft.supplyScheduleText,
+      ),
+      expected_headcount: expectedHeadcount,
+    },
+    candidate: {
+      age_min: ageMin,
+      age_max: ageMax,
+      gender_requirement: draft.genderRequirement,
+      education_requirement: draft.educationRequirement,
+      experience_required: draft.experienceRequired,
+      experience_details: draft.experienceRequired
+        ? normalizeOptionalDraftText(draft.experienceDetails)
+        : null,
+      accept_former_customer_workers: draft.acceptFormerCustomerWorkers,
+      entry_assessment_text: normalizeOptionalDraftText(
+        draft.entryAssessmentText,
+      ),
+      other_requirements_text: normalizeOptionalDraftText(
+        draft.otherRequirementsText,
+      ),
+    },
+    compensation: {
+      base_salary_vnd: baseSalaryVnd,
+      base_salary_conditions: normalizeOptionalDraftText(
+        draft.baseSalaryConditions,
+      ),
+      attendance_bonus_vnd: attendanceBonusVnd,
+      attendance_bonus_conditions: normalizeOptionalDraftText(
+        draft.attendanceBonusConditions,
+      ),
+      living_allowance_vnd: livingAllowanceVnd,
+      living_allowance_conditions: normalizeOptionalDraftText(
+        draft.livingAllowanceConditions,
+      ),
+      seniority_allowance_vnd: seniorityAllowanceVnd,
+      seniority_allowance_conditions: normalizeOptionalDraftText(
+        draft.seniorityAllowanceConditions,
+      ),
+      eyesight_allowance_vnd: eyesightAllowanceVnd,
+      eyesight_allowance_conditions: normalizeOptionalDraftText(
+        draft.eyesightAllowanceConditions,
+      ),
+      other_allowance_text: normalizeOptionalDraftText(
+        draft.otherAllowanceText,
+      ),
+      average_income_min_vnd: averageIncomeMinVnd,
+      average_income_max_vnd: averageIncomeMaxVnd,
+      salary_payment_schedule: normalizeOptionalDraftText(
+        draft.salaryPaymentSchedule,
+      ),
+      salary_advance_available: draft.salaryAdvanceAvailable,
+      salary_advance_amount_vnd: salaryAdvanceAmountVnd,
+      salary_advance_schedule: draft.salaryAdvanceAvailable
+        ? normalizeOptionalDraftText(draft.salaryAdvanceSchedule)
+        : null,
+      weekly_salary_available: draft.weeklySalaryAvailable,
+      weekly_salary_payment_schedule: draft.weeklySalaryAvailable
+        ? normalizeOptionalDraftText(draft.weeklySalaryPaymentSchedule)
+        : null,
+      day_shift_8h_vnd: dayShift8hVnd,
+      day_shift_11h_vnd: dayShift11hVnd,
+      night_shift_8h_vnd: nightShift8hVnd,
+      night_shift_11h_vnd: nightShift11hVnd,
+      sunday_day_11h_vnd: sundayDay11hVnd,
+      sunday_night_11h_vnd: sundayNight11hVnd,
+      holiday_day_11h_vnd: holidayDay11hVnd,
+      holiday_night_11h_vnd: holidayNight11hVnd,
+      ppe_provided: draft.ppeProvided,
+      ppe_details: draft.ppeProvided
+        ? normalizeOptionalDraftText(draft.ppeDetails)
+        : null,
+      other_benefits: normalizeOptionalDraftText(draft.otherBenefits),
+    },
+    documents: {
+      require_original_cccd_and_copy: draft.requireOriginalCccdAndCopy,
+      require_certified_resume: draft.requireCertifiedResume,
+      require_health_certificate_within_6_months:
+        draft.requireHealthCertificateWithin6Months,
+      require_photo_3x4: draft.requirePhoto3x4,
+      require_degree_or_certificate: draft.requireDegreeOrCertificate,
+      require_social_insurance_book: draft.requireSocialInsuranceBook,
+      require_other_documents: draft.requireOtherDocuments,
+      other_documents_text: draft.requireOtherDocuments
+        ? normalizeOptionalDraftText(draft.otherDocumentsText)
+        : null,
+    },
+  };
+
+  if (draft.mode === "create") {
+    const rawBody = {
+      project_id: draft.projectId.trim(),
+      industrial_park_id: draft.industrialParkId.trim().toLowerCase(),
+      content: contentCandidate,
+    };
+    const parsed = parseCreateRecruitmentPostBody(rawBody);
+    if (!parsed.ok) {
+      return {
+        ok: false,
+        code: parsed.code,
+        message: recruitmentPostErrorMessage(parsed.code),
+        fieldErrors: {},
+      };
+    }
+    return {
+      ok: true,
+      mode: "create",
+      requestBody: {
+        project_id: parsed.value.project_id,
+        industrial_park_id: parsed.value.industrial_park_id,
+        content: parsed.value.content,
+      },
+    };
+  }
+
+  const rawBody = {
+    expected_version: draft.expectedVersion,
+    content: contentCandidate,
+  };
+  const parsed = parseUpdateRecruitmentPostBody(rawBody);
+  if (!parsed.ok) {
+    return {
+      ok: false,
+      code: parsed.code,
+      message: recruitmentPostErrorMessage(parsed.code),
+      fieldErrors: {},
+    };
+  }
+  return {
+    ok: true,
+    mode: "edit",
+    requestBody: {
+      expected_version: parsed.value.expected_version,
+      content: parsed.value.content,
+    },
+  };
+}
+
+export function buildWithdrawRecruitmentPostRequestBody(
+  expectedVersion: number,
+):
+  | {
+      readonly ok: true;
+      readonly requestBody: WithdrawRecruitmentPostRequestBody;
+    }
+  | {
+      readonly ok: false;
+      readonly code: RecruitmentPostErrorCode;
+      readonly message: string;
+    } {
+  const parsed = parseWithdrawRecruitmentPostBody({
+    expected_version: expectedVersion,
+  });
+  if (!parsed.ok) {
+    return {
+      ok: false,
+      code: parsed.code,
+      message: recruitmentPostErrorMessage(parsed.code),
+    };
+  }
+  return {
+    ok: true,
+    requestBody: {
+      expected_version: parsed.value.expected_version,
+    },
+  };
+}
+
+export function parseRecruitmentPostMutationEnvelope(
+  payload: unknown,
+): RecruitmentPostMutationResult | null {
+  if (!isPlainRecord(payload) || payload.ok !== true) return null;
+  return projectRecruitmentPostMutation(payload.data);
+}
+
+export type RecruitmentPostMutationOutcome =
+  | {
+      readonly kind: "ok";
+      readonly result: RecruitmentPostMutationResult;
+    }
+  | {
+      readonly kind: "access_loss";
+      readonly accessLoss: RecruitmentPostAccessLossKind;
+    }
+  | {
+      readonly kind: "conflict_stale";
+      readonly code: "RECRUITMENT_POST_STALE";
+      readonly message: string;
+    }
+  | {
+      readonly kind: "already_withdrawn";
+      readonly code: "RECRUITMENT_POST_ALREADY_WITHDRAWN";
+      readonly message: string;
+    }
+  | {
+      readonly kind: "ambiguous_retry_lock";
+      readonly code: string;
+      readonly message: string;
+    }
+  | {
+      readonly kind: "error";
+      readonly code: string;
+      readonly message: string;
+    };
+
+/**
+ * Classifies write outcomes (`POST /api/recruitment-posts`, `PATCH /api/recruitment-posts/[briefId]`,
+ * `POST /api/recruitment-posts/[briefId]/withdraw`):
+ * - `200`/`201` with valid `RecruitmentPostMutationResult` -> `ok`
+ * - `401`/`403` -> `access_loss`
+ * - `409 RECRUITMENT_POST_STALE` -> `conflict_stale` (keep draft, allow reload-to-compare, never auto-resubmit)
+ * - `409 RECRUITMENT_POST_ALREADY_WITHDRAWN` -> `already_withdrawn`
+ * - `0` (network error/timeout), `502`/`503`/`504`, `5xx`, or malformed `2xx` -> `ambiguous_retry_lock`
+ *   (locks form editing and preserves exact payload + `Idempotency-Key` for safe retry or reload)
+ */
+export function resolveRecruitmentPostMutationOutcome(input: {
+  readonly status: number;
+  readonly payload: unknown;
+}): RecruitmentPostMutationOutcome {
+  const errorCode = extractRecruitmentPostErrorCode(input.payload);
+  const accessLoss = classifyRecruitmentPostAccessLoss(input.status, errorCode);
+  if (accessLoss) {
+    return {
+      kind: "access_loss",
+      accessLoss,
+    };
+  }
+
+  if (input.status >= 200 && input.status < 300) {
+    const parsed = parseRecruitmentPostMutationEnvelope(input.payload);
+    if (!parsed) {
+      return {
+        kind: "ambiguous_retry_lock",
+        code: "RECRUITMENT_POST_UNAVAILABLE",
+        message:
+          "Máy chủ trả về phản hồi không thể xác minh sau khi gửi yêu cầu. Biểu mẫu đã được khóa tạm thời; vui lòng bấm 'Gửi lại đúng yêu cầu' hoặc 'Tải bản mới nhất để đối chiếu'.",
+      };
+    }
+    return {
+      kind: "ok",
+      result: parsed,
+    };
+  }
+
+  if (input.status === 409 && errorCode === "RECRUITMENT_POST_STALE") {
+    return {
+      kind: "conflict_stale",
+      code: "RECRUITMENT_POST_STALE",
+      message: recruitmentPostErrorMessage("RECRUITMENT_POST_STALE"),
+    };
+  }
+
+  if (
+    input.status === 409 &&
+    errorCode === "RECRUITMENT_POST_ALREADY_WITHDRAWN"
+  ) {
+    return {
+      kind: "already_withdrawn",
+      code: "RECRUITMENT_POST_ALREADY_WITHDRAWN",
+      message: recruitmentPostErrorMessage("RECRUITMENT_POST_ALREADY_WITHDRAWN"),
+    };
+  }
+
+  if (
+    input.status === 0 ||
+    input.status === 408 ||
+    input.status === 429 ||
+    input.status >= 500 ||
+    errorCode === "RECRUITMENT_POST_UNAVAILABLE"
+  ) {
+    return {
+      kind: "ambiguous_retry_lock",
+      code: errorCode ?? "RECRUITMENT_POST_UNAVAILABLE",
+      message:
+        "Mất kết nối hoặc chưa xác nhận được kết quả xử lý trên máy chủ. Để tránh tạo bản ghi trùng, biểu mẫu đang được khóa chỉnh sửa — bạn chỉ có thể gửi lại đúng yêu cầu với cùng khóa định danh hoặc tải bản mới nhất để đối chiếu.",
+    };
+  }
+
+  const resolvedCode = errorCode ?? "RECRUITMENT_POST_INPUT_INVALID";
+  return {
+    kind: "error",
+    code: resolvedCode,
+    message: recruitmentPostErrorMessage(resolvedCode),
+  };
 }
