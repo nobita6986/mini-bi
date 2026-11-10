@@ -584,7 +584,7 @@ test("Global IA representative actor matrix: Recruiter/Nhân viên, Team Leader,
   assert.equal(recruiterMenu.ids.includes("admin"), false);
   assert.equal(recruiterMenu.ids.includes("project-operations"), false);
 
-  // 2. Team Leader sees Project and one Work Reports management entry, but not /admin or attendance report.
+  // 2. Team Leader sees Project, Work Reports management, and team-scoped Attendance Report, but not /admin or /finance.
   const teamLeader = {
     capabilities: [
       "entry_team",
@@ -612,14 +612,15 @@ test("Global IA representative actor matrix: Recruiter/Nhân viên, Team Leader,
       children: [
         "project-operations",
         "work-report-assignments",
+        "attendance-report",
       ],
     },
   ]);
   assert.equal(teamLeaderMenu.ids.includes("admin"), false, "Team Leader must not see /admin");
-  assert.equal(teamLeaderMenu.ids.includes("attendance-report"), false, "Team Leader must not see /admin/attendance");
+  assert.equal(teamLeaderMenu.ids.includes("attendance-report"), true, "Team Leader sees team-scoped /admin/attendance");
   assert.equal(teamLeaderMenu.ids.includes("finance"), false, "Team Leader must not see /finance");
 
-  // 3. Trưởng phòng sees the single Work Reports management entry and no /admin.
+  // 3. Trưởng phòng sees the single Work Reports management entry and no /admin or attendance-report.
   const departmentHead = {
     capabilities: ["report_assign", "report_review", "report_analytics_view", "report_view"],
     scopes: team,
@@ -639,6 +640,7 @@ test("Global IA representative actor matrix: Recruiter/Nhân viên, Team Leader,
       children: ["work-report-assignments"],
     },
   ]);
+  assert.equal(departmentHeadMenu.ids.includes("attendance-report"), false, "Trưởng phòng without team_manager_assign must not see /admin/attendance");
   assert.equal(departmentHeadMenu.ids.includes("admin"), false, "Trưởng phòng must not see /admin without admin_area");
   assert.equal(departmentHeadMenu.ids.includes("project-operations"), false);
 

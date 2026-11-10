@@ -17,6 +17,10 @@
 --      `public`, `anon`, `authenticated`, and `service_role`.
 --   3. Cross-team `employee_id` filters and cross-team check-in photo requests
 --      fail closed with `42501 ATTENDANCE_REPORT_ACCESS_DENIED`.
+--   4. Team-scoped report payloads (`scope_kind = 'team'`) omit global HQ
+--      configuration (`current_hq = null`) and company-wide slot policy profile
+--      catalogs (`slot_policy.profiles` omitted; `slot_policy` restricted to
+--      versions actually applied to the team in the report month).
 -- =============================================================================
 
 begin;
@@ -167,21 +171,25 @@ begin
     raise exception 'ATTENDANCE_REPORT_ACCESS_DENIED' using errcode = '42501';
   end if;
 
-  select jsonb_build_object(
-           'version', h.version,
-           'latitude', h.latitude,
-           'longitude', h.longitude,
-           'effective_from', pg_catalog.to_char(h.effective_from at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
-           'effective_from_local', pg_catalog.to_char(h.effective_from at time zone 'Asia/Ho_Chi_Minh', 'YYYY-MM-DD HH24:MI:SS'),
-           'configured_by_display_name', coalesce(ident.employee_display_name, u.display_name)
-         )
-    into v_current_hq
-    from public.attendance_hq_location_revisions h
-    join public.direct_entry_app_users u
-      on u.app_user_id = h.configured_by_user_id
-    left join lateral public.attendance__internal_resolve_employee_identity(u.app_user_id) ident on true
-   order by h.effective_from desc, h.version desc
-   limit 1;
+  if v_scope_kind = 'all' then
+    select jsonb_build_object(
+             'version', h.version,
+             'latitude', h.latitude,
+             'longitude', h.longitude,
+             'effective_from', pg_catalog.to_char(h.effective_from at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+             'effective_from_local', pg_catalog.to_char(h.effective_from at time zone 'Asia/Ho_Chi_Minh', 'YYYY-MM-DD HH24:MI:SS'),
+             'configured_by_display_name', coalesce(ident.employee_display_name, u.display_name)
+           )
+      into v_current_hq
+      from public.attendance_hq_location_revisions h
+      join public.direct_entry_app_users u
+        on u.app_user_id = h.configured_by_user_id
+      left join lateral public.attendance__internal_resolve_employee_identity(u.app_user_id) ident on true
+     order by h.effective_from desc, h.version desc
+     limit 1;
+  else
+    v_current_hq := null;
+  end if;
 
   with scoped_employee_identities as materialized (
     select
@@ -610,160 +618,165 @@ begin
 
   v_offset := (v_page - 1) * v_page_size;
 
-  select jsonb_build_object(
-    'version', r.version,
-    'latitude', r.latitude,
-    'longitude', r.longitude,
-    'effective_from', to_char(r.effective_from at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
-    'effective_from_local', to_char(r.effective_from at time zone 'Asia/Ho_Chi_Minh', 'YYYY-MM-DD HH24:MI:SS'),
-    'configured_by_display_name', coalesce(ident.employee_display_name, u.display_name)
-  )
-    into v_current_hq
-  from public.attendance_hq_location_revisions r
-  join public.direct_entry_app_users u
-    on u.app_user_id = r.configured_by_user_id
-  left join lateral public.attendance__internal_resolve_employee_identity(u.app_user_id) ident on true
-  order by r.effective_from desc, r.version desc
-  limit 1;
-
-  with policy_with_bounds as materialized (
-    select
-      p as policy_row,
-      p.profile_id,
-      p.version,
-      p.effective_from_date,
-      (
-        lead(p.effective_from_date) over (
-          partition by p.profile_id
-          order by p.effective_from_date asc, p.version asc
-        ) - 1
-      ) as effective_to_date,
-      coalesce(ident.employee_display_name, u.display_name) as actor_display_name
-    from public.attendance_slot_policy_versions p
-    left join public.direct_entry_app_users u
-      on u.app_user_id = p.configured_by_user_id
-    left join lateral public.attendance__internal_resolve_employee_identity(u.app_user_id) ident on true
-  ),
-  default_month_active_versions as (
-    select distinct on (pb.version)
-      pb.*
-    from generate_series(v_month_start::timestamp, v_month_end::timestamp, interval '1 day') as cal(d)
-    join lateral (
-      select p2.*
-      from policy_with_bounds p2
-      where p2.profile_id = v_default_profile_id
-      order by (p2.effective_from_date <= cal.d::date) desc, p2.effective_from_date desc, p2.version desc
-      limit 1
-    ) pb on true
-    order by pb.version asc
-  )
-  select jsonb_build_object(
-    'current_policy', (
-      select public.attendance__internal_format_slot_policy(
-        pb.policy_row,
-        pb.effective_to_date,
-        pb.actor_display_name
-      )
-      from policy_with_bounds pb
-      where pb.profile_id = v_default_profile_id
-      order by (pb.effective_from_date <= v_today_vn) desc, pb.effective_from_date desc, pb.version desc
-      limit 1
-    ),
-    'latest_policy', (
-      select public.attendance__internal_format_slot_policy(
-        pb.policy_row,
-        pb.effective_to_date,
-        pb.actor_display_name
-      )
-      from policy_with_bounds pb
-      where pb.profile_id = v_default_profile_id
-      order by pb.version desc
-      limit 1
-    ),
-    'month_policies', coalesce(
-      (
-        select jsonb_agg(
-          public.attendance__internal_format_slot_policy(
-            mv.policy_row,
-            mv.effective_to_date,
-            mv.actor_display_name
-          )
-          order by mv.version asc
-        )
-        from default_month_active_versions mv
-      ),
-      '[]'::jsonb
-    ),
-    'profiles', coalesce(
-      (
-        select jsonb_agg(
-          jsonb_build_object(
-            'profile_id', pr.profile_id,
-            'profile_code', pr.profile_code,
-            'display_name', pr.display_name,
-            'description', pr.description,
-            'is_default', pr.is_default,
-            'active', pr.active,
-            'version', pr.version,
-            'current_policy', (
-              select public.attendance__internal_format_slot_policy(
-                pb_c.policy_row,
-                pb_c.effective_to_date,
-                pb_c.actor_display_name
-              )
-              from policy_with_bounds pb_c
-              where pb_c.profile_id = pr.profile_id
-              order by (pb_c.effective_from_date <= v_today_vn) desc, pb_c.effective_from_date desc, pb_c.version desc
-              limit 1
-            ),
-            'latest_policy', (
-              select public.attendance__internal_format_slot_policy(
-                pb_l.policy_row,
-                pb_l.effective_to_date,
-                pb_l.actor_display_name
-              )
-              from policy_with_bounds pb_l
-              where pb_l.profile_id = pr.profile_id
-              order by pb_l.version desc
-              limit 1
-            ),
-            'month_policies', coalesce((
-              select jsonb_agg(
-                public.attendance__internal_format_slot_policy(
-                  pmv.policy_row,
-                  pmv.effective_to_date,
-                  pmv.actor_display_name
-                )
-                order by pmv.version asc
-              )
-              from (
-                select distinct on (pb_m.version)
-                  pb_m.*
-                from generate_series(v_month_start::timestamp, v_month_end::timestamp, interval '1 day') as cal_m(d)
-                join lateral (
-                  select p3.*
-                  from policy_with_bounds p3
-                  where p3.profile_id = pr.profile_id
-                  order by (p3.effective_from_date <= cal_m.d::date) desc, p3.effective_from_date desc, p3.version desc
-                  limit 1
-                ) pb_m on true
-                order by pb_m.version asc
-              ) pmv
-            ), '[]'::jsonb)
-          )
-          order by
-            pr.is_default desc,
-            pr.active desc,
-            lower(pr.display_name) asc,
-            lower(pr.profile_code) asc,
-            pr.profile_id asc
-        )
-        from public.attendance_slot_policy_profiles pr
-      ),
-      '[]'::jsonb
+  if v_scope_kind = 'all' then
+    select jsonb_build_object(
+      'version', r.version,
+      'latitude', r.latitude,
+      'longitude', r.longitude,
+      'effective_from', to_char(r.effective_from at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+      'effective_from_local', to_char(r.effective_from at time zone 'Asia/Ho_Chi_Minh', 'YYYY-MM-DD HH24:MI:SS'),
+      'configured_by_display_name', coalesce(ident.employee_display_name, u.display_name)
     )
-  )
-    into v_slot_policy;
+      into v_current_hq
+    from public.attendance_hq_location_revisions r
+    join public.direct_entry_app_users u
+      on u.app_user_id = r.configured_by_user_id
+    left join lateral public.attendance__internal_resolve_employee_identity(u.app_user_id) ident on true
+    order by r.effective_from desc, r.version desc
+    limit 1;
+
+    with policy_with_bounds as materialized (
+      select
+        p as policy_row,
+        p.profile_id,
+        p.version,
+        p.effective_from_date,
+        (
+          lead(p.effective_from_date) over (
+            partition by p.profile_id
+            order by p.effective_from_date asc, p.version asc
+          ) - 1
+        ) as effective_to_date,
+        coalesce(ident.employee_display_name, u.display_name) as actor_display_name
+      from public.attendance_slot_policy_versions p
+      left join public.direct_entry_app_users u
+        on u.app_user_id = p.configured_by_user_id
+      left join lateral public.attendance__internal_resolve_employee_identity(u.app_user_id) ident on true
+    ),
+    default_month_active_versions as (
+      select distinct on (pb.version)
+        pb.*
+      from generate_series(v_month_start::timestamp, v_month_end::timestamp, interval '1 day') as cal(d)
+      join lateral (
+        select p2.*
+        from policy_with_bounds p2
+        where p2.profile_id = v_default_profile_id
+        order by (p2.effective_from_date <= cal.d::date) desc, p2.effective_from_date desc, p2.version desc
+        limit 1
+      ) pb on true
+      order by pb.version asc
+    )
+    select jsonb_build_object(
+      'current_policy', (
+        select public.attendance__internal_format_slot_policy(
+          pb.policy_row,
+          pb.effective_to_date,
+          pb.actor_display_name
+        )
+        from policy_with_bounds pb
+        where pb.profile_id = v_default_profile_id
+        order by (pb.effective_from_date <= v_today_vn) desc, pb.effective_from_date desc, pb.version desc
+        limit 1
+      ),
+      'latest_policy', (
+        select public.attendance__internal_format_slot_policy(
+          pb.policy_row,
+          pb.effective_to_date,
+          pb.actor_display_name
+        )
+        from policy_with_bounds pb
+        where pb.profile_id = v_default_profile_id
+        order by pb.version desc
+        limit 1
+      ),
+      'month_policies', coalesce(
+        (
+          select jsonb_agg(
+            public.attendance__internal_format_slot_policy(
+              mv.policy_row,
+              mv.effective_to_date,
+              mv.actor_display_name
+            )
+            order by mv.version asc
+          )
+          from default_month_active_versions mv
+        ),
+        '[]'::jsonb
+      ),
+      'profiles', coalesce(
+        (
+          select jsonb_agg(
+            jsonb_build_object(
+              'profile_id', pr.profile_id,
+              'profile_code', pr.profile_code,
+              'display_name', pr.display_name,
+              'description', pr.description,
+              'is_default', pr.is_default,
+              'active', pr.active,
+              'version', pr.version,
+              'current_policy', (
+                select public.attendance__internal_format_slot_policy(
+                  pb_c.policy_row,
+                  pb_c.effective_to_date,
+                  pb_c.actor_display_name
+                )
+                from policy_with_bounds pb_c
+                where pb_c.profile_id = pr.profile_id
+                order by (pb_c.effective_from_date <= v_today_vn) desc, pb_c.effective_from_date desc, pb_c.version desc
+                limit 1
+              ),
+              'latest_policy', (
+                select public.attendance__internal_format_slot_policy(
+                  pb_l.policy_row,
+                  pb_l.effective_to_date,
+                  pb_l.actor_display_name
+                )
+                from policy_with_bounds pb_l
+                where pb_l.profile_id = pr.profile_id
+                order by pb_l.version desc
+                limit 1
+              ),
+              'month_policies', coalesce((
+                select jsonb_agg(
+                  public.attendance__internal_format_slot_policy(
+                    pmv.policy_row,
+                    pmv.effective_to_date,
+                    pmv.actor_display_name
+                  )
+                  order by pmv.version asc
+                )
+                from (
+                  select distinct on (pb_m.version)
+                    pb_m.*
+                  from generate_series(v_month_start::timestamp, v_month_end::timestamp, interval '1 day') as cal_m(d)
+                  join lateral (
+                    select p3.*
+                    from policy_with_bounds p3
+                    where p3.profile_id = pr.profile_id
+                    order by (p3.effective_from_date <= cal_m.d::date) desc, p3.effective_from_date desc, p3.version desc
+                    limit 1
+                  ) pb_m on true
+                  order by pb_m.version asc
+                ) pmv
+              ), '[]'::jsonb)
+            )
+            order by
+              pr.is_default desc,
+              pr.active desc,
+              lower(pr.display_name) asc,
+              lower(pr.profile_code) asc,
+              pr.profile_id asc
+          )
+          from public.attendance_slot_policy_profiles pr
+        ),
+        '[]'::jsonb
+      )
+    )
+      into v_slot_policy;
+  else
+    v_current_hq := null;
+    v_slot_policy := null;
+  end if;
 
   select jsonb_agg(
     jsonb_build_object(
@@ -1091,6 +1104,130 @@ begin
     join profile_day_policies pdp
       on pdp.profile_id = edpi.profile_id
      and pdp.business_date = edpi.business_date
+  ),
+  team_policy_with_bounds as materialized (
+    select
+      p as policy_row,
+      p.profile_id,
+      pr.is_default,
+      pr.display_name as profile_name,
+      pr.profile_code,
+      p.version,
+      p.effective_from_date,
+      (
+        lead(p.effective_from_date) over (
+          partition by p.profile_id
+          order by p.effective_from_date asc, p.version asc
+        ) - 1
+      ) as effective_to_date
+    from public.attendance_slot_policy_versions p
+    join public.attendance_slot_policy_profiles pr
+      on pr.profile_id = p.profile_id
+    where v_scope_kind = 'team'
+      and (
+        pr.profile_id = v_default_profile_id
+        or exists (
+          select 1
+          from employee_day_policies edp_tp
+          where edp_tp.profile_id = pr.profile_id
+        )
+      )
+  ),
+  team_default_month_versions as (
+    select distinct on (tpb.version)
+      tpb.*
+    from month_calendar_days cal
+    join lateral (
+      select p2.*
+      from team_policy_with_bounds p2
+      where p2.profile_id = v_default_profile_id
+      order by (p2.effective_from_date <= cal.business_date) desc, p2.effective_from_date desc, p2.version desc
+      limit 1
+    ) tpb on true
+    where v_scope_kind = 'team'
+    order by tpb.version asc
+  ),
+  team_scoped_month_versions as (
+    select
+      tpb.*
+    from team_policy_with_bounds tpb
+    where v_scope_kind = 'team'
+      and exists (
+        select 1
+        from employee_day_policies edp_tv
+        where edp_tv.profile_id = tpb.profile_id
+          and edp_tv.policy_version = tpb.version
+      )
+    union all
+    select
+      tdmv.*
+    from team_default_month_versions tdmv
+    where v_scope_kind = 'team'
+      and not exists (
+        select 1
+        from employee_day_policies
+      )
+  ),
+  team_slot_policy_agg as (
+    select
+      case
+        when v_scope_kind = 'team' then
+          jsonb_build_object(
+            'current_policy', (
+              select public.attendance__internal_format_slot_policy(
+                tmv.policy_row,
+                tmv.effective_to_date,
+                null
+              )
+              from team_scoped_month_versions tmv
+              order by
+                tmv.is_default desc,
+                (tmv.effective_from_date <= v_ref_date) desc,
+                tmv.effective_from_date desc,
+                tmv.version desc,
+                lower(tmv.profile_name) asc,
+                lower(tmv.profile_code) asc,
+                tmv.profile_id asc
+              limit 1
+            ),
+            'latest_policy', (
+              select public.attendance__internal_format_slot_policy(
+                tmv.policy_row,
+                tmv.effective_to_date,
+                null
+              )
+              from team_scoped_month_versions tmv
+              order by
+                tmv.is_default desc,
+                tmv.version desc,
+                tmv.effective_from_date desc,
+                lower(tmv.profile_name) asc,
+                lower(tmv.profile_code) asc,
+                tmv.profile_id asc
+              limit 1
+            ),
+            'month_policies', coalesce(
+              (
+                select jsonb_agg(
+                  public.attendance__internal_format_slot_policy(
+                    tmv.policy_row,
+                    tmv.effective_to_date,
+                    null
+                  )
+                  order by
+                    tmv.is_default desc,
+                    lower(tmv.profile_name) asc,
+                    lower(tmv.profile_code) asc,
+                    tmv.profile_id asc,
+                    tmv.version asc
+                )
+                from team_scoped_month_versions tmv
+              ),
+              '[]'::jsonb
+            )
+          )
+        else v_slot_policy
+      end as slot_policy
   ),
   month_checkins_raw as materialized (
     select
@@ -1597,6 +1734,12 @@ begin
               order by mds2.profile_id asc, mds2.business_date asc, mds2.slot_index asc
             )::text
             from profile_day_slot_defs mds2
+            where v_scope_kind = 'all'
+               or exists (
+                 select 1
+                 from employee_day_policies edp_s
+                 where edp_s.profile_id = mds2.profile_id
+               )
           ),
           '[]'
         )
@@ -1808,6 +1951,7 @@ begin
   select
     boa.branch_options,
     eoa.employee_options,
+    tspa.slot_policy,
     a.total_employees,
     a.snapshot_token,
     jsonb_build_object(
@@ -1879,10 +2023,11 @@ begin
       ),
       '[]'::jsonb
     )
-  into v_branch_options, v_employee_options, v_total_rows, v_snapshot_token, v_overview, v_items
+  into v_branch_options, v_employee_options, v_slot_policy, v_total_rows, v_snapshot_token, v_overview, v_items
   from agg a
   cross join branch_options_agg boa
-  cross join employee_options_agg eoa;
+  cross join employee_options_agg eoa
+  cross join team_slot_policy_agg tspa;
 
   v_total_pages := case
     when v_total_rows = 0 then 0

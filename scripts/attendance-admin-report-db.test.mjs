@@ -1491,6 +1491,11 @@ test("Attendance Admin Report SQL enforces ACL/immutability, role matrix, HQ rev
     const tlReport = projectAttendanceAdminReport(tlReportRaw);
     assert.ok(tlReport, "Team Leader report must pass strict projection");
     assert.equal(tlReport.viewer.can_configure_hq, false);
+    assert.equal(
+      tlReport.current_hq,
+      null,
+      "Team Leader attendance_admin_report must not expose global current_hq",
+    );
     assert.deepEqual(
       tlReport.employee_options.map((opt) => opt.app_user_id).sort(),
       [ACTORS.STAFF_A.app, ACTORS.TEAM_LEADER.app].sort(),
@@ -1512,6 +1517,34 @@ test("Attendance Admin Report SQL enforces ACL/immutability, role matrix, HQ rev
       tlReport.items.some((item) => item.employee_display_name === ACTORS.STAFF_B.name),
       false,
     );
+    const tlComputedCheckinItem = tlReport.items.find(
+      (item) => item.checkin_id === c1ExactV1.checkin_id,
+    );
+    assert.ok(tlComputedCheckinItem);
+    assert.equal(tlComputedCheckinItem.distance_status, "COMPUTED");
+    assert.equal(tlComputedCheckinItem.hq_version_used, 1);
+
+    // Full Admin and BoD still receive full current_hq metadata
+    const adminAfterTlReport = projectAttendanceAdminReport(
+      await callReportAsServiceRole(db, {
+        auth_subject: ACTORS.FULL_ADMIN.auth,
+        app_user_id: ACTORS.FULL_ADMIN.app,
+        from_date: minDate,
+        to_date: maxDate,
+      }),
+    );
+    assert.ok(adminAfterTlReport?.current_hq);
+    assert.equal(adminAfterTlReport.current_hq.version, 2);
+    const bodAfterTlReport = projectAttendanceAdminReport(
+      await callReportAsServiceRole(db, {
+        auth_subject: ACTORS.BOD_PRIVILEGED.auth,
+        app_user_id: ACTORS.BOD_PRIVILEGED.app,
+        from_date: minDate,
+        to_date: maxDate,
+      }),
+    );
+    assert.ok(bodAfterTlReport?.current_hq);
+    assert.equal(bodAfterTlReport.current_hq.version, 2);
 
     // 10b. Searching for STAFF_B (TEAM_BETA) as TEAM_LEADER returns 0 rows
     const tlSearchBeta = await callReportAsServiceRole(db, {

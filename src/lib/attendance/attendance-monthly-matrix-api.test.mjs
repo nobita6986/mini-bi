@@ -2579,7 +2579,21 @@ test("Team Leader authority: allowed on monthly-matrix report and XLSX export (i
   ];
   const TEAM_LEADER_CAPS = ["team_manager_assign", "report_view", "report_analytics_view"];
 
-  // 1. Canonical Team Leader can call GET /api/admin/attendance/monthly-matrix
+  // 1. Canonical Team Leader can call GET /api/admin/attendance/monthly-matrix (team-scoped payload: current_hq = null, no slot_policy.profiles)
+  const teamScopedRawPayload = buildValidMonthlyMatrixReport({
+    viewer: { can_configure_hq: false, can_manage_branches: false },
+    current_hq: null,
+    slot_policy: {
+      current_policy: DEFAULT_ATTENDANCE_SLOT_POLICY,
+      latest_policy: DEFAULT_ATTENDANCE_SLOT_POLICY,
+      month_policies: [DEFAULT_ATTENDANCE_SLOT_POLICY],
+    },
+  });
+  const projectedTeamScoped = projectAttendanceMonthlyMatrixReport(teamScopedRawPayload);
+  assert.notEqual(projectedTeamScoped, null);
+  assert.equal(projectedTeamScoped.current_hq, null);
+  assert.equal(projectedTeamScoped.slot_policy.profiles, undefined);
+
   const matrixRes = await getAttendanceMonthlyMatrixReport(
     new Request("https://bi.example.com/api/admin/attendance/monthly-matrix?year_month=2026-10"),
     {
@@ -2587,9 +2601,7 @@ test("Team Leader authority: allowed on monthly-matrix report and XLSX export (i
       repository: {
         getMonthlyMatrixReport: async () => ({
           ok: true,
-          report: buildValidMonthlyMatrixReport({
-            viewer: { can_configure_hq: false, can_manage_branches: false },
-          }),
+          report: projectedTeamScoped,
         }),
         listBranchesAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
         upsertBranchAdmin: async () => ({ ok: false, code: "ATTENDANCE_REPORT_UNAVAILABLE" }),
@@ -2603,6 +2615,8 @@ test("Team Leader authority: allowed on monthly-matrix report and XLSX export (i
   assert.equal(matrixJson.ok, true);
   assert.equal(matrixJson.report.viewer.can_configure_hq, false);
   assert.equal(matrixJson.report.viewer.can_manage_branches, false);
+  assert.equal(matrixJson.report.current_hq, null);
+  assert.equal(matrixJson.report.slot_policy.profiles, undefined);
 
   // 2. Canonical Team Leader can call GET /api/admin/attendance/monthly-matrix/export (including 100->25 fallback)
   const exportCalls = [];
@@ -2620,6 +2634,12 @@ test("Team Leader authority: allowed on monthly-matrix report and XLSX export (i
             ok: true,
             report: buildValidMonthlyMatrixReport({
               viewer: { can_configure_hq: false, can_manage_branches: false },
+              current_hq: null,
+              slot_policy: {
+                current_policy: DEFAULT_ATTENDANCE_SLOT_POLICY,
+                latest_policy: DEFAULT_ATTENDANCE_SLOT_POLICY,
+                month_policies: [DEFAULT_ATTENDANCE_SLOT_POLICY],
+              },
               pagination: {
                 page: 1,
                 page_size: ATTENDANCE_MONTHLY_MATRIX_EXPORT_FALLBACK_PAGE_SIZE,

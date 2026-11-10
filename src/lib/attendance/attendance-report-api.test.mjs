@@ -478,10 +478,14 @@ test("GET /api/admin/attendance/report allows Full Admin, canonical BoD & canoni
     ["Team Leader", TEAM_LEADER_CAPS, TEAM_SCOPE, false],
   ]) {
     const rpcCalls = [];
+    const isTeamLeader = label === "Team Leader";
     const repository = createServiceAttendanceAdminReportRepository(async (name, args) => {
       rpcCalls.push({ name, args });
       return {
-        data: buildValidReportRpcPayload({ viewer: { can_configure_hq: canConfigureHq } }),
+        data: buildValidReportRpcPayload({
+          viewer: { can_configure_hq: canConfigureHq },
+          ...(isTeamLeader ? { current_hq: null } : {}),
+        }),
         error: null,
       };
     });
@@ -501,6 +505,11 @@ test("GET /api/admin/attendance/report allows Full Admin, canonical BoD & canoni
     const body = await response.json();
     assert.equal(body.ok, true, label);
     assert.equal(body.report.viewer.can_configure_hq, canConfigureHq, label);
+    if (isTeamLeader) {
+      assert.equal(body.report.current_hq, null, label);
+    } else {
+      assert.notEqual(body.report.current_hq, null, label);
+    }
     assert.equal(rpcCalls.length, 1, label);
     assert.deepEqual(rpcCalls[0], {
       name: "attendance_admin_report",

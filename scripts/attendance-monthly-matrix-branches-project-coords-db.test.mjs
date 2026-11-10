@@ -38,6 +38,7 @@ import {
 } from "../src/lib/attendance/attendance-monthly-matrix-contract.ts";
 import { computeHqLocationRequestFingerprint } from "../src/lib/attendance/attendance-report-api.ts";
 import { projectAttendanceAdminReport } from "../src/lib/attendance/attendance-report-contract.ts";
+import { buildAttendanceMonthlyMatrixXlsx } from "../src/lib/attendance/attendance-monthly-matrix-xlsx.ts";
 import {
   projectAdminList,
   projectAdminLocationMutation,
@@ -2767,22 +2768,63 @@ test("HRP Branches, Branch Check-In Distance Snapshot Immutability, Project Coor
     assert.ok(ctCreated);
     const ctUnassignedBranchId = ctCreated.branch.branch_id;
 
-    // 10a. TEAM_LEADER reads November 2026 monthly matrix: sees only TEAM_ALPHA members & TEAM_ALPHA branches
-    const tlNovMatrix = projectAttendanceMonthlyMatrixReport(
-      await callAsServiceRole(
-        db,
-        `select public.attendance_monthly_matrix_report(
-          $1::uuid, $2::uuid, '2026-11', null, null, null, 1, 25
-        ) as data`,
-        [ACTORS.TEAM_LEADER.auth, ACTORS.TEAM_LEADER.app],
-      ),
+    // 10a. TEAM_LEADER reads November 2026 monthly matrix: sees only TEAM_ALPHA members & TEAM_ALPHA branches, and does NOT receive global current_hq or company-wide slot_policy.profiles
+    const tlNovMatrixRaw = await callAsServiceRole(
+      db,
+      `select public.attendance_monthly_matrix_report(
+        $1::uuid, $2::uuid, '2026-11', null, null, null, 1, 25
+      ) as data`,
+      [ACTORS.TEAM_LEADER.auth, ACTORS.TEAM_LEADER.app],
     );
+    assert.equal(
+      tlNovMatrixRaw.current_hq,
+      null,
+      "Raw SQL payload for Team Leader must set current_hq = null",
+    );
+    assert.equal(
+      "profiles" in tlNovMatrixRaw.slot_policy,
+      false,
+      "Raw SQL payload for Team Leader must omit company-wide slot_policy.profiles",
+    );
+    const tlNovMatrix = projectAttendanceMonthlyMatrixReport(tlNovMatrixRaw);
     assert.ok(tlNovMatrix, "Team Leader monthly matrix report projects cleanly");
     assert.deepEqual(tlNovMatrix.viewer, {
       can_configure_hq: false,
       can_manage_branches: false,
       can_manage_slot_policy: false,
     });
+    assert.equal(tlNovMatrix.current_hq, null);
+    assert.equal(tlNovMatrix.slot_policy.profiles, undefined);
+    assert.deepEqual(
+      tlNovMatrix.slot_policy.month_policies.map((p) => p.profile_code),
+      ["DEFAULT"],
+      "Team Leader month_policies must include only policies actually applied to TEAM_ALPHA in 2026-11 (never unused company profiles HANH_CHINH, TUYEN_DUNG_3, or A)",
+    );
+    assert.equal(
+      tlNovMatrix.slot_policy.month_policies.some(
+        (p) =>
+          p.profile_code === "HANH_CHINH" ||
+          p.profile_code === "TUYEN_DUNG_3" ||
+          p.profile_code === "A",
+      ),
+      false,
+    );
+    assert.ok(
+      tlNovMatrix.slot_policy.month_policies.every(
+        (p) => p.configured_by_display_name === "Mặc định hệ thống",
+      ),
+      "Team Leader slot_policy must mask global configurator display name",
+    );
+
+    const tlXlsxBytes = await buildAttendanceMonthlyMatrixXlsx({
+      year_month: tlNovMatrix.filters.year_month,
+      from_date: tlNovMatrix.filters.from_date,
+      to_date: tlNovMatrix.filters.to_date,
+      calendar_days: tlNovMatrix.calendar_days,
+      items: tlNovMatrix.items,
+      slot_policy: tlNovMatrix.slot_policy,
+    });
+    assert.ok(tlXlsxBytes.byteLength > 0, "Team Leader Excel export builds cleanly from scoped payload");
     assert.deepEqual(
       tlNovMatrix.employee_options.map((opt) => opt.app_user_id).sort(),
       [ACTORS.STAFF_A.app, ACTORS.TEAM_LEADER.app].sort(),
@@ -2886,7 +2928,28 @@ test("HRP Branches, Branch Check-In Distance Snapshot Immutability, Project Coor
         [ACTORS.FULL_ADMIN.auth, ACTORS.FULL_ADMIN.app],
       ),
     );
-    assert.ok(tlPage1 && tlPage2 && tlPage100 && adminNovMatrix);
+    const bodNovMatrix = projectAttendanceMonthlyMatrixReport(
+      await callAsServiceRole(
+        db,
+        `select public.attendance_monthly_matrix_report(
+          $1::uuid, $2::uuid, '2026-11', null, null, null, 1, 25
+        ) as data`,
+        [ACTORS.BOD_PRIVILEGED.auth, ACTORS.BOD_PRIVILEGED.app],
+      ),
+    );
+    assert.ok(tlPage1 && tlPage2 && tlPage100 && adminNovMatrix && bodNovMatrix);
+    assert.ok(adminNovMatrix.current_hq !== null, "Full Admin receives full current_hq");
+    assert.ok(
+      Array.isArray(adminNovMatrix.slot_policy.profiles) &&
+        adminNovMatrix.slot_policy.profiles.length >= 4,
+      "Full Admin receives full company-wide slot_policy.profiles",
+    );
+    assert.ok(bodNovMatrix.current_hq !== null, "BoD receives full current_hq");
+    assert.ok(
+      Array.isArray(bodNovMatrix.slot_policy.profiles) &&
+        bodNovMatrix.slot_policy.profiles.length >= 4,
+      "BoD receives full company-wide slot_policy.profiles",
+    );
     assert.equal(tlPage1.pagination.snapshot_token, tlPage2.pagination.snapshot_token);
     assert.equal(tlNovMatrix.pagination.snapshot_token, tlPage100.pagination.snapshot_token);
     assert.notEqual(
