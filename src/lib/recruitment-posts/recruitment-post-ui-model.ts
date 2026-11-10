@@ -130,7 +130,7 @@ export const GENDER_REQUIREMENT_LABELS: Readonly<
 > = Object.freeze({
   FEMALE: "Nữ",
   MALE: "Nam",
-  ANY: "Không giới hạn (Nam/Nữ)",
+  ANY: "Cặp Nam/Nữ",
 });
 
 export const EDUCATION_REQUIREMENT_LABELS: Readonly<
@@ -487,16 +487,14 @@ export function toRecruitmentPostCardViewModel(
     item.compensation.average_income_max_vnd,
   );
   const baseSalaryAndIncomeDisplay = `LCB: ${baseSalaryDisplay} · Thu nhập: ${incomeRangeDisplay}`;
-  const managerNameDisplay = formatRecruitmentPostText(
-    item.general.manager_name,
+  const createdByDisplayName = formatRecruitmentPostText(
+    item.created_by_display_name,
   );
+  const managerNameDisplay = createdByDisplayName;
   const managerPhoneDisplay = formatRecruitmentPostText(
     item.general.manager_phone,
   );
   const managerContactDisplay = `${managerNameDisplay} · ${managerPhoneDisplay}`;
-  const createdByDisplayName = formatRecruitmentPostText(
-    item.created_by_display_name,
-  );
   const updatedAtDisplay = formatRecruitmentPostTimestampVi(item.updated_at);
   const createdByAndUpdatedAtDisplay = `${createdByDisplayName} · ${updatedAtDisplay}`;
 
@@ -605,7 +603,9 @@ export function toRecruitmentPostDetailViewModel(
       shiftDetailsDisplay: formatRecruitmentPostText(
         item.general.shift_details,
       ),
-      managerNameDisplay: formatRecruitmentPostText(item.general.manager_name),
+      managerNameDisplay: formatRecruitmentPostText(
+        item.created_by_display_name,
+      ),
       managerPhoneDisplay: formatRecruitmentPostText(
         item.general.manager_phone,
       ),
@@ -1201,6 +1201,229 @@ export function recruitmentPostErrorMessage(code: string | null): string {
   }
 }
 
+// -----------------------------------------------------------------------------
+// Markdown Export Builder & Detail-Fetch Export Orchestration
+// -----------------------------------------------------------------------------
+
+export type RecruitmentPostMarkdownExportFile = {
+  readonly filename: string;
+  readonly content: string;
+  readonly mimeType: "text/markdown;charset=utf-8";
+};
+
+export type RecruitmentPostExportOutcome =
+  | {
+      readonly kind: "ok";
+      readonly post: RecruitmentPostItem;
+      readonly file: RecruitmentPostMarkdownExportFile;
+    }
+  | {
+      readonly kind: "access_loss";
+      readonly accessLoss: RecruitmentPostAccessLossKind;
+    }
+  | {
+      readonly kind: "error";
+      readonly status: number;
+      readonly code: string;
+      readonly message: string;
+    };
+
+/**
+ * Normalizes and sanitizes `briefId` into a safe `.md` filename without special characters
+ * or path separators: `tin-tuyen-dung-<brief-id>.md`.
+ */
+export function sanitizeRecruitmentPostExportFilename(briefId: string): string {
+  const safeId = briefId
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  return `tin-tuyen-dung-${safeId || "ban-tin"}.md`;
+}
+
+/**
+ * Builds the complete `.md` export file from a server-validated `RecruitmentPostItem`.
+ * Includes all 4 BOD sections + section 5 metadata, using `created_by_display_name` and
+ * `general.manager_phone` for contact info, and never exposing `general.manager_name`,
+ * internal location UUIDs, snapshot tokens, or permission flags.
+ */
+export function buildRecruitmentPostMarkdownExport(
+  item: RecruitmentPostItem,
+): RecruitmentPostMarkdownExportFile {
+  const detail = toRecruitmentPostDetailViewModel(item);
+  const ageRangeDisplay = formatRecruitmentPostAgeRange(
+    item.candidate.age_min,
+    item.candidate.age_max,
+  );
+  const incomeRangeDisplay = formatRecruitmentPostIncomeRange(
+    item.compensation.average_income_min_vnd,
+    item.compensation.average_income_max_vnd,
+  );
+
+  const lines: string[] = [
+    `# Phiếu tin tuyển dụng — ${detail.section1General.projectName}`,
+    "",
+    "## 1. Thông tin chung dự án",
+    `- **Tên dự án:** ${detail.section1General.projectName}`,
+    `- **Tên khách hàng:** ${detail.section1General.customerNameDisplay}`,
+    `- **Tỉnh/Thành:** ${detail.section1General.provinceName}`,
+    `- **Khu công nghiệp:** ${detail.section1General.industrialParkName}`,
+    `- **Vốn đầu tư:** ${detail.section1General.investmentOriginDisplay}`,
+    `- **Ngành nghề sản xuất:** ${detail.section1General.manufacturingIndustryDisplay}`,
+    `- **Hình thức tuyển dụng:** ${detail.section1General.laborTypesDisplay}`,
+    `- **Công việc:** ${detail.section1General.jobDescriptionDisplay}`,
+    `- **Môi trường:** ${detail.section1General.environmentTypesDisplay} (Tư thế: ${detail.section1General.workPosturesDisplay})`,
+    `- **Thời gian/ca làm:** ${detail.section1General.shiftPatternDisplay} (${detail.section1General.shiftDetailsDisplay})`,
+    `- **Lịch cung ứng:** ${detail.section1General.supplyScheduleTextDisplay}`,
+    `- **Số lượng dự kiến:** ${detail.section1General.expectedHeadcountDisplay}`,
+    `- **Liên hệ người phụ trách:** ${detail.section1General.managerNameDisplay} · ${detail.section1General.managerPhoneDisplay}`,
+    "",
+    "## 2. Yêu cầu ứng viên",
+    `- **Độ tuổi:** ${ageRangeDisplay} (Từ: ${detail.section2CandidateRequirements.ageFromDisplay} — Đến: ${detail.section2CandidateRequirements.ageToDisplay})`,
+    `- **Giới tính:** ${detail.section2CandidateRequirements.genderDisplay}`,
+    `- **Trình độ tối thiểu:** ${detail.section2CandidateRequirements.minimumEducationDisplay}`,
+    `- **Kinh nghiệm:** ${detail.section2CandidateRequirements.experienceRequiredDisplay} (${detail.section2CandidateRequirements.experienceDetailsDisplay})`,
+    `- **Nhận người từng làm tại khách hàng:** ${detail.section2CandidateRequirements.acceptsFormerWorkersDisplay}`,
+    `- **Hình thức kiểm tra đầu vào:** ${detail.section2CandidateRequirements.entryTestFormatDisplay}`,
+    `- **Yêu cầu khác:** ${detail.section2CandidateRequirements.otherRequirementsDisplay}`,
+    "",
+    "## 3. Lương, thưởng, phụ cấp và phúc lợi",
+    `- **Lương cơ bản:** ${detail.section3CompensationBenefits.baseSalaryVndDisplay} (Điều kiện: ${detail.section3CompensationBenefits.baseSalaryConditionsDisplay})`,
+    "- **Các khoản thưởng/phụ cấp:**",
+    `  - **Thưởng chuyên cần:** ${detail.section3CompensationBenefits.attendanceBonusVndDisplay} (Điều kiện: ${detail.section3CompensationBenefits.attendanceBonusConditionsDisplay})`,
+    `  - **Phụ cấp đời sống:** ${detail.section3CompensationBenefits.livingAllowanceVndDisplay} (Điều kiện: ${detail.section3CompensationBenefits.livingAllowanceConditionsDisplay})`,
+    `  - **Phụ cấp thâm niên:** ${detail.section3CompensationBenefits.seniorityAllowanceVndDisplay} (Điều kiện: ${detail.section3CompensationBenefits.seniorityAllowanceConditionsDisplay})`,
+    `  - **Phụ cấp độc hại/kính hiển vi:** ${detail.section3CompensationBenefits.eyesightAllowanceVndDisplay} (Điều kiện: ${detail.section3CompensationBenefits.eyesightAllowanceConditionsDisplay})`,
+    `  - **Phụ cấp khác:** ${detail.section3CompensationBenefits.otherAllowanceTextDisplay}`,
+    `- **Thu nhập bình quân dự kiến:** ${incomeRangeDisplay} (Tối thiểu: ${detail.section3CompensationBenefits.averageIncomeMinVndDisplay} — Tối đa: ${detail.section3CompensationBenefits.averageIncomeMaxVndDisplay})`,
+    `- **Ngày thanh toán:** ${detail.section3CompensationBenefits.salaryPaymentScheduleDisplay}`,
+    `- **Ứng lương:** ${detail.section3CompensationBenefits.salaryAdvanceAvailableDisplay} (Mức ứng: ${detail.section3CompensationBenefits.salaryAdvanceAmountVndDisplay} — Lịch ứng: ${detail.section3CompensationBenefits.salaryAdvanceScheduleDisplay})`,
+    `- **Lương tuần:** ${detail.section3CompensationBenefits.weeklySalaryAvailableDisplay} (Lịch trả: ${detail.section3CompensationBenefits.weeklySalaryPaymentScheduleDisplay})`,
+    "- **Đủ 8 mức tiền ca:**",
+    `  - **Ca ngày 8h:** ${detail.section3CompensationBenefits.dayShift8hVndDisplay}`,
+    `  - **Ca ngày 11h:** ${detail.section3CompensationBenefits.dayShift11hVndDisplay}`,
+    `  - **Ca đêm 8h:** ${detail.section3CompensationBenefits.nightShift8hVndDisplay}`,
+    `  - **Ca đêm 11h:** ${detail.section3CompensationBenefits.nightShift11hVndDisplay}`,
+    `  - **Chủ nhật ca ngày 11h:** ${detail.section3CompensationBenefits.sundayDay11hVndDisplay}`,
+    `  - **Chủ nhật ca đêm 11h:** ${detail.section3CompensationBenefits.sundayNight11hVndDisplay}`,
+    `  - **Ngày lễ ca ngày 11h:** ${detail.section3CompensationBenefits.holidayDay11hVndDisplay}`,
+    `  - **Ngày lễ ca đêm 11h:** ${detail.section3CompensationBenefits.holidayNight11hVndDisplay}`,
+    `- **Đồng phục/bảo hộ:** ${detail.section3CompensationBenefits.ppeProvidedDisplay} (${detail.section3CompensationBenefits.ppeDetailsDisplay})`,
+    `- **Phúc lợi khác:** ${detail.section3CompensationBenefits.otherBenefitsDisplay}`,
+    "",
+    "## 4. Hồ sơ ứng viên cần chuẩn bị",
+    `- **CCCD:** ${detail.section4ApplicationDocuments.requireOriginalCccdAndCopyDisplay}`,
+    `- **Sơ yếu lý lịch:** ${detail.section4ApplicationDocuments.requireCertifiedResumeDisplay}`,
+    `- **Giấy khám sức khỏe:** ${detail.section4ApplicationDocuments.requireHealthCertificateWithin6MonthsDisplay}`,
+    `- **Ảnh 3x4:** ${detail.section4ApplicationDocuments.requirePhoto3x4Display}`,
+    `- **Bằng cấp/chứng chỉ:** ${detail.section4ApplicationDocuments.requireDegreeOrCertificateDisplay}`,
+    `- **Sổ BHXH:** ${detail.section4ApplicationDocuments.requireSocialInsuranceBookDisplay}`,
+    `- **Giấy tờ khác:** ${detail.section4ApplicationDocuments.requireOtherDocumentsDisplay} (${detail.section4ApplicationDocuments.otherDocumentsTextDisplay})`,
+    "",
+    "## 5. Thông tin bản tin (Metadata)",
+    `- **Người đăng:** ${detail.createdByDisplayName}`,
+    `- **Thời gian đăng:** ${detail.publishedAtDisplay}`,
+    `- **Người cập nhật gần nhất:** ${detail.updatedByDisplayName}`,
+    `- **Thời gian cập nhật:** ${detail.updatedAtDisplay}`,
+    `- **Mã tin đối chiếu:** ${detail.briefId}`,
+    "",
+  ];
+
+  return {
+    filename: sanitizeRecruitmentPostExportFilename(detail.briefId),
+    content: lines.join("\n"),
+    mimeType: "text/markdown;charset=utf-8",
+  };
+}
+
+/**
+ * Evaluates the HTTP status + parsed JSON body of `GET /api/recruitment-posts/[briefId]`
+ * for the export flow fail-closed:
+ * - 401/403 returns `access_loss` and never produces a file.
+ * - Non-2xx or invalid/corrupted payload returns `error` and never produces a file.
+ * - Valid contract envelope builds the `.md` export file.
+ */
+export function resolveRecruitmentPostExportOutcome(input: {
+  readonly status: number;
+  readonly payload: unknown;
+}): RecruitmentPostExportOutcome {
+  const errorCode = extractRecruitmentPostErrorCode(input.payload);
+  const accessLoss = classifyRecruitmentPostAccessLoss(input.status, errorCode);
+  if (accessLoss) {
+    return {
+      kind: "access_loss",
+      accessLoss,
+    };
+  }
+
+  if (input.status < 200 || input.status >= 300) {
+    const resolvedCode = errorCode ?? "RECRUITMENT_POST_UNAVAILABLE";
+    return {
+      kind: "error",
+      status: input.status,
+      code: resolvedCode,
+      message: recruitmentPostErrorMessage(resolvedCode),
+    };
+  }
+
+  const parsedDetail = parseRecruitmentPostDetailEnvelope(input.payload);
+  if (!parsedDetail) {
+    return {
+      kind: "error",
+      status: input.status,
+      code: "RECRUITMENT_POST_UNAVAILABLE",
+      message: recruitmentPostErrorMessage("RECRUITMENT_POST_UNAVAILABLE"),
+    };
+  }
+
+  return {
+    kind: "ok",
+    post: parsedDetail.post,
+    file: buildRecruitmentPostMarkdownExport(parsedDetail.post),
+  };
+}
+
+/**
+ * Fetches the full detail from `GET /api/recruitment-posts/[briefId]`, validates the contract
+ * envelope fail-closed, and invokes `onDownload` only when the detail succeeds.
+ */
+export async function exportRecruitmentPostDetailMarkdown(options: {
+  readonly briefId: string;
+  readonly fetchImpl?: typeof fetch;
+  readonly signal?: AbortSignal;
+  readonly onDownload?: (file: RecruitmentPostMarkdownExportFile) => void;
+}): Promise<RecruitmentPostExportOutcome> {
+  const fetcher = options.fetchImpl ?? fetch;
+  try {
+    const response = await fetcher(
+      `/api/recruitment-posts/${encodeURIComponent(options.briefId)}`,
+      {
+        method: "GET",
+        cache: "no-store",
+        credentials: "same-origin",
+        signal: options.signal,
+      },
+    );
+    const rawPayload = await response.json().catch(() => null);
+    const outcome = resolveRecruitmentPostExportOutcome({
+      status: response.status,
+      payload: rawPayload,
+    });
+    if (outcome.kind === "ok") {
+      options.onDownload?.(outcome.file);
+    }
+    return outcome;
+  } catch {
+    return {
+      kind: "error",
+      status: 0,
+      code: "RECRUITMENT_POST_UNAVAILABLE",
+      message: recruitmentPostErrorMessage("RECRUITMENT_POST_UNAVAILABLE"),
+    };
+  }
+}
+
 // =============================================================================
 // PHASE 4 — Authoring Form Draft, Pre-Submit Confirmation, Write Payloads & OCC
 // =============================================================================
@@ -1642,44 +1865,16 @@ export function toggleRecruitmentPostLaborTypeKey(
   return { ...draft, laborTypeKeys: next };
 }
 
-function foldVietnameseSearchText(raw: string): string {
-  return raw
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[đĐ]/g, "d")
-    .toLowerCase()
-    .trim();
-}
-
-export function filterCreateFormIndustrialParks(
+export function selectableIndustrialParksForCreate(
   industrialParks: readonly RecruitmentPostIndustrialParkOption[],
   provinces: readonly RecruitmentPostProvinceOption[],
-  searchQuery: string,
 ): RecruitmentPostIndustrialParkOption[] {
   const activeProvinceIds = new Set(
     provinces.filter((p) => p.active).map((p) => p.province_id),
   );
-  const provinceNameById = new Map(
-    provinces.map((p) => [p.province_id, p.display_name]),
-  );
-  const activeParks = industrialParks.filter(
+  return industrialParks.filter(
     (park) => park.active && activeProvinceIds.has(park.province_id),
   );
-  const foldedQuery = foldVietnameseSearchText(searchQuery);
-  if (!foldedQuery) return activeParks;
-
-  return activeParks.filter((park) => {
-    const parkName = foldVietnameseSearchText(park.display_name);
-    const parkCode = foldVietnameseSearchText(park.industrial_park_code);
-    const provinceName = foldVietnameseSearchText(
-      provinceNameById.get(park.province_id) ?? "",
-    );
-    return (
-      parkName.includes(foldedQuery) ||
-      parkCode.includes(foldedQuery) ||
-      provinceName.includes(foldedQuery)
-    );
-  });
 }
 
 export function deriveProvinceDisplayNameForDraft(
@@ -1845,15 +2040,9 @@ export function buildRecruitmentPostPreSubmitSummary(input: {
     maxRes?.ok ? maxRes.canonical : null,
   );
 
-  const managerName =
-    draft.mode === "edit" && draft.lockedManagerName?.trim()
-      ? draft.lockedManagerName.trim()
-      : draft.managerName.trim();
   const managerPhone = draft.managerPhone.trim();
   const managerContactDisplay =
-    managerName && managerPhone
-      ? `${managerName} · ${managerPhone}`
-      : managerName || managerPhone || "Chưa nhập người phụ trách";
+    managerPhone || "Chưa nhập số điện thoại liên hệ";
 
   return {
     projectDisplay,
@@ -1918,7 +2107,7 @@ export function validateAndBuildRecruitmentPostWritePayload(
           typeof draft.lockedManagerName === "string" &&
           draft.lockedManagerName.trim().length > 0
         ? draft.lockedManagerName.trim()
-        : draft.managerName.trim();
+        : draft.managerName.trim() || "Người đăng tin";
 
   if (draft.mode === "create") {
     if (!draft.projectId.trim()) {
@@ -1943,9 +2132,6 @@ export function validateAndBuildRecruitmentPostWritePayload(
   if (draft.shiftPattern === "OTHER" && !draft.shiftDetails.trim()) {
     fieldErrors.shiftDetails =
       "Vui lòng nhập chi tiết ca làm việc khi chọn Khác.";
-  }
-  if (!effectiveManagerName) {
-    fieldErrors.managerName = "Vui lòng nhập tên người phụ trách dự án.";
   }
   const phoneDigits = draft.managerPhone.trim().replace(/[^0-9]/g, "");
   if (!draft.managerPhone.trim() || phoneDigits.length < 6) {

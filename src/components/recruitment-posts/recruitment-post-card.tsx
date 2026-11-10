@@ -6,10 +6,14 @@ import type { RecruitmentPostCardViewModel } from "@/lib/recruitment-posts/recru
 export function RecruitmentPostCard({
   card,
   onViewDetail,
+  onExport,
+  isExporting = false,
   onWithdraw,
 }: {
   card: RecruitmentPostCardViewModel;
   onViewDetail: (briefId: string) => void;
+  onExport?: (briefId: string) => void;
+  isExporting?: boolean;
   onWithdraw?: (card: RecruitmentPostCardViewModel) => void;
 }) {
   return (
@@ -32,7 +36,10 @@ export function RecruitmentPostCard({
               {card.locationDisplay}
             </p>
           </div>
-          <div className="flex shrink-0 flex-wrap items-center gap-2 pt-1 sm:pt-0">
+          <div
+            data-testid="recruitment-post-card-actions"
+            className="flex shrink-0 flex-wrap items-center gap-2 pt-1 sm:pt-0"
+          >
             <Button
               type="button"
               variant="secondary"
@@ -41,6 +48,17 @@ export function RecruitmentPostCard({
               onClick={() => onViewDetail(card.briefId)}
             >
               Xem chi tiết
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              data-testid="recruitment-post-export"
+              data-brief-id={card.briefId}
+              disabled={isExporting}
+              onClick={() => onExport?.(card.briefId)}
+            >
+              {isExporting ? "Đang xuất…" : "Xuất bản tin"}
             </Button>
             {card.allowedActions.canEdit ? (
               <Link

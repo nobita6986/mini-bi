@@ -27,7 +27,7 @@ import {
   createLatestRequestTracker,
   deriveProvinceDisplayNameForDraft,
   extractRecruitmentPostErrorCode,
-  filterCreateFormIndustrialParks,
+  formatRecruitmentPostText,
   formatRecruitmentPostTimestampVi,
   newIdempotencyKey,
   normalizeRecruitmentPostVndInput,
@@ -35,6 +35,7 @@ import {
   recruitmentPostErrorMessage,
   resolveRecruitmentPostContextOutcome,
   resolveRecruitmentPostMutationOutcome,
+  selectableIndustrialParksForCreate,
   selectableLaborTypesForDraft,
   setRecruitmentPostExperienceRequired,
   setRecruitmentPostPpeProvided,
@@ -112,7 +113,6 @@ export type RecruitmentPostFormInitialTestState = {
   readonly loadError?: string | null;
   readonly notFoundError?: boolean;
   readonly accessLoss?: RecruitmentPostAccessLossKind | null;
-  readonly industrialParkSearch?: string;
   readonly submitting?: boolean;
   readonly submitError?: string | null;
   readonly validationMessage?: string | null;
@@ -209,9 +209,6 @@ export function RecruitmentPostForm({
     useState<RecruitmentPostAccessLossKind | null>(
       () => initialStateForTest?.accessLoss ?? null,
     );
-  const [industrialParkSearch, setIndustrialParkSearch] = useState<string>(
-    () => initialStateForTest?.industrialParkSearch ?? "",
-  );
 
   const [submitting, setSubmitting] = useState<boolean>(
     () => initialStateForTest?.submitting ?? false,
@@ -674,14 +671,13 @@ export function RecruitmentPostForm({
     [context],
   );
 
-  const filteredIndustrialParks = useMemo(
+  const selectableIndustrialParks = useMemo(
     () =>
-      filterCreateFormIndustrialParks(
+      selectableIndustrialParksForCreate(
         context?.industrial_parks ?? [],
         context?.provinces ?? [],
-        industrialParkSearch,
       ),
-    [context, industrialParkSearch],
+    [context],
   );
 
   const derivedProvinceDisplayName = useMemo(
@@ -1061,8 +1057,13 @@ export function RecruitmentPostForm({
             <p>
               <span className="text-muted">Người phụ trách:</span>{" "}
               <strong>
-                {comparedServerPost.general.manager_name} ·{" "}
-                {comparedServerPost.general.manager_phone}
+                {formatRecruitmentPostText(
+                  comparedServerPost.created_by_display_name,
+                )}{" "}
+                ·{" "}
+                {formatRecruitmentPostText(
+                  comparedServerPost.general.manager_phone,
+                )}
               </strong>
             </p>
             <p>
@@ -1166,64 +1167,118 @@ export function RecruitmentPostForm({
           </div>
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            {/* Dự án */}
+            {/* Dự án & Khu công nghiệp trên cùng 1 hàng desktop */}
             <div
-              className={
-                mode === "create"
-                  ? "space-y-1.5 sm:col-span-2"
-                  : "space-y-1.5"
-              }
+              data-testid="recruitment-post-project-park-row"
+              className="grid grid-cols-1 gap-4 sm:col-span-2 sm:grid-cols-2"
             >
-              <label
-                htmlFor="recruitment-post-field-project"
-                className="block text-sm font-medium text-foreground"
-              >
-                Dự án <span className="text-danger">*</span>
-              </label>
-              {mode === "edit" ? (
-                <input
-                  id="recruitment-post-field-project"
-                  type="text"
-                  readOnly
-                  disabled
-                  data-testid="recruitment-post-locked-project"
-                  value={draft.lockedProjectDisplayName}
-                  className={INPUT_CLASS}
-                />
-              ) : (
-                <select
-                  id="recruitment-post-field-project"
-                  data-testid="recruitment-post-select-project"
-                  disabled={formLocked}
-                  value={draft.projectId}
-                  onChange={(event) =>
-                    setDraft((prev) =>
-                      applyCreateFormProjectSelection(
-                        prev,
-                        event.target.value,
-                        managedProjects,
-                      ),
-                    )
-                  }
-                  aria-invalid={Boolean(fieldErrors.projectId)}
-                  className={INPUT_CLASS}
+              {/* Dự án */}
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="recruitment-post-field-project"
+                  className="block text-sm font-medium text-foreground"
                 >
-                  <option value="">-- Chọn dự án đang quản lý --</option>
-                  {managedProjects.map((project) => (
-                    <option key={project.project_id} value={project.project_id}>
-                      {project.display_name}
-                    </option>
-                  ))}
-                </select>
-              )}
-              {fieldErrors.projectId ? (
-                <p className="text-xs text-danger">{fieldErrors.projectId}</p>
-              ) : null}
+                  Dự án <span className="text-danger">*</span>
+                </label>
+                {mode === "edit" ? (
+                  <input
+                    id="recruitment-post-field-project"
+                    type="text"
+                    readOnly
+                    disabled
+                    data-testid="recruitment-post-locked-project"
+                    value={draft.lockedProjectDisplayName}
+                    className={INPUT_CLASS}
+                  />
+                ) : (
+                  <select
+                    id="recruitment-post-field-project"
+                    data-testid="recruitment-post-select-project"
+                    disabled={formLocked}
+                    value={draft.projectId}
+                    onChange={(event) =>
+                      setDraft((prev) =>
+                        applyCreateFormProjectSelection(
+                          prev,
+                          event.target.value,
+                          managedProjects,
+                        ),
+                      )
+                    }
+                    aria-invalid={Boolean(fieldErrors.projectId)}
+                    className={INPUT_CLASS}
+                  >
+                    <option value="">-- Chọn dự án đang quản lý --</option>
+                    {managedProjects.map((project) => (
+                      <option
+                        key={project.project_id}
+                        value={project.project_id}
+                      >
+                        {project.display_name}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                {fieldErrors.projectId ? (
+                  <p className="text-xs text-danger">{fieldErrors.projectId}</p>
+                ) : null}
+              </div>
+
+              {/* Khu công nghiệp */}
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="recruitment-post-field-park"
+                  className="block text-sm font-medium text-foreground"
+                >
+                  Khu công nghiệp <span className="text-danger">*</span>
+                </label>
+                {mode === "edit" ? (
+                  <input
+                    id="recruitment-post-field-park"
+                    type="text"
+                    readOnly
+                    disabled
+                    data-testid="recruitment-post-locked-park"
+                    value={draft.lockedIndustrialParkDisplayName}
+                    className={INPUT_CLASS}
+                  />
+                ) : (
+                  <select
+                    id="recruitment-post-field-park"
+                    data-testid="recruitment-post-select-park"
+                    disabled={formLocked}
+                    value={draft.industrialParkId}
+                    onChange={(event) =>
+                      setDraft((prev) => ({
+                        ...prev,
+                        industrialParkId: event.target.value,
+                      }))
+                    }
+                    aria-invalid={Boolean(fieldErrors.industrialParkId)}
+                    className={INPUT_CLASS}
+                  >
+                    <option value="">-- Chọn Khu công nghiệp --</option>
+                    {selectableIndustrialParks.map((park) => (
+                      <option
+                        key={park.industrial_park_id}
+                        value={park.industrial_park_id}
+                      >
+                        {park.display_name} ({park.industrial_park_code})
+                      </option>
+                    ))}
+                  </select>
+                )}
+                {fieldErrors.industrialParkId ? (
+                  <p className="text-xs text-danger">
+                    {fieldErrors.industrialParkId}
+                  </p>
+                ) : null}
+              </div>
             </div>
 
             {/* Tỉnh/Thành tự động suy ra (chỉ hiển thị trên giao diện chỉnh sửa tin đã đăng) */}
             {mode === "edit" ? (
-              <div className="space-y-1.5">
+              <div className="space-y-1.5 sm:col-span-2">
                 <label
                   htmlFor="recruitment-post-field-province"
                   className="block text-sm font-medium text-foreground"
@@ -1243,71 +1298,6 @@ export function RecruitmentPostForm({
                 />
               </div>
             ) : null}
-
-            {/* Khu công nghiệp */}
-            <div className="space-y-1.5 sm:col-span-2">
-              <label
-                htmlFor="recruitment-post-field-park"
-                className="block text-sm font-medium text-foreground"
-              >
-                Khu công nghiệp <span className="text-danger">*</span>
-              </label>
-              {mode === "edit" ? (
-                <input
-                  id="recruitment-post-field-park"
-                  type="text"
-                  readOnly
-                  disabled
-                  data-testid="recruitment-post-locked-park"
-                  value={draft.lockedIndustrialParkDisplayName}
-                  className={INPUT_CLASS}
-                />
-              ) : (
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                  <input
-                    type="search"
-                    aria-label="Tìm kiếm Khu công nghiệp"
-                    data-testid="recruitment-post-search-park"
-                    disabled={formLocked}
-                    value={industrialParkSearch}
-                    onChange={(event) =>
-                      setIndustrialParkSearch(event.target.value)
-                    }
-                    placeholder="Gõ để tìm nhanh KCN (ví dụ: VSIP, Yên Phong…)"
-                    className={INPUT_CLASS}
-                  />
-                  <select
-                    id="recruitment-post-field-park"
-                    data-testid="recruitment-post-select-park"
-                    disabled={formLocked}
-                    value={draft.industrialParkId}
-                    onChange={(event) =>
-                      setDraft((prev) => ({
-                        ...prev,
-                        industrialParkId: event.target.value,
-                      }))
-                    }
-                    aria-invalid={Boolean(fieldErrors.industrialParkId)}
-                    className={INPUT_CLASS}
-                  >
-                    <option value="">-- Chọn Khu công nghiệp --</option>
-                    {filteredIndustrialParks.map((park) => (
-                      <option
-                        key={park.industrial_park_id}
-                        value={park.industrial_park_id}
-                      >
-                        {park.display_name} ({park.industrial_park_code})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
-              {fieldErrors.industrialParkId ? (
-                <p className="text-xs text-danger">
-                  {fieldErrors.industrialParkId}
-                </p>
-              ) : null}
-            </div>
 
             {/* Tên khách hàng */}
             <div className="space-y-1.5">
@@ -1550,34 +1540,6 @@ export function RecruitmentPostForm({
               ) : null}
             </div>
 
-            {/* Người phụ trách dự án */}
-            <div className="space-y-1.5">
-              <label
-                htmlFor="recruitment-post-field-manager-name"
-                className="block text-sm font-medium text-foreground"
-              >
-                Người phụ trách dự án <span className="text-danger">*</span>
-              </label>
-              <input
-                id="recruitment-post-field-manager-name"
-                type="text"
-                data-testid="recruitment-post-input-manager-name"
-                readOnly
-                disabled={formLocked && !permissionRevokedReadOnly}
-                value={
-                  mode === "edit" && draft.lockedManagerName?.trim()
-                    ? draft.lockedManagerName
-                    : draft.managerName
-                }
-                aria-invalid={Boolean(fieldErrors.managerName)}
-                placeholder="Họ và tên người phụ trách"
-                className={INPUT_CLASS}
-              />
-              {fieldErrors.managerName ? (
-                <p className="text-xs text-danger">{fieldErrors.managerName}</p>
-              ) : null}
-            </div>
-
             {/* Số điện thoại người phụ trách */}
             <div className="space-y-1.5">
               <label
@@ -1736,128 +1698,135 @@ export function RecruitmentPostForm({
           </div>
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            {/* Độ tuổi tối thiểu */}
-            <div className="space-y-1.5">
-              <label
-                htmlFor="recruitment-post-field-age-min"
-                className="block text-sm font-medium text-foreground"
-              >
-                Độ tuổi từ
-              </label>
-              <input
-                id="recruitment-post-field-age-min"
-                type="number"
-                min={15}
-                max={70}
-                step={1}
-                data-testid="recruitment-post-input-age-min"
-                readOnly={permissionRevokedReadOnly}
-                disabled={formLocked && !permissionRevokedReadOnly}
-                value={draft.ageMin}
-                onChange={(event) =>
-                  setDraft((prev) => ({
-                    ...prev,
-                    ageMin: event.target.value,
-                  }))
-                }
-                aria-invalid={Boolean(fieldErrors.ageMin)}
-                className={NUMBER_INPUT_CLASS}
-              />
-              {fieldErrors.ageMin ? (
-                <p className="text-xs text-danger">{fieldErrors.ageMin}</p>
-              ) : null}
-            </div>
+            {/* 4 trường cốt lõi trên cùng 1 hàng desktop: Độ tuổi từ, Độ tuổi đến, Giới tính, Trình độ tối thiểu */}
+            <div
+              data-testid="recruitment-post-candidate-core-row"
+              className="grid grid-cols-1 gap-4 sm:col-span-2 sm:grid-cols-2 lg:grid-cols-4"
+            >
+              {/* Độ tuổi tối thiểu */}
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="recruitment-post-field-age-min"
+                  className="block text-sm font-medium text-foreground"
+                >
+                  Độ tuổi từ
+                </label>
+                <input
+                  id="recruitment-post-field-age-min"
+                  type="number"
+                  min={15}
+                  max={70}
+                  step={1}
+                  data-testid="recruitment-post-input-age-min"
+                  readOnly={permissionRevokedReadOnly}
+                  disabled={formLocked && !permissionRevokedReadOnly}
+                  value={draft.ageMin}
+                  onChange={(event) =>
+                    setDraft((prev) => ({
+                      ...prev,
+                      ageMin: event.target.value,
+                    }))
+                  }
+                  aria-invalid={Boolean(fieldErrors.ageMin)}
+                  className={NUMBER_INPUT_CLASS}
+                />
+                {fieldErrors.ageMin ? (
+                  <p className="text-xs text-danger">{fieldErrors.ageMin}</p>
+                ) : null}
+              </div>
 
-            {/* Độ tuổi tối đa */}
-            <div className="space-y-1.5">
-              <label
-                htmlFor="recruitment-post-field-age-max"
-                className="block text-sm font-medium text-foreground"
-              >
-                Độ tuổi đến
-              </label>
-              <input
-                id="recruitment-post-field-age-max"
-                type="number"
-                min={15}
-                max={70}
-                step={1}
-                data-testid="recruitment-post-input-age-max"
-                readOnly={permissionRevokedReadOnly}
-                disabled={formLocked && !permissionRevokedReadOnly}
-                value={draft.ageMax}
-                onChange={(event) =>
-                  setDraft((prev) => ({
-                    ...prev,
-                    ageMax: event.target.value,
-                  }))
-                }
-                aria-invalid={Boolean(fieldErrors.ageMax)}
-                className={NUMBER_INPUT_CLASS}
-              />
-              {fieldErrors.ageMax ? (
-                <p className="text-xs text-danger">{fieldErrors.ageMax}</p>
-              ) : null}
-            </div>
+              {/* Độ tuổi tối đa */}
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="recruitment-post-field-age-max"
+                  className="block text-sm font-medium text-foreground"
+                >
+                  Độ tuổi đến
+                </label>
+                <input
+                  id="recruitment-post-field-age-max"
+                  type="number"
+                  min={15}
+                  max={70}
+                  step={1}
+                  data-testid="recruitment-post-input-age-max"
+                  readOnly={permissionRevokedReadOnly}
+                  disabled={formLocked && !permissionRevokedReadOnly}
+                  value={draft.ageMax}
+                  onChange={(event) =>
+                    setDraft((prev) => ({
+                      ...prev,
+                      ageMax: event.target.value,
+                    }))
+                  }
+                  aria-invalid={Boolean(fieldErrors.ageMax)}
+                  className={NUMBER_INPUT_CLASS}
+                />
+                {fieldErrors.ageMax ? (
+                  <p className="text-xs text-danger">{fieldErrors.ageMax}</p>
+                ) : null}
+              </div>
 
-            {/* Giới tính */}
-            <div className="space-y-1.5">
-              <label
-                htmlFor="recruitment-post-field-gender"
-                className="block text-sm font-medium text-foreground"
-              >
-                Giới tính <span className="text-danger">*</span>
-              </label>
-              <select
-                id="recruitment-post-field-gender"
-                data-testid="recruitment-post-select-gender"
-                disabled={formLocked}
-                value={draft.genderRequirement}
-                onChange={(event) =>
-                  setDraft((prev) => ({
-                    ...prev,
-                    genderRequirement:
-                      event.target.value as RecruitmentPostGenderRequirement,
-                  }))
-                }
-                className={INPUT_CLASS}
-              >
-                {RECRUITMENT_POST_GENDER_REQUIREMENTS.map((gender) => (
-                  <option key={gender} value={gender}>
-                    {GENDER_REQUIREMENT_LABELS[gender]}
-                  </option>
-                ))}
-              </select>
-            </div>
+              {/* Giới tính */}
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="recruitment-post-field-gender"
+                  className="block text-sm font-medium text-foreground"
+                >
+                  Giới tính <span className="text-danger">*</span>
+                </label>
+                <select
+                  id="recruitment-post-field-gender"
+                  data-testid="recruitment-post-select-gender"
+                  disabled={formLocked}
+                  value={draft.genderRequirement}
+                  onChange={(event) =>
+                    setDraft((prev) => ({
+                      ...prev,
+                      genderRequirement:
+                        event.target.value as RecruitmentPostGenderRequirement,
+                    }))
+                  }
+                  className={INPUT_CLASS}
+                >
+                  {RECRUITMENT_POST_GENDER_REQUIREMENTS.map((gender) => (
+                    <option key={gender} value={gender}>
+                      {GENDER_REQUIREMENT_LABELS[gender]}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-            {/* Trình độ tối thiểu */}
-            <div className="space-y-1.5">
-              <label
-                htmlFor="recruitment-post-field-education"
-                className="block text-sm font-medium text-foreground"
-              >
-                Trình độ tối thiểu <span className="text-danger">*</span>
-              </label>
-              <select
-                id="recruitment-post-field-education"
-                data-testid="recruitment-post-select-education"
-                disabled={formLocked}
-                value={draft.educationRequirement}
-                onChange={(event) =>
-                  setDraft((prev) => ({
-                    ...prev,
-                    educationRequirement:
-                      event.target.value as RecruitmentPostEducationRequirement,
-                  }))
-                }
-                className={INPUT_CLASS}
-              >
-                {RECRUITMENT_POST_EDUCATION_REQUIREMENTS.map((level) => (
-                  <option key={level} value={level}>
-                    {EDUCATION_REQUIREMENT_LABELS[level]}
-                  </option>
-                ))}
-              </select>
+              {/* Trình độ tối thiểu */}
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="recruitment-post-field-education"
+                  className="block text-sm font-medium text-foreground"
+                >
+                  Trình độ tối thiểu <span className="text-danger">*</span>
+                </label>
+                <select
+                  id="recruitment-post-field-education"
+                  data-testid="recruitment-post-select-education"
+                  disabled={formLocked}
+                  value={draft.educationRequirement}
+                  onChange={(event) =>
+                    setDraft((prev) => ({
+                      ...prev,
+                      educationRequirement:
+                        event.target
+                          .value as RecruitmentPostEducationRequirement,
+                    }))
+                  }
+                  className={INPUT_CLASS}
+                >
+                  {RECRUITMENT_POST_EDUCATION_REQUIREMENTS.map((level) => (
+                    <option key={level} value={level}>
+                      {EDUCATION_REQUIREMENT_LABELS[level]}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
 
             {/* Yêu cầu kinh nghiệm */}
