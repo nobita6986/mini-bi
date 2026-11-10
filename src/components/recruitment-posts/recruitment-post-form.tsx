@@ -1413,208 +1413,227 @@ export function RecruitmentPostForm({
               ) : null}
             </div>
 
-            {/* Môi trường làm việc */}
-            <fieldset className="space-y-2">
-              <legend className="text-sm font-medium text-foreground">
-                Môi trường làm việc
-              </legend>
-              <div className="flex flex-wrap gap-3">
-                {RECRUITMENT_POST_ENVIRONMENT_TYPES.map((envType) => {
-                  const checked = draft.environmentTypes.includes(envType);
-                  return (
-                    <label
-                      key={envType}
-                      className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-border bg-surface-muted/30 px-3 py-2 text-sm text-foreground cursor-pointer"
-                    >
-                      <input
-                        type="checkbox"
-                        data-testid={`recruitment-post-env-${envType}`}
-                        disabled={formLocked}
-                        checked={checked}
-                        onChange={() =>
-                          setDraft((prev) =>
-                            toggleRecruitmentPostEnvironmentType(prev, envType),
-                          )
-                        }
-                        className="h-4 w-4 rounded border-border"
-                      />
-                      <span>{ENVIRONMENT_TYPE_LABELS[envType]}</span>
-                    </label>
-                  );
-                })}
-              </div>
-            </fieldset>
+            {/* Cụm checkbox liên tiếp: Môi trường làm việc, Tư thế làm việc, Hình thức tuyển dụng */}
+            <div
+              data-testid="recruitment-post-checkbox-cluster"
+              className="flex flex-col gap-4 sm:col-span-2 lg:flex-row lg:flex-wrap lg:items-start lg:gap-x-8 lg:gap-y-4"
+            >
+              {/* Môi trường làm việc */}
+              <fieldset className="space-y-2">
+                <legend className="text-sm font-medium text-foreground">
+                  Môi trường làm việc
+                </legend>
+                <div className="flex flex-wrap gap-3">
+                  {RECRUITMENT_POST_ENVIRONMENT_TYPES.map((envType) => {
+                    const checked = draft.environmentTypes.includes(envType);
+                    return (
+                      <label
+                        key={envType}
+                        className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-border bg-surface-muted/30 px-3 py-2 text-sm text-foreground cursor-pointer"
+                      >
+                        <input
+                          type="checkbox"
+                          data-testid={`recruitment-post-env-${envType}`}
+                          disabled={formLocked}
+                          checked={checked}
+                          onChange={() =>
+                            setDraft((prev) =>
+                              toggleRecruitmentPostEnvironmentType(
+                                prev,
+                                envType,
+                              ),
+                            )
+                          }
+                          className="h-4 w-4 rounded border-border"
+                        />
+                        <span>{ENVIRONMENT_TYPE_LABELS[envType]}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </fieldset>
 
-            {/* Tư thế làm việc */}
-            <fieldset className="space-y-2">
-              <legend className="text-sm font-medium text-foreground">
-                Tư thế làm việc
-              </legend>
-              <div className="flex flex-wrap gap-3">
-                {RECRUITMENT_POST_WORK_POSTURES.map((posture) => {
-                  const checked = draft.workPostures.includes(posture);
-                  return (
-                    <label
-                      key={posture}
-                      className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-border bg-surface-muted/30 px-3 py-2 text-sm text-foreground cursor-pointer"
-                    >
-                      <input
-                        type="checkbox"
-                        data-testid={`recruitment-post-posture-${posture}`}
-                        disabled={formLocked}
-                        checked={checked}
-                        onChange={() =>
-                          setDraft((prev) =>
-                            toggleRecruitmentPostWorkPosture(prev, posture),
-                          )
-                        }
-                        className="h-4 w-4 rounded border-border"
-                      />
-                      <span>{WORK_POSTURE_LABELS[posture]}</span>
-                    </label>
-                  );
-                })}
-              </div>
-            </fieldset>
+              {/* Tư thế làm việc */}
+              <fieldset className="space-y-2">
+                <legend className="text-sm font-medium text-foreground">
+                  Tư thế làm việc
+                </legend>
+                <div className="flex flex-wrap gap-3">
+                  {RECRUITMENT_POST_WORK_POSTURES.map((posture) => {
+                    const checked = draft.workPostures.includes(posture);
+                    return (
+                      <label
+                        key={posture}
+                        className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-border bg-surface-muted/30 px-3 py-2 text-sm text-foreground cursor-pointer"
+                      >
+                        <input
+                          type="checkbox"
+                          data-testid={`recruitment-post-posture-${posture}`}
+                          disabled={formLocked}
+                          checked={checked}
+                          onChange={() =>
+                            setDraft((prev) =>
+                              toggleRecruitmentPostWorkPosture(prev, posture),
+                            )
+                          }
+                          className="h-4 w-4 rounded border-border"
+                        />
+                        <span>{WORK_POSTURE_LABELS[posture]}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </fieldset>
 
-            {/* Ca làm việc */}
-            <div className="space-y-1.5">
-              <label
-                htmlFor="recruitment-post-field-shift-pattern"
-                className="block text-sm font-medium text-foreground"
-              >
-                Ca làm việc <span className="text-danger">*</span>
-              </label>
-              <select
-                id="recruitment-post-field-shift-pattern"
-                data-testid="recruitment-post-select-shift-pattern"
-                disabled={formLocked}
-                value={draft.shiftPattern}
-                onChange={(event) =>
-                  setDraft((prev) => ({
-                    ...prev,
-                    shiftPattern:
-                      event.target.value as RecruitmentPostShiftPattern,
-                  }))
-                }
-                className={INPUT_CLASS}
-              >
-                {RECRUITMENT_POST_SHIFT_PATTERNS.map((pattern) => (
-                  <option key={pattern} value={pattern}>
-                    {SHIFT_PATTERN_LABELS[pattern]}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* Chi tiết ca / giờ làm việc */}
-            <div className="space-y-1.5">
-              <label
-                htmlFor="recruitment-post-field-shift-details"
-                className="block text-sm font-medium text-foreground"
-              >
-                Chi tiết ca / giờ làm việc{" "}
-                {draft.shiftPattern === "OTHER" ? (
-                  <span className="text-danger">*</span>
+              {/* Hình thức tuyển dụng */}
+              <fieldset className="space-y-2">
+                <legend className="text-sm font-medium text-foreground">
+                  Hình thức tuyển dụng <span className="text-danger">*</span>
+                </legend>
+                <div className="flex flex-wrap gap-3">
+                  {selectableLaborTypes.map((lt) => {
+                    const checked = draft.laborTypeKeys.includes(
+                      lt.labor_type_key,
+                    );
+                    return (
+                      <label
+                        key={lt.labor_type_key}
+                        className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-border bg-surface-muted/30 px-3 py-2 text-sm text-foreground cursor-pointer"
+                      >
+                        <input
+                          type="checkbox"
+                          data-testid={`recruitment-post-labor-type-${lt.labor_type_key}`}
+                          disabled={formLocked}
+                          checked={checked}
+                          onChange={() =>
+                            setDraft((prev) =>
+                              toggleRecruitmentPostLaborTypeKey(
+                                prev,
+                                lt.labor_type_key,
+                              ),
+                            )
+                          }
+                          className="h-4 w-4 rounded border-border"
+                        />
+                        <span>
+                          {lt.display_name}
+                          {!lt.active ? " (Lịch sử)" : ""}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+                {fieldErrors.laborTypeKeys ? (
+                  <p className="text-xs text-danger">
+                    {fieldErrors.laborTypeKeys}
+                  </p>
                 ) : null}
-              </label>
-              <input
-                id="recruitment-post-field-shift-details"
-                type="text"
-                data-testid="recruitment-post-input-shift-details"
-                readOnly={permissionRevokedReadOnly}
-                disabled={formLocked && !permissionRevokedReadOnly}
-                value={draft.shiftDetails}
-                onChange={(event) =>
-                  setDraft((prev) => ({
-                    ...prev,
-                    shiftDetails: event.target.value,
-                  }))
-                }
-                aria-invalid={Boolean(fieldErrors.shiftDetails)}
-                placeholder="Ví dụ: Ca ngày 08:00 - 20:00, Ca đêm 20:00 - 08:00"
-                className={INPUT_CLASS}
-              />
-              {fieldErrors.shiftDetails ? (
-                <p className="text-xs text-danger">{fieldErrors.shiftDetails}</p>
-              ) : null}
+              </fieldset>
             </div>
 
-            {/* Số điện thoại người phụ trách */}
-            <div className="space-y-1.5">
-              <label
-                htmlFor="recruitment-post-field-manager-phone"
-                className="block text-sm font-medium text-foreground"
-              >
-                Số điện thoại người phụ trách{" "}
-                <span className="text-danger">*</span>
-              </label>
-              <input
-                id="recruitment-post-field-manager-phone"
-                type="tel"
-                data-testid="recruitment-post-input-manager-phone"
-                readOnly={permissionRevokedReadOnly}
-                disabled={formLocked && !permissionRevokedReadOnly}
-                value={draft.managerPhone}
-                onChange={(event) =>
-                  setDraft((prev) => ({
-                    ...prev,
-                    managerPhone: event.target.value,
-                  }))
-                }
-                aria-invalid={Boolean(fieldErrors.managerPhone)}
-                placeholder="Ví dụ: 0912345678"
-                className={NUMBER_INPUT_CLASS}
-              />
-              {fieldErrors.managerPhone ? (
-                <p className="text-xs text-danger">{fieldErrors.managerPhone}</p>
-              ) : null}
-            </div>
-
-            {/* Hình thức tuyển dụng */}
-            <fieldset className="space-y-2 sm:col-span-2">
-              <legend className="text-sm font-medium text-foreground">
-                Hình thức tuyển dụng <span className="text-danger">*</span>
-              </legend>
-              <div className="flex flex-wrap gap-3">
-                {selectableLaborTypes.map((lt) => {
-                  const checked = draft.laborTypeKeys.includes(
-                    lt.labor_type_key,
-                  );
-                  return (
-                    <label
-                      key={lt.labor_type_key}
-                      className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-border bg-surface-muted/30 px-3 py-2 text-sm text-foreground cursor-pointer"
-                    >
-                      <input
-                        type="checkbox"
-                        data-testid={`recruitment-post-labor-type-${lt.labor_type_key}`}
-                        disabled={formLocked}
-                        checked={checked}
-                        onChange={() =>
-                          setDraft((prev) =>
-                            toggleRecruitmentPostLaborTypeKey(
-                              prev,
-                              lt.labor_type_key,
-                            ),
-                          )
-                        }
-                        className="h-4 w-4 rounded border-border"
-                      />
-                      <span>
-                        {lt.display_name}
-                        {!lt.active ? " (Lịch sử)" : ""}
-                      </span>
-                    </label>
-                  );
-                })}
+            {/* Hàng 3 trường: Ca làm việc, Chi tiết ca / giờ làm việc, Số điện thoại người phụ trách */}
+            <div
+              data-testid="recruitment-post-shift-contact-row"
+              className="grid grid-cols-1 gap-4 sm:col-span-2 sm:grid-cols-2 lg:grid-cols-3"
+            >
+              {/* Ca làm việc */}
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="recruitment-post-field-shift-pattern"
+                  className="block text-sm font-medium text-foreground"
+                >
+                  Ca làm việc <span className="text-danger">*</span>
+                </label>
+                <select
+                  id="recruitment-post-field-shift-pattern"
+                  data-testid="recruitment-post-select-shift-pattern"
+                  disabled={formLocked}
+                  value={draft.shiftPattern}
+                  onChange={(event) =>
+                    setDraft((prev) => ({
+                      ...prev,
+                      shiftPattern:
+                        event.target.value as RecruitmentPostShiftPattern,
+                    }))
+                  }
+                  className={INPUT_CLASS}
+                >
+                  {RECRUITMENT_POST_SHIFT_PATTERNS.map((pattern) => (
+                    <option key={pattern} value={pattern}>
+                      {SHIFT_PATTERN_LABELS[pattern]}
+                    </option>
+                  ))}
+                </select>
               </div>
-              {fieldErrors.laborTypeKeys ? (
-                <p className="text-xs text-danger">
-                  {fieldErrors.laborTypeKeys}
-                </p>
-              ) : null}
-            </fieldset>
+
+              {/* Chi tiết ca / giờ làm việc */}
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="recruitment-post-field-shift-details"
+                  className="block text-sm font-medium text-foreground"
+                >
+                  Chi tiết ca / giờ làm việc{" "}
+                  {draft.shiftPattern === "OTHER" ? (
+                    <span className="text-danger">*</span>
+                  ) : null}
+                </label>
+                <input
+                  id="recruitment-post-field-shift-details"
+                  type="text"
+                  data-testid="recruitment-post-input-shift-details"
+                  readOnly={permissionRevokedReadOnly}
+                  disabled={formLocked && !permissionRevokedReadOnly}
+                  value={draft.shiftDetails}
+                  onChange={(event) =>
+                    setDraft((prev) => ({
+                      ...prev,
+                      shiftDetails: event.target.value,
+                    }))
+                  }
+                  aria-invalid={Boolean(fieldErrors.shiftDetails)}
+                  placeholder="Ví dụ: Ca ngày 08:00 - 20:00, Ca đêm 20:00 - 08:00"
+                  className={INPUT_CLASS}
+                />
+                {fieldErrors.shiftDetails ? (
+                  <p className="text-xs text-danger">
+                    {fieldErrors.shiftDetails}
+                  </p>
+                ) : null}
+              </div>
+
+              {/* Số điện thoại người phụ trách */}
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="recruitment-post-field-manager-phone"
+                  className="block text-sm font-medium text-foreground"
+                >
+                  Số điện thoại người phụ trách{" "}
+                  <span className="text-danger">*</span>
+                </label>
+                <input
+                  id="recruitment-post-field-manager-phone"
+                  type="tel"
+                  data-testid="recruitment-post-input-manager-phone"
+                  readOnly={permissionRevokedReadOnly}
+                  disabled={formLocked && !permissionRevokedReadOnly}
+                  value={draft.managerPhone}
+                  onChange={(event) =>
+                    setDraft((prev) => ({
+                      ...prev,
+                      managerPhone: event.target.value,
+                    }))
+                  }
+                  aria-invalid={Boolean(fieldErrors.managerPhone)}
+                  placeholder="Ví dụ: 0912345678"
+                  className={NUMBER_INPUT_CLASS}
+                />
+                {fieldErrors.managerPhone ? (
+                  <p className="text-xs text-danger">
+                    {fieldErrors.managerPhone}
+                  </p>
+                ) : null}
+              </div>
+            </div>
 
             {/* Số lượng dự kiến */}
             <div className="space-y-1.5">

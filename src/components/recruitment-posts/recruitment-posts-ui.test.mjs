@@ -1040,8 +1040,18 @@ describe("Phase 3 — Recruitment Posts UI & Architecture Gate", () => {
       ],
       labor_types: [
         {
+          labor_type_key: "THOI_VU",
+          display_name: "Thời vụ",
+          active: true,
+        },
+        {
           labor_type_key: "CHINH_THUC",
           display_name: "Chính thức",
+          active: true,
+        },
+        {
+          labor_type_key: "GIA_CONG",
+          display_name: "Gia công",
           active: true,
         },
       ],
@@ -1097,6 +1107,117 @@ describe("Phase 3 — Recruitment Posts UI & Architecture Gate", () => {
     );
     assert.match(createHtml, /data-testid="recruitment-post-select-project"/);
     assert.match(createHtml, /data-testid="recruitment-post-select-park"/);
+
+    // Consecutive checkbox cluster (Môi trường làm việc -> Tư thế làm việc -> Hình thức tuyển dụng)
+    assert.match(
+      createHtml,
+      /data-testid="recruitment-post-checkbox-cluster"[^>]*class="[^"]*lg:flex-row[^"]*lg:flex-wrap[^"]*"/,
+    );
+    assert.match(createHtml, /data-testid="recruitment-post-env-CLEAN_ROOM"/);
+    assert.match(createHtml, /data-testid="recruitment-post-env-NORMAL_ROOM"/);
+    assert.match(createHtml, /data-testid="recruitment-post-env-SEMI_CLEAN_ROOM"/);
+    assert.match(createHtml, /data-testid="recruitment-post-posture-STANDING"/);
+    assert.match(createHtml, /data-testid="recruitment-post-posture-SITTING"/);
+    assert.match(
+      createHtml,
+      /data-testid="recruitment-post-labor-type-THOI_VU"/,
+    );
+    assert.match(
+      createHtml,
+      /data-testid="recruitment-post-labor-type-CHINH_THUC"/,
+    );
+    assert.match(
+      createHtml,
+      /data-testid="recruitment-post-labor-type-GIA_CONG"/,
+    );
+
+    // 3-column desktop row immediately after checkbox cluster: Ca làm việc * -> Chi tiết ca / giờ làm việc -> Số điện thoại người phụ trách *
+    assert.match(
+      createHtml,
+      /data-testid="recruitment-post-shift-contact-row"[^>]*class="[^"]*lg:grid-cols-3[^"]*"/,
+    );
+    const clusterPos = createHtml.indexOf(
+      'data-testid="recruitment-post-checkbox-cluster"',
+    );
+    const envPos = createHtml.indexOf(
+      'data-testid="recruitment-post-env-CLEAN_ROOM"',
+    );
+    const posturePos = createHtml.indexOf(
+      'data-testid="recruitment-post-posture-STANDING"',
+    );
+    const laborPos = createHtml.indexOf(
+      'data-testid="recruitment-post-labor-type-THOI_VU"',
+    );
+    const shiftContactRowPos = createHtml.indexOf(
+      'data-testid="recruitment-post-shift-contact-row"',
+    );
+    const shiftPatternPos = createHtml.indexOf(
+      'data-testid="recruitment-post-select-shift-pattern"',
+    );
+    const shiftDetailsPos = createHtml.indexOf(
+      'data-testid="recruitment-post-input-shift-details"',
+    );
+    const managerPhonePos = createHtml.indexOf(
+      'data-testid="recruitment-post-input-manager-phone"',
+    );
+    const headcountPos = createHtml.indexOf(
+      'data-testid="recruitment-post-input-headcount"',
+    );
+
+    assert.ok(clusterPos > 0 && envPos > clusterPos);
+    assert.ok(posturePos > envPos);
+    assert.ok(laborPos > posturePos);
+    assert.ok(
+      shiftContactRowPos > laborPos,
+      "shift-contact row must come immediately after checkbox cluster",
+    );
+    assert.ok(shiftPatternPos > shiftContactRowPos);
+    assert.ok(
+      shiftDetailsPos > shiftPatternPos,
+      "shift_details must follow shift_pattern",
+    );
+    assert.ok(
+      managerPhonePos > shiftDetailsPos,
+      "manager_phone must follow shift_details",
+    );
+    assert.ok(
+      headcountPos > managerPhonePos,
+      "expected_headcount must follow the 3-field shift & contact row",
+    );
+
+    // Verify shift_details required marker & fieldErrors for laborTypeKeys, shiftDetails, managerPhone remain intact
+    const validationCreateHtml = renderToStaticMarkup(
+      createElement(RecruitmentPostForm, {
+        mode: "create",
+        actorDisplayName: "Trần Thị PM",
+        initialStateForTest: {
+          initialLoading: false,
+          context: sampleContext,
+          draft: {
+            ...createDraft,
+            shiftPattern: "OTHER",
+          },
+          fieldErrors: {
+            laborTypeKeys: "Vui lòng chọn ít nhất một Hình thức tuyển dụng.",
+            shiftDetails: "Vui lòng nhập Chi tiết ca / giờ làm việc.",
+            managerPhone: "Vui lòng nhập Số điện thoại người phụ trách.",
+          },
+        },
+      }),
+    );
+    assert.match(
+      validationCreateHtml,
+      /Vui lòng chọn ít nhất một Hình thức tuyển dụng\./,
+    );
+    assert.match(
+      validationCreateHtml,
+      /Vui lòng nhập Chi tiết ca \/ giờ làm việc\./,
+    );
+    assert.match(
+      validationCreateHtml,
+      /Vui lòng nhập Số điện thoại người phụ trách\./,
+    );
+
     assert.doesNotMatch(
       createHtml,
       /data-testid="recruitment-post-input-manager-name"/,
