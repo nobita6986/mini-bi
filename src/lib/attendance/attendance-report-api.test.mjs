@@ -201,9 +201,19 @@ test("Attendance Report navigation, Admin shell, and page-gate matrix enforces A
   const workerEditHistorySection = allSections.filter(({ id }) => id === "worker-edit-history");
   const allSectionsWithoutWorkerHistory = allSections.filter(({ id }) => id !== "worker-edit-history");
   const catalogSections = allSectionsWithoutWorkerHistory.filter(
-    ({ id }) => !["departments", "accounts", "project-team-scopes", "attendance"].includes(id),
+    ({ id }) =>
+      ![
+        "departments",
+        "accounts",
+        "project-team-scopes",
+        "provinces",
+        "industrial-parks",
+        "attendance",
+      ].includes(id),
   );
-  const attendanceOnlySection = allSections.filter(({ id }) => id === "attendance");
+  const bodSections = allSections.filter(({ id }) =>
+    ["provinces", "industrial-parks", "attendance"].includes(id),
+  );
 
   const matrix = [
     {
@@ -234,7 +244,7 @@ test("Attendance Report navigation, Admin shell, and page-gate matrix enforces A
       adminShellAllowed: true,
       personnelAllowed: false,
       accountsAllowed: false,
-      expectedSections: attendanceOnlySection,
+      expectedSections: bodSections,
     },
     {
       name: "BoD via report_analytics_view + report_view (@ all)",
@@ -244,7 +254,7 @@ test("Attendance Report navigation, Admin shell, and page-gate matrix enforces A
       adminShellAllowed: true,
       personnelAllowed: false,
       accountsAllowed: false,
-      expectedSections: attendanceOnlySection,
+      expectedSections: bodSections,
     },
     {
       name: "Aggregate-only viewer (report_analytics_view @ all without report_view)",
