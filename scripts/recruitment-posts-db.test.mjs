@@ -15,6 +15,8 @@ import {
   projectRecruitmentPostMutation,
 } from "../src/lib/recruitment-posts/contract.ts";
 import {
+  RECRUITMENT_POST_LIST_MINE_MIGRATION_NAME,
+  RECRUITMENT_POST_LIST_MINE_RPC_SIGNATURES,
   RECRUITMENT_POSTS_MIGRATION_NAME,
   RECRUITMENT_POSTS_RPC_SIGNATURES,
   migrationSqlForTransaction,
@@ -142,6 +144,13 @@ const RPC_PARAMS = {
     "p_labor_type_key",
     "p_updated_from",
     "p_updated_to",
+    "p_cursor",
+    "p_snapshot_token",
+    "p_page_size",
+  ],
+  recruitment_post_list_mine: [
+    "p_auth_subject",
+    "p_app_user_id",
     "p_cursor",
     "p_snapshot_token",
     "p_page_size",
@@ -453,8 +462,9 @@ const PARK_BA_THIEN_2 = parksByCode.VP_BA_THIEN_2;
 const PARK_KHAI_QUANG = parksByCode.VP_KHAI_QUANG;
 const PARK_PHU_HA = parksByCode.PT_PHU_HA;
 
-test("T-ACL-01, T-ACL-02 & T-AUTH-13: 6 public RPCs are service_role-only, all 10 internal helpers are revoked from all roles including service_role, no pair unique index exists, and zero hard-coded emails exist in SQL definitions", async () => {
+test("T-ACL-01, T-ACL-02 & T-AUTH-13: 7 public RPCs are service_role-only, all 10 internal helpers are revoked from all roles including service_role, no pair unique index exists, and zero hard-coded emails exist in SQL definitions", async () => {
   assert.equal(RECRUITMENT_POSTS_RPC_SIGNATURES.length, 6);
+  assert.equal(RECRUITMENT_POST_LIST_MINE_RPC_SIGNATURES.length, 1);
 
   // Confirm pair unique index does NOT exist, while non-unique project published index DOES exist
   const { rows: idxRows } = await db.query(`
@@ -474,6 +484,11 @@ test("T-ACL-01, T-ACL-02 & T-AUTH-13: 6 public RPCs are service_role-only, all 1
     true,
     "Non-unique partial index on (project_id, brief_id) where status='PUBLISHED' must exist",
   );
+  assert.equal(
+    idxNames.includes("recruitment_project_briefs_creator_status_updated_idx"),
+    true,
+    "Index on (created_by_app_user_id, status, updated_at desc, brief_id desc) must exist",
+  );
 
   // T-AUTH-13: No '@' character or hard-coded email in any recruitment_post* function body
   const { rows: fnDefs } = await db.query(`
@@ -483,7 +498,7 @@ test("T-ACL-01, T-ACL-02 & T-AUTH-13: 6 public RPCs are service_role-only, all 1
      where n.nspname = 'public'
        and p.proname like 'recruitment_post%'
   `);
-  assert.equal(fnDefs.length, 16);
+  assert.equal(fnDefs.length, 17);
   for (const row of fnDefs) {
     assert.equal(
       row.fn_def.includes("@"),
@@ -599,6 +614,7 @@ test("T-AUTH-01..12 & T-PROJ-01: Authorization matrix for create, update, withdr
   for (const rpcName of [
     "recruitment_post_get_context",
     "recruitment_post_list",
+    "recruitment_post_list_mine",
     "recruitment_post_get",
     "recruitment_post_create",
     "recruitment_post_update",
@@ -1639,4 +1655,252 @@ test("T-FEED-01..08: Snapshot S1 + Keyset Cursor C1 pagination across 25 posts, 
   });
   assert.equal(err19Digits?.code, "22023");
   assert.equal(err19Digits?.message, "RECRUITMENT_POST_SNAPSHOT_INVALID");
+});
+
+test("T-MINE-01..07: recruitment_post_list_mine creator-only PUBLISHED + WITHDRAWN projection, former PM history retention, page_size=15 bounds, 15+5 snapshot pagination, and cross-tab token rejection", async () => {
+  // T-MINE-07: $self_check$ in 20261110150000_recruitment_post_list_mine.sql fails with 55000 if owned by NOBYPASSRLS role
+  const mineMigrationSql = await readFile(
+    path.join(MIGRATION_DIR, RECRUITMENT_POST_LIST_MINE_MIGRATION_NAME),
+    "utf8",
+  );
+  const mineSelfCheckMatch = mineMigrationSql.match(
+    /do \$self_check\$[\s\S]*?\$self_check\$;/,
+  );
+  assert.ok(mineSelfCheckMatch, "Expected $self_check$ block in list_mine migration");
+  let mineSelfCheckErr = null;
+  await db.exec("begin");
+  try {
+    await db.exec(
+      "alter function public.recruitment_post_list_mine(uuid, uuid, text, text, integer) owner to rp_nobypass_migrator",
+    );
+    await db.exec(mineSelfCheckMatch[0]);
+  } catch (err) {
+    mineSelfCheckErr = err;
+  } finally {
+    await db.exec("rollback");
+  }
+  assert.ok(mineSelfCheckErr);
+  assert.equal(mineSelfCheckErr.code, "55000");
+  assert.match(mineSelfCheckErr.message, /must bypass FORCE RLS/);
+
+  // T-MINE-04: Default page_size = 15 and bounds (1..15) on both recruitment_post_list and recruitment_post_list_mine
+  const { rows: defaultListRows } = await db.query(
+    "select public.recruitment_post_list($1::uuid, $2::uuid) as result",
+    [REGULAR_STAFF.auth, REGULAR_STAFF.app],
+  );
+  assert.equal(defaultListRows[0].result.page_size, 15);
+  assert.equal(defaultListRows[0].result.items.length, 15);
+
+  const { rows: defaultMineRows } = await db.query(
+    "select public.recruitment_post_list_mine($1::uuid, $2::uuid) as result",
+    [PM_A.auth, PM_A.app],
+  );
+  assert.equal(defaultMineRows[0].result.page_size, 15);
+  assert.ok(projectRecruitmentPostList(defaultMineRows[0].result) !== null);
+
+  for (const rpcName of ["recruitment_post_list", "recruitment_post_list_mine"]) {
+    for (const invalidSize of [0, 16, -1, null]) {
+      const errSize = await rpcError(db, rpcName, {
+        p_auth_subject: PM_A.auth,
+        p_app_user_id: PM_A.app,
+        p_page_size: invalidSize,
+      });
+      assert.equal(errSize?.code, "22023", `${rpcName} must reject page_size=${invalidSize}`);
+      assert.equal(errSize?.message, "RECRUITMENT_POST_INPUT_INVALID");
+    }
+  }
+
+  // T-MINE-01 & T-MINE-02: PM_A sees only posts where created_by_app_user_id = PM_A.app (both PUBLISHED and WITHDRAWN),
+  // never posts created by ADMIN_ALSO_PM or PM_B. Full Admin (NOBITA_ADMIN) with 0 created posts gets empty items.
+  const nobitaMine = await rpc(db, "recruitment_post_list_mine", {
+    p_auth_subject: NOBITA_ADMIN.auth,
+    p_app_user_id: NOBITA_ADMIN.app,
+    p_page_size: 15,
+  });
+  assert.deepEqual(nobitaMine.items, []);
+  assert.equal(nobitaMine.has_more, false);
+  assert.equal(nobitaMine.next_cursor, null);
+
+  const bodMine = await rpc(db, "recruitment_post_list_mine", {
+    p_auth_subject: LIENVU_BOD.auth,
+    p_app_user_id: LIENVU_BOD.app,
+    p_page_size: 15,
+  });
+  assert.deepEqual(bodMine.items, []);
+
+  // Ensure PM_B has at least 20 posts total (mix of PUBLISHED and WITHDRAWN) to test 15 + 5 pagination
+  const { rows: pmBCountRows } = await db.query(
+    "select count(*)::int as c from public.recruitment_project_briefs where created_by_app_user_id = $1::uuid",
+    [PM_B.app],
+  );
+  const existingPmBCount = pmBCountRows[0].c;
+  const neededFor20 = Math.max(0, 20 - existingPmBCount);
+  const createdForPmB = [];
+  for (let i = 0; i < neededFor20; i++) {
+    const created = await rpc(db, "recruitment_post_create", {
+      p_auth_subject: PM_B.auth,
+      p_app_user_id: PM_B.app,
+      p_payload: makeCreatePayload(
+        "PROJ_RP_B",
+        PARK_BA_THIEN_1.industrial_park_id,
+        {
+          general: {
+            customer_name: `Công ty Tin Của Tôi PM_B #${i + 1}`,
+            expected_headcount: 50 + i,
+          },
+        },
+      ),
+      p_idempotency_key: KEY(700 + i),
+    });
+    createdForPmB.push(created.post);
+  }
+  // Withdraw one of PM_B's newly created posts so PM_B has both PUBLISHED and WITHDRAWN
+  const targetWithdrawPost = createdForPmB[createdForPmB.length - 1];
+  await rpc(db, "recruitment_post_withdraw", {
+    p_auth_subject: PM_B.auth,
+    p_app_user_id: PM_B.app,
+    p_brief_id: targetWithdrawPost.brief_id,
+    p_expected_version: targetWithdrawPost.version,
+    p_idempotency_key: KEY(750),
+  });
+
+  // Paginate PM_B's 20 posts across page 1 (15 items) and page 2 (5 items)
+  const pmBPage1 = await rpc(db, "recruitment_post_list_mine", {
+    p_auth_subject: PM_B.auth,
+    p_app_user_id: PM_B.app,
+    p_page_size: 15,
+  });
+  assert.ok(projectRecruitmentPostList(pmBPage1) !== null);
+  assert.equal(pmBPage1.page_size, 15);
+  assert.equal(pmBPage1.items.length, 15);
+  assert.equal(pmBPage1.has_more, true);
+  assert.ok(pmBPage1.next_cursor);
+
+  // Concurrent mutation by PM_B after snapshot S1 is taken must not corrupt S1 pagination
+  await rpc(db, "recruitment_post_update", {
+    p_auth_subject: PM_B.auth,
+    p_app_user_id: PM_B.app,
+    p_brief_id: createdForPmB[0].brief_id,
+    p_expected_version: 1,
+    p_payload: makeBriefContent({
+      general: { customer_name: "Cập nhật sau snapshot S1" },
+    }),
+    p_idempotency_key: KEY(751),
+  });
+
+  const pmBPage2 = await rpc(db, "recruitment_post_list_mine", {
+    p_auth_subject: PM_B.auth,
+    p_app_user_id: PM_B.app,
+    p_snapshot_token: pmBPage1.snapshot_token,
+    p_cursor: pmBPage1.next_cursor,
+    p_page_size: 15,
+  });
+  assert.ok(projectRecruitmentPostList(pmBPage2) !== null);
+  assert.equal(pmBPage2.items.length, 5);
+  assert.equal(pmBPage2.has_more, false);
+  assert.equal(pmBPage2.next_cursor, null);
+
+  const allPmBMineItems = [...pmBPage1.items, ...pmBPage2.items];
+  const uniquePmBIds = new Set(allPmBMineItems.map((it) => it.brief_id));
+  assert.equal(uniquePmBIds.size, 20, "Zero duplicate or missing items across 15+5 pages");
+  assert.equal(
+    allPmBMineItems.some((it) => it.status === "WITHDRAWN"),
+    true,
+    "Mine list must include WITHDRAWN posts",
+  );
+  assert.equal(
+    allPmBMineItems.some((it) => it.status === "PUBLISHED"),
+    true,
+    "Mine list must include PUBLISHED posts",
+  );
+
+  // Verify every returned item actually belongs to PM_B in DB
+  const { rows: ownerCheckRows } = await db.query(
+    `select count(*)::int as wrong_owner
+       from public.recruitment_project_briefs
+      where brief_id = any($1::uuid[])
+        and created_by_app_user_id <> $2::uuid`,
+    [Array.from(uniquePmBIds), PM_B.app],
+  );
+  assert.equal(ownerCheckRows[0].wrong_owner, 0);
+
+  // Verify WITHDRAWN item has can_edit=false and can_withdraw=false
+  const withdrawnItemInMine = allPmBMineItems.find(
+    (it) => it.brief_id === targetWithdrawPost.brief_id,
+  );
+  assert.ok(withdrawnItemInMine);
+  assert.equal(withdrawnItemInMine.status, "WITHDRAWN");
+  assert.deepEqual(withdrawnItemInMine.allowed_actions, {
+    can_edit: false,
+    can_withdraw: false,
+  });
+
+  // T-MINE-03: Former PM whose assignment on PROJ_RP_B ended (can_create=false) still sees their created posts in recruitment_post_list_mine
+  await db.exec("begin");
+  try {
+    await db.query(
+      `update public.direct_entry_project_manager_assignments
+          set is_current = false,
+              valid_to = '2026-06-01'::date,
+              revoked_at = '2026-06-01T00:00:00Z'::timestamptz
+        where manager_recruiter_id = $1::uuid
+          and is_current = true`,
+      [PM_B.recruiter],
+    );
+    const formerPmCtx = await rpc(db, "recruitment_post_get_context", {
+      p_auth_subject: PM_B.auth,
+      p_app_user_id: PM_B.app,
+    });
+    assert.equal(formerPmCtx.can_create, false);
+
+    const formerPmMine = await rpc(db, "recruitment_post_list_mine", {
+      p_auth_subject: PM_B.auth,
+      p_app_user_id: PM_B.app,
+      p_page_size: 15,
+    });
+    assert.equal(formerPmMine.items.length, 15);
+    for (const item of formerPmMine.items) {
+      const expectedMutate = item.status === "PUBLISHED";
+      assert.deepEqual(
+        item.allowed_actions,
+        { can_edit: expectedMutate, can_withdraw: expectedMutate },
+        "Former PM must retain history in Tin của tôi with status-derived allowed_actions",
+      );
+    }
+  } finally {
+    await db.exec("rollback");
+  }
+
+  // T-MINE-06: Cross-tab and cross-actor snapshot/cursor tokens must fail with 22023 RECRUITMENT_POST_SNAPSHOT_INVALID
+  const pubFeedPage = await rpc(db, "recruitment_post_list", {
+    p_auth_subject: PM_B.auth,
+    p_app_user_id: PM_B.app,
+    p_page_size: 15,
+  });
+  const errPubTokenInMine = await rpcError(db, "recruitment_post_list_mine", {
+    p_auth_subject: PM_B.auth,
+    p_app_user_id: PM_B.app,
+    p_snapshot_token: pubFeedPage.snapshot_token,
+    p_page_size: 15,
+  });
+  assert.equal(errPubTokenInMine?.code, "22023");
+  assert.equal(errPubTokenInMine?.message, "RECRUITMENT_POST_SNAPSHOT_INVALID");
+
+  const errMineTokenInPub = await rpcError(db, "recruitment_post_list", {
+    p_auth_subject: PM_B.auth,
+    p_app_user_id: PM_B.app,
+    p_snapshot_token: pmBPage1.snapshot_token,
+    p_page_size: 15,
+  });
+  assert.equal(errMineTokenInPub?.code, "22023");
+  assert.equal(errMineTokenInPub?.message, "RECRUITMENT_POST_SNAPSHOT_INVALID");
+
+  const errCrossActorMineToken = await rpcError(db, "recruitment_post_list_mine", {
+    p_auth_subject: PM_A.auth,
+    p_app_user_id: PM_A.app,
+    p_snapshot_token: pmBPage1.snapshot_token,
+    p_page_size: 15,
+  });
+  assert.equal(errCrossActorMineToken?.code, "22023");
+  assert.equal(errCrossActorMineToken?.message, "RECRUITMENT_POST_SNAPSHOT_INVALID");
 });

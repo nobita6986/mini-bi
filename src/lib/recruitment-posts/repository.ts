@@ -7,6 +7,7 @@ import {
   projectRecruitmentPostMutation,
 } from "./contract.ts";
 import type {
+  ListMyRecruitmentPostsQuery,
   ListRecruitmentPostsQuery,
   RecruitmentPostContext,
   RecruitmentPostErrorCode,
@@ -38,6 +39,9 @@ export type RecruitmentPostRepository = {
   ): Promise<RecruitmentPostOutcome<RecruitmentPostContext>>;
   list(
     input: RecruitmentPostActorRef & ListRecruitmentPostsQuery,
+  ): Promise<RecruitmentPostOutcome<RecruitmentPostList>>;
+  listMine(
+    input: RecruitmentPostActorRef & ListMyRecruitmentPostsQuery,
   ): Promise<RecruitmentPostOutcome<RecruitmentPostList>>;
   get(
     input: RecruitmentPostActorRef & { brief_id: string },
@@ -186,6 +190,19 @@ export function createRecruitmentPostRepository(
           p_labor_type_key: input.labor_type_key,
           p_updated_from: input.updated_from,
           p_updated_to: input.updated_to,
+          p_cursor: input.cursor,
+          p_snapshot_token: input.snapshot_token,
+          p_page_size: input.page_size,
+        },
+        projectRecruitmentPostList,
+      );
+    },
+    listMine(input) {
+      return invoke(
+        "recruitment_post_list_mine",
+        {
+          p_auth_subject: input.auth_subject,
+          p_app_user_id: input.app_user_id,
           p_cursor: input.cursor,
           p_snapshot_token: input.snapshot_token,
           p_page_size: input.page_size,

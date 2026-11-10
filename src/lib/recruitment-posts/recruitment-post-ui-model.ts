@@ -160,6 +160,43 @@ export function decideRecruitmentPostsPageAccess(input: {
   return decideSessionPageAccess(input.actor);
 }
 
+export const RECRUITMENT_POST_FEED_TABS = ["published", "mine"] as const;
+
+export type RecruitmentPostFeedTab =
+  (typeof RECRUITMENT_POST_FEED_TABS)[number];
+
+export const RECRUITMENT_POST_FEED_TAB_LABELS: Readonly<
+  Record<RecruitmentPostFeedTab, string>
+> = Object.freeze({
+  published: "Tin đang tuyển",
+  mine: "Tin của tôi",
+});
+
+export const RECRUITMENT_POST_STATUS_BADGE_LABELS: Readonly<
+  Record<RecruitmentPostStatus, string>
+> = Object.freeze({
+  PUBLISHED: "Đang tuyển",
+  WITHDRAWN: "Đã rút",
+});
+
+export function parseRecruitmentPostFeedTab(
+  raw: string | readonly string[] | null | undefined,
+): RecruitmentPostFeedTab {
+  const candidate = Array.isArray(raw) ? raw[0] : raw;
+  if (typeof candidate === "string" && candidate.trim().toLowerCase() === "mine") {
+    return "mine";
+  }
+  return "published";
+}
+
+export function buildRecruitmentPostFeedTabHref(
+  tab: RecruitmentPostFeedTab,
+): string {
+  return tab === "mine"
+    ? "/recruitment-posts?tab=mine"
+    : "/recruitment-posts?tab=published";
+}
+
 export type RecruitmentPostAllowedActionsViewModel = {
   readonly canEdit: boolean;
   readonly canWithdraw: boolean;
@@ -187,6 +224,9 @@ export const EMPTY_RECRUITMENT_POST_FILTERS: RecruitmentPostFeedFilterState =
 export type RecruitmentPostCardViewModel = {
   readonly briefId: string;
   readonly version: number;
+  readonly status: RecruitmentPostStatus;
+  readonly statusBadgeLabel: string;
+  readonly projectId: string;
   readonly projectName: string;
   readonly customerNameDisplay: string;
   readonly provinceName: string;
@@ -497,10 +537,16 @@ export function toRecruitmentPostCardViewModel(
   const managerContactDisplay = `${managerNameDisplay} · ${managerPhoneDisplay}`;
   const updatedAtDisplay = formatRecruitmentPostTimestampVi(item.updated_at);
   const createdByAndUpdatedAtDisplay = `${createdByDisplayName} · ${updatedAtDisplay}`;
+  const isPublished = item.status === "PUBLISHED";
 
   return {
     briefId: item.brief_id,
     version: item.version,
+    status: item.status,
+    statusBadgeLabel:
+      RECRUITMENT_POST_STATUS_BADGE_LABELS[item.status] ??
+      (item.status === "WITHDRAWN" ? "Đã rút" : "Đang tuyển"),
+    projectId: item.project.project_id,
     projectName,
     customerNameDisplay,
     provinceName,
@@ -522,8 +568,8 @@ export function toRecruitmentPostCardViewModel(
     updatedAtDisplay,
     createdByAndUpdatedAtDisplay,
     allowedActions: {
-      canEdit: item.allowed_actions.can_edit,
-      canWithdraw: item.allowed_actions.can_withdraw,
+      canEdit: isPublished && item.allowed_actions.can_edit,
+      canWithdraw: isPublished && item.allowed_actions.can_withdraw,
     },
   };
 }
@@ -923,7 +969,7 @@ export function validateRecruitmentPostFeedFilters(
 
 /**
  * Builds the `GET /api/recruitment-posts` URL adhering strictly to `parseListRecruitmentPostsQuery`.
- * - Uses `page_size=10` (`DEFAULT_RECRUITMENT_POST_PAGE_SIZE`).
+ * - Uses `page_size=15` (`DEFAULT_RECRUITMENT_POST_PAGE_SIZE`).
  * - Includes both `snapshot_token` and `cursor` when loading subsequent batches.
  */
 export function buildRecruitmentPostListUrl(
@@ -962,6 +1008,82 @@ export function buildRecruitmentPostListUrl(
   }
 
   return `/api/recruitment-posts?${params.toString()}`;
+}
+
+/**
+ * Builds the `GET /api/recruitment-posts/mine` URL adhering strictly to `parseListMyRecruitmentPostsQuery`.
+ * - Uses `page_size=15` (`DEFAULT_RECRUITMENT_POST_PAGE_SIZE`).
+ * - Includes both `snapshot_token` and `cursor` when loading subsequent batches.
+ */
+export function buildRecruitmentPostMineListUrl(pagination?: {
+  cursor?: string | null;
+  snapshotToken?: string | null;
+  pageSize?: number;
+}): string {
+  const params = new URLSearchParams();
+  const pageSize = pagination?.pageSize ?? DEFAULT_RECRUITMENT_POST_PAGE_SIZE;
+  params.set("page_size", String(pageSize));
+
+  const cursor = pagination?.cursor?.trim() ?? "";
+  const snapshotToken = pagination?.snapshotToken?.trim() ?? "";
+  if (cursor !== "" && snapshotToken !== "") {
+    params.set("snapshot_token", snapshotToken);
+    params.set("cursor", cursor);
+  }
+
+  return `/api/recruitment-posts/mine?${params.toString()}`;
+}
+
+/**
+ * Updates feed items after a post is withdrawn:
+ * - In `published` (`Tin đang tuyển`), removes the withdrawn card from the feed.
+ * - In `mine` (`Tin của tôi`), keeps the card in-place and updates it with the `WITHDRAWN` projection.
+ */
+export function applyWithdrawnPostToFeedItems(
+  items: readonly RecruitmentPostItem[],
+  withdrawnPost: RecruitmentPostItem,
+  tab: RecruitmentPostFeedTab,
+): RecruitmentPostItem[] {
+  if (tab === "mine") {
+    return items.map((item) =>
+      item.brief_id === withdrawnPost.brief_id ? withdrawnPost : item,
+    );
+  }
+  return items.filter((item) => item.brief_id !== withdrawnPost.brief_id);
+}
+
+export function isSourceProjectManagedForRepost(
+  projectId: string,
+  managedProjects:
+    | ReadonlyArray<{ readonly project_id: string }>
+    | null
+    | undefined,
+): boolean {
+  const normalizedProjectId = projectId.trim();
+  if (!normalizedProjectId || !Array.isArray(managedProjects)) {
+    return false;
+  }
+  return managedProjects.some(
+    (project) => project.project_id === normalizedProjectId,
+  );
+}
+
+export function canRepostWithdrawnRecruitmentPost(input: {
+  readonly tab: RecruitmentPostFeedTab;
+  readonly status: RecruitmentPostStatus;
+  readonly projectId: string;
+  readonly managedProjects:
+    | ReadonlyArray<{ readonly project_id: string }>
+    | null
+    | undefined;
+}): boolean {
+  if (input.tab !== "mine" || input.status !== "WITHDRAWN") {
+    return false;
+  }
+  return isSourceProjectManagedForRepost(
+    input.projectId,
+    input.managedProjects,
+  );
 }
 
 /**
@@ -1059,6 +1181,97 @@ export function createEmptyRecruitmentPostDataState(): RecruitmentPostDataState 
     nextCursor: null,
     snapshotToken: null,
     hasMore: false,
+  };
+}
+
+/**
+ * Clears feed items, pagination tokens, and any open/selected detail state belonging to the
+ * previous feed or tab while preserving the loaded catalog `context` (if valid).
+ */
+export function clearRecruitmentPostFeedItemsPreservingContext(
+  prev: RecruitmentPostDataState,
+): RecruitmentPostDataState {
+  return {
+    ...prev,
+    items: [],
+    selectedDetail: null,
+    detailOpen: false,
+    detailBriefId: null,
+    detailError: null,
+    nextCursor: null,
+    snapshotToken: null,
+    hasMore: false,
+  };
+}
+
+export type RecruitmentPostListOutcome =
+  | {
+      readonly kind: "ok";
+      readonly list: RecruitmentPostList;
+    }
+  | {
+      readonly kind: "access_loss";
+      readonly accessLoss: RecruitmentPostAccessLossKind;
+    }
+  | {
+      readonly kind: "error";
+      readonly code: string;
+      readonly message: string;
+    };
+
+export function resolveRecruitmentPostListOutcome(input: {
+  readonly status: number;
+  readonly payload: unknown;
+}): RecruitmentPostListOutcome {
+  const errorCode = extractRecruitmentPostErrorCode(input.payload);
+  const accessLoss = classifyRecruitmentPostAccessLoss(input.status, errorCode);
+  if (accessLoss) {
+    return {
+      kind: "access_loss",
+      accessLoss,
+    };
+  }
+
+  if (input.status < 200 || input.status >= 300) {
+    const resolvedCode = errorCode ?? "RECRUITMENT_POST_UNAVAILABLE";
+    return {
+      kind: "error",
+      code: resolvedCode,
+      message: recruitmentPostErrorMessage(resolvedCode),
+    };
+  }
+
+  const parsedList = parseRecruitmentPostListEnvelope(input.payload);
+  if (!parsedList) {
+    return {
+      kind: "error",
+      code: "RECRUITMENT_POST_UNAVAILABLE",
+      message: recruitmentPostErrorMessage("RECRUITMENT_POST_UNAVAILABLE"),
+    };
+  }
+
+  return {
+    kind: "ok",
+    list: parsedList,
+  };
+}
+
+export function applyRecruitmentPostFirstPageOutcome(
+  prev: RecruitmentPostDataState,
+  outcome: RecruitmentPostListOutcome,
+): RecruitmentPostDataState {
+  if (outcome.kind === "access_loss") {
+    return createEmptyRecruitmentPostDataState();
+  }
+  if (outcome.kind === "error") {
+    return clearRecruitmentPostFeedItemsPreservingContext(prev);
+  }
+  return {
+    ...clearRecruitmentPostFeedItemsPreservingContext(prev),
+    items: mergeUniqueRecruitmentPostItems([], outcome.list.items),
+    nextCursor: outcome.list.next_cursor,
+    snapshotToken: outcome.list.snapshot_token,
+    hasMore: outcome.list.has_more && outcome.list.next_cursor !== null,
   };
 }
 
@@ -1445,6 +1658,98 @@ export type WithdrawRecruitmentPostRequestBody = {
   readonly expected_version: number;
 };
 
+export const RECRUITMENT_POST_REPOST_BANNER_TEXT =
+  "Đang tạo tin mới từ một tin đã rút";
+
+export const RECRUITMENT_POST_REPOST_UNMANAGED_PROJECT_MESSAGE =
+  "Bạn không còn phụ trách dự án của tin tuyển dụng này nên không còn quyền đăng lại.";
+
+export const RECRUITMENT_POST_UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function isValidRecruitmentPostUuid(
+  value: string | null | undefined,
+): boolean {
+  if (typeof value !== "string") return false;
+  return RECRUITMENT_POST_UUID_PATTERN.test(value.trim());
+}
+
+export type RecruitmentPostCopyFromOutcome =
+  | {
+      readonly kind: "ok";
+      readonly post: RecruitmentPostItem;
+    }
+  | {
+      readonly kind: "access_loss";
+      readonly accessLoss: RecruitmentPostAccessLossKind;
+    }
+  | {
+      readonly kind: "invalid_source";
+      readonly code: string;
+      readonly message: string;
+    };
+
+export function resolveRecruitmentPostCopyFromOutcome(input: {
+  readonly status: number;
+  readonly payload: unknown;
+  readonly context?: RecruitmentPostContext | null;
+}): RecruitmentPostCopyFromOutcome {
+  const errorCode = extractRecruitmentPostErrorCode(input.payload);
+  const accessLoss = classifyRecruitmentPostAccessLoss(input.status, errorCode);
+  if (accessLoss) {
+    return {
+      kind: "access_loss",
+      accessLoss,
+    };
+  }
+
+  if (input.status < 200 || input.status >= 300) {
+    const resolvedCode = errorCode ?? "RECRUITMENT_POST_NOT_FOUND";
+    return {
+      kind: "invalid_source",
+      code: resolvedCode,
+      message:
+        "Không thể sao chép tin tuyển dụng này. Chỉ có thể đăng lại từ một tin đã rút hợp lệ.",
+    };
+  }
+
+  const parsedDetail = parseRecruitmentPostDetailEnvelope(input.payload);
+  if (!parsedDetail) {
+    return {
+      kind: "invalid_source",
+      code: "RECRUITMENT_POST_UNAVAILABLE",
+      message: recruitmentPostErrorMessage("RECRUITMENT_POST_UNAVAILABLE"),
+    };
+  }
+
+  if (parsedDetail.post.status !== "WITHDRAWN") {
+    return {
+      kind: "invalid_source",
+      code: "RECRUITMENT_POST_COPY_SOURCE_NOT_WITHDRAWN",
+      message: "Chỉ có thể đăng lại từ tin tuyển dụng ở trạng thái Đã rút.",
+    };
+  }
+
+  if (
+    input.context !== undefined &&
+    !isSourceProjectManagedForRepost(
+      parsedDetail.post.project.project_id,
+      input.context?.managed_projects,
+    )
+  ) {
+    return {
+      kind: "invalid_source",
+      code: "RECRUITMENT_POST_REPOST_PROJECT_NOT_MANAGED",
+      message: RECRUITMENT_POST_REPOST_UNMANAGED_PROJECT_MESSAGE,
+    };
+  }
+
+  return {
+    kind: "ok",
+    post: parsedDetail.post,
+  };
+}
+
 export type RecruitmentPostFormDraftState = {
   readonly mode: RecruitmentPostFormMode;
   readonly expectedVersion: number;
@@ -1455,6 +1760,15 @@ export type RecruitmentPostFormDraftState = {
   readonly lockedProvinceDisplayName: string;
   readonly lockedManagerName?: string;
   readonly lockedHistoricalLaborTypes: ReadonlyArray<{
+    readonly labor_type_key: string;
+    readonly display_name: string;
+  }>;
+  readonly repostFromBriefId?: string;
+  readonly repostSourceProjectId?: string;
+  readonly repostSourceProjectDisplayName?: string;
+  readonly repostSourceIndustrialParkId?: string;
+  readonly repostSourceIndustrialParkDisplayName?: string;
+  readonly repostSourceLaborTypes?: ReadonlyArray<{
     readonly labor_type_key: string;
     readonly display_name: string;
   }>;
@@ -1694,6 +2008,244 @@ export function createEditRecruitmentPostFormDraftFromItem(
 }
 
 /**
+ * Pure helper to build a `mode="create"` form draft from a `WITHDRAWN` `RecruitmentPostItem`.
+ * - Copies all 4 sections of content.
+ * - Never copies `brief_id`, `version` (resets to 1), `status`, timestamps, old creator/updater/withdrawer,
+ *   `allowed_actions`, old `Idempotency-Key`, or historical `general.manager_name`.
+ * - Uses `actorDisplayName` for `managerName` / `lockedManagerName`.
+ * - When `context` is provided:
+ *   - Copies `projectId` only if `item.project.project_id` is in `context.managed_projects` (otherwise sets `""`
+ *     so the user cannot auto-repost into an unmanaged project and must select an active managed project).
+ *   - Copies `industrialParkId` only if both the park and its province are `active` in `context` (otherwise sets `""`
+ *     so the user must select an active industrial park).
+ */
+export function createCreateRecruitmentPostFormDraftFromItem(
+  item: RecruitmentPostItem,
+  options?: {
+    readonly actorDisplayName?: string;
+    readonly context?: RecruitmentPostContext | null;
+  },
+): RecruitmentPostFormDraftState {
+  const actorManagerName =
+    typeof options?.actorDisplayName === "string"
+      ? options.actorDisplayName.trim()
+      : "";
+  const context = options?.context ?? null;
+
+  let projectId = item.project.project_id;
+  let industrialParkId = item.industrial_park.industrial_park_id;
+
+  if (context) {
+    const isManagedProject = context.managed_projects.some(
+      (project) => project.project_id === item.project.project_id,
+    );
+    projectId = isManagedProject ? item.project.project_id : "";
+
+    const activeParks = selectableIndustrialParksForCreate(
+      context.industrial_parks,
+      context.provinces,
+    );
+    const isActivePark = activeParks.some(
+      (park) =>
+        park.industrial_park_id.toLowerCase() ===
+        item.industrial_park.industrial_park_id.toLowerCase(),
+    );
+    industrialParkId = isActivePark
+      ? item.industrial_park.industrial_park_id
+      : "";
+  }
+
+  const repostSourceLaborTypes = item.general.labor_types.map((lt) => ({
+    labor_type_key: lt.labor_type_key,
+    display_name: lt.display_name,
+  }));
+
+  return {
+    mode: "create",
+    expectedVersion: 1,
+    projectId,
+    industrialParkId,
+    lockedProjectDisplayName: "",
+    lockedIndustrialParkDisplayName: "",
+    lockedProvinceDisplayName: "",
+    lockedManagerName: actorManagerName,
+    lockedHistoricalLaborTypes: [],
+    repostFromBriefId: item.brief_id,
+    repostSourceProjectId: item.project.project_id,
+    repostSourceProjectDisplayName: item.project.display_name,
+    repostSourceIndustrialParkId: item.industrial_park.industrial_park_id,
+    repostSourceIndustrialParkDisplayName: item.industrial_park.display_name,
+    repostSourceLaborTypes,
+    customerName: item.general.customer_name,
+    investmentOrigin: item.general.investment_origin ?? "",
+    manufacturingIndustry: item.general.manufacturing_industry ?? "",
+    jobDescription: item.general.job_description,
+    environmentTypes: [...item.general.environment_types],
+    workPostures: [...item.general.work_postures],
+    shiftPattern: item.general.shift_pattern,
+    shiftDetails: item.general.shift_details ?? "",
+    managerName: actorManagerName,
+    managerPhone: item.general.manager_phone,
+    laborTypeKeys: item.general.labor_types.map((lt) => lt.labor_type_key),
+    supplyScheduleText: item.general.supply_schedule_text ?? "",
+    expectedHeadcount:
+      item.general.expected_headcount !== null
+        ? String(item.general.expected_headcount)
+        : "",
+    ageMin:
+      item.candidate.age_min !== null ? String(item.candidate.age_min) : "",
+    ageMax:
+      item.candidate.age_max !== null ? String(item.candidate.age_max) : "",
+    genderRequirement: item.candidate.gender_requirement,
+    educationRequirement: item.candidate.education_requirement,
+    experienceRequired: item.candidate.experience_required,
+    experienceDetails: item.candidate.experience_details ?? "",
+    acceptFormerCustomerWorkers: item.candidate.accept_former_customer_workers,
+    entryAssessmentText: item.candidate.entry_assessment_text ?? "",
+    otherRequirementsText: item.candidate.other_requirements_text ?? "",
+    baseSalaryVnd: item.compensation.base_salary_vnd ?? "",
+    baseSalaryConditions: item.compensation.base_salary_conditions ?? "",
+    attendanceBonusVnd: item.compensation.attendance_bonus_vnd ?? "",
+    attendanceBonusConditions:
+      item.compensation.attendance_bonus_conditions ?? "",
+    livingAllowanceVnd: item.compensation.living_allowance_vnd ?? "",
+    livingAllowanceConditions:
+      item.compensation.living_allowance_conditions ?? "",
+    seniorityAllowanceVnd: item.compensation.seniority_allowance_vnd ?? "",
+    seniorityAllowanceConditions:
+      item.compensation.seniority_allowance_conditions ?? "",
+    eyesightAllowanceVnd: item.compensation.eyesight_allowance_vnd ?? "",
+    eyesightAllowanceConditions:
+      item.compensation.eyesight_allowance_conditions ?? "",
+    otherAllowanceText: item.compensation.other_allowance_text ?? "",
+    averageIncomeMinVnd: item.compensation.average_income_min_vnd ?? "",
+    averageIncomeMaxVnd: item.compensation.average_income_max_vnd ?? "",
+    salaryPaymentSchedule: item.compensation.salary_payment_schedule ?? "",
+    salaryAdvanceAvailable: item.compensation.salary_advance_available,
+    salaryAdvanceAmountVnd: item.compensation.salary_advance_amount_vnd ?? "",
+    salaryAdvanceSchedule: item.compensation.salary_advance_schedule ?? "",
+    weeklySalaryAvailable: item.compensation.weekly_salary_available,
+    weeklySalaryPaymentSchedule:
+      item.compensation.weekly_salary_payment_schedule ?? "",
+    dayShift8hVnd: item.compensation.day_shift_8h_vnd ?? "",
+    dayShift11hVnd: item.compensation.day_shift_11h_vnd ?? "",
+    nightShift8hVnd: item.compensation.night_shift_8h_vnd ?? "",
+    nightShift11hVnd: item.compensation.night_shift_11h_vnd ?? "",
+    sundayDay11hVnd: item.compensation.sunday_day_11h_vnd ?? "",
+    sundayNight11hVnd: item.compensation.sunday_night_11h_vnd ?? "",
+    holidayDay11hVnd: item.compensation.holiday_day_11h_vnd ?? "",
+    holidayNight11hVnd: item.compensation.holiday_night_11h_vnd ?? "",
+    ppeProvided: item.compensation.ppe_provided,
+    ppeDetails: item.compensation.ppe_details ?? "",
+    otherBenefits: item.compensation.other_benefits ?? "",
+    requireOriginalCccdAndCopy: item.documents.require_original_cccd_and_copy,
+    requireCertifiedResume: item.documents.require_certified_resume,
+    requireHealthCertificateWithin6Months:
+      item.documents.require_health_certificate_within_6_months,
+    requirePhoto3x4: item.documents.require_photo_3x4,
+    requireDegreeOrCertificate: item.documents.require_degree_or_certificate,
+    requireSocialInsuranceBook: item.documents.require_social_insurance_book,
+    requireOtherDocuments: item.documents.require_other_documents,
+    otherDocumentsText: item.documents.other_documents_text ?? "",
+  };
+}
+
+export type RepostDraftCompatibility = {
+  readonly isRepost: boolean;
+  readonly projectNotManaged: boolean;
+  readonly industrialParkInactive: boolean;
+  readonly inactiveLaborTypeKeys: readonly string[];
+  readonly warnings: readonly string[];
+};
+
+export function inspectRepostDraftCompatibility(
+  draft: RecruitmentPostFormDraftState,
+  context: RecruitmentPostContext | null,
+): RepostDraftCompatibility {
+  const isRepost =
+    draft.mode === "create" && Boolean(draft.repostFromBriefId);
+  if (!isRepost) {
+    return {
+      isRepost: false,
+      projectNotManaged: false,
+      industrialParkInactive: false,
+      inactiveLaborTypeKeys: [],
+      warnings: [],
+    };
+  }
+  if (!context) {
+    return {
+      isRepost: true,
+      projectNotManaged: true,
+      industrialParkInactive: false,
+      inactiveLaborTypeKeys: [],
+      warnings: [RECRUITMENT_POST_REPOST_UNMANAGED_PROJECT_MESSAGE],
+    };
+  }
+
+  const warnings: string[] = [];
+
+  const sourceProjectId = (
+    draft.repostSourceProjectId ?? draft.projectId
+  ).trim();
+  const sourceProjectManaged = isSourceProjectManagedForRepost(
+    sourceProjectId,
+    context.managed_projects,
+  );
+  const projectNotManaged = !sourceProjectManaged;
+  if (projectNotManaged) {
+    warnings.push(RECRUITMENT_POST_REPOST_UNMANAGED_PROJECT_MESSAGE);
+  }
+
+  const activeParks = selectableIndustrialParksForCreate(
+    context.industrial_parks,
+    context.provinces,
+  );
+  const sourceParkId = (draft.repostSourceIndustrialParkId ?? "")
+    .trim()
+    .toLowerCase();
+  const sourceParkActive =
+    sourceParkId === "" ||
+    activeParks.some(
+      (park) => park.industrial_park_id.toLowerCase() === sourceParkId,
+    );
+  const currentParkId = draft.industrialParkId.trim().toLowerCase();
+  const currentParkActive =
+    currentParkId !== "" &&
+    activeParks.some(
+      (park) => park.industrial_park_id.toLowerCase() === currentParkId,
+    );
+  const industrialParkInactive = !sourceParkActive && !currentParkActive;
+  if (industrialParkInactive) {
+    warnings.push(
+      "Khu công nghiệp hoặc Tỉnh/Thành của tin cũ đã ngừng hoạt động. Vui lòng chọn lại Khu công nghiệp đang hoạt động.",
+    );
+  }
+
+  const activeLaborTypeKeys = new Set(
+    context.labor_types
+      .filter((item) => item.active)
+      .map((item) => item.labor_type_key),
+  );
+  const inactiveLaborTypeKeys = draft.laborTypeKeys.filter(
+    (key) => !activeLaborTypeKeys.has(key),
+  );
+  if (inactiveLaborTypeKeys.length > 0) {
+    warnings.push(
+      "Một số hình thức tuyển dụng của tin cũ đã ngừng hoạt động. Vui lòng bỏ chọn mục ngừng hoạt động và chọn lại hình thức đang hoạt động.",
+    );
+  }
+
+  return {
+    isRepost: true,
+    projectNotManaged,
+    industrialParkInactive,
+    inactiveLaborTypeKeys,
+    warnings,
+  };
+}
+
+/**
  * When the user actively changes the Project dropdown in `mode="create"`,
  * updates `projectId` and defaults `customerName` to the selected project's `display_name`.
  * In `mode="edit"`, returns the draft unchanged.
@@ -1745,6 +2297,30 @@ export function applyCreateFormContextDefaults(
   }
   const normalizedActorName =
     typeof actorDisplayName === "string" ? actorDisplayName.trim() : "";
+  const nextManagerName = normalizedActorName || draft.managerName;
+
+  if (draft.repostFromBriefId) {
+    const isManagedProject = context.managed_projects.some(
+      (project) => project.project_id === draft.projectId.trim(),
+    );
+    const activeParks = selectableIndustrialParksForCreate(
+      context.industrial_parks,
+      context.provinces,
+    );
+    const isActivePark = activeParks.some(
+      (park) =>
+        park.industrial_park_id.toLowerCase() ===
+        draft.industrialParkId.trim().toLowerCase(),
+    );
+    return {
+      ...draft,
+      projectId: isManagedProject ? draft.projectId : "",
+      industrialParkId: isActivePark ? draft.industrialParkId : "",
+      managerName: nextManagerName,
+      lockedManagerName: nextManagerName,
+    };
+  }
+
   const singleManagedProject =
     !draft.projectId.trim() && context.managed_projects.length === 1
       ? context.managed_projects[0]
@@ -1757,7 +2333,6 @@ export function applyCreateFormContextDefaults(
     singleManagedProject && !draft.customerName.trim()
       ? singleManagedProject.display_name
       : draft.customerName;
-  const nextManagerName = normalizedActorName || draft.managerName;
 
   return {
     ...draft,
@@ -1904,12 +2479,22 @@ export function selectableLaborTypesForDraft(
   draft: RecruitmentPostFormDraftState,
 ): RecruitmentPostLaborTypeOption[] {
   const activeList = contextLaborTypes.filter((item) => item.active);
-  if (draft.mode !== "edit") {
+  const repostInactiveSource =
+    draft.mode === "create"
+      ? (draft.repostSourceLaborTypes ?? []).filter((hist) =>
+          draft.laborTypeKeys.includes(hist.labor_type_key),
+        )
+      : [];
+  if (draft.mode !== "edit" && repostInactiveSource.length === 0) {
     return activeList;
   }
   const seenKeys = new Set(activeList.map((item) => item.labor_type_key));
   const merged = [...activeList];
-  for (const hist of draft.lockedHistoricalLaborTypes) {
+  const historicalItems =
+    draft.mode === "edit"
+      ? draft.lockedHistoricalLaborTypes
+      : repostInactiveSource;
+  for (const hist of historicalItems) {
     if (!seenKeys.has(hist.labor_type_key)) {
       const fromCatalog = contextLaborTypes.find(
         (item) => item.labor_type_key === hist.labor_type_key,
@@ -2095,9 +2680,13 @@ function normalizeOptionalDraftVnd(
 
 export function validateAndBuildRecruitmentPostWritePayload(
   draft: RecruitmentPostFormDraftState,
-  options?: { readonly actorDisplayName?: string },
+  options?: {
+    readonly actorDisplayName?: string;
+    readonly context?: RecruitmentPostContext | null;
+  },
 ): BuiltRecruitmentPostWriteRequest {
   const fieldErrors: Record<string, string> = {};
+  const context = options?.context ?? null;
   const effectiveManagerName =
     draft.mode === "create" &&
     typeof options?.actorDisplayName === "string" &&
@@ -2110,11 +2699,43 @@ export function validateAndBuildRecruitmentPostWritePayload(
         : draft.managerName.trim() || "Người đăng tin";
 
   if (draft.mode === "create") {
-    if (!draft.projectId.trim()) {
-      fieldErrors.projectId = "Vui lòng chọn dự án bạn đang quản lý.";
+    const trimmedProjectId = draft.projectId.trim();
+    if (!trimmedProjectId) {
+      if (
+        draft.repostFromBriefId &&
+        context &&
+        draft.repostSourceProjectId &&
+        !context.managed_projects.some(
+          (p) => p.project_id === draft.repostSourceProjectId,
+        )
+      ) {
+        fieldErrors.projectId = RECRUITMENT_POST_REPOST_UNMANAGED_PROJECT_MESSAGE;
+      } else {
+        fieldErrors.projectId = "Vui lòng chọn dự án bạn đang quản lý.";
+      }
+    } else if (
+      context &&
+      !context.managed_projects.some((p) => p.project_id === trimmedProjectId)
+    ) {
+      fieldErrors.projectId = RECRUITMENT_POST_REPOST_UNMANAGED_PROJECT_MESSAGE;
     }
-    if (!draft.industrialParkId.trim()) {
+
+    const trimmedParkId = draft.industrialParkId.trim().toLowerCase();
+    if (!trimmedParkId) {
       fieldErrors.industrialParkId = "Vui lòng chọn Khu công nghiệp.";
+    } else if (context) {
+      const activeParks = selectableIndustrialParksForCreate(
+        context.industrial_parks,
+        context.provinces,
+      );
+      if (
+        !activeParks.some(
+          (park) => park.industrial_park_id.toLowerCase() === trimmedParkId,
+        )
+      ) {
+        fieldErrors.industrialParkId =
+          "Khu công nghiệp hoặc Tỉnh/Thành đã ngừng hoạt động. Vui lòng chọn lại Khu công nghiệp đang hoạt động.";
+      }
     }
   } else if (
     !Number.isSafeInteger(draft.expectedVersion) ||
@@ -2141,6 +2762,19 @@ export function validateAndBuildRecruitmentPostWritePayload(
   if (draft.laborTypeKeys.length === 0) {
     fieldErrors.laborTypeKeys =
       "Vui lòng chọn ít nhất một hình thức tuyển dụng.";
+  } else if (draft.mode === "create" && context) {
+    const activeLaborKeys = new Set(
+      context.labor_types
+        .filter((item) => item.active)
+        .map((item) => item.labor_type_key),
+    );
+    const hasInactiveLaborType = draft.laborTypeKeys.some(
+      (key) => !activeLaborKeys.has(key),
+    );
+    if (hasInactiveLaborType) {
+      fieldErrors.laborTypeKeys =
+        "Hình thức tuyển dụng có mục đã ngừng hoạt động. Vui lòng bỏ chọn mục ngừng hoạt động và chọn lại hình thức đang hoạt động.";
+    }
   }
 
   let expectedHeadcount: number | null = null;

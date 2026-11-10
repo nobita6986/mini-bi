@@ -1,10 +1,15 @@
 "use client";
 
 import Link from "next/link";
+import {
+  useRouter as readNextAppRouter,
+  useSearchParams,
+} from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { AccessDenied, AccountUnavailable } from "@/components/auth/access-denied";
 import { Button } from "@/components/ui/button";
+import { useNotify } from "@/components/ui/notify-provider";
 import { PageHeader, PageShell } from "@/components/ui/page-shell";
 import { StatusBanner } from "@/components/ui/status-banner";
 import {
@@ -14,14 +19,18 @@ import {
   RECRUITMENT_POST_EDUCATION_REQUIREMENTS,
   RECRUITMENT_POST_ENVIRONMENT_TYPES,
   RECRUITMENT_POST_GENDER_REQUIREMENTS,
+  RECRUITMENT_POST_REPOST_BANNER_TEXT,
+  RECRUITMENT_POST_REPOST_UNMANAGED_PROJECT_MESSAGE,
   RECRUITMENT_POST_SHIFT_PATTERNS,
   RECRUITMENT_POST_WORK_POSTURES,
   SHIFT_PATTERN_LABELS,
   WORK_POSTURE_LABELS,
   applyCreateFormContextDefaults,
   applyCreateFormProjectSelection,
+  buildRecruitmentPostFeedTabHref,
   buildRecruitmentPostPreSubmitSummary,
   classifyRecruitmentPostAccessLoss,
+  createCreateRecruitmentPostFormDraftFromItem,
   createEditRecruitmentPostFormDraftFromItem,
   createEmptyRecruitmentPostFormDraft,
   createLatestRequestTracker,
@@ -29,11 +38,14 @@ import {
   extractRecruitmentPostErrorCode,
   formatRecruitmentPostText,
   formatRecruitmentPostTimestampVi,
+  inspectRepostDraftCompatibility,
+  isValidRecruitmentPostUuid,
   newIdempotencyKey,
   normalizeRecruitmentPostVndInput,
   parseRecruitmentPostDetailEnvelope,
   recruitmentPostErrorMessage,
   resolveRecruitmentPostContextOutcome,
+  resolveRecruitmentPostCopyFromOutcome,
   resolveRecruitmentPostMutationOutcome,
   selectableIndustrialParksForCreate,
   selectableLaborTypesForDraft,
@@ -63,6 +75,14 @@ import {
   RecruitmentPostWithdrawDialog,
   type RecruitmentPostWithdrawTarget,
 } from "./recruitment-post-withdraw-dialog";
+
+function getOptionalAppRouter() {
+  try {
+    return readNextAppRouter();
+  } catch {
+    return null;
+  }
+}
 
 const INPUT_CLASS =
   "h-11 w-full rounded-lg border border-border bg-surface px-3 text-sm text-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/30 disabled:cursor-not-allowed disabled:bg-surface-muted/60 disabled:opacity-75 read-only:bg-surface-muted/50";
@@ -108,6 +128,8 @@ export type PendingFormMutationIntent =
 export type RecruitmentPostFormInitialTestState = {
   readonly context?: RecruitmentPostContext | null;
   readonly loadedPost?: RecruitmentPostItem | null;
+  readonly repostSourcePost?: RecruitmentPostItem | null;
+  readonly copyFromError?: string | null;
   readonly draft?: RecruitmentPostFormDraftState;
   readonly initialLoading?: boolean;
   readonly loadError?: string | null;
@@ -142,14 +164,38 @@ function VndFieldPreview({ rawValue, label }: { rawValue: string; label: string 
 export function RecruitmentPostForm({
   mode,
   briefId,
+  copyFromBriefId,
   actorDisplayName,
+  onNavigate,
   initialStateForTest,
 }: {
   mode: RecruitmentPostFormMode;
   briefId?: string;
+  copyFromBriefId?: string;
   actorDisplayName?: string;
+  onNavigate?: (href: string) => void;
   initialStateForTest?: RecruitmentPostFormInitialTestState;
 }) {
+  const router = getOptionalAppRouter();
+  const searchParams = useSearchParams();
+  const notify = useNotify();
+
+  const resolvedCopyFromParam = useMemo(() => {
+    if (mode !== "create") return "";
+    if (typeof copyFromBriefId === "string" && copyFromBriefId.trim().length > 0) {
+      return copyFromBriefId.trim();
+    }
+    const fromQuery = searchParams?.get("copy_from");
+    return typeof fromQuery === "string" ? fromQuery.trim() : "";
+  }, [copyFromBriefId, mode, searchParams]);
+
+  const [activeCopyFromBriefId, setActiveCopyFromBriefId] = useState<string>(
+    () => resolvedCopyFromParam,
+  );
+  const [copyFromError, setCopyFromError] = useState<string | null>(
+    () => initialStateForTest?.copyFromError ?? null,
+  );
+
   const [context, setContext] = useState<RecruitmentPostContext | null>(
     () => initialStateForTest?.context ?? null,
   );
@@ -182,6 +228,15 @@ export function RecruitmentPostForm({
     if (mode === "edit" && initialStateForTest?.loadedPost) {
       return createEditRecruitmentPostFormDraftFromItem(
         initialStateForTest.loadedPost,
+      );
+    }
+    if (mode === "create" && initialStateForTest?.repostSourcePost) {
+      return createCreateRecruitmentPostFormDraftFromItem(
+        initialStateForTest.repostSourcePost,
+        {
+          actorDisplayName,
+          context: initialStateForTest.context ?? null,
+        },
       );
     }
     const emptyDraft = createEmptyRecruitmentPostFormDraft(mode, {
@@ -293,8 +348,14 @@ export function RecruitmentPostForm({
     setInitialLoading(true);
     setLoadError(null);
     setNotFoundError(false);
+    setCopyFromError(null);
 
     try {
+      const hasCopyFrom =
+        mode === "create" && activeCopyFromBriefId.trim().length > 0;
+      const copyFromUuidValid =
+        hasCopyFrom && isValidRecruitmentPostUuid(activeCopyFromBriefId);
+
       const contextPromise = fetch("/api/recruitment-posts/context", {
         method: "GET",
         cache: "no-store",
@@ -310,7 +371,17 @@ export function RecruitmentPostForm({
               credentials: "same-origin",
               signal: ticket.signal,
             })
-          : null;
+          : copyFromUuidValid
+            ? fetch(
+                `/api/recruitment-posts/${encodeURIComponent(activeCopyFromBriefId)}`,
+                {
+                  method: "GET",
+                  cache: "no-store",
+                  credentials: "same-origin",
+                  signal: ticket.signal,
+                },
+              )
+            : null;
 
       const [contextResponse, detailResponse] = await Promise.all([
         contextPromise,
@@ -389,6 +460,58 @@ export function RecruitmentPostForm({
         return;
       }
 
+      if (hasCopyFrom) {
+        if (!copyFromUuidValid || !detailResponse) {
+          setContext(contextOutcome.context);
+          setDraft(
+            createEmptyRecruitmentPostFormDraft("create", { actorDisplayName }),
+          );
+          setCopyFromError(
+            "Mã tin tuyển dụng cần sao chép không hợp lệ. Chỉ có thể đăng lại từ một tin đã rút hợp lệ.",
+          );
+          setInitialLoading(false);
+          setLoadError(null);
+          return;
+        }
+
+        const rawCopyPayload = await detailResponse.json().catch(() => null);
+        if (!ticket.isCurrent()) return;
+
+        const copyOutcome = resolveRecruitmentPostCopyFromOutcome({
+          status: detailResponse.status,
+          payload: rawCopyPayload,
+          context: contextOutcome.context,
+        });
+
+        if (copyOutcome.kind === "access_loss") {
+          handleAccessRevoked(copyOutcome.accessLoss);
+          return;
+        }
+
+        if (copyOutcome.kind === "invalid_source") {
+          setContext(contextOutcome.context);
+          setDraft(
+            createEmptyRecruitmentPostFormDraft("create", { actorDisplayName }),
+          );
+          setCopyFromError(copyOutcome.message);
+          setInitialLoading(false);
+          setLoadError(null);
+          return;
+        }
+
+        setContext(contextOutcome.context);
+        setCopyFromError(null);
+        setDraft(
+          createCreateRecruitmentPostFormDraftFromItem(copyOutcome.post, {
+            actorDisplayName,
+            context: contextOutcome.context,
+          }),
+        );
+        setInitialLoading(false);
+        setLoadError(null);
+        return;
+      }
+
       setContext(contextOutcome.context);
       setDraft((prev) =>
         applyCreateFormContextDefaults(
@@ -406,7 +529,7 @@ export function RecruitmentPostForm({
         recruitmentPostErrorMessage("RECRUITMENT_POST_UNAVAILABLE"),
       );
     }
-  }, [actorDisplayName, briefId, handleAccessRevoked, mode]);
+  }, [activeCopyFromBriefId, actorDisplayName, briefId, handleAccessRevoked, mode]);
 
   useEffect(() => {
     if (initialStateForTest) {
@@ -487,6 +610,19 @@ export function RecruitmentPostForm({
           setAmbiguousLockMessage(null);
           setStaleConflictMessage(null);
           setComparedServerPost(null);
+
+          if (intent.mode === "create") {
+            notify.success({
+              title: "Đã đăng tin tuyển dụng thành công.",
+            });
+            const targetHref = buildRecruitmentPostFeedTabHref("mine");
+            onNavigate?.(targetHref);
+            if (router) {
+              router.push(targetHref);
+            }
+            return;
+          }
+
           setSavedPost(outcome.result.post);
           setLoadedPost(outcome.result.post);
           setDraft(createEditRecruitmentPostFormDraftFromItem(outcome.result.post));
@@ -534,7 +670,7 @@ export function RecruitmentPostForm({
         );
       }
     },
-    [handleAccessRevoked],
+    [handleAccessRevoked, notify, onNavigate, router],
   );
 
   const handleSubmitForm = useCallback(
@@ -544,6 +680,7 @@ export function RecruitmentPostForm({
 
       const built = validateAndBuildRecruitmentPostWritePayload(draft, {
         actorDisplayName,
+        context,
       });
       if (!built.ok) {
         setFieldErrors(built.fieldErrors);
@@ -585,6 +722,7 @@ export function RecruitmentPostForm({
     [
       actorDisplayName,
       briefId,
+      context,
       draft,
       executeMutationIntent,
       formLocked,
@@ -705,6 +843,27 @@ export function RecruitmentPostForm({
       }),
     [context, draft, managedProjects],
   );
+
+  const repostCompatibility = useMemo(
+    () => inspectRepostDraftCompatibility(draft, context),
+    [context, draft],
+  );
+
+  const handleStartBlankFromCopyError = useCallback(() => {
+    setActiveCopyFromBriefId("");
+    setCopyFromError(null);
+    const blankDraft = createEmptyRecruitmentPostFormDraft("create", {
+      actorDisplayName,
+    });
+    setDraft(
+      context
+        ? applyCreateFormContextDefaults(blankDraft, context, actorDisplayName)
+        : blankDraft,
+    );
+    if (router) {
+      router.replace("/recruitment-posts/new", { scroll: false });
+    }
+  }, [actorDisplayName, context, router]);
 
   if (accessLoss === "ACCESS_DENIED") {
     return <AccessDenied />;
@@ -828,17 +987,78 @@ export function RecruitmentPostForm({
     );
   }
 
+  const canCreateAnyProject =
+    Boolean(context?.can_create) && (context?.managed_projects.length ?? 0) > 0;
+  const effectiveCopyFromError =
+    copyFromError ??
+    (mode === "create" && repostCompatibility.projectNotManaged
+      ? RECRUITMENT_POST_REPOST_UNMANAGED_PROJECT_MESSAGE
+      : null);
+
+  if (mode === "create" && effectiveCopyFromError) {
+    return (
+      <PageShell dataTestId="recruitment-post-copy-from-error">
+        <PageHeader
+          title="Tạo phiếu tuyển dụng"
+          actions={
+            <Link
+              href="/recruitment-posts?tab=mine"
+              data-testid="recruitment-post-copy-from-back-mine"
+              className="inline-flex min-h-11 h-10 items-center justify-center rounded-md border border-border bg-surface px-3.5 text-sm font-medium text-foreground hover:bg-surface-muted/70"
+            >
+              Quay lại Tin của tôi
+            </Link>
+          }
+        />
+        <StatusBanner
+          tone="error"
+          title="Không thể đăng lại tin tuyển dụng này"
+          dataTestId="recruitment-post-copy-from-error-banner"
+        >
+          <div className="space-y-3">
+            <p>{effectiveCopyFromError}</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <Link
+                href="/recruitment-posts?tab=mine"
+                className="inline-flex min-h-9 items-center justify-center rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-on-primary hover:bg-primary/90"
+              >
+                Quay lại Tin của tôi
+              </Link>
+              {canCreateAnyProject ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  data-testid="recruitment-post-copy-from-start-blank"
+                  onClick={handleStartBlankFromCopyError}
+                >
+                  Tạo tin mới trống
+                </Button>
+              ) : null}
+            </div>
+          </div>
+        </StatusBanner>
+      </PageShell>
+    );
+  }
+
   if (
     mode === "create" &&
     (!context?.can_create || context.managed_projects.length === 0)
   ) {
+    const isRepostAttempt =
+      Boolean(draft.repostFromBriefId) || activeCopyFromBriefId.length > 0;
     return (
       <PageShell dataTestId="recruitment-post-create-forbidden">
         <PageHeader
           title="Tạo phiếu tuyển dụng"
           actions={
             <Link
-              href="/recruitment-posts"
+              href={
+                isRepostAttempt
+                  ? "/recruitment-posts?tab=mine"
+                  : "/recruitment-posts"
+              }
               className="inline-flex min-h-11 h-10 items-center justify-center rounded-md border border-border bg-surface px-3.5 text-sm font-medium text-foreground hover:bg-surface-muted/70"
             >
               Quay lại danh sách tin tuyển dụng
@@ -850,9 +1070,18 @@ export function RecruitmentPostForm({
           title="Bạn không có quyền tạo phiếu tuyển dụng"
           dataTestId="recruitment-post-create-forbidden-banner"
         >
-          Chỉ Quản lý dự án (PM) hiện hành của dự án đang hoạt động mới được tạo
-          phiếu tuyển dụng cho dự án mình quản lý. Tài khoản hiện tại không có dự
-          án nào thuộc quyền tạo tin.
+          {isRepostAttempt ? (
+            <div className="space-y-1">
+              <p>{RECRUITMENT_POST_REPOST_UNMANAGED_PROJECT_MESSAGE}</p>
+              <p>
+                Chỉ Quản lý dự án (PM) hiện hành của dự án đang hoạt động mới
+                được tạo phiếu tuyển dụng cho dự án mình quản lý. Tài khoản hiện
+                tại không có dự án nào thuộc quyền tạo tin.
+              </p>
+            </div>
+          ) : (
+            "Chỉ Quản lý dự án (PM) hiện hành của dự án đang hoạt động mới được tạo phiếu tuyển dụng cho dự án mình quản lý. Tài khoản hiện tại không có dự án nào thuộc quyền tạo tin."
+          )}
         </StatusBanner>
       </PageShell>
     );
@@ -938,15 +1167,46 @@ export function RecruitmentPostForm({
         }
       />
 
-      {savedPost ? (
+      {mode === "create" && repostCompatibility.isRepost ? (
+        <StatusBanner
+          tone="info"
+          title={RECRUITMENT_POST_REPOST_BANNER_TEXT}
+          dataTestId="recruitment-post-repost-banner"
+        >
+          Nội dung biểu mẫu đã được sao chép từ tin đã rút. Hệ thống sẽ tạo một
+          phiếu tuyển dụng mới độc lập khi bạn xác nhận đăng tin.
+        </StatusBanner>
+      ) : null}
+
+      {mode === "create" && repostCompatibility.warnings.length > 0 ? (
+        <StatusBanner
+          tone="warning"
+          title="Cần cập nhật lại dự án hoặc danh mục đang hoạt động"
+          dataTestId="recruitment-post-repost-warning"
+        >
+          <div className="space-y-2">
+            {repostCompatibility.warnings.map((warning) => (
+              <p key={warning}>{warning}</p>
+            ))}
+            <div>
+              <Link
+                href="/recruitment-posts?tab=mine"
+                className="inline-flex min-h-9 items-center justify-center rounded-md border border-border bg-surface px-3 py-1.5 text-xs font-medium text-foreground hover:bg-surface-muted/70"
+              >
+                Quay lại Tin của tôi
+              </Link>
+            </div>
+          </div>
+        </StatusBanner>
+      ) : null}
+
+      {savedPost && mode === "edit" ? (
         <StatusBanner
           tone="success"
           title={
             savedPost.status === "WITHDRAWN"
               ? "Đã rút phiếu tuyển dụng thành công"
-              : mode === "create"
-                ? "Đã tạo phiếu tuyển dụng thành công"
-                : "Đã lưu cập nhật phiếu tuyển dụng"
+              : "Đã lưu cập nhật phiếu tuyển dụng"
           }
           dataTestId="recruitment-post-form-saved-banner"
         >

@@ -1,9 +1,9 @@
 import { isRealCalendarDate } from "../analytics/identity/identity-shared.mjs";
 
 export const MAX_RECRUITMENT_POST_BODY_BYTES = 96 * 1024;
-export const DEFAULT_RECRUITMENT_POST_PAGE_SIZE = 10;
+export const DEFAULT_RECRUITMENT_POST_PAGE_SIZE = 15;
 export const MIN_RECRUITMENT_POST_PAGE_SIZE = 1;
-export const MAX_RECRUITMENT_POST_PAGE_SIZE = 10;
+export const MAX_RECRUITMENT_POST_PAGE_SIZE = 15;
 
 export const RECRUITMENT_POST_AGE_MIN = 15;
 export const RECRUITMENT_POST_AGE_MAX = 70;
@@ -312,10 +312,21 @@ const FORBIDDEN_AUTHORITY_KEYS = new Set([
   "createdby",
   "createdbyuserid",
   "createdbyappuserid",
+  "creator",
+  "creatorid",
+  "creatoruserid",
+  "creatorappuserid",
   "updatedbyappuserid",
   "withdrawnbyappuserid",
   "owner",
+  "ownerid",
   "owneruserid",
+  "ownerappuserid",
+  "email",
+  "useremail",
+  "actoremail",
+  "username",
+  "login",
   "actor",
   "role",
   "roles",
@@ -782,6 +793,90 @@ export function parseListRecruitmentPostsQuery(
       labor_type_key,
       updated_from,
       updated_to,
+      cursor,
+      snapshot_token,
+      page_size,
+    },
+  };
+}
+
+export type ListMyRecruitmentPostsQuery = {
+  cursor: string | null;
+  snapshot_token: string | null;
+  page_size: number;
+};
+
+const ALLOWED_LIST_MINE_QUERY_KEYS = new Set([
+  "cursor",
+  "snapshot_token",
+  "page_size",
+]);
+
+export function parseListMyRecruitmentPostsQuery(
+  url: URL,
+): RecruitmentPostParseResult<ListMyRecruitmentPostsQuery> {
+  const seenKeys = new Set<string>();
+  for (const [key] of url.searchParams.entries()) {
+    if (FORBIDDEN_AUTHORITY_KEYS.has(normalizeAuthorityKey(key))) {
+      return { ok: false, code: "CLIENT_AUTHORITY_FIELD_FORBIDDEN" };
+    }
+    if (!ALLOWED_LIST_MINE_QUERY_KEYS.has(key) || seenKeys.has(key)) {
+      return { ok: false, code: "RECRUITMENT_POST_INPUT_INVALID" };
+    }
+    seenKeys.add(key);
+  }
+
+  let page_size = DEFAULT_RECRUITMENT_POST_PAGE_SIZE;
+  const rawPageSize = url.searchParams.get("page_size");
+  if (rawPageSize !== null) {
+    const trimmed = rawPageSize.trim();
+    if (!/^\d{1,3}$/.test(trimmed)) {
+      return { ok: false, code: "RECRUITMENT_POST_INPUT_INVALID" };
+    }
+    const parsed = Number(trimmed);
+    if (
+      !Number.isSafeInteger(parsed) ||
+      parsed < MIN_RECRUITMENT_POST_PAGE_SIZE ||
+      parsed > MAX_RECRUITMENT_POST_PAGE_SIZE
+    ) {
+      return { ok: false, code: "RECRUITMENT_POST_INPUT_INVALID" };
+    }
+    page_size = parsed;
+  }
+
+  let snapshot_token: string | null = null;
+  const rawSnapshotToken = url.searchParams.get("snapshot_token");
+  if (rawSnapshotToken !== null && rawSnapshotToken.trim() !== "") {
+    const trimmed = rawSnapshotToken.trim();
+    if (!RECRUITMENT_POST_SNAPSHOT_TOKEN_PATTERN.test(trimmed)) {
+      return { ok: false, code: "RECRUITMENT_POST_SNAPSHOT_INVALID" };
+    }
+    snapshot_token = trimmed;
+  }
+
+  let cursor: string | null = null;
+  const rawCursor = url.searchParams.get("cursor");
+  if (rawCursor !== null && rawCursor.trim() !== "") {
+    const trimmed = rawCursor.trim();
+    if (!RECRUITMENT_POST_CURSOR_PATTERN.test(trimmed) || snapshot_token === null) {
+      return { ok: false, code: "RECRUITMENT_POST_SNAPSHOT_INVALID" };
+    }
+    const tokenMatch = RECRUITMENT_POST_SNAPSHOT_TOKEN_PATTERN.exec(snapshot_token);
+    const cursorMatch = RECRUITMENT_POST_CURSOR_PATTERN.exec(trimmed);
+    if (
+      !tokenMatch ||
+      !cursorMatch ||
+      tokenMatch[1] !== cursorMatch[1] ||
+      tokenMatch[2] !== cursorMatch[2]
+    ) {
+      return { ok: false, code: "RECRUITMENT_POST_SNAPSHOT_INVALID" };
+    }
+    cursor = trimmed;
+  }
+
+  return {
+    ok: true,
+    value: {
       cursor,
       snapshot_token,
       page_size,

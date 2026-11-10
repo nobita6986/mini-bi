@@ -393,6 +393,11 @@ export const RECRUITMENT_POSTS_RPC_SIGNATURES = Object.freeze([
   "public.recruitment_post_update(uuid, uuid, uuid, integer, jsonb, text)",
   "public.recruitment_post_withdraw(uuid, uuid, uuid, integer, text)",
 ]);
+export const RECRUITMENT_POST_LIST_MINE_MIGRATION_NAME =
+  "20261110150000_recruitment_post_list_mine.sql";
+export const RECRUITMENT_POST_LIST_MINE_RPC_SIGNATURES = Object.freeze([
+  "public.recruitment_post_list_mine(uuid, uuid, text, text, integer)",
+]);
 export const F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES = Object.freeze([
   "public.work_report_list_templates(uuid, uuid)",
   "public.work_report_get_template(uuid, uuid, uuid)",
@@ -645,7 +650,8 @@ export async function verifyS0T1CHistoricalCompatibility(
     vfin05CombinedPaymentOffsetApplied = false,
     t1aHotfixWorkerDetailAndSalaryAdvanceAccessApplied = false,
     recruitmentLocationCatalogApplied = false,
-    recruitmentPostsApplied = false } = {},
+    recruitmentPostsApplied = false,
+    recruitmentPostListMineApplied = false } = {},
 ) {
   const baseAllowlist = extractS0T1CAllowlistSignatures(migrationSql);
   if (baseAllowlist.length === 0) {
@@ -759,6 +765,9 @@ export async function verifyS0T1CHistoricalCompatibility(
       : []),
     ...(recruitmentPostsApplied
       ? RECRUITMENT_POSTS_RPC_SIGNATURES
+      : []),
+    ...(recruitmentPostListMineApplied
+      ? RECRUITMENT_POST_LIST_MINE_RPC_SIGNATURES
       : []),
   ];
 
@@ -1036,6 +1045,8 @@ export async function verifyAppliedMigrationChecksum(
           appliedMap.has(RECRUITMENT_LOCATION_CATALOG_MIGRATION_NAME),
         recruitmentPostsApplied:
           appliedMap.has(RECRUITMENT_POSTS_MIGRATION_NAME),
+        recruitmentPostListMineApplied:
+          appliedMap.has(RECRUITMENT_POST_LIST_MINE_MIGRATION_NAME),
       },
     );
     if (postconditions.ok) {

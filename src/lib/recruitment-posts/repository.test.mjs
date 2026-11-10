@@ -214,13 +214,30 @@ test("classifyRecruitmentPostError maps explicit SQL message tokens and SQLSTATE
   );
 });
 
-test("createRecruitmentPostRepository calls all 6 RPCs with server-resolved actor and enforces fail-closed projection", async () => {
+test("createRecruitmentPostRepository calls all 7 RPCs with server-resolved actor and enforces fail-closed projection", async () => {
   const calls = [];
   const rpcResponses = {
     recruitment_post_get_context: SAMPLE_CONTEXT,
     recruitment_post_list: {
       items: [SAMPLE_ITEM],
-      page_size: 10,
+      page_size: 15,
+      has_more: false,
+      next_cursor: null,
+      snapshot_token: `S1.1.${FILTER_HASH}`,
+    },
+    recruitment_post_list_mine: {
+      items: [
+        SAMPLE_ITEM,
+        {
+          ...SAMPLE_ITEM,
+          brief_id: "77777777-7777-4777-8777-777777777777",
+          status: "WITHDRAWN",
+          withdrawn_at: "2026-11-10T09:00:00.123456Z",
+          withdrawn_by_display_name: "Nguyễn Văn A",
+          allowed_actions: { can_edit: false, can_withdraw: false },
+        },
+      ],
+      page_size: 15,
       has_more: false,
       next_cursor: null,
       snapshot_token: `S1.1.${FILTER_HASH}`,
@@ -268,9 +285,21 @@ test("createRecruitmentPostRepository calls all 6 RPCs with server-resolved acto
     updated_to: "2026-11-10",
     cursor: null,
     snapshot_token: null,
-    page_size: 10,
+    page_size: 15,
   });
   assert.equal(listRes.ok, true);
+
+  const listMineRes = await repo.listMine({
+    ...ACTOR,
+    cursor: null,
+    snapshot_token: null,
+    page_size: 15,
+  });
+  assert.equal(listMineRes.ok, true);
+  if (listMineRes.ok) {
+    assert.equal(listMineRes.data.items.length, 2);
+    assert.equal(listMineRes.data.items[1].status, "WITHDRAWN");
+  }
 
   const getRes = await repo.get({ ...ACTOR, brief_id: BRIEF_ID });
   assert.equal(getRes.ok, true);

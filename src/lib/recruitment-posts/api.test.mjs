@@ -6,6 +6,7 @@ import {
   handleRecruitmentPostCreate,
   handleRecruitmentPostGet,
   handleRecruitmentPostList,
+  handleRecruitmentPostListMine,
   handleRecruitmentPostUpdate,
   handleRecruitmentPostWithdraw,
 } from "./api.ts";
@@ -144,6 +145,10 @@ function makeDeps(
         },
         list: async (input) => {
           calls.push(["list", input]);
+          return repoResult;
+        },
+        listMine: async (input) => {
+          calls.push(["listMine", input]);
           return repoResult;
         },
         get: async (input) => {
@@ -528,4 +533,114 @@ test("create enforces manager_name from server-verified actor display_name and i
     adminEditorDeps.calls[1][1].payload.general.manager_phone,
     "0988777666",
   );
+});
+
+test("handleRecruitmentPostListMine enforces feature flag, session, authority guards, query bounds, and returns 200 with private no-store", async () => {
+  const listData = {
+    items: [
+      SAMPLE_ITEM,
+      {
+        ...SAMPLE_ITEM,
+        brief_id: "77777777-7777-4777-8777-777777777777",
+        status: "WITHDRAWN",
+        withdrawn_at: "2026-11-10T09:00:00.123456Z",
+        withdrawn_by_display_name: "Nguyễn Văn A",
+        allowed_actions: { can_edit: false, can_withdraw: false },
+      },
+    ],
+    page_size: 15,
+    has_more: false,
+    next_cursor: null,
+    snapshot_token: `S1.1.${FILTER_HASH}`,
+  };
+  const { calls, dependencies } = makeDeps({ ok: true, data: listData });
+
+  // Feature flag off -> 404
+  const offRes = await handleRecruitmentPostListMine(
+    new Request("https://app.test/api/recruitment-posts/mine"),
+    "false",
+    dependencies,
+  );
+  assert.equal(offRes.status, 404);
+  assert.equal(offRes.headers.get("cache-control"), "private, no-store");
+
+  // Unauthenticated -> 401
+  const unauthDeps = makeDeps(
+    { ok: true, data: listData },
+    { actor: { ok: false, reason: "UNAUTHENTICATED" }, response_headers: {} },
+  );
+  const unauthRes = await handleRecruitmentPostListMine(
+    new Request("https://app.test/api/recruitment-posts/mine"),
+    "true",
+    unauthDeps.dependencies,
+  );
+  assert.equal(unauthRes.status, 401);
+
+  // Disabled account -> 403 ACTOR_NOT_AVAILABLE
+  const disabledDeps = makeDeps(
+    { ok: true, data: listData },
+    {
+      actor: { ok: false, reason: "ACCOUNT_UNAVAILABLE" },
+      response_headers: {},
+    },
+  );
+  const disabledRes = await handleRecruitmentPostListMine(
+    new Request("https://app.test/api/recruitment-posts/mine"),
+    "true",
+    disabledDeps.dependencies,
+  );
+  assert.equal(disabledRes.status, 403);
+  assert.deepEqual(await disabledRes.json(), {
+    ok: false,
+    code: "ACTOR_NOT_AVAILABLE",
+  });
+
+  // Forbidden client authority query key -> 400 CLIENT_AUTHORITY_FIELD_FORBIDDEN
+  const spoofQueryRes = await handleRecruitmentPostListMine(
+    new Request(
+      "https://app.test/api/recruitment-posts/mine?app_user_id=99999999-9999-4999-8999-999999999999",
+    ),
+    "true",
+    dependencies,
+  );
+  assert.equal(spoofQueryRes.status, 400);
+  assert.deepEqual(await spoofQueryRes.json(), {
+    ok: false,
+    code: "CLIENT_AUTHORITY_FIELD_FORBIDDEN",
+  });
+
+  // Forbidden filter query key (e.g. project_id) or page_size=16 -> 400 RECRUITMENT_POST_INPUT_INVALID
+  const badQueryRes = await handleRecruitmentPostListMine(
+    new Request("https://app.test/api/recruitment-posts/mine?page_size=16"),
+    "true",
+    dependencies,
+  );
+  assert.equal(badQueryRes.status, 400);
+  assert.deepEqual(await badQueryRes.json(), {
+    ok: false,
+    code: "RECRUITMENT_POST_INPUT_INVALID",
+  });
+
+  // Valid request -> 200 OK with private, no-store and actor resolved from session
+  const okRes = await handleRecruitmentPostListMine(
+    new Request("https://app.test/api/recruitment-posts/mine?page_size=15"),
+    "true",
+    dependencies,
+  );
+  assert.equal(okRes.status, 200);
+  assert.equal(okRes.headers.get("cache-control"), "private, no-store");
+  const okJson = await okRes.json();
+  assert.equal(okJson.ok, true);
+  assert.equal(okJson.data.items.length, 2);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0], [
+    "listMine",
+    {
+      auth_subject: ACTOR.auth_subject,
+      app_user_id: ACTOR.app_user_id,
+      cursor: null,
+      snapshot_token: null,
+      page_size: 15,
+    },
+  ]);
 });
