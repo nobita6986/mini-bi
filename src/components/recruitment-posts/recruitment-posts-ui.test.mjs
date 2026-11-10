@@ -1702,7 +1702,7 @@ describe("Phase 3 — Recruitment Posts UI & Architecture Gate", () => {
     );
     assert.match(
       publishedTabHtml,
-      /data-testid="recruitment-post-card-header"[^>]*class="[^"]*bg-surface-muted\/70[^"]*"/,
+      /data-testid="recruitment-post-card-header"[^>]*data-status="PUBLISHED"/,
     );
     assert.doesNotMatch(
       publishedTabHtml,
@@ -1710,8 +1710,55 @@ describe("Phase 3 — Recruitment Posts UI & Architecture Gate", () => {
     );
     assert.match(
       publishedTabHtml,
-      /<dl class="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">/,
+      /data-testid="recruitment-post-card-job"/,
     );
+    assert.match(
+      publishedTabHtml,
+      /data-testid="recruitment-post-card-labor-types"/,
+    );
+    assert.match(
+      publishedTabHtml,
+      /data-testid="recruitment-post-card-headcount"/,
+    );
+    assert.match(
+      publishedTabHtml,
+      /data-testid="recruitment-post-card-candidate"/,
+    );
+    assert.match(
+      publishedTabHtml,
+      /data-testid="recruitment-post-card-compensation"/,
+    );
+    assert.match(
+      publishedTabHtml,
+      /data-testid="recruitment-post-card-contact"/,
+    );
+    assert.match(
+      publishedTabHtml,
+      /data-testid="recruitment-post-card-footer"/,
+    );
+
+    // Verify action button order on PUBLISHED card with canEdit=true & canWithdraw=true:
+    // Xem chi tiết -> Xuất bản tin -> Sửa -> Rút tin (and job block immediately follows actions)
+    const viewDetailIdx = publishedTabHtml.indexOf(
+      `data-testid="recruitment-post-view-detail-${publishedPost.brief_id}"`,
+    );
+    const exportIdx = publishedTabHtml.indexOf(
+      'data-testid="recruitment-post-export"',
+    );
+    const editIdx = publishedTabHtml.indexOf(
+      `data-testid="recruitment-post-edit-${publishedPost.brief_id}"`,
+    );
+    const withdrawIdx = publishedTabHtml.indexOf(
+      `data-testid="recruitment-post-withdraw-${publishedPost.brief_id}"`,
+    );
+    const jobBlockIdx = publishedTabHtml.indexOf(
+      'data-testid="recruitment-post-card-job"',
+    );
+    assert.ok(viewDetailIdx > 0);
+    assert.ok(viewDetailIdx < exportIdx);
+    assert.ok(exportIdx < editIdx);
+    assert.ok(editIdx < withdrawIdx);
+    assert.ok(withdrawIdx < jobBlockIdx);
 
     // Verify loadMoreError sits outside the 3-column grid container
     assert.match(
@@ -1877,6 +1924,10 @@ describe("Phase 3 — Recruitment Posts UI & Architecture Gate", () => {
     );
     assert.match(
       withdrawnCardHtml,
+      /data-testid="recruitment-post-card-header"[^>]*data-status="WITHDRAWN"/,
+    );
+    assert.match(
+      withdrawnCardHtml,
       new RegExp(`data-testid="recruitment-post-status-badge-${withdrawnPost.brief_id}"`),
     );
     assert.match(withdrawnCardHtml, />Đã rút</);
@@ -1897,6 +1948,46 @@ describe("Phase 3 — Recruitment Posts UI & Architecture Gate", () => {
       withdrawnCardHtml,
       new RegExp(`data-testid="recruitment-post-withdraw-${withdrawnPost.brief_id}"`),
     );
+
+    const withdrawnViewIdx = withdrawnCardHtml.indexOf(
+      `data-testid="recruitment-post-view-detail-${withdrawnPost.brief_id}"`,
+    );
+    const withdrawnExportIdx = withdrawnCardHtml.indexOf(
+      'data-testid="recruitment-post-export"',
+    );
+    const withdrawnRepostIdx = withdrawnCardHtml.indexOf(
+      `data-testid="recruitment-post-repost-${withdrawnPost.brief_id}"`,
+    );
+    assert.ok(withdrawnViewIdx > 0);
+    assert.ok(withdrawnViewIdx < withdrawnExportIdx);
+    assert.ok(withdrawnExportIdx < withdrawnRepostIdx);
+
+    // Long text card: wraps/clamps safely without horizontal overflow
+    const longTextItem = makeCompleteItem({
+      brief_id: makeBriefId(299),
+      project: {
+        project_id: "PROJ_LONG",
+        display_name: "Dự án Sản Xuất Mô-đun Bán Dẫn Siêu Tích Hợp Thế Hệ Mới Khu Vực Miền Bắc",
+      },
+      general: {
+        ...makeCompleteItem().general,
+        customer_name:
+          "Công ty TNHH Công Nghệ Cao Và Sản Xuất Linh Kiện Quang Điện Tử Quốc Tế",
+        job_description:
+          "Vận hành dây chuyền SMT tự động tốc độ cao, kiểm tra chất lượng bo mạch điện tử theo tiêu chuẩn IPC-A-610, phối hợp kỹ thuật viên bảo trì thiết bị phòng sạch.",
+      },
+    });
+    const longTextCardHtml = renderToStaticMarkup(
+      createElement(RecruitmentPostCard, {
+        card: toRecruitmentPostCardViewModel(longTextItem),
+        showStatusBadge: true,
+        onViewDetail: () => {},
+      }),
+    );
+    assert.match(longTextCardHtml, /line-clamp-3/);
+    assert.match(longTextCardHtml, /break-words/);
+    assert.match(longTextCardHtml, /tabular-nums/);
+    assert.match(longTextCardHtml, /motion-reduce:transition-none/);
 
     // Default RecruitmentPostCard without explicit canRepost=true is fail-closed (no Đăng lại button)
     const defaultWithdrawnCardHtml = renderToStaticMarkup(
