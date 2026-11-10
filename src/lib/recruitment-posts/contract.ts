@@ -858,7 +858,7 @@ function parseOptionalVndField(
 
 export function parseRecruitmentPostContent(
   raw: Record<string, unknown>,
-  options?: { actorDisplayName?: string },
+  options?: { actorDisplayName?: string; managerNameOverride?: string },
 ): RecruitmentPostParseResult<RecruitmentPostContentInput> {
   const general = raw.general;
   const candidate = raw.candidate;
@@ -962,9 +962,11 @@ export function parseRecruitmentPostContent(
     return { ok: false, code: "RECRUITMENT_POST_CONTENT_INVALID" };
   }
   const managerNameSource =
-    options?.actorDisplayName !== undefined
-      ? options.actorDisplayName
-      : general.manager_name;
+    options?.managerNameOverride !== undefined
+      ? options.managerNameOverride
+      : options?.actorDisplayName !== undefined
+        ? options.actorDisplayName
+        : general.manager_name;
   const manager_name = parseRequiredStringField(managerNameSource, 256);
   if (!manager_name.ok) return manager_name;
 
@@ -1399,6 +1401,7 @@ export type UpdateRecruitmentPostRequest = {
 
 export function parseUpdateRecruitmentPostBody(
   body: unknown,
+  options?: { managerNameOverride?: string },
 ): RecruitmentPostParseResult<UpdateRecruitmentPostRequest> {
   if (containsForbiddenClientAuthorityKey(body)) {
     return { ok: false, code: "CLIENT_AUTHORITY_FIELD_FORBIDDEN" };
@@ -1438,7 +1441,7 @@ export function parseUpdateRecruitmentPostBody(
     rawContent = body;
   }
 
-  const parsedContent = parseRecruitmentPostContent(rawContent);
+  const parsedContent = parseRecruitmentPostContent(rawContent, options);
   if (!parsedContent.ok) return parsedContent;
 
   return {

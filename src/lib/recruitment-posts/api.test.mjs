@@ -470,12 +470,21 @@ test("create enforces manager_name from server-verified actor display_name and i
   });
   assert.equal(missingDisplayNameDeps.calls.length, 0);
 
-  // Update by another user (e.g. Full Admin / BOD) preserves the original manager_name
+  // Update by another user (e.g. Full Admin / BOD) or with a tampered client manager_name
+  // always preserves the originally saved manager_name from the server
+  const storedOriginalPost = {
+    ...SAMPLE_ITEM,
+    version: 2,
+    general: {
+      ...SAMPLE_ITEM.general,
+      manager_name: "Nguyễn Văn Quản Lý Gốc",
+    },
+  };
   const adminEditorDeps = makeDeps(
     {
       ok: true,
       data: {
-        post: { ...SAMPLE_ITEM, version: 2 },
+        post: storedOriginalPost,
         changed: true,
         replayed: false,
       },
@@ -492,7 +501,8 @@ test("create enforces manager_name from server-verified actor display_name and i
     },
   );
   const updateContent = makeValidContent();
-  updateContent.general.manager_name = "Nguyễn Văn Quản Lý Gốc";
+  updateContent.general.manager_name = "Tên Giả Mạo Khi Sửa";
+  updateContent.general.manager_phone = "0988777666";
 
   const updateRes = await handleRecruitmentPostUpdate(
     makeMutationRequest(
@@ -505,10 +515,17 @@ test("create enforces manager_name from server-verified actor display_name and i
     adminEditorDeps.dependencies,
   );
   assert.equal(updateRes.status, 200);
-  assert.equal(adminEditorDeps.calls.length, 1);
-  assert.equal(adminEditorDeps.calls[0][0], "update");
+  assert.equal(adminEditorDeps.calls.length, 2);
+  assert.equal(adminEditorDeps.calls[0][0], "get");
+  assert.equal(adminEditorDeps.calls[0][1].brief_id, BRIEF_ID);
+  assert.equal(adminEditorDeps.calls[1][0], "update");
+  assert.equal(adminEditorDeps.calls[1][1].expected_version, 1);
   assert.equal(
-    adminEditorDeps.calls[0][1].payload.general.manager_name,
+    adminEditorDeps.calls[1][1].payload.general.manager_name,
     "Nguyễn Văn Quản Lý Gốc",
+  );
+  assert.equal(
+    adminEditorDeps.calls[1][1].payload.general.manager_phone,
+    "0988777666",
   );
 });

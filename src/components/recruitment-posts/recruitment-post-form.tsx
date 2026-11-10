@@ -166,6 +166,15 @@ export function RecruitmentPostForm({
         return {
           ...initialStateForTest.draft,
           managerName: actorDisplayName.trim(),
+          lockedManagerName: actorDisplayName.trim(),
+        };
+      }
+      if (mode === "edit" && initialStateForTest.loadedPost) {
+        return {
+          ...initialStateForTest.draft,
+          managerName: initialStateForTest.loadedPost.general.manager_name,
+          lockedManagerName:
+            initialStateForTest.loadedPost.general.manager_name,
         };
       }
       return initialStateForTest.draft;
@@ -1553,16 +1562,13 @@ export function RecruitmentPostForm({
                 id="recruitment-post-field-manager-name"
                 type="text"
                 data-testid="recruitment-post-input-manager-name"
-                readOnly={mode === "create" || permissionRevokedReadOnly}
+                readOnly
                 disabled={formLocked && !permissionRevokedReadOnly}
-                value={draft.managerName}
-                onChange={(event) => {
-                  if (mode === "create") return;
-                  setDraft((prev) => ({
-                    ...prev,
-                    managerName: event.target.value,
-                  }));
-                }}
+                value={
+                  mode === "edit" && draft.lockedManagerName?.trim()
+                    ? draft.lockedManagerName
+                    : draft.managerName
+                }
                 aria-invalid={Boolean(fieldErrors.managerName)}
                 placeholder="Họ và tên người phụ trách"
                 className={INPUT_CLASS}

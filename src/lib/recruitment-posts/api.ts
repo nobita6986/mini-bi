@@ -454,12 +454,28 @@ export async function handleRecruitmentPostUpdate(
     return recruitmentPostError(idempotencyKey.code);
   }
 
-  const parsedBody = parseUpdateRecruitmentPostBody(boundedBody.value);
-  if (!parsedBody.ok) {
-    return recruitmentPostError(parsedBody.code);
+  const precheckedBody = parseUpdateRecruitmentPostBody(boundedBody.value, {
+    managerNameOverride: "__LOCKED_ORIGINAL_MANAGER_NAME__",
+  });
+  if (!precheckedBody.ok) {
+    return recruitmentPostError(precheckedBody.code);
   }
 
   try {
+    const existing = await dependencies.repository.get({
+      auth_subject: actor.auth_subject,
+      app_user_id: actor.app_user_id,
+      brief_id: parsedBriefId.value,
+    });
+    if (!existing.ok) return recruitmentPostError(existing.code);
+
+    const parsedBody = parseUpdateRecruitmentPostBody(boundedBody.value, {
+      managerNameOverride: existing.data.post.general.manager_name,
+    });
+    if (!parsedBody.ok) {
+      return recruitmentPostError(parsedBody.code);
+    }
+
     const updated = await dependencies.repository.update({
       auth_subject: actor.auth_subject,
       app_user_id: actor.app_user_id,

@@ -1110,7 +1110,10 @@ describe("Phase 3 — Recruitment Posts UI & Architecture Gate", () => {
           initialLoading: false,
           context: sampleContext,
           loadedPost: existingPost,
-          draft: createEditRecruitmentPostFormDraftFromItem(existingPost),
+          draft: {
+            ...createEditRecruitmentPostFormDraftFromItem(existingPost),
+            managerName: "Tên Giả Mạo Khi Sửa",
+          },
           staleConflictMessage:
             "Tin tuyển dụng đã thay đổi phiên bản. Vui lòng tải lại dữ liệu mới nhất trước khi thực hiện lại.",
           comparedServerPost: newerServerPost,
@@ -1127,8 +1130,13 @@ describe("Phase 3 — Recruitment Posts UI & Architecture Gate", () => {
     );
     assert.match(
       editStaleHtml,
-      /data-testid="recruitment-post-input-manager-name"[^>]*value="Trần Thị PM"/,
+      /<input[^>]*data-testid="recruitment-post-input-manager-name"[^>]*readOnly=""[^>]*value="Trần Thị PM"/,
     );
+    assert.doesNotMatch(
+      editStaleHtml,
+      /<input[^>]*data-testid="recruitment-post-input-manager-phone"[^>]*readOnly=""/,
+    );
+    assert.doesNotMatch(editStaleHtml, /Tên Giả Mạo Khi Sửa/);
     assert.doesNotMatch(editStaleHtml, /Lê Quản Trị BOD/);
     assert.match(editStaleHtml, /data-testid="recruitment-post-stale-conflict"/);
     assert.match(editStaleHtml, /Tải bản mới nhất để đối chiếu/);

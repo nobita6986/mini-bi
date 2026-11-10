@@ -1112,10 +1112,18 @@ test("Phase 4: Pre-submit 6-item confirmation block, write payload validation, w
     );
   }
 
-  // Valid edit payload sends expected_version + content (never project_id or industrial_park_id) and preserves original customer_name & manager_name even if actorDisplayName is passed
-  const builtEdit = validateAndBuildRecruitmentPostWritePayload(editDraft, {
-    actorDisplayName: "Lê Quản Trị BOD",
-  });
+  // Valid edit payload sends expected_version + content (never project_id or industrial_park_id) and preserves original customer_name & manager_name even if draft.managerName is tampered or actorDisplayName is passed
+  const tamperedEditDraft = {
+    ...editDraft,
+    managerName: "Tên Giả Mạo Khi Sửa",
+    managerPhone: "0988777666",
+  };
+  const builtEdit = validateAndBuildRecruitmentPostWritePayload(
+    tamperedEditDraft,
+    {
+      actorDisplayName: "Lê Quản Trị BOD",
+    },
+  );
   assert.equal(builtEdit.ok, true);
   if (builtEdit.ok && builtEdit.mode === "edit") {
     assert.equal(builtEdit.requestBody.expected_version, 2);
@@ -1128,6 +1136,10 @@ test("Phase 4: Pre-submit 6-item confirmation block, write payload validation, w
     assert.equal(
       builtEdit.requestBody.content.general.manager_name,
       "Trần Thị PM",
+    );
+    assert.equal(
+      builtEdit.requestBody.content.general.manager_phone,
+      "0988777666",
     );
   }
 

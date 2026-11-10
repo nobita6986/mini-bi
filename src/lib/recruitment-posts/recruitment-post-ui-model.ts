@@ -1230,6 +1230,7 @@ export type RecruitmentPostFormDraftState = {
   readonly lockedProjectDisplayName: string;
   readonly lockedIndustrialParkDisplayName: string;
   readonly lockedProvinceDisplayName: string;
+  readonly lockedManagerName?: string;
   readonly lockedHistoricalLaborTypes: ReadonlyArray<{
     readonly labor_type_key: string;
     readonly display_name: string;
@@ -1316,6 +1317,7 @@ export function createEmptyRecruitmentPostFormDraft(
     lockedProjectDisplayName: "",
     lockedIndustrialParkDisplayName: "",
     lockedProvinceDisplayName: "",
+    lockedManagerName: actorManagerName,
     lockedHistoricalLaborTypes: [],
     customerName: "",
     investmentOrigin: "",
@@ -1391,6 +1393,7 @@ export function createEditRecruitmentPostFormDraftFromItem(
     lockedProjectDisplayName: item.project.display_name,
     lockedIndustrialParkDisplayName: item.industrial_park.display_name,
     lockedProvinceDisplayName: item.province.display_name,
+    lockedManagerName: item.general.manager_name,
     lockedHistoricalLaborTypes: item.general.labor_types.map((lt) => ({
       labor_type_key: lt.labor_type_key,
       display_name: lt.display_name,
@@ -1538,6 +1541,7 @@ export function applyCreateFormContextDefaults(
     projectId: nextProjectId,
     customerName: nextCustomerName,
     managerName: nextManagerName,
+    lockedManagerName: nextManagerName,
   };
 }
 
@@ -1841,7 +1845,10 @@ export function buildRecruitmentPostPreSubmitSummary(input: {
     maxRes?.ok ? maxRes.canonical : null,
   );
 
-  const managerName = draft.managerName.trim();
+  const managerName =
+    draft.mode === "edit" && draft.lockedManagerName?.trim()
+      ? draft.lockedManagerName.trim()
+      : draft.managerName.trim();
   const managerPhone = draft.managerPhone.trim();
   const managerContactDisplay =
     managerName && managerPhone
@@ -1907,7 +1914,11 @@ export function validateAndBuildRecruitmentPostWritePayload(
     typeof options?.actorDisplayName === "string" &&
     options.actorDisplayName.trim().length > 0
       ? options.actorDisplayName.trim()
-      : draft.managerName.trim();
+      : draft.mode === "edit" &&
+          typeof draft.lockedManagerName === "string" &&
+          draft.lockedManagerName.trim().length > 0
+        ? draft.lockedManagerName.trim()
+        : draft.managerName.trim();
 
   if (draft.mode === "create") {
     if (!draft.projectId.trim()) {
