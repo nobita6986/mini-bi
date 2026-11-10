@@ -1,6 +1,10 @@
 "use client";
 
 import Link from "next/link";
+import {
+  useRouter as readNextAppRouter,
+  useSearchParams,
+} from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { AccessDenied, AccountUnavailable } from "@/components/auth/access-denied";
@@ -12,10 +16,16 @@ import { StatusBanner } from "@/components/ui/status-banner";
 import {
   DEFAULT_RECRUITMENT_POST_PAGE_SIZE,
   EMPTY_RECRUITMENT_POST_FILTERS,
+  RECRUITMENT_POST_FEED_TABS,
+  RECRUITMENT_POST_FEED_TAB_LABELS,
   applyIndustrialParkFilterChange,
   applyProvinceFilterChange,
+  applyWithdrawnPostToFeedItems,
   beginRecruitmentPostContextRequest,
+  buildRecruitmentPostFeedTabHref,
   buildRecruitmentPostListUrl,
+  buildRecruitmentPostMineListUrl,
+  canRepostWithdrawnRecruitmentPost,
   classifyRecruitmentPostAccessLoss,
   createEmptyRecruitmentPostDataState,
   createLatestRequestTracker,
@@ -24,6 +34,7 @@ import {
   hasActiveRecruitmentPostFilters,
   mergeUniqueRecruitmentPostItems,
   parseRecruitmentPostDetailEnvelope,
+  parseRecruitmentPostFeedTab,
   parseRecruitmentPostListEnvelope,
   recruitmentPostContextErrorMessage,
   recruitmentPostErrorMessage,
@@ -42,6 +53,7 @@ import {
   type RecruitmentPostDataState,
   type RecruitmentPostDetailViewModel,
   type RecruitmentPostFeedFilterState,
+  type RecruitmentPostFeedTab,
   type RecruitmentPostItem,
   type RecruitmentPostMarkdownExportFile,
 } from "@/lib/recruitment-posts/recruitment-post-ui-model";
@@ -52,6 +64,14 @@ import {
   RecruitmentPostWithdrawDialog,
   type RecruitmentPostWithdrawTarget,
 } from "./recruitment-post-withdraw-dialog";
+
+function getOptionalAppRouter() {
+  try {
+    return readNextAppRouter();
+  } catch {
+    return null;
+  }
+}
 
 const FILTER_SELECT_CLASS =
   "h-11 w-full rounded-lg border border-border bg-surface px-2.5 text-sm text-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/30 disabled:cursor-not-allowed disabled:opacity-60";
@@ -101,6 +121,7 @@ export type RecruitmentPostExportErrorState = {
 };
 
 export type RecruitmentPostFeedWorkspaceInitialTestState = {
+  readonly activeTab?: RecruitmentPostFeedTab;
   readonly filters?: RecruitmentPostFeedFilterState;
   readonly dataState?: RecruitmentPostDataState;
   readonly accessLoss?: RecruitmentPostAccessLossKind | null;
@@ -118,10 +139,25 @@ export type RecruitmentPostFeedWorkspaceInitialTestState = {
 };
 
 export function RecruitmentPostFeedWorkspace({
+  initialTab,
   initialStateForTest,
 }: {
+  initialTab?: RecruitmentPostFeedTab;
   initialStateForTest?: RecruitmentPostFeedWorkspaceInitialTestState;
 } = {}) {
+  const router = getOptionalAppRouter();
+  const searchParams = useSearchParams();
+  const searchTabParam = searchParams?.get("tab");
+
+  const [activeTab, setActiveTab] = useState<RecruitmentPostFeedTab>(() => {
+    if (initialStateForTest?.activeTab) {
+      return initialStateForTest.activeTab;
+    }
+    if (initialTab) {
+      return initialTab;
+    }
+    return parseRecruitmentPostFeedTab(searchTabParam);
+  });
   const [filters, setFilters] = useState<RecruitmentPostFeedFilterState>(
     () => initialStateForTest?.filters ?? EMPTY_RECRUITMENT_POST_FILTERS,
   );
@@ -256,16 +292,88 @@ export function RecruitmentPostFeedWorkspace({
     }
   }, [handleAccessRevoked]);
 
-  const loadFirstPage = useCallback(
-    async (activeFilters: RecruitmentPostFeedFilterState) => {
-      const validation = validateRecruitmentPostFeedFilters(activeFilters);
-      if (!validation.ok) {
-        getRequestTracker(feedTrackerRef).cancelAll();
-        setInitialLoading(false);
-        setLoadingMore(false);
-        setFeedError(validation.message);
-        setLoadMoreError(null);
+  const tabButtonRefs = useRef<
+    Record<RecruitmentPostFeedTab, HTMLButtonElement | null>
+  >({
+    published: null,
+    mine: null,
+  });
+
+  const handleSelectTab = useCallback(
+    (nextTab: RecruitmentPostFeedTab, focusButton = false) => {
+      if (focusButton) {
+        tabButtonRefs.current[nextTab]?.focus();
+      }
+      if (nextTab === activeTab) return;
+      getRequestTracker(feedTrackerRef).cancelAll();
+      setWithdrawSuccessBanner(null);
+      setFeedError(null);
+      setLoadMoreError(null);
+      setActiveTab(nextTab);
+      const href = buildRecruitmentPostFeedTabHref(nextTab);
+      if (router) {
+        router.replace(href, { scroll: false });
+      } else if (typeof window !== "undefined" && window.history?.replaceState) {
+        window.history.replaceState(null, "", href);
+      }
+    },
+    [activeTab, router],
+  );
+
+  const handleTabKeyDown = useCallback(
+    (
+      event: React.KeyboardEvent<HTMLButtonElement>,
+      currentTab: RecruitmentPostFeedTab,
+    ) => {
+      const currentIndex = RECRUITMENT_POST_FEED_TABS.indexOf(currentTab);
+      if (currentIndex < 0) return;
+
+      if (event.key === "ArrowRight") {
+        event.preventDefault();
+        const nextIndex =
+          (currentIndex + 1) % RECRUITMENT_POST_FEED_TABS.length;
+        handleSelectTab(RECRUITMENT_POST_FEED_TABS[nextIndex], true);
         return;
+      }
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        const prevIndex =
+          (currentIndex - 1 + RECRUITMENT_POST_FEED_TABS.length) %
+          RECRUITMENT_POST_FEED_TABS.length;
+        handleSelectTab(RECRUITMENT_POST_FEED_TABS[prevIndex], true);
+        return;
+      }
+      if (event.key === "Home") {
+        event.preventDefault();
+        handleSelectTab(RECRUITMENT_POST_FEED_TABS[0], true);
+        return;
+      }
+      if (event.key === "End") {
+        event.preventDefault();
+        handleSelectTab(
+          RECRUITMENT_POST_FEED_TABS[RECRUITMENT_POST_FEED_TABS.length - 1],
+          true,
+        );
+      }
+    },
+    [handleSelectTab],
+  );
+
+  const loadFirstPage = useCallback(
+    async (
+      activeFilters: RecruitmentPostFeedFilterState,
+      tab: RecruitmentPostFeedTab,
+    ) => {
+      if (tab === "published") {
+        const validation = validateRecruitmentPostFeedFilters(activeFilters);
+        if (!validation.ok) {
+          getRequestTracker(feedTrackerRef).cancelAll();
+          setInitialLoading(false);
+          setLoadingMore(false);
+          setFeedError(validation.message);
+          setLoadMoreError(null);
+          return;
+        }
       }
 
       const ticket = getRequestTracker(feedTrackerRef).begin();
@@ -281,9 +389,14 @@ export function RecruitmentPostFeedWorkspace({
         hasMore: false,
       }));
 
-      const url = buildRecruitmentPostListUrl(activeFilters, {
-        pageSize: DEFAULT_RECRUITMENT_POST_PAGE_SIZE,
-      });
+      const url =
+        tab === "mine"
+          ? buildRecruitmentPostMineListUrl({
+              pageSize: DEFAULT_RECRUITMENT_POST_PAGE_SIZE,
+            })
+          : buildRecruitmentPostListUrl(activeFilters, {
+              pageSize: DEFAULT_RECRUITMENT_POST_PAGE_SIZE,
+            });
 
       try {
         const response = await fetch(url, {
@@ -359,11 +472,18 @@ export function RecruitmentPostFeedWorkspace({
     setLoadingMore(true);
     setLoadMoreError(null);
 
-    const url = buildRecruitmentPostListUrl(filters, {
-      cursor: dataState.nextCursor,
-      snapshotToken: dataState.snapshotToken,
-      pageSize: DEFAULT_RECRUITMENT_POST_PAGE_SIZE,
-    });
+    const url =
+      activeTab === "mine"
+        ? buildRecruitmentPostMineListUrl({
+            cursor: dataState.nextCursor,
+            snapshotToken: dataState.snapshotToken,
+            pageSize: DEFAULT_RECRUITMENT_POST_PAGE_SIZE,
+          })
+        : buildRecruitmentPostListUrl(filters, {
+            cursor: dataState.nextCursor,
+            snapshotToken: dataState.snapshotToken,
+            pageSize: DEFAULT_RECRUITMENT_POST_PAGE_SIZE,
+          });
 
     try {
       const response = await fetch(url, {
@@ -419,6 +539,7 @@ export function RecruitmentPostFeedWorkspace({
       );
     }
   }, [
+    activeTab,
     dataState.hasMore,
     dataState.nextCursor,
     dataState.snapshotToken,
@@ -647,8 +768,10 @@ export function RecruitmentPostFeedWorkspace({
         const isCurrentDetail = prev.detailBriefId === withdrawnPost.brief_id;
         return {
           ...prev,
-          items: prev.items.filter(
-            (item) => item.brief_id !== withdrawnPost.brief_id,
+          items: applyWithdrawnPostToFeedItems(
+            prev.items,
+            withdrawnPost,
+            activeTab,
           ),
           detailOpen: isCurrentDetail ? false : prev.detailOpen,
           detailBriefId: isCurrentDetail ? null : prev.detailBriefId,
@@ -657,7 +780,7 @@ export function RecruitmentPostFeedWorkspace({
         };
       });
     },
-    [],
+    [activeTab],
   );
 
   const handleLatestServerPostLoaded = useCallback(
@@ -692,13 +815,13 @@ export function RecruitmentPostFeedWorkspace({
     let cancelled = false;
     queueMicrotask(() => {
       if (!cancelled) {
-        void loadFirstPage(filters);
+        void loadFirstPage(filters, activeTab);
       }
     });
     return () => {
       cancelled = true;
     };
-  }, [filters, loadFirstPage]);
+  }, [activeTab, filters, loadFirstPage]);
 
   useEffect(() => {
     return () => {
@@ -817,370 +940,438 @@ export function RecruitmentPostFeedWorkspace({
         </StatusBanner>
       ) : null}
 
-      <FilterToolbar
-        dataTestId="recruitment-posts-filter-toolbar"
-        actions={
-          hasFilters ? (
-            <Button
+      <div
+        role="tablist"
+        aria-label="Phân loại danh sách tin tuyển dụng"
+        data-testid="recruitment-posts-tabs"
+        className="flex flex-wrap items-center gap-2 border-b border-border pb-2"
+      >
+        {RECRUITMENT_POST_FEED_TABS.map((tab) => {
+          const isSelected = activeTab === tab;
+          return (
+            <button
+              key={tab}
+              ref={(el) => {
+                tabButtonRefs.current[tab] = el;
+              }}
               type="button"
-              variant="secondary"
-              size="md"
-              data-testid="recruitment-posts-clear-filters"
-              onClick={() => setFilters(EMPTY_RECRUITMENT_POST_FILTERS)}
+              role="tab"
+              id={`recruitment-posts-tab-${tab}`}
+              data-testid={`recruitment-posts-tab-${tab}`}
+              aria-selected={isSelected}
+              aria-controls="recruitment-posts-tabpanel"
+              tabIndex={isSelected ? 0 : -1}
+              onClick={() => handleSelectTab(tab)}
+              onKeyDown={(event) => handleTabKeyDown(event, tab)}
+              className={
+                isSelected
+                  ? "inline-flex min-h-11 items-center justify-center rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-on-primary shadow-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                  : "inline-flex min-h-11 items-center justify-center rounded-lg border border-border bg-surface px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-surface-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+              }
             >
-              Xóa bộ lọc
-            </Button>
-          ) : null
-        }
-        summary={
-          <span>
+              {RECRUITMENT_POST_FEED_TAB_LABELS[tab]}
+            </button>
+          );
+        })}
+      </div>
+
+      <div
+        id="recruitment-posts-tabpanel"
+        role="tabpanel"
+        aria-labelledby={`recruitment-posts-tab-${activeTab}`}
+        className="space-y-4"
+      >
+        {activeTab === "published" ? (
+          <FilterToolbar
+            dataTestId="recruitment-posts-filter-toolbar"
+            actions={
+              hasFilters ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="md"
+                  data-testid="recruitment-posts-clear-filters"
+                  onClick={() => setFilters(EMPTY_RECRUITMENT_POST_FILTERS)}
+                >
+                  Xóa bộ lọc
+                </Button>
+              ) : null
+            }
+            summary={
+              <span>
+                Hiển thị{" "}
+                <strong className="font-mono tabular-nums text-foreground">
+                  {cardViewModels.length}
+                </strong>{" "}
+                tin tuyển dụng đang hiệu lực (tối đa{" "}
+                {DEFAULT_RECRUITMENT_POST_PAGE_SIZE} tin mỗi lượt tải).
+              </span>
+            }
+          >
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+              <div className="flex min-w-0 flex-col gap-1 text-sm">
+                <label
+                  htmlFor="recruitment-posts-filter-project"
+                  className="font-medium text-muted"
+                >
+                  Dự án
+                </label>
+                <select
+                  id="recruitment-posts-filter-project"
+                  data-testid="recruitment-posts-filter-project"
+                  value={filters.projectId}
+                  onChange={(event) =>
+                    setFilters((prev) => ({
+                      ...prev,
+                      projectId: event.target.value,
+                    }))
+                  }
+                  className={FILTER_SELECT_CLASS}
+                >
+                  <option value="">Tất cả dự án</option>
+                  {filterProjects.map((project) => (
+                    <option key={project.project_id} value={project.project_id}>
+                      {project.display_name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex min-w-0 flex-col gap-1 text-sm">
+                <label
+                  htmlFor="recruitment-posts-filter-province"
+                  className="font-medium text-muted"
+                >
+                  Tỉnh/Thành
+                </label>
+                <select
+                  id="recruitment-posts-filter-province"
+                  data-testid="recruitment-posts-filter-province"
+                  value={filters.provinceId}
+                  onChange={(event) =>
+                    setFilters((prev) =>
+                      applyProvinceFilterChange(
+                        prev,
+                        event.target.value,
+                        dataState.context?.industrial_parks ?? [],
+                      ),
+                    )
+                  }
+                  className={FILTER_SELECT_CLASS}
+                >
+                  <option value="">Tất cả tỉnh/thành</option>
+                  {activeProvinces.map((province) => (
+                    <option
+                      key={province.province_id}
+                      value={province.province_id}
+                    >
+                      {province.display_name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex min-w-0 flex-col gap-1 text-sm">
+                <label
+                  htmlFor="recruitment-posts-filter-park"
+                  className="font-medium text-muted"
+                >
+                  Khu công nghiệp
+                </label>
+                <select
+                  id="recruitment-posts-filter-park"
+                  data-testid="recruitment-posts-filter-park"
+                  value={filters.industrialParkId}
+                  onChange={(event) =>
+                    setFilters((prev) =>
+                      applyIndustrialParkFilterChange(
+                        prev,
+                        event.target.value,
+                        dataState.context?.industrial_parks ?? [],
+                      ),
+                    )
+                  }
+                  className={FILTER_SELECT_CLASS}
+                >
+                  <option value="">Tất cả KCN</option>
+                  {activeIndustrialParks.map((park) => (
+                    <option
+                      key={park.industrial_park_id}
+                      value={park.industrial_park_id}
+                    >
+                      {park.display_name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex min-w-0 flex-col gap-1 text-sm">
+                <label
+                  htmlFor="recruitment-posts-filter-labor-type"
+                  className="font-medium text-muted"
+                >
+                  Hình thức tuyển dụng
+                </label>
+                <select
+                  id="recruitment-posts-filter-labor-type"
+                  data-testid="recruitment-posts-filter-labor-type"
+                  value={filters.laborTypeKey}
+                  onChange={(event) =>
+                    setFilters((prev) => ({
+                      ...prev,
+                      laborTypeKey: event.target.value,
+                    }))
+                  }
+                  className={FILTER_SELECT_CLASS}
+                >
+                  <option value="">Tất cả hình thức</option>
+                  {activeLaborTypes.map((laborType) => (
+                    <option
+                      key={laborType.labor_type_key}
+                      value={laborType.labor_type_key}
+                    >
+                      {laborType.display_name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex min-w-0 flex-col gap-1 text-sm">
+                <label
+                  htmlFor="recruitment-posts-filter-updated-from"
+                  className="font-medium text-muted"
+                >
+                  Từ ngày cập nhật
+                </label>
+                <input
+                  id="recruitment-posts-filter-updated-from"
+                  data-testid="recruitment-posts-filter-updated-from"
+                  type="date"
+                  value={filters.updatedFrom}
+                  max={filters.updatedTo || undefined}
+                  onChange={(event) =>
+                    setFilters((prev) => ({
+                      ...prev,
+                      updatedFrom: event.target.value,
+                    }))
+                  }
+                  className={FILTER_DATE_INPUT_CLASS}
+                />
+              </div>
+
+              <div className="flex min-w-0 flex-col gap-1 text-sm">
+                <label
+                  htmlFor="recruitment-posts-filter-updated-to"
+                  className="font-medium text-muted"
+                >
+                  Đến ngày cập nhật
+                </label>
+                <input
+                  id="recruitment-posts-filter-updated-to"
+                  data-testid="recruitment-posts-filter-updated-to"
+                  type="date"
+                  value={filters.updatedTo}
+                  min={filters.updatedFrom || undefined}
+                  onChange={(event) =>
+                    setFilters((prev) => ({
+                      ...prev,
+                      updatedTo: event.target.value,
+                    }))
+                  }
+                  className={FILTER_DATE_INPUT_CLASS}
+                />
+              </div>
+            </div>
+          </FilterToolbar>
+        ) : (
+          <div
+            data-testid="recruitment-posts-mine-summary"
+            className="rounded-xl border border-border bg-surface px-4 py-3 text-sm text-muted"
+          >
             Hiển thị{" "}
             <strong className="font-mono tabular-nums text-foreground">
               {cardViewModels.length}
             </strong>{" "}
-            tin tuyển dụng đang hiệu lực (tối đa{" "}
+            tin tuyển dụng do bạn tạo gồm cả tin đang tuyển và đã rút (tối đa{" "}
             {DEFAULT_RECRUITMENT_POST_PAGE_SIZE} tin mỗi lượt tải).
-          </span>
-        }
-      >
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-          <div className="flex min-w-0 flex-col gap-1 text-sm">
-            <label
-              htmlFor="recruitment-posts-filter-project"
-              className="font-medium text-muted"
-            >
-              Dự án
-            </label>
-            <select
-              id="recruitment-posts-filter-project"
-              data-testid="recruitment-posts-filter-project"
-              value={filters.projectId}
-              onChange={(event) =>
-                setFilters((prev) => ({
-                  ...prev,
-                  projectId: event.target.value,
-                }))
-              }
-              className={FILTER_SELECT_CLASS}
-            >
-              <option value="">Tất cả dự án</option>
-              {filterProjects.map((project) => (
-                <option key={project.project_id} value={project.project_id}>
-                  {project.display_name}
-                </option>
-              ))}
-            </select>
           </div>
+        )}
 
-          <div className="flex min-w-0 flex-col gap-1 text-sm">
-            <label
-              htmlFor="recruitment-posts-filter-province"
-              className="font-medium text-muted"
-            >
-              Tỉnh/Thành
-            </label>
-            <select
-              id="recruitment-posts-filter-province"
-              data-testid="recruitment-posts-filter-province"
-              value={filters.provinceId}
-              onChange={(event) =>
-                setFilters((prev) =>
-                  applyProvinceFilterChange(
-                    prev,
-                    event.target.value,
-                    dataState.context?.industrial_parks ?? [],
-                  ),
-                )
-              }
-              className={FILTER_SELECT_CLASS}
-            >
-              <option value="">Tất cả tỉnh/thành</option>
-              {activeProvinces.map((province) => (
-                <option key={province.province_id} value={province.province_id}>
-                  {province.display_name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="flex min-w-0 flex-col gap-1 text-sm">
-            <label
-              htmlFor="recruitment-posts-filter-park"
-              className="font-medium text-muted"
-            >
-              Khu công nghiệp
-            </label>
-            <select
-              id="recruitment-posts-filter-park"
-              data-testid="recruitment-posts-filter-park"
-              value={filters.industrialParkId}
-              onChange={(event) =>
-                setFilters((prev) =>
-                  applyIndustrialParkFilterChange(
-                    prev,
-                    event.target.value,
-                    dataState.context?.industrial_parks ?? [],
-                  ),
-                )
-              }
-              className={FILTER_SELECT_CLASS}
-            >
-              <option value="">Tất cả KCN</option>
-              {activeIndustrialParks.map((park) => (
-                <option
-                  key={park.industrial_park_id}
-                  value={park.industrial_park_id}
-                >
-                  {park.display_name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="flex min-w-0 flex-col gap-1 text-sm">
-            <label
-              htmlFor="recruitment-posts-filter-labor-type"
-              className="font-medium text-muted"
-            >
-              Hình thức tuyển dụng
-            </label>
-            <select
-              id="recruitment-posts-filter-labor-type"
-              data-testid="recruitment-posts-filter-labor-type"
-              value={filters.laborTypeKey}
-              onChange={(event) =>
-                setFilters((prev) => ({
-                  ...prev,
-                  laborTypeKey: event.target.value,
-                }))
-              }
-              className={FILTER_SELECT_CLASS}
-            >
-              <option value="">Tất cả hình thức</option>
-              {activeLaborTypes.map((laborType) => (
-                <option
-                  key={laborType.labor_type_key}
-                  value={laborType.labor_type_key}
-                >
-                  {laborType.display_name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="flex min-w-0 flex-col gap-1 text-sm">
-            <label
-              htmlFor="recruitment-posts-filter-updated-from"
-              className="font-medium text-muted"
-            >
-              Từ ngày cập nhật
-            </label>
-            <input
-              id="recruitment-posts-filter-updated-from"
-              data-testid="recruitment-posts-filter-updated-from"
-              type="date"
-              value={filters.updatedFrom}
-              max={filters.updatedTo || undefined}
-              onChange={(event) =>
-                setFilters((prev) => ({
-                  ...prev,
-                  updatedFrom: event.target.value,
-                }))
-              }
-              className={FILTER_DATE_INPUT_CLASS}
-            />
-          </div>
-
-          <div className="flex min-w-0 flex-col gap-1 text-sm">
-            <label
-              htmlFor="recruitment-posts-filter-updated-to"
-              className="font-medium text-muted"
-            >
-              Đến ngày cập nhật
-            </label>
-            <input
-              id="recruitment-posts-filter-updated-to"
-              data-testid="recruitment-posts-filter-updated-to"
-              type="date"
-              value={filters.updatedTo}
-              min={filters.updatedFrom || undefined}
-              onChange={(event) =>
-                setFilters((prev) => ({
-                  ...prev,
-                  updatedTo: event.target.value,
-                }))
-              }
-              className={FILTER_DATE_INPUT_CLASS}
-            />
-          </div>
-        </div>
-      </FilterToolbar>
-
-      {contextError ? (
-        <StatusBanner
-          tone="warning"
-          title="Không thể tải ngữ cảnh bộ lọc"
-          dataTestId="recruitment-posts-context-error"
-        >
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <span>{contextError}</span>
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              data-testid="recruitment-posts-context-retry"
-              onClick={() => {
-                void loadContext();
-              }}
-              disabled={contextLoading}
-            >
-              {contextLoading ? "Đang tải lại…" : "Thử tải lại ngữ cảnh"}
-            </Button>
-          </div>
-        </StatusBanner>
-      ) : null}
-
-      {feedError ? (
-        <StatusBanner
-          tone="error"
-          title="Không thể tải danh sách tin tuyển dụng"
-          dataTestId="recruitment-posts-feed-error"
-        >
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <span>{feedError}</span>
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              data-testid="recruitment-posts-feed-retry"
-              onClick={() => {
-                void loadContext();
-                void loadFirstPage(filters);
-              }}
-            >
-              Thử lại
-            </Button>
-          </div>
-        </StatusBanner>
-      ) : null}
-
-      {exportError ? (
-        <StatusBanner
-          tone="error"
-          title="Không thể xuất bản tin tuyển dụng"
-          dataTestId="recruitment-posts-export-error"
-        >
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <span>{exportError.message}</span>
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              data-testid="recruitment-posts-export-retry"
-              disabled={exportingBriefId !== null}
-              onClick={() => {
-                void handleExportPost(exportError.briefId);
-              }}
-            >
-              {exportingBriefId === exportError.briefId
-                ? "Đang xuất…"
-                : "Thử lại"}
-            </Button>
-          </div>
-        </StatusBanner>
-      ) : null}
-
-      {initialLoading ? (
-        <div
-          role="status"
-          aria-live="polite"
-          data-testid="recruitment-posts-loading"
-          className="rounded-xl border border-border bg-surface p-8 text-center text-sm text-muted"
-        >
-          Đang tải danh sách tin tuyển dụng…
-        </div>
-      ) : null}
-
-      {!initialLoading && !feedError && cardViewModels.length === 0 ? (
-        <div
-          role="status"
-          aria-live="polite"
-          data-testid="recruitment-posts-empty"
-          className="rounded-xl border border-border bg-surface p-8 text-center space-y-3"
-        >
-          <p className="text-sm font-medium text-foreground">
-            {hasFilters
-              ? "Không có phiếu tuyển dụng nào khớp với bộ lọc."
-              : "Hiện chưa có phiếu tuyển dụng nào đang hiệu lực."}
-          </p>
-          {hasFilters ? (
-            <div>
+        {contextError ? (
+          <StatusBanner
+            tone="warning"
+            title="Không thể tải ngữ cảnh bộ lọc"
+            dataTestId="recruitment-posts-context-error"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <span>{contextError}</span>
               <Button
                 type="button"
                 variant="secondary"
                 size="sm"
-                onClick={() => setFilters(EMPTY_RECRUITMENT_POST_FILTERS)}
+                data-testid="recruitment-posts-context-retry"
+                onClick={() => {
+                  void loadContext();
+                }}
+                disabled={contextLoading}
               >
-                Xóa bộ lọc
+                {contextLoading ? "Đang tải lại…" : "Thử tải lại ngữ cảnh"}
               </Button>
             </div>
-          ) : null}
-        </div>
-      ) : null}
+          </StatusBanner>
+        ) : null}
 
-      {!initialLoading && cardViewModels.length > 0 ? (
-        <div
-          data-testid="recruitment-posts-list"
-          className="flex flex-col gap-4"
-        >
-          {cardViewModels.map((card) => (
-            <RecruitmentPostCard
-              key={card.briefId}
-              card={card}
-              onViewDetail={handleOpenDetail}
-              onExport={handleExportPost}
-              isExporting={exportingBriefId === card.briefId}
-              onWithdraw={handleOpenWithdrawFromCard}
-            />
-          ))}
+        {feedError ? (
+          <StatusBanner
+            tone="error"
+            title="Không thể tải danh sách tin tuyển dụng"
+            dataTestId="recruitment-posts-feed-error"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <span>{feedError}</span>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                data-testid="recruitment-posts-feed-retry"
+                onClick={() => {
+                  void loadContext();
+                  void loadFirstPage(filters, activeTab);
+                }}
+              >
+                Thử lại
+              </Button>
+            </div>
+          </StatusBanner>
+        ) : null}
 
-          {loadMoreError ? (
-            <StatusBanner
-              tone="error"
-              title="Không thể tải thêm tin tuyển dụng"
-              dataTestId="recruitment-posts-load-more-error"
-            >
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <span>{loadMoreError}</span>
+        {exportError ? (
+          <StatusBanner
+            tone="error"
+            title="Không thể xuất bản tin tuyển dụng"
+            dataTestId="recruitment-posts-export-error"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <span>{exportError.message}</span>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                data-testid="recruitment-posts-export-retry"
+                disabled={exportingBriefId !== null}
+                onClick={() => {
+                  void handleExportPost(exportError.briefId);
+                }}
+              >
+                {exportingBriefId === exportError.briefId
+                  ? "Đang xuất…"
+                  : "Thử lại"}
+              </Button>
+            </div>
+          </StatusBanner>
+        ) : null}
+
+        {initialLoading ? (
+          <div
+            role="status"
+            aria-live="polite"
+            data-testid="recruitment-posts-loading"
+            className="rounded-xl border border-border bg-surface p-8 text-center text-sm text-muted"
+          >
+            Đang tải danh sách tin tuyển dụng…
+          </div>
+        ) : null}
+
+        {!initialLoading && !feedError && cardViewModels.length === 0 ? (
+          <div
+            role="status"
+            aria-live="polite"
+            data-testid="recruitment-posts-empty"
+            className="rounded-xl border border-border bg-surface p-8 text-center space-y-3"
+          >
+            <p className="text-sm font-medium text-foreground">
+              {activeTab === "mine"
+                ? "Bạn chưa tạo phiếu tuyển dụng nào."
+                : hasFilters
+                  ? "Không có phiếu tuyển dụng nào khớp với bộ lọc."
+                  : "Hiện chưa có phiếu tuyển dụng nào đang hiệu lực."}
+            </p>
+            {activeTab === "published" && hasFilters ? (
+              <div>
                 <Button
                   type="button"
                   variant="secondary"
                   size="sm"
-                  data-testid="recruitment-posts-load-more-retry"
-                  onClick={() => {
-                    void handleLoadMore();
-                  }}
-                  disabled={loadingMore}
+                  onClick={() => setFilters(EMPTY_RECRUITMENT_POST_FILTERS)}
                 >
-                  Thử lại
+                  Xóa bộ lọc
                 </Button>
               </div>
-            </StatusBanner>
-          ) : null}
-
-          <div className="flex justify-center pt-2">
-            <CursorLoadMore
-              hasMore={dataState.hasMore}
-              loading={loadingMore}
-              onLoadMore={() => {
-                void handleLoadMore();
-              }}
-              label="Tải thêm"
-              loadingLabel="Đang tải thêm…"
-            />
+            ) : null}
           </div>
-        </div>
-      ) : null}
+        ) : null}
+
+        {!initialLoading && cardViewModels.length > 0 ? (
+          <div className="space-y-4">
+            <div
+              data-testid="recruitment-posts-list"
+              className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3"
+            >
+              {cardViewModels.map((card) => (
+                <RecruitmentPostCard
+                  key={card.briefId}
+                  card={card}
+                  onViewDetail={handleOpenDetail}
+                  onExport={handleExportPost}
+                  isExporting={exportingBriefId === card.briefId}
+                  onWithdraw={handleOpenWithdrawFromCard}
+                  showStatusBadge={activeTab === "mine"}
+                  canRepost={canRepostWithdrawnRecruitmentPost({
+                    tab: activeTab,
+                    status: card.status,
+                  })}
+                />
+              ))}
+            </div>
+
+            {loadMoreError ? (
+              <StatusBanner
+                tone="error"
+                title="Không thể tải thêm tin tuyển dụng"
+                dataTestId="recruitment-posts-load-more-error"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <span>{loadMoreError}</span>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    data-testid="recruitment-posts-load-more-retry"
+                    onClick={() => {
+                      void handleLoadMore();
+                    }}
+                    disabled={loadingMore}
+                  >
+                    Thử lại
+                  </Button>
+                </div>
+              </StatusBanner>
+            ) : null}
+
+            <div className="flex justify-center pt-2">
+              <CursorLoadMore
+                hasMore={dataState.hasMore}
+                loading={loadingMore}
+                onLoadMore={() => {
+                  void handleLoadMore();
+                }}
+                label="Tải thêm"
+                loadingLabel="Đang tải thêm…"
+              />
+            </div>
+          </div>
+        ) : null}
+      </div>
 
       <RecruitmentPostDetailDialog
         open={dataState.detailOpen}

@@ -115,6 +115,7 @@ const {
   RECRUITMENT_POST_UNPROVIDED_LABEL,
   beginRecruitmentPostContextRequest,
   classifyRecruitmentPostAccessLoss,
+  createCreateRecruitmentPostFormDraftFromItem,
   createEditRecruitmentPostFormDraftFromItem,
   createEmptyRecruitmentPostDataState,
   createEmptyRecruitmentPostFormDraft,
@@ -364,7 +365,8 @@ describe("Phase 3 — Recruitment Posts UI & Architecture Gate", () => {
     assert.match(pageSrc, /redirect\("\/login\?next=%2Frecruitment-posts"\)/);
     assert.match(pageSrc, /<AccountUnavailable \/>/);
     assert.match(pageSrc, /<TemporaryUnavailable \/>/);
-    assert.match(pageSrc, /<RecruitmentPostFeedWorkspace \/>/);
+    assert.match(pageSrc, /parseRecruitmentPostFeedTab\(resolvedSearchParams\?\.tab\)/);
+    assert.match(pageSrc, /<RecruitmentPostFeedWorkspace initialTab=\{initialTab\} \/>/);
 
     assert.match(layoutSrc, /export const dynamic = "force-dynamic"/);
     assert.match(layoutSrc, /<AppShell actor=\{actor\}>\{children\}<\/AppShell>/);
@@ -1441,7 +1443,7 @@ describe("Phase 3 — Recruitment Posts UI & Architecture Gate", () => {
 
     assert.match(
       newPageSrc,
-      /<RecruitmentPostForm\s+mode="create"\s+actorDisplayName=\{actor && actor\.ok \? actor\.actor\.display_name : ""\}\s*\/>/,
+      /<RecruitmentPostForm[\s\S]*mode="create"[\s\S]*copyFromBriefId=\{[\s\S]*\}[\s\S]*actorDisplayName=\{actor && actor\.ok \? actor\.actor\.display_name : ""\}\s*\/>/,
     );
     assert.match(
       editPageSrc,
@@ -1637,6 +1639,343 @@ describe("Phase 3 — Recruitment Posts UI & Architecture Gate", () => {
       /data-testid="recruitment-posts-list"/,
     );
     assert.doesNotMatch(revokedWorkspaceHtml, /Dự án Điện tử ABC/);
+  });
+
+  it("renders 'Tin đang tuyển' and 'Tin của tôi' tabs, 3-card responsive grid, highlighted card header, status badges, and WITHDRAWN 'Đăng lại' actions", () => {
+    const publishedPost = makeCompleteItem({
+      brief_id: makeBriefId(201),
+      status: "PUBLISHED",
+      allowed_actions: { can_edit: true, can_withdraw: true },
+    });
+    const withdrawnPost = makeCompleteItem({
+      brief_id: makeBriefId(202),
+      status: "WITHDRAWN",
+      withdrawn_at: "2026-11-10T11:00:00.000Z",
+      withdrawn_by_display_name: "Nguyễn Văn Quản Lý",
+      allowed_actions: { can_edit: false, can_withdraw: false },
+    });
+
+    // 1. Default "Tin đang tuyển" tab: accessible tablist, 3-column grid, highlighted header, no status badge
+    const publishedTabHtml = renderToStaticMarkup(
+      createElement(RecruitmentPostFeedWorkspace, {
+        initialTab: "published",
+        initialStateForTest: {
+          contextLoading: false,
+          contextError: null,
+          initialLoading: false,
+          feedError: null,
+          loadMoreError: "Không thể tải thêm tin lúc này.",
+          dataState: {
+            ...createEmptyRecruitmentPostDataState(),
+            items: [publishedPost],
+            hasMore: true,
+            nextCursor: `C1.42.0123456789abcdef0123456789abcdef.1762684800000000.${publishedPost.brief_id}`,
+          },
+        },
+      }),
+    );
+
+    assert.match(publishedTabHtml, /role="tablist"/);
+    assert.match(
+      publishedTabHtml,
+      /data-testid="recruitment-posts-tab-published"[^>]*aria-selected="true"/,
+    );
+    assert.match(
+      publishedTabHtml,
+      /data-testid="recruitment-posts-tab-mine"[^>]*aria-selected="false"/,
+    );
+    assert.match(publishedTabHtml, /data-testid="recruitment-posts-filter-toolbar"/);
+    assert.match(
+      publishedTabHtml,
+      /data-testid="recruitment-posts-list"[^>]*class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3"/,
+    );
+    assert.match(
+      publishedTabHtml,
+      new RegExp(
+        `data-testid="recruitment-post-card-${publishedPost.brief_id}"[^>]*class="[^"]*h-full[^"]*"`,
+      ),
+    );
+    assert.match(
+      publishedTabHtml,
+      /data-testid="recruitment-post-card-header"[^>]*class="[^"]*bg-surface-muted\/70[^"]*"/,
+    );
+    assert.doesNotMatch(
+      publishedTabHtml,
+      /data-testid="recruitment-post-status-badge-/,
+    );
+    assert.match(
+      publishedTabHtml,
+      /<dl class="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">/,
+    );
+
+    // Verify loadMoreError sits outside the 3-column grid container
+    assert.match(
+      publishedTabHtml,
+      /data-testid="recruitment-posts-load-more-error"/,
+    );
+
+    // 2. "Tin của tôi" tab: hides filters, shows status badges ("Đang tuyển" / "Đã rút"),
+    // shows "Đăng lại" link on WITHDRAWN card, and never shows "Sửa" or "Rút tin" on WITHDRAWN card
+    const mineTabHtml = renderToStaticMarkup(
+      createElement(RecruitmentPostFeedWorkspace, {
+        initialTab: "mine",
+        initialStateForTest: {
+          activeTab: "mine",
+          contextLoading: false,
+          contextError: null,
+          initialLoading: false,
+          feedError: null,
+          dataState: {
+            ...createEmptyRecruitmentPostDataState(),
+            items: [publishedPost, withdrawnPost],
+            hasMore: false,
+          },
+        },
+      }),
+    );
+
+    assert.match(
+      mineTabHtml,
+      /data-testid="recruitment-posts-tab-mine"[^>]*aria-selected="true"/,
+    );
+    assert.doesNotMatch(mineTabHtml, /data-testid="recruitment-posts-filter-toolbar"/);
+    assert.match(
+      mineTabHtml,
+      new RegExp(`data-testid="recruitment-post-status-badge-${publishedPost.brief_id}"`),
+    );
+    assert.match(
+      mineTabHtml,
+      new RegExp(`data-testid="recruitment-post-status-badge-${withdrawnPost.brief_id}"`),
+    );
+    assert.match(mineTabHtml, />Đang tuyển</);
+    assert.match(mineTabHtml, />Đã rút</);
+    assert.match(
+      mineTabHtml,
+      new RegExp(
+        `href="/recruitment-posts/new\\?copy_from=${withdrawnPost.brief_id}"`,
+      ),
+    );
+    assert.match(
+      mineTabHtml,
+      new RegExp(`data-testid="recruitment-post-repost-${withdrawnPost.brief_id}"`),
+    );
+    assert.match(mineTabHtml, />Đăng lại</);
+
+    // Render individual WITHDRAWN card in mine tab to verify Sửa & Rút tin are absent while Xem chi tiết, Xuất bản tin, Đăng lại are present
+    const withdrawnCardHtml = renderToStaticMarkup(
+      createElement(RecruitmentPostCard, {
+        card: toRecruitmentPostCardViewModel(withdrawnPost),
+        showStatusBadge: true,
+        onViewDetail: () => {},
+        onExport: () => {},
+        onWithdraw: () => {},
+      }),
+    );
+    assert.match(
+      withdrawnCardHtml,
+      new RegExp(`data-testid="recruitment-post-status-badge-${withdrawnPost.brief_id}"`),
+    );
+    assert.match(withdrawnCardHtml, />Đã rút</);
+    assert.match(
+      withdrawnCardHtml,
+      new RegExp(`data-testid="recruitment-post-view-detail-${withdrawnPost.brief_id}"`),
+    );
+    assert.match(withdrawnCardHtml, /data-testid="recruitment-post-export"/);
+    assert.match(
+      withdrawnCardHtml,
+      new RegExp(`data-testid="recruitment-post-repost-${withdrawnPost.brief_id}"`),
+    );
+    assert.doesNotMatch(
+      withdrawnCardHtml,
+      new RegExp(`data-testid="recruitment-post-edit-${withdrawnPost.brief_id}"`),
+    );
+    assert.doesNotMatch(
+      withdrawnCardHtml,
+      new RegExp(`data-testid="recruitment-post-withdraw-${withdrawnPost.brief_id}"`),
+    );
+
+    // 3. Empty state in "Tin của tôi" tab
+    const emptyMineHtml = renderToStaticMarkup(
+      createElement(RecruitmentPostFeedWorkspace, {
+        initialTab: "mine",
+        initialStateForTest: {
+          activeTab: "mine",
+          contextLoading: false,
+          contextError: null,
+          initialLoading: false,
+          feedError: null,
+          dataState: createEmptyRecruitmentPostDataState(),
+        },
+      }),
+    );
+    assert.match(emptyMineHtml, /Bạn chưa tạo phiếu tuyển dụng nào\./);
+  });
+
+  it("renders 'Đăng lại' copy_from flow on RecruitmentPostForm, blocks unmanaged project auto-repost, rejects non-WITHDRAWN copy_from, and redirects to /recruitment-posts?tab=mine with toast after create", () => {
+    const sampleContext = {
+      can_create: true,
+      managed_projects: [
+        { project_id: "PROJ_ABC", display_name: "Dự án Điện tử ABC" },
+        { project_id: "PROJ_XYZ", display_name: "Dự án Cơ khí XYZ" },
+      ],
+      filter_projects: [
+        { project_id: "PROJ_ABC", display_name: "Dự án Điện tử ABC" },
+      ],
+      provinces: [
+        {
+          province_id: PROVINCE_VP_ID,
+          province_code: "VINH_PHUC",
+          display_name: "Vĩnh Phúc",
+          active: true,
+        },
+      ],
+      industrial_parks: [
+        {
+          industrial_park_id: PARK_KHAI_QUANG_ID,
+          industrial_park_code: "VP_KHAI_QUANG",
+          province_id: PROVINCE_VP_ID,
+          display_name: "KCN Khai Quang",
+          active: true,
+        },
+      ],
+      labor_types: [
+        {
+          labor_type_key: "CHINH_THUC",
+          display_name: "Chính thức",
+          active: true,
+        },
+        {
+          labor_type_key: "THOI_VU",
+          display_name: "Thời vụ",
+          active: true,
+        },
+      ],
+    };
+
+    const withdrawnSource = makeCompleteItem({
+      brief_id: makeBriefId(301),
+      version: 4,
+      status: "WITHDRAWN",
+      withdrawn_at: "2026-11-10T10:00:00.000Z",
+      withdrawn_by_display_name: "Lê Thị Cũ",
+      general: {
+        ...makeCompleteItem().general,
+        manager_name: "old.login",
+        manager_phone: "0977888999",
+      },
+      allowed_actions: { can_edit: false, can_withdraw: false },
+    });
+
+    // 1. Valid WITHDRAWN copy_from renders repost banner and prefills 4 sections into mode="create" with current actorDisplayName
+    const repostDraft = createCreateRecruitmentPostFormDraftFromItem(
+      withdrawnSource,
+      {
+        actorDisplayName: "Phạm Thị PM Hiện Tại",
+        context: sampleContext,
+      },
+    );
+    const repostFormHtml = renderToStaticMarkup(
+      createElement(RecruitmentPostForm, {
+        mode: "create",
+        actorDisplayName: "Phạm Thị PM Hiện Tại",
+        copyFromBriefId: withdrawnSource.brief_id,
+        initialStateForTest: {
+          initialLoading: false,
+          context: sampleContext,
+          repostSourcePost: withdrawnSource,
+          draft: repostDraft,
+        },
+      }),
+    );
+
+    assert.equal(repostDraft.managerName, "Phạm Thị PM Hiện Tại");
+    assert.match(repostFormHtml, /data-testid="recruitment-post-repost-banner"/);
+    assert.match(repostFormHtml, /Đang tạo tin mới từ một tin đã rút/);
+    assert.match(repostFormHtml, /0977888999/);
+    assert.doesNotMatch(repostFormHtml, /old\.login/);
+    assert.match(
+      repostFormHtml,
+      /Công ty TNHH Linh Kiện Điện Tử ABC/,
+    );
+
+    // 2. When actor is no longer PM of source project, renders unmanaged project warning and clears project selection
+    const unmanagedContext = {
+      ...sampleContext,
+      managed_projects: [
+        { project_id: "PROJ_XYZ", display_name: "Dự án Cơ khí XYZ" },
+      ],
+    };
+    const unmanagedDraft = createCreateRecruitmentPostFormDraftFromItem(
+      withdrawnSource,
+      {
+        actorDisplayName: "Phạm Thị PM Hiện Tại",
+        context: unmanagedContext,
+      },
+    );
+    const unmanagedHtml = renderToStaticMarkup(
+      createElement(RecruitmentPostForm, {
+        mode: "create",
+        actorDisplayName: "Phạm Thị PM Hiện Tại",
+        copyFromBriefId: withdrawnSource.brief_id,
+        initialStateForTest: {
+          initialLoading: false,
+          context: unmanagedContext,
+          repostSourcePost: withdrawnSource,
+          repostProjectUnmanagedWarning: true,
+          repostCatalogNotice:
+            "Khu công nghiệp của tin cũ đã ngừng hoạt động. Vui lòng chọn lại KCN đang hoạt động.",
+          draft: unmanagedDraft,
+        },
+      }),
+    );
+    assert.match(
+      unmanagedHtml,
+      /data-testid="recruitment-post-repost-warning"/,
+    );
+    assert.match(
+      unmanagedHtml,
+      /Bạn không còn phụ trách dự án này\. Vui lòng chọn dự án đang quản lý hoặc quay lại\./,
+    );
+    assert.match(unmanagedHtml, /href="\/recruitment-posts\?tab=mine"/);
+
+    // 3. Invalid or PUBLISHED copy_from renders safe error banner and does not prefill form
+    const copyErrorHtml = renderToStaticMarkup(
+      createElement(RecruitmentPostForm, {
+        mode: "create",
+        actorDisplayName: "Phạm Thị PM Hiện Tại",
+        copyFromBriefId: makeBriefId(302),
+        initialStateForTest: {
+          initialLoading: false,
+          context: sampleContext,
+          copyFromError:
+            "Chỉ có thể đăng lại từ một tin đã rút. Vui lòng kiểm tra lại tại tab “Tin của tôi”.",
+        },
+      }),
+    );
+    assert.match(
+      copyErrorHtml,
+      /data-testid="recruitment-post-copy-from-error"/,
+    );
+    assert.match(
+      copyErrorHtml,
+      /Chỉ có thể đăng lại từ một tin đã rút/,
+    );
+    assert.match(copyErrorHtml, /href="\/recruitment-posts\?tab=mine"/);
+    assert.doesNotMatch(copyErrorHtml, /data-testid="recruitment-post-form"/);
+
+    // 4. Verify RecruitmentPostForm source wires toast ("Đã đăng tin tuyển dụng thành công.") and router.push("/recruitment-posts?tab=mine") on create success, and gates inline saved banner to mode === "edit"
+    const formSrc = readRel(
+      "src/components/recruitment-posts/recruitment-post-form.tsx",
+    );
+    assert.match(
+      formSrc,
+      /notify\.success\(\{\s*title:\s*"Đã đăng tin tuyển dụng thành công\.",?\s*\}\)/,
+    );
+    assert.match(
+      formSrc,
+      /buildRecruitmentPostFeedTabHref\("mine"\)/,
+    );
+    assert.match(formSrc, /\{savedPost && mode === "edit" \? \(/);
   });
 });
 

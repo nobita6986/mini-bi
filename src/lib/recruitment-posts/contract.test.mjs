@@ -2,10 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  DEFAULT_RECRUITMENT_POST_PAGE_SIZE,
+  MAX_RECRUITMENT_POST_PAGE_SIZE,
   RECRUITMENT_POST_ERROR_CODES,
   containsForbiddenClientAuthorityKey,
   parseCreateRecruitmentPostBody,
   parseIdempotencyKeyHeader,
+  parseListMyRecruitmentPostsQuery,
   parseListRecruitmentPostsQuery,
   parseNoQueryParams,
   parseUpdateRecruitmentPostBody,
@@ -506,6 +509,114 @@ test("parseListRecruitmentPostsQuery validates filters and 18-digit bounded S1/C
       ),
     ),
     { ok: false, code: "RECRUITMENT_POST_INPUT_INVALID" },
+  );
+
+  // Page size default is 15, max is 15; 16 is rejected
+  assert.equal(DEFAULT_RECRUITMENT_POST_PAGE_SIZE, 15);
+  assert.equal(MAX_RECRUITMENT_POST_PAGE_SIZE, 15);
+  const defaultParsed = parseListRecruitmentPostsQuery(
+    new URL("https://app.test/api/recruitment-posts"),
+  );
+  assert.equal(defaultParsed.ok, true);
+  if (defaultParsed.ok) {
+    assert.equal(defaultParsed.value.page_size, 15);
+  }
+  const maxParsed = parseListRecruitmentPostsQuery(
+    new URL("https://app.test/api/recruitment-posts?page_size=15"),
+  );
+  assert.equal(maxParsed.ok, true);
+  assert.deepEqual(
+    parseListRecruitmentPostsQuery(
+      new URL("https://app.test/api/recruitment-posts?page_size=16"),
+    ),
+    { ok: false, code: "RECRUITMENT_POST_INPUT_INVALID" },
+  );
+});
+
+test("parseListMyRecruitmentPostsQuery accepts only cursor, snapshot_token, and page_size (1..15) and rejects filter or client authority keys", () => {
+  const token = `S1.42.${FILTER_HASH}`;
+  const cursor = `C1.42.${FILTER_HASH}.1762761600123456.${BRIEF_ID}`;
+
+  const defaultMine = parseListMyRecruitmentPostsQuery(
+    new URL("https://app.test/api/recruitment-posts/mine"),
+  );
+  assert.deepEqual(defaultMine, {
+    ok: true,
+    value: {
+      cursor: null,
+      snapshot_token: null,
+      page_size: 15,
+    },
+  });
+
+  const pagedMine = parseListMyRecruitmentPostsQuery(
+    new URL(
+      `https://app.test/api/recruitment-posts/mine?page_size=15&snapshot_token=${token}&cursor=${cursor}`,
+    ),
+  );
+  assert.deepEqual(pagedMine, {
+    ok: true,
+    value: {
+      cursor,
+      snapshot_token: token,
+      page_size: 15,
+    },
+  });
+
+  // Reject page_size=0 or 16
+  for (const badSize of ["0", "16", "-1", "abc"]) {
+    assert.deepEqual(
+      parseListMyRecruitmentPostsQuery(
+        new URL(`https://app.test/api/recruitment-posts/mine?page_size=${badSize}`),
+      ),
+      { ok: false, code: "RECRUITMENT_POST_INPUT_INVALID" },
+    );
+  }
+
+  // Reject feed filter keys (project_id, status, province_id, etc.)
+  for (const extraParam of [
+    "project_id=PROJ_A",
+    "status=WITHDRAWN",
+    `province_id=${PROVINCE_ID}`,
+  ]) {
+    assert.deepEqual(
+      parseListMyRecruitmentPostsQuery(
+        new URL(`https://app.test/api/recruitment-posts/mine?${extraParam}`),
+      ),
+      { ok: false, code: "RECRUITMENT_POST_INPUT_INVALID" },
+    );
+  }
+
+  // Reject client authority keys with CLIENT_AUTHORITY_FIELD_FORBIDDEN
+  for (const authorityKey of [
+    "app_user_id",
+    "auth_subject",
+    "creator_id",
+    "created_by_app_user_id",
+    "user_id",
+    "email",
+    "username",
+  ]) {
+    assert.deepEqual(
+      parseListMyRecruitmentPostsQuery(
+        new URL(`https://app.test/api/recruitment-posts/mine?${authorityKey}=spoof`),
+      ),
+      { ok: false, code: "CLIENT_AUTHORITY_FIELD_FORBIDDEN" },
+    );
+  }
+
+  // Reject duplicate keys and cursor without snapshot_token
+  assert.deepEqual(
+    parseListMyRecruitmentPostsQuery(
+      new URL("https://app.test/api/recruitment-posts/mine?page_size=10&page_size=15"),
+    ),
+    { ok: false, code: "RECRUITMENT_POST_INPUT_INVALID" },
+  );
+  assert.deepEqual(
+    parseListMyRecruitmentPostsQuery(
+      new URL(`https://app.test/api/recruitment-posts/mine?cursor=${cursor}`),
+    ),
+    { ok: false, code: "RECRUITMENT_POST_SNAPSHOT_INVALID" },
   );
 });
 

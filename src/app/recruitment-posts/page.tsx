@@ -5,7 +5,10 @@ import { AccountUnavailable } from "@/components/auth/access-denied";
 import { TemporaryUnavailable } from "@/components/auth/temporary-unavailable";
 import { RecruitmentPostFeedWorkspace } from "@/components/recruitment-posts/recruitment-post-feed-workspace";
 import { resolveActorForRequest } from "@/lib/navigation/resolve-nav-actor";
-import { decideRecruitmentPostsPageAccess } from "@/lib/recruitment-posts/recruitment-post-ui-model";
+import {
+  decideRecruitmentPostsPageAccess,
+  parseRecruitmentPostFeedTab,
+} from "@/lib/recruitment-posts/recruitment-post-ui-model";
 
 export const dynamic = "force-dynamic";
 
@@ -13,8 +16,14 @@ export const metadata = {
   title: "Tin tuyển dụng — Hệ thống báo cáo HRP",
 };
 
-export default async function RecruitmentPostsPage() {
+export default async function RecruitmentPostsPage({
+  searchParams,
+}: {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+} = {}) {
   await connection();
+  const resolvedSearchParams = searchParams ? await searchParams : undefined;
+  const initialTab = parseRecruitmentPostFeedTab(resolvedSearchParams?.tab);
   const actor = await resolveActorForRequest().catch(() => null);
   const decision = decideRecruitmentPostsPageAccess({
     enabledFlag: process.env.DIRECT_ENTRY_API_ENABLED,
@@ -31,6 +40,6 @@ export default async function RecruitmentPostsPage() {
     case "TEMPORARY_UNAVAILABLE":
       return <TemporaryUnavailable />;
     case "ALLOW":
-      return <RecruitmentPostFeedWorkspace />;
+      return <RecruitmentPostFeedWorkspace initialTab={initialTab} />;
   }
 }

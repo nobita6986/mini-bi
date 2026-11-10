@@ -8,6 +8,7 @@ import {
   containsForbiddenClientAuthorityKey,
   parseCreateRecruitmentPostBody,
   parseIdempotencyKeyHeader,
+  parseListMyRecruitmentPostsQuery,
   parseListRecruitmentPostsQuery,
   parseNoQueryParams,
   parseUpdateRecruitmentPostBody,
@@ -283,6 +284,50 @@ export async function handleRecruitmentPostList(
 }
 
 export const handleListRecruitmentPosts = handleRecruitmentPostList;
+
+// -----------------------------------------------------------------------------
+// 2b. GET /api/recruitment-posts/mine
+// -----------------------------------------------------------------------------
+export async function handleRecruitmentPostListMine(
+  request: Request,
+  enabledFlag: string | undefined,
+  dependencies: RecruitmentPostApiDependencies,
+): Promise<Response> {
+  const gate = directEntryFeatureGate(enabledFlag);
+  if (gate) return gate;
+
+  if (hasDisallowedAuthorityHeaders(request)) {
+    return recruitmentPostError("CLIENT_AUTHORITY_FIELD_FORBIDDEN");
+  }
+
+  const url = parseRequestUrl(request);
+  if (!url) {
+    return recruitmentPostError("RECRUITMENT_POST_INPUT_INVALID");
+  }
+
+  const parsedQuery = parseListMyRecruitmentPostsQuery(url);
+  if (!parsedQuery.ok) {
+    return recruitmentPostError(parsedQuery.code);
+  }
+
+  const actor = await resolveRecruitmentPostActor(dependencies);
+  if (!actor.ok) return actor.response;
+
+  try {
+    const result = await dependencies.repository.listMine({
+      auth_subject: actor.auth_subject,
+      app_user_id: actor.app_user_id,
+      ...parsedQuery.value,
+    });
+    if (!result.ok) return recruitmentPostError(result.code);
+    return recruitmentPostOk(result.data, 200);
+  } catch {
+    console.error("[recruitment-posts] listMine failed");
+    return recruitmentPostError("RECRUITMENT_POST_UNAVAILABLE");
+  }
+}
+
+export const handleListMyRecruitmentPosts = handleRecruitmentPostListMine;
 
 // -----------------------------------------------------------------------------
 // 3. GET /api/recruitment-posts/[briefId]
