@@ -119,6 +119,7 @@ const {
   createEmptyRecruitmentPostDataState,
   createEmptyRecruitmentPostFormDraft,
   createLatestRequestTracker,
+  exportRecruitmentPostDetailMarkdown,
   mergeUniqueRecruitmentPostItems,
   recruitmentPostContextErrorMessage,
   resolveRecruitmentPostContextOutcome,
@@ -386,12 +387,13 @@ describe("Phase 3 — Recruitment Posts UI & Architecture Gate", () => {
     assert.match(mobileNavSrc, /"recruitment-posts": ClipboardList/);
   });
 
-  it("renders RecruitmentPostCard with all 10 BOD summary items and zero Phase 4 mutation buttons", () => {
+  it("renders RecruitmentPostCard with all 10 BOD summary items, export button, and creator display name as manager contact", () => {
     const fullCard = toRecruitmentPostCardViewModel(makeCompleteItem());
     const html = renderToStaticMarkup(
       createElement(RecruitmentPostCard, {
         card: fullCard,
         onViewDetail: () => {},
+        onExport: () => {},
       }),
     );
 
@@ -402,13 +404,50 @@ describe("Phase 3 — Recruitment Posts UI & Architecture Gate", () => {
     assert.match(html, /Lắp ráp bảng mạch, kiểm tra ngoại quan bằng kính hiển vi\./);
     assert.match(html, /Chính thức, Thời vụ/);
     assert.match(html, /150 người/);
-    assert.match(html, /Không giới hạn \(Nam\/Nữ\) · Độ tuổi: 18 – 38 tuổi/);
+    assert.match(html, /Cặp Nam\/Nữ · Độ tuổi: 18 – 38 tuổi/);
     assert.match(html, /LCB:\s*5\.500\.000\s*₫\s*·\s*Thu nhập:\s*9\.500\.000\s*₫\s*–\s*13\.500\.000\s*₫/);
-    assert.match(html, /Trần Thị PM · 0912345678/);
-    assert.match(html, /Nguyễn Văn Quản Lý/);
+    assert.match(html, /Nguyễn Văn Quản Lý · 0912345678/);
+    assert.doesNotMatch(html, /Trần Thị PM/);
     assert.match(html, /Xem chi tiết/);
+    assert.match(html, /data-testid="recruitment-post-export"/);
+    assert.match(html, /Xuất bản tin/);
 
-    // Must not render duplicate currency unit or Phase 4 buttons
+    // Exporting state disables button and shows loading label
+    const exportingHtml = renderToStaticMarkup(
+      createElement(RecruitmentPostCard, {
+        card: fullCard,
+        onViewDetail: () => {},
+        onExport: () => {},
+        isExporting: true,
+      }),
+    );
+    assert.match(
+      exportingHtml,
+      /<button[^>]*disabled=""[^>]*data-testid="recruitment-post-export"[^>]*>Đang xuất…<\/button>/,
+    );
+
+    // Regression: general.manager_name = "yenlh.td" and created_by_display_name = "Lê Thị Hải Yến"
+    const loginManagerCard = toRecruitmentPostCardViewModel(
+      makeCompleteItem({
+        created_by_display_name: "Lê Thị Hải Yến",
+        updated_by_display_name: "Lê Thị Hải Yến",
+        general: {
+          ...makeCompleteItem().general,
+          manager_name: "yenlh.td",
+          manager_phone: "0912345678",
+        },
+      }),
+    );
+    const loginCardHtml = renderToStaticMarkup(
+      createElement(RecruitmentPostCard, {
+        card: loginManagerCard,
+        onViewDetail: () => {},
+      }),
+    );
+    assert.match(loginCardHtml, /Lê Thị Hải Yến · 0912345678/);
+    assert.doesNotMatch(loginCardHtml, /yenlh\.td/);
+
+    // Must not render duplicate currency unit or Phase 4 buttons when not allowed
     assert.doesNotMatch(html, /₫\s*đ/);
     assert.doesNotMatch(html, /Tạo phiếu tuyển dụng/);
     assert.doesNotMatch(html, />Sửa</);
@@ -429,7 +468,17 @@ describe("Phase 3 — Recruitment Posts UI & Architecture Gate", () => {
   });
 
   it("renders RecruitmentPostDetailDialog with all 4 BOD sections, 8 shift wages, loading and error states", () => {
-    const detailVm = toRecruitmentPostDetailViewModel(makeCompleteItem());
+    const detailVm = toRecruitmentPostDetailViewModel(
+      makeCompleteItem({
+        created_by_display_name: "Lê Thị Hải Yến",
+        updated_by_display_name: "Lê Thị Hải Yến",
+        general: {
+          ...makeCompleteItem().general,
+          manager_name: "yenlh.td",
+          manager_phone: "0912345678",
+        },
+      }),
+    );
     const html = renderToStaticMarkup(
       createElement(RecruitmentPostDetailDialog, {
         open: true,
@@ -450,7 +499,7 @@ describe("Phase 3 — Recruitment Posts UI & Architecture Gate", () => {
     assert.match(html, /3\. Lương, thưởng và phúc lợi/);
     assert.match(html, /4\. Hồ sơ ứng viên cần chuẩn bị/);
 
-    // Section 1 fields
+    // Section 1 fields (uses created_by_display_name "Lê Thị Hải Yến" and never "yenlh.td")
     assert.match(html, /Dự án Điện tử ABC/);
     assert.match(html, /Công ty TNHH Linh Kiện Điện Tử ABC/);
     assert.match(html, /Vĩnh Phúc/);
@@ -460,11 +509,12 @@ describe("Phase 3 — Recruitment Posts UI & Architecture Gate", () => {
     assert.match(html, /Phòng sạch, Phòng bán sạch/);
     assert.match(html, /Ngồi, Đứng/);
     assert.match(html, /Hai ca/);
-    assert.match(html, /Trần Thị PM/);
+    assert.match(html, /Lê Thị Hải Yến/);
     assert.match(html, /0912345678/);
+    assert.doesNotMatch(html, /yenlh\.td/);
 
     // Section 2 fields
-    assert.match(html, /Không giới hạn \(Nam\/Nữ\)/);
+    assert.match(html, /Cặp Nam\/Nữ/);
     assert.match(html, /THCS \(Cấp 2\)/);
     assert.match(html, />Có</);
     assert.match(html, /Có nhận/);
@@ -990,8 +1040,18 @@ describe("Phase 3 — Recruitment Posts UI & Architecture Gate", () => {
       ],
       labor_types: [
         {
+          labor_type_key: "THOI_VU",
+          display_name: "Thời vụ",
+          active: true,
+        },
+        {
           labor_type_key: "CHINH_THUC",
           display_name: "Chính thức",
+          active: true,
+        },
+        {
+          labor_type_key: "GIA_CONG",
+          display_name: "Gia công",
           active: true,
         },
       ],
@@ -1022,7 +1082,7 @@ describe("Phase 3 — Recruitment Posts UI & Architecture Gate", () => {
       }),
     );
 
-    // 4 BOD sections + NO standalone province input + NO missing KCN helper text + KCN search/select still required + 6-item pre-submit confirmation block still shows derived province
+    // 4 BOD sections + NO standalone province input + NO missing KCN helper text + NO KCN search input + Project & KCN on same desktop row + NO manager name input + editable phone + 4 candidate fields in 1 desktop row + gender label "Cặp Nam/Nữ" + 6-item pre-submit confirmation block showing phone only
     assert.match(createHtml, /1\. Thông tin chung dự án/);
     assert.match(createHtml, /2\. Yêu cầu ứng viên/);
     assert.match(createHtml, /3\. Lương, thưởng và phúc lợi/);
@@ -1039,18 +1099,145 @@ describe("Phase 3 — Recruitment Posts UI & Architecture Gate", () => {
       createHtml,
       /data-testid="recruitment-post-derived-province"/,
     );
-    assert.match(createHtml, /data-testid="recruitment-post-select-project"/);
-    assert.match(createHtml, /data-testid="recruitment-post-search-park"/);
-    assert.match(createHtml, /data-testid="recruitment-post-select-park"/);
+    assert.doesNotMatch(createHtml, /data-testid="recruitment-post-search-park"/);
+    assert.doesNotMatch(createHtml, /Gõ để tìm nhanh KCN/);
     assert.match(
       createHtml,
-      /<input[^>]*data-testid="recruitment-post-input-manager-name"[^>]*readOnly=""[^>]*value="Trần Thị PM"/,
+      /data-testid="recruitment-post-project-park-row"[^>]*class="[^"]*sm:grid-cols-2[^"]*"/,
     );
+    assert.match(createHtml, /data-testid="recruitment-post-select-project"/);
+    assert.match(createHtml, /data-testid="recruitment-post-select-park"/);
+
+    // Consecutive checkbox cluster (Môi trường làm việc -> Tư thế làm việc -> Hình thức tuyển dụng)
+    assert.match(
+      createHtml,
+      /data-testid="recruitment-post-checkbox-cluster"[^>]*class="[^"]*lg:flex-row[^"]*lg:flex-wrap[^"]*"/,
+    );
+    assert.match(createHtml, /data-testid="recruitment-post-env-CLEAN_ROOM"/);
+    assert.match(createHtml, /data-testid="recruitment-post-env-NORMAL_ROOM"/);
+    assert.match(createHtml, /data-testid="recruitment-post-env-SEMI_CLEAN_ROOM"/);
+    assert.match(createHtml, /data-testid="recruitment-post-posture-STANDING"/);
+    assert.match(createHtml, /data-testid="recruitment-post-posture-SITTING"/);
+    assert.match(
+      createHtml,
+      /data-testid="recruitment-post-labor-type-THOI_VU"/,
+    );
+    assert.match(
+      createHtml,
+      /data-testid="recruitment-post-labor-type-CHINH_THUC"/,
+    );
+    assert.match(
+      createHtml,
+      /data-testid="recruitment-post-labor-type-GIA_CONG"/,
+    );
+
+    // 3-column desktop row immediately after checkbox cluster: Ca làm việc * -> Chi tiết ca / giờ làm việc -> Số điện thoại người phụ trách *
+    assert.match(
+      createHtml,
+      /data-testid="recruitment-post-shift-contact-row"[^>]*class="[^"]*lg:grid-cols-3[^"]*"/,
+    );
+    const clusterPos = createHtml.indexOf(
+      'data-testid="recruitment-post-checkbox-cluster"',
+    );
+    const envPos = createHtml.indexOf(
+      'data-testid="recruitment-post-env-CLEAN_ROOM"',
+    );
+    const posturePos = createHtml.indexOf(
+      'data-testid="recruitment-post-posture-STANDING"',
+    );
+    const laborPos = createHtml.indexOf(
+      'data-testid="recruitment-post-labor-type-THOI_VU"',
+    );
+    const shiftContactRowPos = createHtml.indexOf(
+      'data-testid="recruitment-post-shift-contact-row"',
+    );
+    const shiftPatternPos = createHtml.indexOf(
+      'data-testid="recruitment-post-select-shift-pattern"',
+    );
+    const shiftDetailsPos = createHtml.indexOf(
+      'data-testid="recruitment-post-input-shift-details"',
+    );
+    const managerPhonePos = createHtml.indexOf(
+      'data-testid="recruitment-post-input-manager-phone"',
+    );
+    const headcountPos = createHtml.indexOf(
+      'data-testid="recruitment-post-input-headcount"',
+    );
+
+    assert.ok(clusterPos > 0 && envPos > clusterPos);
+    assert.ok(posturePos > envPos);
+    assert.ok(laborPos > posturePos);
+    assert.ok(
+      shiftContactRowPos > laborPos,
+      "shift-contact row must come immediately after checkbox cluster",
+    );
+    assert.ok(shiftPatternPos > shiftContactRowPos);
+    assert.ok(
+      shiftDetailsPos > shiftPatternPos,
+      "shift_details must follow shift_pattern",
+    );
+    assert.ok(
+      managerPhonePos > shiftDetailsPos,
+      "manager_phone must follow shift_details",
+    );
+    assert.ok(
+      headcountPos > managerPhonePos,
+      "expected_headcount must follow the 3-field shift & contact row",
+    );
+
+    // Verify shift_details required marker & fieldErrors for laborTypeKeys, shiftDetails, managerPhone remain intact
+    const validationCreateHtml = renderToStaticMarkup(
+      createElement(RecruitmentPostForm, {
+        mode: "create",
+        actorDisplayName: "Trần Thị PM",
+        initialStateForTest: {
+          initialLoading: false,
+          context: sampleContext,
+          draft: {
+            ...createDraft,
+            shiftPattern: "OTHER",
+          },
+          fieldErrors: {
+            laborTypeKeys: "Vui lòng chọn ít nhất một Hình thức tuyển dụng.",
+            shiftDetails: "Vui lòng nhập Chi tiết ca / giờ làm việc.",
+            managerPhone: "Vui lòng nhập Số điện thoại người phụ trách.",
+          },
+        },
+      }),
+    );
+    assert.match(
+      validationCreateHtml,
+      /Vui lòng chọn ít nhất một Hình thức tuyển dụng\./,
+    );
+    assert.match(
+      validationCreateHtml,
+      /Vui lòng nhập Chi tiết ca \/ giờ làm việc\./,
+    );
+    assert.match(
+      validationCreateHtml,
+      /Vui lòng nhập Số điện thoại người phụ trách\./,
+    );
+
+    assert.doesNotMatch(
+      createHtml,
+      /data-testid="recruitment-post-input-manager-name"/,
+    );
+    assert.doesNotMatch(createHtml, /Người phụ trách dự án/);
     assert.doesNotMatch(createHtml, /Tên Client Cố Tình Gửi/);
+    assert.match(
+      createHtml,
+      /data-testid="recruitment-post-input-manager-phone"[^>]*value="0912345678"/,
+    );
     assert.doesNotMatch(
       createHtml,
       /<input[^>]*data-testid="recruitment-post-input-manager-phone"[^>]*readOnly=""/,
     );
+    assert.match(
+      createHtml,
+      /data-testid="recruitment-post-candidate-core-row"[^>]*class="[^"]*lg:grid-cols-4[^"]*"/,
+    );
+    assert.match(createHtml, /<option value="ANY"[^>]*>Cặp Nam\/Nữ<\/option>/);
+    assert.doesNotMatch(createHtml, /Không giới hạn \(Nam\/Nữ\)/);
     assert.match(createHtml, /data-testid="recruitment-post-pre-submit-summary"/);
     assert.match(createHtml, /1\. Dự án/);
     assert.match(createHtml, /2\. Khu công nghiệp &amp; Tỉnh\/Thành/);
@@ -1061,7 +1248,8 @@ describe("Phase 3 — Recruitment Posts UI & Architecture Gate", () => {
     assert.match(createHtml, /5\. Thu nhập bình quân dự kiến/);
     assert.match(createHtml, /9\.500\.000\s*₫\s*–\s*12\.500\.000\s*₫/);
     assert.match(createHtml, /6\. Liên hệ người phụ trách/);
-    assert.match(createHtml, /Trần Thị PM · 0912345678/);
+    assert.match(createHtml, />0912345678</);
+    assert.doesNotMatch(createHtml, /Trần Thị PM · 0912345678/);
 
     // Single managed project auto-defaults projectId and customerName on initial create render while keeping customerName editable
     const autoDefaultCreateHtml = renderToStaticMarkup(
@@ -1082,20 +1270,31 @@ describe("Phase 3 — Recruitment Posts UI & Architecture Gate", () => {
       autoDefaultCreateHtml,
       /<input[^>]*data-testid="recruitment-post-input-customer-name"[^>]*readOnly=""/,
     );
-    assert.match(
+    assert.doesNotMatch(
       autoDefaultCreateHtml,
-      /<input[^>]*data-testid="recruitment-post-input-manager-name"[^>]*readOnly=""[^>]*value="Trần Thị PM"/,
+      /data-testid="recruitment-post-input-manager-name"/,
     );
 
-    // Edit mode locks Project and Industrial Park, preserves original customer_name and manager_name even if actorDisplayName is Full Admin/BOD, and handles 409 OCC stale + compared server post without auto-resubmitting
+    // Edit mode locks Project and Industrial Park, hides manager_name input while keeping manager_phone editable, and renders comparedServerPost with created_by_display_name ("Lê Thị Hải Yến") and never general.manager_name ("yenlh.td")
     const existingPost = makeCompleteItem({
       version: 3,
+      created_by_display_name: "Lê Thị Hải Yến",
+      updated_by_display_name: "Lê Thị Hải Yến",
+      general: {
+        ...makeCompleteItem().general,
+        manager_name: "yenlh.td",
+        manager_phone: "0912345678",
+      },
       allowed_actions: { can_edit: true, can_withdraw: true },
     });
     const newerServerPost = makeCompleteItem({
       version: 4,
+      created_by_display_name: "Lê Thị Hải Yến",
+      updated_by_display_name: "Lê Thị Hải Yến",
       general: {
         ...existingPost.general,
+        manager_name: "yenlh.td",
+        manager_phone: "0912345678",
         job_description: "Công việc mới cập nhật trên máy chủ v4",
       },
       allowed_actions: { can_edit: true, can_withdraw: true },
@@ -1128,9 +1327,9 @@ describe("Phase 3 — Recruitment Posts UI & Architecture Gate", () => {
       editStaleHtml,
       /data-testid="recruitment-post-input-customer-name"[^>]*value="Công ty TNHH Linh Kiện Điện Tử ABC"/,
     );
-    assert.match(
+    assert.doesNotMatch(
       editStaleHtml,
-      /<input[^>]*data-testid="recruitment-post-input-manager-name"[^>]*readOnly=""[^>]*value="Trần Thị PM"/,
+      /data-testid="recruitment-post-input-manager-name"/,
     );
     assert.doesNotMatch(
       editStaleHtml,
@@ -1138,6 +1337,9 @@ describe("Phase 3 — Recruitment Posts UI & Architecture Gate", () => {
     );
     assert.doesNotMatch(editStaleHtml, /Tên Giả Mạo Khi Sửa/);
     assert.doesNotMatch(editStaleHtml, /Lê Quản Trị BOD/);
+    assert.doesNotMatch(editStaleHtml, /yenlh\.td/);
+    assert.match(editStaleHtml, /Lê Thị Hải Yến/);
+    assert.match(editStaleHtml, /0912345678/);
     assert.match(editStaleHtml, /data-testid="recruitment-post-stale-conflict"/);
     assert.match(editStaleHtml, /Tải bản mới nhất để đối chiếu/);
     assert.match(
@@ -1255,6 +1457,186 @@ describe("Phase 3 — Recruitment Posts UI & Architecture Gate", () => {
       /decideRecruitmentLocationCatalogPageAccess/,
     );
     assert.match(adminParksPageSrc, /<IndustrialParkCatalogManager \/>/);
+  });
+
+  it("renders 'Xuất bản tin' button on card, exports Markdown from GET /api/recruitment-posts/[briefId], shows error banner without creating file on failure, and wipes state on 401/403", async () => {
+    const postItem = makeCompleteItem({
+      brief_id: makeBriefId(88),
+      created_by_display_name: "Lê Thị Hải Yến",
+      updated_by_display_name: "Lê Thị Hải Yến",
+      general: {
+        ...makeCompleteItem().general,
+        manager_name: "yenlh.td",
+        manager_phone: "0912345678",
+      },
+    });
+
+    // 1. Feed workspace renders "Xuất bản tin" button next to "Xem chi tiết" with responsive flex-wrap actions
+    const feedHtml = renderToStaticMarkup(
+      createElement(RecruitmentPostFeedWorkspace, {
+        initialStateForTest: {
+          contextLoading: false,
+          contextError: null,
+          initialLoading: false,
+          feedError: null,
+          dataState: {
+            ...createEmptyRecruitmentPostDataState(),
+            items: [postItem],
+            hasMore: false,
+          },
+        },
+      }),
+    );
+    assert.match(
+      feedHtml,
+      /data-testid="recruitment-post-card-actions"[^>]*class="[^"]*flex-wrap[^"]*"/,
+    );
+    assert.match(feedHtml, /data-testid="recruitment-post-export"/);
+    assert.match(feedHtml, /Xuất bản tin/);
+
+    // 2. While exporting, button is disabled and shows "Đang xuất…"
+    const exportingHtml = renderToStaticMarkup(
+      createElement(RecruitmentPostFeedWorkspace, {
+        initialStateForTest: {
+          contextLoading: false,
+          contextError: null,
+          initialLoading: false,
+          feedError: null,
+          exportingBriefId: postItem.brief_id,
+          dataState: {
+            ...createEmptyRecruitmentPostDataState(),
+            items: [postItem],
+            hasMore: false,
+          },
+        },
+      }),
+    );
+    assert.match(
+      exportingHtml,
+      /<button[^>]*disabled=""[^>]*data-testid="recruitment-post-export"[^>]*>Đang xuất…<\/button>/,
+    );
+
+    // 3. When detail export fails, workspace renders recognizable error banner + retry button
+    const exportErrorHtml = renderToStaticMarkup(
+      createElement(RecruitmentPostFeedWorkspace, {
+        initialStateForTest: {
+          contextLoading: false,
+          contextError: null,
+          initialLoading: false,
+          feedError: null,
+          exportError: {
+            briefId: postItem.brief_id,
+            message:
+              "Không thể tải dữ liệu tin tuyển dụng lúc này. Vui lòng thử lại.",
+          },
+          dataState: {
+            ...createEmptyRecruitmentPostDataState(),
+            items: [postItem],
+            hasMore: false,
+          },
+        },
+      }),
+    );
+    assert.match(
+      exportErrorHtml,
+      /data-testid="recruitment-posts-export-error"/,
+    );
+    assert.match(exportErrorHtml, /Không thể xuất bản tin tuyển dụng/);
+    assert.match(
+      exportErrorHtml,
+      /data-testid="recruitment-posts-export-retry"/,
+    );
+
+    // 4. Clicking export fetches GET /api/recruitment-posts/[briefId] and generates .md with 4 sections + metadata, using created_by_display_name & manager_phone and never manager_name
+    const requestedUrls = [];
+    const createdFiles = [];
+    const okResult = await exportRecruitmentPostDetailMarkdown({
+      briefId: postItem.brief_id,
+      fetchImpl: async (url) => {
+        requestedUrls.push(String(url));
+        return new Response(
+          JSON.stringify({ ok: true, data: { post: postItem } }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      },
+      onDownload: (file) => {
+        createdFiles.push(file);
+      },
+    });
+    assert.deepEqual(requestedUrls, [
+      `/api/recruitment-posts/${postItem.brief_id}`,
+    ]);
+    assert.equal(okResult.kind, "ok");
+    assert.equal(createdFiles.length, 1);
+    assert.equal(
+      createdFiles[0].filename,
+      `tin-tuyen-dung-${postItem.brief_id}.md`,
+    );
+    assert.match(createdFiles[0].content, /## 1\. Thông tin chung dự án/);
+    assert.match(createdFiles[0].content, /## 2\. Yêu cầu ứng viên/);
+    assert.match(
+      createdFiles[0].content,
+      /## 3\. Lương, thưởng, phụ cấp và phúc lợi/,
+    );
+    assert.match(
+      createdFiles[0].content,
+      /## 4\. Hồ sơ ứng viên cần chuẩn bị/,
+    );
+    assert.match(
+      createdFiles[0].content,
+      /## 5\. Thông tin bản tin \(Metadata\)/,
+    );
+    assert.match(createdFiles[0].content, /Lê Thị Hải Yến · 0912345678/);
+    assert.doesNotMatch(createdFiles[0].content, /yenlh\.td/);
+
+    // 5. HTTP/parse error does not create any file
+    let createdOn500 = false;
+    const errorResult = await exportRecruitmentPostDetailMarkdown({
+      briefId: postItem.brief_id,
+      fetchImpl: async () =>
+        new Response(
+          JSON.stringify({ ok: false, code: "RECRUITMENT_POST_UNAVAILABLE" }),
+          { status: 500 },
+        ),
+      onDownload: () => {
+        createdOn500 = true;
+      },
+    });
+    assert.equal(errorResult.kind, "error");
+    assert.equal(createdOn500, false);
+
+    // 6. 401/403 returns access_loss without creating a file, triggering workspace state wipe
+    let createdOn403 = false;
+    const accessLossResult = await exportRecruitmentPostDetailMarkdown({
+      briefId: postItem.brief_id,
+      fetchImpl: async () =>
+        new Response(
+          JSON.stringify({ ok: false, code: "RECRUITMENT_POST_ACCESS_DENIED" }),
+          { status: 403 },
+        ),
+      onDownload: () => {
+        createdOn403 = true;
+      },
+    });
+    assert.deepEqual(accessLossResult, {
+      kind: "access_loss",
+      accessLoss: "ACCESS_DENIED",
+    });
+    assert.equal(createdOn403, false);
+
+    const revokedWorkspaceHtml = renderToStaticMarkup(
+      createElement(RecruitmentPostFeedWorkspace, {
+        initialStateForTest: {
+          accessLoss: accessLossResult.accessLoss,
+          dataState: createEmptyRecruitmentPostDataState(),
+        },
+      }),
+    );
+    assert.doesNotMatch(
+      revokedWorkspaceHtml,
+      /data-testid="recruitment-posts-list"/,
+    );
+    assert.doesNotMatch(revokedWorkspaceHtml, /Dự án Điện tử ABC/);
   });
 });
 

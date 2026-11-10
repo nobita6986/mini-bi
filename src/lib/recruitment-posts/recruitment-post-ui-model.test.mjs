@@ -12,6 +12,7 @@ import {
   applyProvinceFilterChange,
   beginRecruitmentPostContextRequest,
   buildRecruitmentPostListUrl,
+  buildRecruitmentPostMarkdownExport,
   buildRecruitmentPostPreSubmitSummary,
   buildWithdrawRecruitmentPostRequestBody,
   classifyRecruitmentPostAccessLoss,
@@ -21,8 +22,8 @@ import {
   createLatestRequestTracker,
   decideRecruitmentPostsPageAccess,
   deriveProvinceDisplayNameForDraft,
+  exportRecruitmentPostDetailMarkdown,
   extractRecruitmentPostErrorCode,
-  filterCreateFormIndustrialParks,
   formatRecruitmentPostAgeRange,
   formatRecruitmentPostHeadcount,
   formatRecruitmentPostIncomeRange,
@@ -38,7 +39,10 @@ import {
   recruitmentPostContextErrorMessage,
   recruitmentPostErrorMessage,
   resolveRecruitmentPostContextOutcome,
+  resolveRecruitmentPostExportOutcome,
   resolveRecruitmentPostMutationOutcome,
+  sanitizeRecruitmentPostExportFilename,
+  selectableIndustrialParksForCreate,
   selectableLaborTypesForDraft,
   setRecruitmentPostExperienceRequired,
   setRecruitmentPostPpeProvided,
@@ -444,14 +448,15 @@ test("FX-08 & FX-09: Card and 4-section Detail view-models map all BOD fields an
   assert.equal(card.expectedHeadcountDisplay, "150 người");
   assert.equal(
     card.genderAndAgeDisplay,
-    "Không giới hạn (Nam/Nữ) · Độ tuổi: 18 – 38 tuổi",
+    "Cặp Nam/Nữ · Độ tuổi: 18 – 38 tuổi",
   );
   assert.match(card.baseSalaryAndIncomeDisplay, /LCB:\s*5\.500\.000\s*₫/);
   assert.match(
     card.baseSalaryAndIncomeDisplay,
     /Thu nhập:\s*9\.500\.000\s*₫\s*–\s*13\.500\.000\s*₫/,
   );
-  assert.equal(card.managerContactDisplay, "Trần Thị PM · 0912345678");
+  assert.equal(card.managerNameDisplay, "Nguyễn Văn Quản Lý");
+  assert.equal(card.managerContactDisplay, "Nguyễn Văn Quản Lý · 0912345678");
   assert.match(card.createdByAndUpdatedAtDisplay, /^Nguyễn Văn Quản Lý · /);
 
   const detail = toRecruitmentPostDetailViewModel(completeItem);
@@ -462,14 +467,43 @@ test("FX-08 & FX-09: Card and 4-section Detail view-models map all BOD fields an
   );
   assert.equal(detail.section1General.workPosturesDisplay, "Ngồi, Đứng");
   assert.equal(detail.section1General.shiftPatternDisplay, "Hai ca");
+  assert.equal(detail.section1General.managerNameDisplay, "Nguyễn Văn Quản Lý");
   assert.equal(detail.section1General.managerPhoneDisplay, "0912345678");
 
   assert.equal(detail.section2CandidateRequirements.ageFromDisplay, "18 tuổi");
   assert.equal(detail.section2CandidateRequirements.ageToDisplay, "38 tuổi");
   assert.equal(
+    detail.section2CandidateRequirements.genderDisplay,
+    "Cặp Nam/Nữ",
+  );
+  assert.equal(
     detail.section2CandidateRequirements.minimumEducationDisplay,
     "THCS (Cấp 2)",
   );
+
+  // Regression: post where general.manager_name = "yenlh.td" and created_by_display_name = "Lê Thị Hải Yến"
+  // must always display "Lê Thị Hải Yến · 0912345678" and never "yenlh.td"
+  const itemWithLoginManager = makeCompleteItem({
+    created_by_display_name: "Lê Thị Hải Yến",
+    updated_by_display_name: "Lê Thị Hải Yến",
+    general: {
+      ...completeItem.general,
+      manager_name: "yenlh.td",
+      manager_phone: "0912345678",
+    },
+  });
+  const loginCard = toRecruitmentPostCardViewModel(itemWithLoginManager);
+  assert.equal(loginCard.managerNameDisplay, "Lê Thị Hải Yến");
+  assert.equal(loginCard.managerContactDisplay, "Lê Thị Hải Yến · 0912345678");
+  assert.equal(JSON.stringify(loginCard).includes("yenlh.td"), false);
+
+  const loginDetail = toRecruitmentPostDetailViewModel(itemWithLoginManager);
+  assert.equal(
+    loginDetail.section1General.managerNameDisplay,
+    "Lê Thị Hải Yến",
+  );
+  assert.equal(loginDetail.section1General.managerPhoneDisplay, "0912345678");
+  assert.equal(JSON.stringify(loginDetail).includes("yenlh.td"), false);
   assert.equal(
     detail.section2CandidateRequirements.experienceRequiredDisplay,
     "Có",
@@ -985,15 +1019,14 @@ test("Phase 4: Authoring draft state, dependent field clearing, KCN search & pro
   createDraft = setRecruitmentPostRequireOtherDocuments(createDraft, false);
   assert.equal(createDraft.otherDocumentsText, "");
 
-  // KCN search filters active parks and auto-derives province display name
-  const filteredParks = filterCreateFormIndustrialParks(
+  // Selectable KCN for create mode returns active parks in active provinces and auto-derives province display name
+  const selectableParks = selectableIndustrialParksForCreate(
     SAMPLE_CONTEXT.industrial_parks,
     SAMPLE_CONTEXT.provinces,
-    "khai quang",
   );
   assert.deepEqual(
-    filteredParks.map((p) => p.industrial_park_id),
-    [PARK_KHAI_QUANG_ID],
+    selectableParks.map((p) => p.industrial_park_id),
+    [PARK_KHAI_QUANG_ID, PARK_BA_THIEN_ID, PARK_QUANG_CHAU_ID],
   );
   const draftWithPark = {
     ...createDraft,
@@ -1067,10 +1100,21 @@ test("Phase 4: Pre-submit 6-item confirmation block, write payload validation, w
       "Lắp ráp bảng mạch, kiểm tra ngoại quan bằng kính hiển vi.",
     expectedHeadcountDisplay: "150 người",
     expectedIncomeDisplay: "9.500.000 ₫ – 13.500.000 ₫",
-    managerContactDisplay: "Trần Thị PM · 0912345678",
+    managerContactDisplay: "0912345678",
   });
 
-  // Valid create payload (KCN remains required; actorDisplayName overrides draft managerName in create mode)
+  const summaryWithoutPhone = buildRecruitmentPostPreSubmitSummary({
+    draft: { ...editDraft, managerPhone: "   " },
+    managedProjects: SAMPLE_CONTEXT.managed_projects,
+    industrialParks: SAMPLE_CONTEXT.industrial_parks,
+    provinces: SAMPLE_CONTEXT.provinces,
+  });
+  assert.equal(
+    summaryWithoutPhone.managerContactDisplay,
+    "Chưa nhập số điện thoại liên hệ",
+  );
+
+  // Valid create payload (KCN remains required; actorDisplayName overrides draft managerName in create mode, and empty managerName never causes a validation error for the hidden field)
   const missingParkCreate = validateAndBuildRecruitmentPostWritePayload({
     ...editDraft,
     mode: "create",
@@ -1083,6 +1127,7 @@ test("Phase 4: Pre-submit 6-item confirmation block, write payload validation, w
       missingParkCreate.fieldErrors.industrialParkId,
       "Vui lòng chọn Khu công nghiệp.",
     );
+    assert.equal(missingParkCreate.fieldErrors.managerName, undefined);
   }
 
   const createDraft = {
@@ -1110,7 +1155,22 @@ test("Phase 4: Pre-submit 6-item confirmation block, write payload validation, w
       builtCreate.requestBody.content.general.manager_name,
       "Phạm Văn PM",
     );
+    assert.equal(
+      builtCreate.requestBody.content.candidate.gender_requirement,
+      "ANY",
+    );
   }
+
+  // Even if both draft.managerName and actorDisplayName are empty, hidden manager_name never triggers a UI validation error
+  const builtCreateWithEmptyManagerName =
+    validateAndBuildRecruitmentPostWritePayload(
+      {
+        ...createDraft,
+        managerName: "",
+      },
+      { actorDisplayName: "" },
+    );
+  assert.equal(builtCreateWithEmptyManagerName.ok, true);
 
   // Valid edit payload sends expected_version + content (never project_id or industrial_park_id) and preserves original customer_name & manager_name even if draft.managerName is tampered or actorDisplayName is passed
   const tamperedEditDraft = {
@@ -1186,5 +1246,209 @@ test("Phase 4: Pre-submit 6-item confirmation block, write payload validation, w
     kind: "access_loss",
     accessLoss: "ACCESS_DENIED",
   });
+});
+
+test("Markdown export: fetches GET /api/recruitment-posts/[briefId], builds 4 sections + metadata with created_by_display_name & manager_phone, excludes manager_name/login/internal UUIDs, and fails closed on HTTP/parse/401/403", async () => {
+  assert.equal(
+    sanitizeRecruitmentPostExportFilename(makeBriefId(1)),
+    `tin-tuyen-dung-${makeBriefId(1)}.md`,
+  );
+  assert.equal(
+    sanitizeRecruitmentPostExportFilename("  ../unsafe/path\\ID$%#@!  "),
+    "tin-tuyen-dung-unsafe-path-id.md",
+  );
+  assert.equal(
+    sanitizeRecruitmentPostExportFilename("$$$"),
+    "tin-tuyen-dung-ban-tin.md",
+  );
+
+  const postWithLoginManager = makeCompleteItem({
+    brief_id: makeBriefId(77),
+    created_by_display_name: "Lê Thị Hải Yến",
+    updated_by_display_name: "Lê Thị Hải Yến",
+    general: {
+      ...makeCompleteItem().general,
+      manager_name: "yenlh.td",
+      manager_phone: "0912345678",
+    },
+  });
+
+  const exportFile = buildRecruitmentPostMarkdownExport(postWithLoginManager);
+  assert.equal(exportFile.filename, `tin-tuyen-dung-${makeBriefId(77)}.md`);
+  assert.equal(exportFile.mimeType, "text/markdown;charset=utf-8");
+
+  // Contains all 4 BOD sections + section 5 Metadata
+  assert.match(exportFile.content, /## 1\. Thông tin chung dự án/);
+  assert.match(exportFile.content, /- \*\*Tên dự án:\*\* Dự án Điện tử ABC/);
+  assert.match(
+    exportFile.content,
+    /- \*\*Tên khách hàng:\*\* Công ty TNHH Linh Kiện Điện Tử ABC/,
+  );
+  assert.match(exportFile.content, /- \*\*Tỉnh\/Thành:\*\* Vĩnh Phúc/);
+  assert.match(exportFile.content, /- \*\*Khu công nghiệp:\*\* KCN Khai Quang/);
+  assert.match(exportFile.content, /- \*\*Vốn đầu tư:\*\* Hàn Quốc/);
+  assert.match(
+    exportFile.content,
+    /- \*\*Ngành nghề sản xuất:\*\* Linh kiện điện tử & bán dẫn/,
+  );
+  assert.match(
+    exportFile.content,
+    /- \*\*Công việc:\*\* Lắp ráp bảng mạch, kiểm tra ngoại quan bằng kính hiển vi\./,
+  );
+  assert.match(
+    exportFile.content,
+    /- \*\*Môi trường:\*\* Phòng sạch, Phòng bán sạch \(Tư thế: Ngồi, Đứng\)/,
+  );
+  assert.match(
+    exportFile.content,
+    /- \*\*Thời gian\/ca làm:\*\* Hai ca \(Ca ngày 08:00 - 20:00, Ca đêm 20:00 - 08:00\)/,
+  );
+  assert.match(
+    exportFile.content,
+    /- \*\*Lịch cung ứng:\*\* Tuyển liên tục từ thứ 2 đến thứ 7 hàng tuần/,
+  );
+  assert.match(exportFile.content, /- \*\*Số lượng dự kiến:\*\* 150 người/);
+  assert.match(
+    exportFile.content,
+    /- \*\*Liên hệ người phụ trách:\*\* Lê Thị Hải Yến · 0912345678/,
+  );
+
+  assert.match(exportFile.content, /## 2\. Yêu cầu ứng viên/);
+  assert.match(exportFile.content, /- \*\*Độ tuổi:\*\* 18 – 38 tuổi/);
+  assert.match(exportFile.content, /- \*\*Giới tính:\*\* Cặp Nam\/Nữ/);
+  assert.match(exportFile.content, /- \*\*Trình độ tối thiểu:\*\* THCS \(Cấp 2\)/);
+  assert.match(
+    exportFile.content,
+    /- \*\*Kinh nghiệm:\*\* Có \(Ưu tiên ứng viên từng làm công ty điện tử 6 tháng\.\)/,
+  );
+  assert.match(
+    exportFile.content,
+    /- \*\*Nhận người từng làm tại khách hàng:\*\* Có nhận/,
+  );
+  assert.match(
+    exportFile.content,
+    /- \*\*Hình thức kiểm tra đầu vào:\*\* Test bảng chữ cái và phỏng vấn trực tiếp/,
+  );
+  assert.match(
+    exportFile.content,
+    /- \*\*Yêu cầu khác:\*\* Không mồ hôi tay, sức khỏe tốt\./,
+  );
+
+  assert.match(exportFile.content, /## 3\. Lương, thưởng, phụ cấp và phúc lợi/);
+  assert.match(exportFile.content, /- \*\*Lương cơ bản:\*\* 5\.500\.000\s*₫/);
+  assert.match(exportFile.content, /- \*\*Các khoản thưởng\/phụ cấp:\*\*/);
+  assert.match(exportFile.content, /- \*\*Thu nhập bình quân dự kiến:\*\*/);
+  assert.match(exportFile.content, /- \*\*Ngày thanh toán:\*\*/);
+  assert.match(exportFile.content, /- \*\*Ứng lương:\*\* Có/);
+  assert.match(exportFile.content, /- \*\*Lương tuần:\*\* Có/);
+  assert.match(exportFile.content, /- \*\*Đủ 8 mức tiền ca:\*\*/);
+  assert.match(exportFile.content, /\*\*Ca ngày 8h:\*\* 220\.000\s*₫/);
+  assert.match(exportFile.content, /\*\*Ca ngày 11h:\*\* 310\.000\s*₫/);
+  assert.match(exportFile.content, /\*\*Ca đêm 8h:\*\* 260\.000\s*₫/);
+  assert.match(exportFile.content, /\*\*Ca đêm 11h:\*\* 365\.000\s*₫/);
+  assert.match(exportFile.content, /\*\*Chủ nhật ca ngày 11h:\*\* 450\.000\s*₫/);
+  assert.match(exportFile.content, /\*\*Chủ nhật ca đêm 11h:\*\* 520\.000\s*₫/);
+  assert.match(exportFile.content, /\*\*Ngày lễ ca ngày 11h:\*\* 660\.000\s*₫/);
+  assert.match(exportFile.content, /\*\*Ngày lễ ca đêm 11h:\*\* 750\.000\s*₫/);
+  assert.match(exportFile.content, /- \*\*Đồng phục\/bảo hộ:\*\* Có cấp phát/);
+  assert.match(exportFile.content, /- \*\*Phúc lợi khác:\*\*/);
+
+  assert.match(exportFile.content, /## 4\. Hồ sơ ứng viên cần chuẩn bị/);
+  assert.match(exportFile.content, /- \*\*CCCD:\*\* Có yêu cầu/);
+  assert.match(exportFile.content, /- \*\*Sơ yếu lý lịch:\*\* Có yêu cầu/);
+  assert.match(exportFile.content, /- \*\*Giấy khám sức khỏe:\*\* Có yêu cầu/);
+  assert.match(exportFile.content, /- \*\*Ảnh 3x4:\*\* Có yêu cầu/);
+  assert.match(exportFile.content, /- \*\*Bằng cấp\/chứng chỉ:\*\* Không/);
+  assert.match(exportFile.content, /- \*\*Sổ BHXH:\*\* Không/);
+  assert.match(exportFile.content, /- \*\*Giấy tờ khác:\*\* Có yêu cầu/);
+
+  assert.match(exportFile.content, /## 5\. Thông tin bản tin \(Metadata\)/);
+  assert.match(exportFile.content, /- \*\*Người đăng:\*\* Lê Thị Hải Yến/);
+  assert.match(exportFile.content, /- \*\*Thời gian đăng:\*\*/);
+  assert.match(
+    exportFile.content,
+    /- \*\*Người cập nhật gần nhất:\*\* Lê Thị Hải Yến/,
+  );
+  assert.match(exportFile.content, /- \*\*Thời gian cập nhật:\*\*/);
+  assert.match(
+    exportFile.content,
+    new RegExp(`- \\*\\*Mã tin đối chiếu:\\*\\* ${makeBriefId(77)}`),
+  );
+
+  // Must NEVER contain manager_name ("yenlh.td") or internal location UUIDs
+  assert.equal(exportFile.content.includes("yenlh.td"), false);
+  assert.equal(exportFile.content.includes(PROVINCE_VP_ID), false);
+  assert.equal(exportFile.content.includes(PARK_KHAI_QUANG_ID), false);
+
+  // Orchestration: calls GET /api/recruitment-posts/[briefId] and creates file on 200 OK
+  const fetchedUrls = [];
+  const downloadedFiles = [];
+  const okExport = await exportRecruitmentPostDetailMarkdown({
+    briefId: postWithLoginManager.brief_id,
+    fetchImpl: async (url) => {
+      fetchedUrls.push(String(url));
+      return new Response(
+        JSON.stringify({ ok: true, data: { post: postWithLoginManager } }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    },
+    onDownload: (file) => {
+      downloadedFiles.push(file);
+    },
+  });
+  assert.deepEqual(fetchedUrls, [
+    `/api/recruitment-posts/${postWithLoginManager.brief_id}`,
+  ]);
+  assert.equal(okExport.kind, "ok");
+  assert.equal(downloadedFiles.length, 1);
+  assert.equal(
+    downloadedFiles[0].filename,
+    `tin-tuyen-dung-${postWithLoginManager.brief_id}.md`,
+  );
+  assert.equal(downloadedFiles[0].content.includes("yenlh.td"), false);
+  assert.equal(downloadedFiles[0].content.includes("Lê Thị Hải Yến"), true);
+
+  // HTTP 503 error or malformed payload must NOT create any file
+  let downloadedOnError = false;
+  const err503 = await exportRecruitmentPostDetailMarkdown({
+    briefId: postWithLoginManager.brief_id,
+    fetchImpl: async () =>
+      new Response(
+        JSON.stringify({ ok: false, code: "RECRUITMENT_POST_UNAVAILABLE" }),
+        { status: 503 },
+      ),
+    onDownload: () => {
+      downloadedOnError = true;
+    },
+  });
+  assert.equal(err503.kind, "error");
+  assert.equal(downloadedOnError, false);
+
+  const errMalformed = resolveRecruitmentPostExportOutcome({
+    status: 200,
+    payload: { ok: true, data: { post: { invalid: true } } },
+  });
+  assert.equal(errMalformed.kind, "error");
+
+  // 401/403 triggers access_loss and never creates a file
+  for (const [status, code, expectedLoss] of [
+    [401, "UNAUTHENTICATED", "UNAUTHENTICATED"],
+    [403, "RECRUITMENT_POST_ACCESS_DENIED", "ACCESS_DENIED"],
+  ]) {
+    let downloadedOnAccessLoss = false;
+    const lossOutcome = await exportRecruitmentPostDetailMarkdown({
+      briefId: postWithLoginManager.brief_id,
+      fetchImpl: async () =>
+        new Response(JSON.stringify({ ok: false, code }), { status }),
+      onDownload: () => {
+        downloadedOnAccessLoss = true;
+      },
+    });
+    assert.deepEqual(lossOutcome, {
+      kind: "access_loss",
+      accessLoss: expectedLoss,
+    });
+    assert.equal(downloadedOnAccessLoss, false);
+  }
 });
 

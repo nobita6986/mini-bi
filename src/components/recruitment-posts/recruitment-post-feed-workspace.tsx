@@ -19,6 +19,7 @@ import {
   classifyRecruitmentPostAccessLoss,
   createEmptyRecruitmentPostDataState,
   createLatestRequestTracker,
+  exportRecruitmentPostDetailMarkdown,
   extractRecruitmentPostErrorCode,
   hasActiveRecruitmentPostFilters,
   mergeUniqueRecruitmentPostItems,
@@ -42,6 +43,7 @@ import {
   type RecruitmentPostDetailViewModel,
   type RecruitmentPostFeedFilterState,
   type RecruitmentPostItem,
+  type RecruitmentPostMarkdownExportFile,
 } from "@/lib/recruitment-posts/recruitment-post-ui-model";
 
 import { RecruitmentPostCard } from "./recruitment-post-card";
@@ -77,6 +79,27 @@ function getRequestTracker(
   return ref.current;
 }
 
+function triggerBrowserMarkdownDownload(
+  file: RecruitmentPostMarkdownExportFile,
+): void {
+  if (typeof document === "undefined" || typeof URL === "undefined") return;
+  const blob = new Blob([file.content], { type: file.mimeType });
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = objectUrl;
+  anchor.download = file.filename;
+  anchor.rel = "noopener";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(objectUrl);
+}
+
+export type RecruitmentPostExportErrorState = {
+  readonly briefId: string;
+  readonly message: string;
+};
+
 export type RecruitmentPostFeedWorkspaceInitialTestState = {
   readonly filters?: RecruitmentPostFeedFilterState;
   readonly dataState?: RecruitmentPostDataState;
@@ -88,6 +111,8 @@ export type RecruitmentPostFeedWorkspaceInitialTestState = {
   readonly feedError?: string | null;
   readonly loadMoreError?: string | null;
   readonly detailLoading?: boolean;
+  readonly exportingBriefId?: string | null;
+  readonly exportError?: RecruitmentPostExportErrorState | null;
   readonly withdrawTarget?: RecruitmentPostWithdrawTarget | null;
   readonly withdrawSuccessBanner?: string | null;
 };
@@ -128,6 +153,13 @@ export function RecruitmentPostFeedWorkspace({
   const [detailLoading, setDetailLoading] = useState<boolean>(
     () => initialStateForTest?.detailLoading ?? false,
   );
+  const [exportingBriefId, setExportingBriefId] = useState<string | null>(
+    () => initialStateForTest?.exportingBriefId ?? null,
+  );
+  const [exportError, setExportError] =
+    useState<RecruitmentPostExportErrorState | null>(
+      () => initialStateForTest?.exportError ?? null,
+    );
   const [withdrawTarget, setWithdrawTarget] =
     useState<RecruitmentPostWithdrawTarget | null>(
       () => initialStateForTest?.withdrawTarget ?? null,
@@ -139,12 +171,14 @@ export function RecruitmentPostFeedWorkspace({
   const contextTrackerRef = useRef<LatestRequestTracker | null>(null);
   const feedTrackerRef = useRef<LatestRequestTracker | null>(null);
   const detailTrackerRef = useRef<LatestRequestTracker | null>(null);
+  const exportTrackerRef = useRef<LatestRequestTracker | null>(null);
 
   const handleAccessRevoked = useCallback(
     (lossKind: RecruitmentPostAccessLossKind) => {
       getRequestTracker(contextTrackerRef).cancelAll();
       getRequestTracker(feedTrackerRef).cancelAll();
       getRequestTracker(detailTrackerRef).cancelAll();
+      getRequestTracker(exportTrackerRef).cancelAll();
       setDataState(createEmptyRecruitmentPostDataState());
       setContextRequestState({
         contextLoading: false,
@@ -153,6 +187,8 @@ export function RecruitmentPostFeedWorkspace({
       setInitialLoading(false);
       setLoadingMore(false);
       setDetailLoading(false);
+      setExportingBriefId(null);
+      setExportError(null);
       setFeedError(null);
       setLoadMoreError(null);
       setWithdrawTarget(null);
@@ -516,6 +552,61 @@ export function RecruitmentPostFeedWorkspace({
     void fetchDetail(dataState.detailBriefId);
   }, [dataState.detailBriefId, fetchDetail]);
 
+  const handleExportPost = useCallback(
+    async (briefId: string) => {
+      if (exportingBriefId !== null) return;
+
+      const ticket = getRequestTracker(exportTrackerRef).begin();
+      setExportingBriefId(briefId);
+      setExportError(null);
+
+      const outcome = await exportRecruitmentPostDetailMarkdown({
+        briefId,
+        signal: ticket.signal,
+        onDownload: (file) => {
+          if (!ticket.isCurrent()) return;
+          triggerBrowserMarkdownDownload(file);
+        },
+      });
+
+      if (!ticket.isCurrent()) return;
+
+      if (outcome.kind === "access_loss") {
+        handleAccessRevoked(outcome.accessLoss);
+        return;
+      }
+
+      if (outcome.kind === "error") {
+        setExportingBriefId(null);
+        setExportError({
+          briefId,
+          message: outcome.message,
+        });
+        if (outcome.status === 404) {
+          setDataState((prev) => ({
+            ...prev,
+            items: prev.items.filter((item) => item.brief_id !== briefId),
+          }));
+        }
+        return;
+      }
+
+      setExportingBriefId(null);
+      setExportError(null);
+      setDataState((prev) => ({
+        ...prev,
+        items: prev.items.map((item) =>
+          item.brief_id === outcome.post.brief_id ? outcome.post : item,
+        ),
+        selectedDetail:
+          prev.selectedDetail?.brief_id === outcome.post.brief_id
+            ? outcome.post
+            : prev.selectedDetail,
+      }));
+    },
+    [exportingBriefId, handleAccessRevoked],
+  );
+
   const handleOpenWithdrawFromCard = useCallback(
     (card: RecruitmentPostCardViewModel) => {
       setWithdrawSuccessBanner(null);
@@ -614,6 +705,7 @@ export function RecruitmentPostFeedWorkspace({
       getRequestTracker(contextTrackerRef).cancelAll();
       getRequestTracker(feedTrackerRef).cancelAll();
       getRequestTracker(detailTrackerRef).cancelAll();
+      getRequestTracker(exportTrackerRef).cancelAll();
     };
   }, []);
 
@@ -972,6 +1064,32 @@ export function RecruitmentPostFeedWorkspace({
         </StatusBanner>
       ) : null}
 
+      {exportError ? (
+        <StatusBanner
+          tone="error"
+          title="Không thể xuất bản tin tuyển dụng"
+          dataTestId="recruitment-posts-export-error"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <span>{exportError.message}</span>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              data-testid="recruitment-posts-export-retry"
+              disabled={exportingBriefId !== null}
+              onClick={() => {
+                void handleExportPost(exportError.briefId);
+              }}
+            >
+              {exportingBriefId === exportError.briefId
+                ? "Đang xuất…"
+                : "Thử lại"}
+            </Button>
+          </div>
+        </StatusBanner>
+      ) : null}
+
       {initialLoading ? (
         <div
           role="status"
@@ -1020,6 +1138,8 @@ export function RecruitmentPostFeedWorkspace({
               key={card.briefId}
               card={card}
               onViewDetail={handleOpenDetail}
+              onExport={handleExportPost}
+              isExporting={exportingBriefId === card.briefId}
               onWithdraw={handleOpenWithdrawFromCard}
             />
           ))}
