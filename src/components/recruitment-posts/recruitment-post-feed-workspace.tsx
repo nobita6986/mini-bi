@@ -36,13 +36,20 @@ import {
   visibleProvincesForFilter,
   type LatestRequestTracker,
   type RecruitmentPostAccessLossKind,
+  type RecruitmentPostCardViewModel,
   type RecruitmentPostContextRequestState,
   type RecruitmentPostDataState,
+  type RecruitmentPostDetailViewModel,
   type RecruitmentPostFeedFilterState,
+  type RecruitmentPostItem,
 } from "@/lib/recruitment-posts/recruitment-post-ui-model";
 
 import { RecruitmentPostCard } from "./recruitment-post-card";
 import { RecruitmentPostDetailDialog } from "./recruitment-post-detail-dialog";
+import {
+  RecruitmentPostWithdrawDialog,
+  type RecruitmentPostWithdrawTarget,
+} from "./recruitment-post-withdraw-dialog";
 
 const FILTER_SELECT_CLASS =
   "h-11 w-full rounded-lg border border-border bg-surface px-2.5 text-sm text-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/30 disabled:cursor-not-allowed disabled:opacity-60";
@@ -81,6 +88,8 @@ export type RecruitmentPostFeedWorkspaceInitialTestState = {
   readonly feedError?: string | null;
   readonly loadMoreError?: string | null;
   readonly detailLoading?: boolean;
+  readonly withdrawTarget?: RecruitmentPostWithdrawTarget | null;
+  readonly withdrawSuccessBanner?: string | null;
 };
 
 export function RecruitmentPostFeedWorkspace({
@@ -119,6 +128,13 @@ export function RecruitmentPostFeedWorkspace({
   const [detailLoading, setDetailLoading] = useState<boolean>(
     () => initialStateForTest?.detailLoading ?? false,
   );
+  const [withdrawTarget, setWithdrawTarget] =
+    useState<RecruitmentPostWithdrawTarget | null>(
+      () => initialStateForTest?.withdrawTarget ?? null,
+    );
+  const [withdrawSuccessBanner, setWithdrawSuccessBanner] = useState<
+    string | null
+  >(() => initialStateForTest?.withdrawSuccessBanner ?? null);
 
   const contextTrackerRef = useRef<LatestRequestTracker | null>(null);
   const feedTrackerRef = useRef<LatestRequestTracker | null>(null);
@@ -139,6 +155,8 @@ export function RecruitmentPostFeedWorkspace({
       setDetailLoading(false);
       setFeedError(null);
       setLoadMoreError(null);
+      setWithdrawTarget(null);
+      setWithdrawSuccessBanner(null);
       setAccessLoss(lossKind);
     },
     [],
@@ -498,6 +516,75 @@ export function RecruitmentPostFeedWorkspace({
     void fetchDetail(dataState.detailBriefId);
   }, [dataState.detailBriefId, fetchDetail]);
 
+  const handleOpenWithdrawFromCard = useCallback(
+    (card: RecruitmentPostCardViewModel) => {
+      setWithdrawSuccessBanner(null);
+      setWithdrawTarget({
+        briefId: card.briefId,
+        expectedVersion: card.version,
+        projectName: card.projectName,
+        industrialParkName: card.industrialParkName,
+        provinceName: card.provinceName,
+        jobDescriptionDisplay: card.jobDescriptionDisplay,
+      });
+    },
+    [],
+  );
+
+  const handleOpenWithdrawFromDetail = useCallback(
+    (detail: RecruitmentPostDetailViewModel) => {
+      setWithdrawSuccessBanner(null);
+      setWithdrawTarget({
+        briefId: detail.briefId,
+        expectedVersion: detail.version,
+        projectName: detail.section1General.projectName,
+        industrialParkName: detail.section1General.industrialParkName,
+        provinceName: detail.section1General.provinceName,
+        jobDescriptionDisplay: detail.section1General.jobDescriptionDisplay,
+      });
+    },
+    [],
+  );
+
+  const handlePostWithdrawn = useCallback(
+    (withdrawnPost: RecruitmentPostItem) => {
+      setWithdrawTarget(null);
+      setWithdrawSuccessBanner(
+        `Đã rút phiếu tuyển dụng dự án "${withdrawnPost.project.display_name}" tại ${withdrawnPost.industrial_park.display_name}.`,
+      );
+      setDataState((prev) => {
+        const isCurrentDetail = prev.detailBriefId === withdrawnPost.brief_id;
+        return {
+          ...prev,
+          items: prev.items.filter(
+            (item) => item.brief_id !== withdrawnPost.brief_id,
+          ),
+          detailOpen: isCurrentDetail ? false : prev.detailOpen,
+          detailBriefId: isCurrentDetail ? null : prev.detailBriefId,
+          selectedDetail: isCurrentDetail ? null : prev.selectedDetail,
+          detailError: isCurrentDetail ? null : prev.detailError,
+        };
+      });
+    },
+    [],
+  );
+
+  const handleLatestServerPostLoaded = useCallback(
+    (latestPost: RecruitmentPostItem) => {
+      setDataState((prev) => ({
+        ...prev,
+        items: prev.items.map((item) =>
+          item.brief_id === latestPost.brief_id ? latestPost : item,
+        ),
+        selectedDetail:
+          prev.selectedDetail?.brief_id === latestPost.brief_id
+            ? latestPost
+            : prev.selectedDetail,
+      }));
+    },
+    [],
+  );
+
   useEffect(() => {
     let cancelled = false;
     queueMicrotask(() => {
@@ -568,6 +655,9 @@ export function RecruitmentPostFeedWorkspace({
   );
 
   const hasFilters = hasActiveRecruitmentPostFilters(filters);
+  const canCreatePost =
+    Boolean(dataState.context?.can_create) &&
+    (dataState.context?.managed_projects.length ?? 0) > 0;
 
   if (accessLoss === "ACCESS_DENIED") {
     return <AccessDenied />;
@@ -612,7 +702,28 @@ export function RecruitmentPostFeedWorkspace({
       <PageHeader
         title="Tin tuyển dụng"
         description="Tra cứu thông tin các phiếu yêu cầu tuyển dụng đang hiệu lực theo dự án, khu công nghiệp và hình thức tuyển dụng."
+        actions={
+          canCreatePost ? (
+            <Link
+              href="/recruitment-posts/new"
+              data-testid="recruitment-posts-create-button"
+              className="inline-flex min-h-11 h-10 items-center justify-center rounded-md bg-primary px-3.5 text-sm font-medium text-on-primary transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+            >
+              Tạo phiếu tuyển dụng
+            </Link>
+          ) : null
+        }
       />
+
+      {withdrawSuccessBanner ? (
+        <StatusBanner
+          tone="success"
+          title="Đã rút phiếu tuyển dụng"
+          dataTestId="recruitment-posts-withdraw-success"
+        >
+          {withdrawSuccessBanner}
+        </StatusBanner>
+      ) : null}
 
       <FilterToolbar
         dataTestId="recruitment-posts-filter-toolbar"
@@ -909,6 +1020,7 @@ export function RecruitmentPostFeedWorkspace({
               key={card.briefId}
               card={card}
               onViewDetail={handleOpenDetail}
+              onWithdraw={handleOpenWithdrawFromCard}
             />
           ))}
 
@@ -957,6 +1069,20 @@ export function RecruitmentPostFeedWorkspace({
         loading={detailLoading}
         error={dataState.detailError}
         onRetry={handleRetryDetail}
+        onWithdraw={handleOpenWithdrawFromDetail}
+      />
+
+      <RecruitmentPostWithdrawDialog
+        open={withdrawTarget !== null}
+        target={withdrawTarget}
+        onOpenChange={(open) => {
+          if (!open) {
+            setWithdrawTarget(null);
+          }
+        }}
+        onWithdrawn={handlePostWithdrawn}
+        onAccessRevoked={handleAccessRevoked}
+        onLatestServerPostLoaded={handleLatestServerPostLoaded}
       />
     </PageShell>
   );

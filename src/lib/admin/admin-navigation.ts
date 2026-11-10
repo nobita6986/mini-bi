@@ -30,6 +30,8 @@ export const ADMIN_SECTIONS: readonly AdminSectionConfig[] = [
   { id: "personnel", label: "Nhân sự", href: "/admin/catalog/personnel", visible: adminAreaNavPredicate },
   { id: "teams", label: "Nhóm", href: "/admin/catalog/teams", visible: adminAreaNavPredicate },
   { id: "labor-types", label: "Loại hình lao động", href: "/admin/catalog/labor-types", visible: adminAreaNavPredicate },
+  { id: "provinces", label: "Tỉnh/Thành", href: "/admin/catalog/provinces", visible: attendanceReportNavPredicate },
+  { id: "industrial-parks", label: "Khu công nghiệp", href: "/admin/catalog/industrial-parks", visible: attendanceReportNavPredicate },
   { id: "project-team-scopes", label: "Mapping Dự án ↔ Nhóm", href: "/admin/catalog/project-team-scopes", visible: adminSecurityNavPredicate },
   { id: "vendors", label: "Vendor (NCC)", href: "/admin/catalog/vendors", visible: adminAreaNavPredicate },
   { id: "departments", label: "Phòng ban", href: "/admin/departments", visible: adminSecurityNavPredicate },
@@ -42,6 +44,8 @@ const RECRUITMENT_SECTION_IDS = new Set([
   "personnel",
   "teams",
   "labor-types",
+  "provinces",
+  "industrial-parks",
   "project-team-scopes",
   "vendors",
 ]);

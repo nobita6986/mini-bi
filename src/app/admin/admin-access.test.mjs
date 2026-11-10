@@ -6,6 +6,7 @@ import {
   decideAccountAccessPageAccess,
   decideAdminAreaAccess,
   decidePersonnelCatalogPageAccess,
+  decideRecruitmentLocationCatalogPageAccess,
 } from "../../lib/auth/direct-entry-page-access.ts";
 
 function actor(capabilities, scopes = [{ kind: "all", reference: "all" }]) {
@@ -88,4 +89,24 @@ test("/admin/departments and /admin/departments/[departmentId] require Full Admi
   assert.match(departmentsPage, /decideAccountAccessPageAccess\(\{ actor \}\)/);
   assert.match(departmentDetailPage, /resolveActorForRequest\(\)/);
   assert.match(departmentDetailPage, /decideAccountAccessPageAccess\(\{ actor \}\)/);
+});
+
+test("/admin/catalog/provinces and /admin/catalog/industrial-parks allow Full Admin and BoD only", () => {
+  const full = actor(["entry_admin", "recruiter_master_manage", "team_master_manage"]);
+  const bodPrivileged = actor(["entry_privileged_edit"]);
+  const bodReporting = actor(["report_analytics_view", "report_view"]);
+  const catalogOperator = actor(["catalog_master_manage"]);
+
+  assert.equal(decideRecruitmentLocationCatalogPageAccess({ actor: full }), "ALLOW");
+  assert.equal(decideRecruitmentLocationCatalogPageAccess({ actor: bodPrivileged }), "ALLOW");
+  assert.equal(decideRecruitmentLocationCatalogPageAccess({ actor: bodReporting }), "ALLOW");
+  assert.equal(decideRecruitmentLocationCatalogPageAccess({ actor: catalogOperator }), "ACCESS_DENIED");
+  assert.equal(decideRecruitmentLocationCatalogPageAccess({ actor: actor(["entry_admin"]) }), "ACCESS_DENIED");
+
+  const provincesPage = readFileSync(new URL("./catalog/provinces/page.tsx", import.meta.url), "utf8");
+  const parksPage = readFileSync(new URL("./catalog/industrial-parks/page.tsx", import.meta.url), "utf8");
+  assert.match(provincesPage, /resolveActorForRequest\(\)/);
+  assert.match(provincesPage, /decideRecruitmentLocationCatalogPageAccess\(\{ actor \}\)/);
+  assert.match(parksPage, /resolveActorForRequest\(\)/);
+  assert.match(parksPage, /decideRecruitmentLocationCatalogPageAccess\(\{ actor \}\)/);
 });

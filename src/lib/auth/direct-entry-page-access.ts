@@ -108,6 +108,20 @@ export function decideAttendanceReportPageAccess(input: {
   });
 }
 
+/**
+ * Separate direct-URL gate for `/admin/catalog/provinces` and
+ * `/admin/catalog/industrial-parks` (Full Admin and BoD only).
+ * Catalog-only operators (`catalog_master_manage`) and Team Leaders are denied.
+ */
+export function decideRecruitmentLocationCatalogPageAccess(input: {
+  actor: ActorResolution | null;
+}): DirectEntryPageDecision {
+  return decideCapabilityPageAccess({
+    actor: input.actor,
+    allowed: attendanceReportNavPredicate,
+  });
+}
+
 export function decideWorkerEditHistoryPageAccess(input: {
   actor: ActorResolution | null;
 }): DirectEntryPageDecision {

@@ -172,7 +172,7 @@
     "test:attendance-monthly-matrix": "node --conditions=react-server --test src/lib/attendance/attendance-monthly-matrix-api.test.mjs src/lib/attendance/attendance-monthly-matrix-ui.test.mjs scripts/attendance-monthly-matrix-branches-project-coords-db.test.mjs",
     "test:recruitment-location-catalog": "node --conditions=react-server --test src/lib/recruitment-locations/location-catalog-api.test.mjs && node --test scripts/recruitment-location-catalog-db.test.mjs scripts/recruitment-location-catalog-concurrency.test.mjs",
     "test:recruitment-posts": "node --conditions=react-server --test src/lib/recruitment-posts/contract.test.mjs src/lib/recruitment-posts/repository.test.mjs src/lib/recruitment-posts/api.test.mjs scripts/recruitment-posts-db.test.mjs && node --test scripts/recruitment-posts-concurrency.test.mjs",
-    "test:recruitment-posts-ui": "node --test src/lib/recruitment-posts/recruitment-post-ui-model.test.mjs src/components/recruitment-posts/recruitment-posts-ui.test.mjs src/lib/navigation/registry.test.mjs src/lib/navigation/registry-capability.test.mjs"
+    "test:recruitment-posts-ui": "node --test src/lib/recruitment-posts/recruitment-post-ui-model.test.mjs src/components/recruitment-posts/recruitment-posts-ui.test.mjs src/lib/admin/location-catalog-model.test.mjs src/lib/admin/admin-navigation.test.mjs src/app/admin/admin-access.test.mjs src/lib/auth/direct-entry-page-access.test.mjs src/lib/navigation/registry.test.mjs src/lib/navigation/registry-capability.test.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.1146.0",

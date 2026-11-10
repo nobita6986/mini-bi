@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import type { RecruitmentPostCardViewModel } from "@/lib/recruitment-posts/recruitment-post-ui-model";
@@ -5,14 +6,14 @@ import type { RecruitmentPostCardViewModel } from "@/lib/recruitment-posts/recru
 export function RecruitmentPostCard({
   card,
   onViewDetail,
+  onWithdraw,
 }: {
   card: RecruitmentPostCardViewModel;
   onViewDetail: (briefId: string) => void;
+  onWithdraw?: (card: RecruitmentPostCardViewModel) => void;
 }) {
   return (
-    <Card
-      className="flex flex-col gap-4 rounded-xl p-4 sm:p-5"
-    >
+    <Card className="flex flex-col gap-4 rounded-xl p-4 sm:p-5">
       <div
         data-testid={`recruitment-post-card-${card.briefId}`}
         className="flex flex-col gap-4"
@@ -31,7 +32,7 @@ export function RecruitmentPostCard({
               {card.locationDisplay}
             </p>
           </div>
-          <div className="flex shrink-0 items-center gap-2 pt-1 sm:pt-0">
+          <div className="flex shrink-0 flex-wrap items-center gap-2 pt-1 sm:pt-0">
             <Button
               type="button"
               variant="secondary"
@@ -41,6 +42,26 @@ export function RecruitmentPostCard({
             >
               Xem chi tiết
             </Button>
+            {card.allowedActions.canEdit ? (
+              <Link
+                href={`/recruitment-posts/${encodeURIComponent(card.briefId)}/edit`}
+                data-testid={`recruitment-post-edit-${card.briefId}`}
+                className="inline-flex h-9 items-center justify-center rounded-lg border border-border bg-surface px-3 text-xs font-medium text-foreground transition-colors hover:bg-surface-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+              >
+                Sửa
+              </Link>
+            ) : null}
+            {card.allowedActions.canWithdraw && onWithdraw ? (
+              <Button
+                type="button"
+                variant="danger"
+                size="sm"
+                data-testid={`recruitment-post-withdraw-${card.briefId}`}
+                onClick={() => onWithdraw(card)}
+              >
+                Rút tin
+              </Button>
+            ) : null}
           </div>
         </div>
 

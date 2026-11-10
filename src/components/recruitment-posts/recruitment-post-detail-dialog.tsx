@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { FormDialog } from "@/components/ui/form-dialog";
 import { StatusBanner } from "@/components/ui/status-banner";
@@ -49,6 +50,7 @@ export function RecruitmentPostDetailDialog({
   loading,
   error,
   onRetry,
+  onWithdraw,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -56,6 +58,7 @@ export function RecruitmentPostDetailDialog({
   loading: boolean;
   error: string | null;
   onRetry: () => void;
+  onWithdraw?: (detail: RecruitmentPostDetailViewModel) => void;
 }) {
   const titleText = detail
     ? `Chi tiết tin tuyển dụng — ${detail.section1General.projectName}`
@@ -580,7 +583,27 @@ export function RecruitmentPostDetailDialog({
               <span>
                 Đăng bởi: {detail.createdByDisplayName} ({detail.publishedAtDisplay})
               </span>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                {detail.allowedActions.canEdit ? (
+                  <Link
+                    href={`/recruitment-posts/${encodeURIComponent(detail.briefId)}/edit`}
+                    data-testid={`recruitment-post-detail-edit-${detail.briefId}`}
+                    className="inline-flex h-9 items-center justify-center rounded-lg border border-border bg-surface px-3 text-xs font-medium text-foreground transition-colors hover:bg-surface-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                  >
+                    Sửa tin
+                  </Link>
+                ) : null}
+                {detail.allowedActions.canWithdraw && onWithdraw ? (
+                  <Button
+                    type="button"
+                    variant="danger"
+                    size="sm"
+                    data-testid={`recruitment-post-detail-withdraw-${detail.briefId}`}
+                    onClick={() => onWithdraw(detail)}
+                  >
+                    Rút tin
+                  </Button>
+                ) : null}
                 <Button
                   type="button"
                   variant="secondary"
