@@ -14,11 +14,12 @@ import {
   RECRUITMENT_POST_EDUCATION_REQUIREMENTS,
   RECRUITMENT_POST_ENVIRONMENT_TYPES,
   RECRUITMENT_POST_GENDER_REQUIREMENTS,
-  RECRUITMENT_POST_MISSING_INDUSTRIAL_PARK_HELP_TEXT,
   RECRUITMENT_POST_SHIFT_PATTERNS,
   RECRUITMENT_POST_WORK_POSTURES,
   SHIFT_PATTERN_LABELS,
   WORK_POSTURE_LABELS,
+  applyCreateFormContextDefaults,
+  applyCreateFormProjectSelection,
   buildRecruitmentPostPreSubmitSummary,
   classifyRecruitmentPostAccessLoss,
   createEditRecruitmentPostFormDraftFromItem,
@@ -141,10 +142,12 @@ function VndFieldPreview({ rawValue, label }: { rawValue: string; label: string 
 export function RecruitmentPostForm({
   mode,
   briefId,
+  actorDisplayName,
   initialStateForTest,
 }: {
   mode: RecruitmentPostFormMode;
   briefId?: string;
+  actorDisplayName?: string;
   initialStateForTest?: RecruitmentPostFormInitialTestState;
 }) {
   const [context, setContext] = useState<RecruitmentPostContext | null>(
@@ -155,6 +158,25 @@ export function RecruitmentPostForm({
   );
   const [draft, setDraft] = useState<RecruitmentPostFormDraftState>(() => {
     if (initialStateForTest?.draft) {
+      if (
+        mode === "create" &&
+        typeof actorDisplayName === "string" &&
+        actorDisplayName.trim().length > 0
+      ) {
+        return {
+          ...initialStateForTest.draft,
+          managerName: actorDisplayName.trim(),
+          lockedManagerName: actorDisplayName.trim(),
+        };
+      }
+      if (mode === "edit" && initialStateForTest.loadedPost) {
+        return {
+          ...initialStateForTest.draft,
+          managerName: initialStateForTest.loadedPost.general.manager_name,
+          lockedManagerName:
+            initialStateForTest.loadedPost.general.manager_name,
+        };
+      }
       return initialStateForTest.draft;
     }
     if (mode === "edit" && initialStateForTest?.loadedPost) {
@@ -162,7 +184,17 @@ export function RecruitmentPostForm({
         initialStateForTest.loadedPost,
       );
     }
-    return createEmptyRecruitmentPostFormDraft(mode);
+    const emptyDraft = createEmptyRecruitmentPostFormDraft(mode, {
+      actorDisplayName,
+    });
+    if (mode === "create" && initialStateForTest?.context) {
+      return applyCreateFormContextDefaults(
+        emptyDraft,
+        initialStateForTest.context,
+        actorDisplayName,
+      );
+    }
+    return emptyDraft;
   });
   const [initialLoading, setInitialLoading] = useState<boolean>(
     () => initialStateForTest?.initialLoading ?? true,
@@ -238,7 +270,7 @@ export function RecruitmentPostForm({
       getRequestTracker(loadTrackerRef).cancelAll();
       setContext(null);
       setLoadedPost(null);
-      setDraft(createEmptyRecruitmentPostFormDraft(mode));
+      setDraft(createEmptyRecruitmentPostFormDraft(mode, { actorDisplayName }));
       setInitialLoading(false);
       setLoadError(null);
       setNotFoundError(false);
@@ -256,7 +288,7 @@ export function RecruitmentPostForm({
       setWithdrawTarget(null);
       setAccessLoss(lossKind);
     },
-    [mode],
+    [actorDisplayName, mode],
   );
 
   const loadFormWorkspace = useCallback(async () => {
@@ -360,15 +392,14 @@ export function RecruitmentPostForm({
         return;
       }
 
-      const defaultProjectId =
-        contextOutcome.context.managed_projects.length === 1
-          ? contextOutcome.context.managed_projects[0].project_id
-          : "";
       setContext(contextOutcome.context);
-      setDraft((prev) => ({
-        ...prev,
-        projectId: prev.projectId || defaultProjectId,
-      }));
+      setDraft((prev) =>
+        applyCreateFormContextDefaults(
+          prev,
+          contextOutcome.context,
+          actorDisplayName,
+        ),
+      );
       setInitialLoading(false);
       setLoadError(null);
     } catch (error) {
@@ -378,7 +409,7 @@ export function RecruitmentPostForm({
         recruitmentPostErrorMessage("RECRUITMENT_POST_UNAVAILABLE"),
       );
     }
-  }, [briefId, handleAccessRevoked, mode]);
+  }, [actorDisplayName, briefId, handleAccessRevoked, mode]);
 
   useEffect(() => {
     if (initialStateForTest) {
@@ -514,7 +545,9 @@ export function RecruitmentPostForm({
       event.preventDefault();
       if (formLocked) return;
 
-      const built = validateAndBuildRecruitmentPostWritePayload(draft);
+      const built = validateAndBuildRecruitmentPostWritePayload(draft, {
+        actorDisplayName,
+      });
       if (!built.ok) {
         setFieldErrors(built.fieldErrors);
         setValidationMessage(built.message);
@@ -552,7 +585,14 @@ export function RecruitmentPostForm({
       setPendingIntent(intent);
       void executeMutationIntent(intent);
     },
-    [briefId, draft, executeMutationIntent, formLocked, loadedPost],
+    [
+      actorDisplayName,
+      briefId,
+      draft,
+      executeMutationIntent,
+      formLocked,
+      loadedPost,
+    ],
   );
 
   const handleRetrySameIntent = useCallback(() => {
@@ -1127,7 +1167,13 @@ export function RecruitmentPostForm({
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             {/* Dự án */}
-            <div className="space-y-1.5">
+            <div
+              className={
+                mode === "create"
+                  ? "space-y-1.5 sm:col-span-2"
+                  : "space-y-1.5"
+              }
+            >
               <label
                 htmlFor="recruitment-post-field-project"
                 className="block text-sm font-medium text-foreground"
@@ -1151,10 +1197,13 @@ export function RecruitmentPostForm({
                   disabled={formLocked}
                   value={draft.projectId}
                   onChange={(event) =>
-                    setDraft((prev) => ({
-                      ...prev,
-                      projectId: event.target.value,
-                    }))
+                    setDraft((prev) =>
+                      applyCreateFormProjectSelection(
+                        prev,
+                        event.target.value,
+                        managedProjects,
+                      ),
+                    )
                   }
                   aria-invalid={Boolean(fieldErrors.projectId)}
                   className={INPUT_CLASS}
@@ -1172,26 +1221,28 @@ export function RecruitmentPostForm({
               ) : null}
             </div>
 
-            {/* Tỉnh/Thành tự động suy ra */}
-            <div className="space-y-1.5">
-              <label
-                htmlFor="recruitment-post-field-province"
-                className="block text-sm font-medium text-foreground"
-              >
-                Tỉnh/Thành (Tự động suy ra từ KCN)
-              </label>
-              <input
-                id="recruitment-post-field-province"
-                type="text"
-                readOnly
-                data-testid="recruitment-post-derived-province"
-                value={
-                  derivedProvinceDisplayName ||
-                  "Tự động điền khi chọn Khu công nghiệp"
-                }
-                className={INPUT_CLASS}
-              />
-            </div>
+            {/* Tỉnh/Thành tự động suy ra (chỉ hiển thị trên giao diện chỉnh sửa tin đã đăng) */}
+            {mode === "edit" ? (
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="recruitment-post-field-province"
+                  className="block text-sm font-medium text-foreground"
+                >
+                  Tỉnh/Thành (Tự động suy ra từ KCN)
+                </label>
+                <input
+                  id="recruitment-post-field-province"
+                  type="text"
+                  readOnly
+                  data-testid="recruitment-post-derived-province"
+                  value={
+                    derivedProvinceDisplayName ||
+                    "Tự động điền khi chọn Khu công nghiệp"
+                  }
+                  className={INPUT_CLASS}
+                />
+              </div>
+            ) : null}
 
             {/* Khu công nghiệp */}
             <div className="space-y-1.5 sm:col-span-2">
@@ -1256,12 +1307,6 @@ export function RecruitmentPostForm({
                   {fieldErrors.industrialParkId}
                 </p>
               ) : null}
-              <p
-                data-testid="recruitment-post-missing-park-help"
-                className="text-xs text-muted"
-              >
-                {RECRUITMENT_POST_MISSING_INDUSTRIAL_PARK_HELP_TEXT}
-              </p>
             </div>
 
             {/* Tên khách hàng */}
@@ -1517,14 +1562,12 @@ export function RecruitmentPostForm({
                 id="recruitment-post-field-manager-name"
                 type="text"
                 data-testid="recruitment-post-input-manager-name"
-                readOnly={permissionRevokedReadOnly}
+                readOnly
                 disabled={formLocked && !permissionRevokedReadOnly}
-                value={draft.managerName}
-                onChange={(event) =>
-                  setDraft((prev) => ({
-                    ...prev,
-                    managerName: event.target.value,
-                  }))
+                value={
+                  mode === "edit" && draft.lockedManagerName?.trim()
+                    ? draft.lockedManagerName
+                    : draft.managerName
                 }
                 aria-invalid={Boolean(fieldErrors.managerName)}
                 placeholder="Họ và tên người phụ trách"

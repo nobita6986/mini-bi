@@ -101,9 +101,6 @@ export type {
 
 export const RECRUITMENT_POST_UNPROVIDED_LABEL = "Chưa cung cấp";
 
-export const RECRUITMENT_POST_MISSING_INDUSTRIAL_PARK_HELP_TEXT =
-  "KCN chưa có trong danh mục. Vui lòng liên hệ Admin/BOD để bổ sung.";
-
 export const ENVIRONMENT_TYPE_LABELS: Readonly<
   Record<RecruitmentPostEnvironmentType, string>
 > = Object.freeze({
@@ -1233,6 +1230,7 @@ export type RecruitmentPostFormDraftState = {
   readonly lockedProjectDisplayName: string;
   readonly lockedIndustrialParkDisplayName: string;
   readonly lockedProvinceDisplayName: string;
+  readonly lockedManagerName?: string;
   readonly lockedHistoricalLaborTypes: ReadonlyArray<{
     readonly labor_type_key: string;
     readonly display_name: string;
@@ -1305,7 +1303,12 @@ export type RecruitmentPostFormDraftState = {
 
 export function createEmptyRecruitmentPostFormDraft(
   mode: RecruitmentPostFormMode = "create",
+  options?: { readonly actorDisplayName?: string },
 ): RecruitmentPostFormDraftState {
+  const actorManagerName =
+    mode === "create" && typeof options?.actorDisplayName === "string"
+      ? options.actorDisplayName.trim()
+      : "";
   return {
     mode,
     expectedVersion: 1,
@@ -1314,6 +1317,7 @@ export function createEmptyRecruitmentPostFormDraft(
     lockedProjectDisplayName: "",
     lockedIndustrialParkDisplayName: "",
     lockedProvinceDisplayName: "",
+    lockedManagerName: actorManagerName,
     lockedHistoricalLaborTypes: [],
     customerName: "",
     investmentOrigin: "",
@@ -1323,7 +1327,7 @@ export function createEmptyRecruitmentPostFormDraft(
     workPostures: [],
     shiftPattern: "TWO_SHIFTS",
     shiftDetails: "",
-    managerName: "",
+    managerName: actorManagerName,
     managerPhone: "",
     laborTypeKeys: [],
     supplyScheduleText: "",
@@ -1389,6 +1393,7 @@ export function createEditRecruitmentPostFormDraftFromItem(
     lockedProjectDisplayName: item.project.display_name,
     lockedIndustrialParkDisplayName: item.industrial_park.display_name,
     lockedProvinceDisplayName: item.province.display_name,
+    lockedManagerName: item.general.manager_name,
     lockedHistoricalLaborTypes: item.general.labor_types.map((lt) => ({
       labor_type_key: lt.labor_type_key,
       display_name: lt.display_name,
@@ -1462,6 +1467,81 @@ export function createEditRecruitmentPostFormDraftFromItem(
     requireSocialInsuranceBook: item.documents.require_social_insurance_book,
     requireOtherDocuments: item.documents.require_other_documents,
     otherDocumentsText: item.documents.other_documents_text ?? "",
+  };
+}
+
+/**
+ * When the user actively changes the Project dropdown in `mode="create"`,
+ * updates `projectId` and defaults `customerName` to the selected project's `display_name`.
+ * In `mode="edit"`, returns the draft unchanged.
+ */
+export function applyCreateFormProjectSelection(
+  draft: RecruitmentPostFormDraftState,
+  nextProjectId: string,
+  managedProjects: readonly RecruitmentPostProjectOption[],
+): RecruitmentPostFormDraftState {
+  if (draft.mode !== "create") {
+    return draft;
+  }
+  const normalizedProjectId = nextProjectId.trim();
+  if (!normalizedProjectId) {
+    return {
+      ...draft,
+      projectId: "",
+      customerName: "",
+    };
+  }
+  const matchedProject = managedProjects.find(
+    (project) => project.project_id === normalizedProjectId,
+  );
+  return {
+    ...draft,
+    projectId: normalizedProjectId,
+    customerName: matchedProject
+      ? matchedProject.display_name
+      : draft.customerName,
+  };
+}
+
+/**
+ * Applies context-load defaults in `mode="create"`:
+ * - When `draft.projectId` is empty and `context.managed_projects.length === 1`,
+ *   auto-selects that single project and defaults `customerName` to its `display_name`
+ *   (only if `draft.customerName` has not already been edited by the user).
+ * - Never overwrites a user-edited `customerName` when reloading context.
+ * - Locks `managerName` to the server-authenticated `actorDisplayName` when provided.
+ * - In `mode="edit"`, returns the draft unchanged.
+ */
+export function applyCreateFormContextDefaults(
+  draft: RecruitmentPostFormDraftState,
+  context: RecruitmentPostContext,
+  actorDisplayName?: string,
+): RecruitmentPostFormDraftState {
+  if (draft.mode !== "create") {
+    return draft;
+  }
+  const normalizedActorName =
+    typeof actorDisplayName === "string" ? actorDisplayName.trim() : "";
+  const singleManagedProject =
+    !draft.projectId.trim() && context.managed_projects.length === 1
+      ? context.managed_projects[0]
+      : null;
+
+  const nextProjectId = singleManagedProject
+    ? singleManagedProject.project_id
+    : draft.projectId;
+  const nextCustomerName =
+    singleManagedProject && !draft.customerName.trim()
+      ? singleManagedProject.display_name
+      : draft.customerName;
+  const nextManagerName = normalizedActorName || draft.managerName;
+
+  return {
+    ...draft,
+    projectId: nextProjectId,
+    customerName: nextCustomerName,
+    managerName: nextManagerName,
+    lockedManagerName: nextManagerName,
   };
 }
 
@@ -1765,7 +1845,10 @@ export function buildRecruitmentPostPreSubmitSummary(input: {
     maxRes?.ok ? maxRes.canonical : null,
   );
 
-  const managerName = draft.managerName.trim();
+  const managerName =
+    draft.mode === "edit" && draft.lockedManagerName?.trim()
+      ? draft.lockedManagerName.trim()
+      : draft.managerName.trim();
   const managerPhone = draft.managerPhone.trim();
   const managerContactDisplay =
     managerName && managerPhone
@@ -1823,8 +1906,19 @@ function normalizeOptionalDraftVnd(
 
 export function validateAndBuildRecruitmentPostWritePayload(
   draft: RecruitmentPostFormDraftState,
+  options?: { readonly actorDisplayName?: string },
 ): BuiltRecruitmentPostWriteRequest {
   const fieldErrors: Record<string, string> = {};
+  const effectiveManagerName =
+    draft.mode === "create" &&
+    typeof options?.actorDisplayName === "string" &&
+    options.actorDisplayName.trim().length > 0
+      ? options.actorDisplayName.trim()
+      : draft.mode === "edit" &&
+          typeof draft.lockedManagerName === "string" &&
+          draft.lockedManagerName.trim().length > 0
+        ? draft.lockedManagerName.trim()
+        : draft.managerName.trim();
 
   if (draft.mode === "create") {
     if (!draft.projectId.trim()) {
@@ -1850,7 +1944,7 @@ export function validateAndBuildRecruitmentPostWritePayload(
     fieldErrors.shiftDetails =
       "Vui lòng nhập chi tiết ca làm việc khi chọn Khác.";
   }
-  if (!draft.managerName.trim()) {
+  if (!effectiveManagerName) {
     fieldErrors.managerName = "Vui lòng nhập tên người phụ trách dự án.";
   }
   const phoneDigits = draft.managerPhone.trim().replace(/[^0-9]/g, "");
@@ -2051,7 +2145,7 @@ export function validateAndBuildRecruitmentPostWritePayload(
       work_postures: [...draft.workPostures],
       shift_pattern: draft.shiftPattern,
       shift_details: normalizeOptionalDraftText(draft.shiftDetails),
-      manager_name: draft.managerName.trim(),
+      manager_name: effectiveManagerName,
       manager_phone: draft.managerPhone.trim(),
       labor_type_keys: [...draft.laborTypeKeys],
       supply_schedule_text: normalizeOptionalDraftText(

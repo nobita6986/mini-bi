@@ -13,6 +13,7 @@ import {
 const ACTOR = {
   auth_subject: "11111111-1111-4111-8111-111111111111",
   app_user_id: "22222222-2222-4222-8222-222222222222",
+  display_name: "Nguyễn Văn A",
   enabled: true,
 };
 const BRIEF_ID = "33333333-3333-4333-8333-333333333333";
@@ -394,4 +395,137 @@ test("create returns 201 when replayed=false and 200 when replayed=true; update 
     getDeps.dependencies,
   );
   assert.equal(getRes.status, 200);
+});
+
+test("create enforces manager_name from server-verified actor display_name and ignores client manager_name, while update preserves existing manager_name", async () => {
+  const createDeps = makeDeps(
+    {
+      ok: true,
+      data: { post: SAMPLE_ITEM, changed: true, replayed: false },
+    },
+    {
+      actor: {
+        ok: true,
+        actor: {
+          ...ACTOR,
+          display_name: "  Phạm Thị Quản Lý Dự Án  ",
+        },
+      },
+      response_headers: {},
+    },
+  );
+
+  const clientBodyWithSpoofedManager = makeValidContent();
+  clientBodyWithSpoofedManager.general.manager_name = "Tên Giả Mạo Từ Client";
+
+  const createRes = await handleRecruitmentPostCreate(
+    makeMutationRequest({
+      project_id: "PROJ_A",
+      industrial_park_id: PARK_ID,
+      content: clientBodyWithSpoofedManager,
+    }),
+    "true",
+    createDeps.dependencies,
+  );
+  assert.equal(createRes.status, 201);
+  assert.equal(createDeps.calls.length, 1);
+  assert.equal(createDeps.calls[0][0], "create");
+  assert.equal(
+    createDeps.calls[0][1].payload.general.manager_name,
+    "Phạm Thị Quản Lý Dự Án",
+  );
+
+  // Missing or blank actor display_name on create fails closed with 403 ACTOR_NOT_AVAILABLE
+  const missingDisplayNameDeps = makeDeps(
+    {
+      ok: true,
+      data: { post: SAMPLE_ITEM, changed: true, replayed: false },
+    },
+    {
+      actor: {
+        ok: true,
+        actor: {
+          auth_subject: ACTOR.auth_subject,
+          app_user_id: ACTOR.app_user_id,
+          display_name: "   ",
+          enabled: true,
+        },
+      },
+      response_headers: {},
+    },
+  );
+  const missingNameRes = await handleRecruitmentPostCreate(
+    makeMutationRequest({
+      project_id: "PROJ_A",
+      industrial_park_id: PARK_ID,
+      content: makeValidContent(),
+    }),
+    "true",
+    missingDisplayNameDeps.dependencies,
+  );
+  assert.equal(missingNameRes.status, 403);
+  assert.deepEqual(await missingNameRes.json(), {
+    ok: false,
+    code: "ACTOR_NOT_AVAILABLE",
+  });
+  assert.equal(missingDisplayNameDeps.calls.length, 0);
+
+  // Update by another user (e.g. Full Admin / BOD) or with a tampered client manager_name
+  // always preserves the originally saved manager_name from the server
+  const storedOriginalPost = {
+    ...SAMPLE_ITEM,
+    version: 2,
+    general: {
+      ...SAMPLE_ITEM.general,
+      manager_name: "Nguyễn Văn Quản Lý Gốc",
+    },
+  };
+  const adminEditorDeps = makeDeps(
+    {
+      ok: true,
+      data: {
+        post: storedOriginalPost,
+        changed: true,
+        replayed: false,
+      },
+    },
+    {
+      actor: {
+        ok: true,
+        actor: {
+          ...ACTOR,
+          display_name: "Lê Quản Trị BOD",
+        },
+      },
+      response_headers: {},
+    },
+  );
+  const updateContent = makeValidContent();
+  updateContent.general.manager_name = "Tên Giả Mạo Khi Sửa";
+  updateContent.general.manager_phone = "0988777666";
+
+  const updateRes = await handleRecruitmentPostUpdate(
+    makeMutationRequest(
+      { expected_version: 1, content: updateContent },
+      "PATCH",
+      `/api/recruitment-posts/${BRIEF_ID}`,
+    ),
+    BRIEF_ID,
+    "true",
+    adminEditorDeps.dependencies,
+  );
+  assert.equal(updateRes.status, 200);
+  assert.equal(adminEditorDeps.calls.length, 2);
+  assert.equal(adminEditorDeps.calls[0][0], "get");
+  assert.equal(adminEditorDeps.calls[0][1].brief_id, BRIEF_ID);
+  assert.equal(adminEditorDeps.calls[1][0], "update");
+  assert.equal(adminEditorDeps.calls[1][1].expected_version, 1);
+  assert.equal(
+    adminEditorDeps.calls[1][1].payload.general.manager_name,
+    "Nguyễn Văn Quản Lý Gốc",
+  );
+  assert.equal(
+    adminEditorDeps.calls[1][1].payload.general.manager_phone,
+    "0988777666",
+  );
 });
