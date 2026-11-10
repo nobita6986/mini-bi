@@ -1006,13 +1006,14 @@ describe("Phase 3 — Recruitment Posts UI & Architecture Gate", () => {
       expectedHeadcount: "120",
       averageIncomeMinVnd: "9500000",
       averageIncomeMaxVnd: "12500000",
-      managerName: "Trần Thị PM",
+      managerName: "Tên Client Cố Tình Gửi",
       managerPhone: "0912345678",
     };
 
     const createHtml = renderToStaticMarkup(
       createElement(RecruitmentPostForm, {
         mode: "create",
+        actorDisplayName: "Trần Thị PM",
         initialStateForTest: {
           initialLoading: false,
           context: sampleContext,
@@ -1021,17 +1022,35 @@ describe("Phase 3 — Recruitment Posts UI & Architecture Gate", () => {
       }),
     );
 
-    // 4 BOD sections + missing KCN helper text + auto-derived province + 6-item pre-submit confirmation block
+    // 4 BOD sections + NO standalone province input + NO missing KCN helper text + KCN search/select still required + 6-item pre-submit confirmation block still shows derived province
     assert.match(createHtml, /1\. Thông tin chung dự án/);
     assert.match(createHtml, /2\. Yêu cầu ứng viên/);
     assert.match(createHtml, /3\. Lương, thưởng và phúc lợi/);
     assert.match(createHtml, /4\. Hồ sơ ứng viên cần chuẩn bị/);
-    assert.match(
+    assert.doesNotMatch(
       createHtml,
       /KCN chưa có trong danh mục\. Vui lòng liên hệ Admin\/BOD để bổ sung\./,
     );
-    assert.match(createHtml, /data-testid="recruitment-post-derived-province"/);
-    assert.match(createHtml, /value="Vĩnh Phúc"/);
+    assert.doesNotMatch(
+      createHtml,
+      /data-testid="recruitment-post-missing-park-help"/,
+    );
+    assert.doesNotMatch(
+      createHtml,
+      /data-testid="recruitment-post-derived-province"/,
+    );
+    assert.match(createHtml, /data-testid="recruitment-post-select-project"/);
+    assert.match(createHtml, /data-testid="recruitment-post-search-park"/);
+    assert.match(createHtml, /data-testid="recruitment-post-select-park"/);
+    assert.match(
+      createHtml,
+      /<input[^>]*data-testid="recruitment-post-input-manager-name"[^>]*readOnly=""[^>]*value="Trần Thị PM"/,
+    );
+    assert.doesNotMatch(createHtml, /Tên Client Cố Tình Gửi/);
+    assert.doesNotMatch(
+      createHtml,
+      /<input[^>]*data-testid="recruitment-post-input-manager-phone"[^>]*readOnly=""/,
+    );
     assert.match(createHtml, /data-testid="recruitment-post-pre-submit-summary"/);
     assert.match(createHtml, /1\. Dự án/);
     assert.match(createHtml, /2\. Khu công nghiệp &amp; Tỉnh\/Thành/);
@@ -1044,7 +1063,31 @@ describe("Phase 3 — Recruitment Posts UI & Architecture Gate", () => {
     assert.match(createHtml, /6\. Liên hệ người phụ trách/);
     assert.match(createHtml, /Trần Thị PM · 0912345678/);
 
-    // Edit mode locks Project and Industrial Park, handles 409 OCC stale + compared server post without auto-resubmitting
+    // Single managed project auto-defaults projectId and customerName on initial create render while keeping customerName editable
+    const autoDefaultCreateHtml = renderToStaticMarkup(
+      createElement(RecruitmentPostForm, {
+        mode: "create",
+        actorDisplayName: "Trần Thị PM",
+        initialStateForTest: {
+          initialLoading: false,
+          context: sampleContext,
+        },
+      }),
+    );
+    assert.match(
+      autoDefaultCreateHtml,
+      /data-testid="recruitment-post-input-customer-name"[^>]*value="Dự án Điện tử ABC"/,
+    );
+    assert.doesNotMatch(
+      autoDefaultCreateHtml,
+      /<input[^>]*data-testid="recruitment-post-input-customer-name"[^>]*readOnly=""/,
+    );
+    assert.match(
+      autoDefaultCreateHtml,
+      /<input[^>]*data-testid="recruitment-post-input-manager-name"[^>]*readOnly=""[^>]*value="Trần Thị PM"/,
+    );
+
+    // Edit mode locks Project and Industrial Park, preserves original customer_name and manager_name even if actorDisplayName is Full Admin/BOD, and handles 409 OCC stale + compared server post without auto-resubmitting
     const existingPost = makeCompleteItem({
       version: 3,
       allowed_actions: { can_edit: true, can_withdraw: true },
@@ -1062,6 +1105,7 @@ describe("Phase 3 — Recruitment Posts UI & Architecture Gate", () => {
       createElement(RecruitmentPostForm, {
         mode: "edit",
         briefId: existingPost.brief_id,
+        actorDisplayName: "Lê Quản Trị BOD",
         initialStateForTest: {
           initialLoading: false,
           context: sampleContext,
@@ -1075,7 +1119,17 @@ describe("Phase 3 — Recruitment Posts UI & Architecture Gate", () => {
     );
 
     assert.match(editStaleHtml, /data-testid="recruitment-post-locked-project"/);
+    assert.match(editStaleHtml, /data-testid="recruitment-post-derived-province"/);
     assert.match(editStaleHtml, /data-testid="recruitment-post-locked-park"/);
+    assert.match(
+      editStaleHtml,
+      /data-testid="recruitment-post-input-customer-name"[^>]*value="Công ty TNHH Linh Kiện Điện Tử ABC"/,
+    );
+    assert.match(
+      editStaleHtml,
+      /data-testid="recruitment-post-input-manager-name"[^>]*value="Trần Thị PM"/,
+    );
+    assert.doesNotMatch(editStaleHtml, /Lê Quản Trị BOD/);
     assert.match(editStaleHtml, /data-testid="recruitment-post-stale-conflict"/);
     assert.match(editStaleHtml, /Tải bản mới nhất để đối chiếu/);
     assert.match(
@@ -1175,7 +1229,10 @@ describe("Phase 3 — Recruitment Posts UI & Architecture Gate", () => {
       "src/app/admin/catalog/industrial-parks/page.tsx",
     );
 
-    assert.match(newPageSrc, /<RecruitmentPostForm mode="create" \/>/);
+    assert.match(
+      newPageSrc,
+      /<RecruitmentPostForm\s+mode="create"\s+actorDisplayName=\{actor && actor\.ok \? actor\.actor\.display_name : ""\}\s*\/>/,
+    );
     assert.match(
       editPageSrc,
       /<RecruitmentPostForm mode="edit" briefId=\{normalizedBriefId\} \/>/,

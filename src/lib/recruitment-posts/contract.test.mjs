@@ -244,6 +244,29 @@ test("parseCreateRecruitmentPostBody accepts nested content and flat sections, n
     ...makeValidContentInput(),
   });
   assert.equal(flat.ok, true);
+
+  // Server actorDisplayName override replaces client manager_name in both content and rpc_payload
+  const clientSpoofedContent = makeValidContentInput();
+  clientSpoofedContent.general.manager_name = "Client Spoofed Manager";
+  const overridden = parseCreateRecruitmentPostBody(
+    {
+      project_id: "PROJ_A",
+      industrial_park_id: PARK_ID,
+      content: clientSpoofedContent,
+    },
+    { actorDisplayName: "  Trần Văn PM Server  " },
+  );
+  assert.equal(overridden.ok, true);
+  if (overridden.ok) {
+    assert.equal(
+      overridden.value.content.general.manager_name,
+      "Trần Văn PM Server",
+    );
+    assert.equal(
+      overridden.value.rpc_payload.general.manager_name,
+      "Trần Văn PM Server",
+    );
+  }
 });
 
 test("parseCreateRecruitmentPostBody and parseUpdateRecruitmentPostBody enforce exact keys, authority deny-list, and business rules", () => {

@@ -5,8 +5,9 @@ import { parseListRecruitmentPostsQuery } from "./contract.ts";
 import {
   DEFAULT_RECRUITMENT_POST_PAGE_SIZE,
   EMPTY_RECRUITMENT_POST_FILTERS,
-  RECRUITMENT_POST_MISSING_INDUSTRIAL_PARK_HELP_TEXT,
   RECRUITMENT_POST_UNPROVIDED_LABEL,
+  applyCreateFormContextDefaults,
+  applyCreateFormProjectSelection,
   applyIndustrialParkFilterChange,
   applyProvinceFilterChange,
   beginRecruitmentPostContextRequest,
@@ -865,15 +866,90 @@ test("createLatestRequestTracker aborts stale requests on filter change or detai
   assert.equal(secondTicket.signal.aborted, true);
 });
 
-test("Phase 4: Authoring draft state, dependent field clearing, KCN search & province auto-derivation, and historical labor type retention", () => {
-  assert.equal(
-    RECRUITMENT_POST_MISSING_INDUSTRIAL_PARK_HELP_TEXT,
-    "KCN chưa có trong danh mục. Vui lòng liên hệ Admin/BOD để bổ sung.",
-  );
-
-  let createDraft = createEmptyRecruitmentPostFormDraft("create");
+test("Phase 4: Authoring draft state, dependent field clearing, KCN search & province auto-derivation, project customer_name defaults, server actor manager_name, and historical labor type retention", () => {
+  let createDraft = createEmptyRecruitmentPostFormDraft("create", {
+    actorDisplayName: "  Phạm Văn PM  ",
+  });
   assert.equal(createDraft.mode, "create");
   assert.equal(createDraft.expectedVersion, 1);
+  assert.equal(createDraft.managerName, "Phạm Văn PM");
+
+  const pmManagedProjects = [
+    { project_id: "PROJ_ABC", display_name: "Dự án Điện tử ABC" },
+    { project_id: "PROJ_COMPAL", display_name: "Dự án Compal Vĩnh Phúc" },
+  ];
+  const pmContext = {
+    ...SAMPLE_CONTEXT,
+    can_create: true,
+    managed_projects: pmManagedProjects,
+  };
+
+  // 1. Selecting a project in create mode auto-fills customerName with the project's display_name
+  const afterSelectAbc = applyCreateFormProjectSelection(
+    createDraft,
+    "PROJ_ABC",
+    pmManagedProjects,
+  );
+  assert.equal(afterSelectAbc.projectId, "PROJ_ABC");
+  assert.equal(afterSelectAbc.customerName, "Dự án Điện tử ABC");
+
+  // Customer name remains editable; reloading context does NOT overwrite user-edited customerName
+  const userEditedCustomerDraft = {
+    ...afterSelectAbc,
+    customerName: "Công ty TNHH Khách Hàng Tuỳ Chỉnh",
+  };
+  const afterContextReload = applyCreateFormContextDefaults(
+    userEditedCustomerDraft,
+    pmContext,
+    "Phạm Văn PM",
+  );
+  assert.equal(
+    afterContextReload.customerName,
+    "Công ty TNHH Khách Hàng Tuỳ Chỉnh",
+  );
+
+  // Actively switching to another project updates customerName to the new project's display_name
+  const afterSelectCompal = applyCreateFormProjectSelection(
+    afterContextReload,
+    "PROJ_COMPAL",
+    pmManagedProjects,
+  );
+  assert.equal(afterSelectCompal.projectId, "PROJ_COMPAL");
+  assert.equal(afterSelectCompal.customerName, "Dự án Compal Vĩnh Phúc");
+
+  // Single managed project auto-selects on initial context load and auto-fills customerName
+  const singleProjectContext = {
+    ...SAMPLE_CONTEXT,
+    managed_projects: [
+      { project_id: "PROJ_ABC", display_name: "Dự án Điện tử ABC" },
+    ],
+  };
+  const autoSelectedSingleProjectDraft = applyCreateFormContextDefaults(
+    createEmptyRecruitmentPostFormDraft("create"),
+    singleProjectContext,
+    "Phạm Văn PM",
+  );
+  assert.equal(autoSelectedSingleProjectDraft.projectId, "PROJ_ABC");
+  assert.equal(
+    autoSelectedSingleProjectDraft.customerName,
+    "Dự án Điện tử ABC",
+  );
+  assert.equal(autoSelectedSingleProjectDraft.managerName, "Phạm Văn PM");
+
+  // Reloading single-project context after user edits customerName preserves user edit
+  const editedSingleProjectDraft = {
+    ...autoSelectedSingleProjectDraft,
+    customerName: "Tên Khách Hàng Đã Sửa",
+  };
+  const reloadedSingleProjectDraft = applyCreateFormContextDefaults(
+    editedSingleProjectDraft,
+    singleProjectContext,
+    "Phạm Văn PM",
+  );
+  assert.equal(
+    reloadedSingleProjectDraft.customerName,
+    "Tên Khách Hàng Đã Sửa",
+  );
 
   createDraft = toggleRecruitmentPostEnvironmentType(createDraft, "CLEAN_ROOM");
   createDraft = toggleRecruitmentPostWorkPosture(createDraft, "SITTING");
@@ -994,14 +1070,31 @@ test("Phase 4: Pre-submit 6-item confirmation block, write payload validation, w
     managerContactDisplay: "Trần Thị PM · 0912345678",
   });
 
-  // Valid create payload
+  // Valid create payload (KCN remains required; actorDisplayName overrides draft managerName in create mode)
+  const missingParkCreate = validateAndBuildRecruitmentPostWritePayload({
+    ...editDraft,
+    mode: "create",
+    projectId: "PROJ_ABC",
+    industrialParkId: "",
+  });
+  assert.equal(missingParkCreate.ok, false);
+  if (!missingParkCreate.ok) {
+    assert.equal(
+      missingParkCreate.fieldErrors.industrialParkId,
+      "Vui lòng chọn Khu công nghiệp.",
+    );
+  }
+
   const createDraft = {
     ...editDraft,
     mode: "create",
     projectId: "PROJ_ABC",
     industrialParkId: PARK_KHAI_QUANG_ID,
+    managerName: "Tên Nháp Cũ",
   };
-  const builtCreate = validateAndBuildRecruitmentPostWritePayload(createDraft);
+  const builtCreate = validateAndBuildRecruitmentPostWritePayload(createDraft, {
+    actorDisplayName: "Phạm Văn PM",
+  });
   assert.equal(builtCreate.ok, true);
   if (builtCreate.ok && builtCreate.mode === "create") {
     assert.equal(builtCreate.requestBody.project_id, "PROJ_ABC");
@@ -1013,15 +1106,29 @@ test("Phase 4: Pre-submit 6-item confirmation block, write payload validation, w
       builtCreate.requestBody.content.general.customer_name,
       "Công ty TNHH Linh Kiện Điện Tử ABC",
     );
+    assert.equal(
+      builtCreate.requestBody.content.general.manager_name,
+      "Phạm Văn PM",
+    );
   }
 
-  // Valid edit payload sends expected_version + content (never project_id or industrial_park_id)
-  const builtEdit = validateAndBuildRecruitmentPostWritePayload(editDraft);
+  // Valid edit payload sends expected_version + content (never project_id or industrial_park_id) and preserves original customer_name & manager_name even if actorDisplayName is passed
+  const builtEdit = validateAndBuildRecruitmentPostWritePayload(editDraft, {
+    actorDisplayName: "Lê Quản Trị BOD",
+  });
   assert.equal(builtEdit.ok, true);
   if (builtEdit.ok && builtEdit.mode === "edit") {
     assert.equal(builtEdit.requestBody.expected_version, 2);
     assert.equal("project_id" in builtEdit.requestBody, false);
     assert.equal("industrial_park_id" in builtEdit.requestBody, false);
+    assert.equal(
+      builtEdit.requestBody.content.general.customer_name,
+      "Công ty TNHH Linh Kiện Điện Tử ABC",
+    );
+    assert.equal(
+      builtEdit.requestBody.content.general.manager_name,
+      "Trần Thị PM",
+    );
   }
 
   // Withdraw body

@@ -64,6 +64,17 @@ function parseRequestUrl(request: Request): URL | null {
   }
 }
 
+const ACTOR_DISPLAY_NAME_CONTROL_CHAR_PATTERN =
+  /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/;
+
+function normalizeActorDisplayName(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  if (ACTOR_DISPLAY_NAME_CONTROL_CHAR_PATTERN.test(raw)) return null;
+  const trimmed = raw.trim();
+  if (trimmed.length < 1 || trimmed.length > 256) return null;
+  return trimmed;
+}
+
 async function resolveRecruitmentPostActor(
   dependencies: RecruitmentPostApiDependencies,
 ): Promise<
@@ -71,6 +82,7 @@ async function resolveRecruitmentPostActor(
       ok: true;
       auth_subject: string;
       app_user_id: string;
+      display_name: string | null;
     }
   | { ok: false; response: Response }
 > {
@@ -109,6 +121,9 @@ async function resolveRecruitmentPostActor(
     ok: true,
     auth_subject: actor.auth_subject.toLowerCase(),
     app_user_id: actor.app_user_id.toLowerCase(),
+    display_name: normalizeActorDisplayName(
+      (actor as { display_name?: unknown }).display_name,
+    ),
   };
 }
 
@@ -340,6 +355,9 @@ export async function handleRecruitmentPostCreate(
 
   const actor = await resolveRecruitmentPostActor(dependencies);
   if (!actor.ok) return actor.response;
+  if (!actor.display_name) {
+    return recruitmentPostError("ACTOR_NOT_AVAILABLE");
+  }
 
   const boundedBody = await readBoundedJsonBody(
     request,
@@ -360,7 +378,9 @@ export async function handleRecruitmentPostCreate(
     return recruitmentPostError(idempotencyKey.code);
   }
 
-  const parsedBody = parseCreateRecruitmentPostBody(boundedBody.value);
+  const parsedBody = parseCreateRecruitmentPostBody(boundedBody.value, {
+    actorDisplayName: actor.display_name,
+  });
   if (!parsedBody.ok) {
     return recruitmentPostError(parsedBody.code);
   }

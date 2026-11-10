@@ -31,6 +31,11 @@ export default async function NewRecruitmentPostPage() {
     case "TEMPORARY_UNAVAILABLE":
       return <TemporaryUnavailable />;
     case "ALLOW":
-      return <RecruitmentPostForm mode="create" />;
+      return (
+        <RecruitmentPostForm
+          mode="create"
+          actorDisplayName={actor && actor.ok ? actor.actor.display_name : ""}
+        />
+      );
   }
 }
