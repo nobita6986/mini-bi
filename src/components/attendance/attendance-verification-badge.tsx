@@ -42,19 +42,17 @@ export function AttendanceVerificationBadge({
         <Tooltip.Trigger asChild>
           <button
             type="button"
-            title={indicator.hint}
             aria-label={indicator.ariaLabel}
             data-verification-kind={indicator.kind}
             data-verification-icon={indicator.icon}
             data-verification-tone={indicator.tone}
             className={cn(
-              "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
+              "relative inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
               VERIFICATION_TONE_CLASSES[indicator.tone],
               className,
             )}
           >
             <Icon aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
-            <span className="sr-only">{indicator.ariaLabel}</span>
           </button>
         </Tooltip.Trigger>
         <Tooltip.Portal>

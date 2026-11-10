@@ -2167,18 +2167,37 @@ test("Compact /admin/attendance header & shared AttendanceVerificationBadge icon
     totalCount: 2,
   });
 
-  // 4. Shared AttendanceVerificationBadge component uses existing Radix Tooltip & Lucide icons, supports hover + keyboard focus + sr-only, and preserves sync delay note
+  // 4. Shared AttendanceVerificationBadge component uses existing Radix Tooltip & Lucide icons (single hint via Tooltip without duplicate native title or uncontained sr-only) and preserves sync delay note
+  const dataTableSource = readFileSync(
+    new URL("../../components/ui/data-table.tsx", import.meta.url),
+    "utf8",
+  );
   assert.match(verificationBadgeSource, /from "lucide-react"/);
   assert.match(verificationBadgeSource, /from "radix-ui"/);
   assert.match(verificationBadgeSource, /Tooltip\.Provider/);
   assert.match(verificationBadgeSource, /Tooltip\.Trigger asChild/);
   assert.match(verificationBadgeSource, /Tooltip\.Content/);
   assert.match(verificationBadgeSource, /aria-label=\{indicator\.ariaLabel\}/);
-  assert.match(verificationBadgeSource, /title=\{indicator\.hint\}/);
-  assert.match(verificationBadgeSource, /className="sr-only"/);
+  assert.equal(verificationBadgeSource.includes("title={indicator.hint}"), false);
+  assert.equal(verificationBadgeSource.includes('className="sr-only"'), false);
+  assert.match(dataTableSource, /relative overflow-hidden rounded-xl/);
+  assert.match(dataTableSource, /relative overflow-x-auto/);
+
+  assert.match(
+    managerSource,
+    /<th scope="col" className=\{cn\(DATA_TABLE_TH_CLASS, "text-center"\)\}>\s*Thời gian\s*<\/th>/,
+  );
+  assert.match(
+    managerSource,
+    /<td\s+data-label="Thời gian"\s+className=\{cn\(DATA_TABLE_TD_CLASS, "text-center"\)\}\s*>/,
+  );
 
   const timeVerificationCellBlock =
     managerSource.match(/function TimeVerificationCell[\s\S]*?\n}\n/)?.[0] ?? "";
+  assert.match(
+    timeVerificationCellBlock,
+    /className="flex flex-col items-center justify-center gap-1 text-center"/,
+  );
   assert.match(timeVerificationCellBlock, /<AttendanceVerificationBadge indicator=\{verification\} \/>/);
   assert.match(timeVerificationCellBlock, /formatSyncDelayNote\(item\.sync_delay_seconds\)/);
 

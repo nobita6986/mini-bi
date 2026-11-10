@@ -27,14 +27,14 @@ export function DataTableContainer({
     <div
       data-testid={dataTestId}
       className={cn(
-        "overflow-hidden rounded-xl border border-border bg-surface shadow-2xs",
+        "relative overflow-hidden rounded-xl border border-border bg-surface shadow-2xs",
         className,
       )}
     >
       <div
         ref={scrollRef}
         className={cn(
-          "overflow-x-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
+          "relative overflow-x-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
           scrollClassName,
         )}
       >

@@ -508,7 +508,7 @@ function TimeVerificationCell({ item }: { item: AttendanceReportItemProjection }
   const syncNote = formatSyncDelayNote(item.sync_delay_seconds);
   const verification = describeAttendanceTimeVerification(item.time_verified);
   return (
-    <div className="space-y-1">
+    <div className="flex flex-col items-center justify-center gap-1 text-center">
       <AttendanceVerificationBadge indicator={verification} />
       {syncNote ? <p className="text-xs text-muted">{syncNote}</p> : null}
     </div>
@@ -1961,8 +1961,8 @@ export function AttendanceReportManager({
                     <th scope="col" className={DATA_TABLE_TH_CLASS}>
                       Ngày &amp; giờ chấm công
                     </th>
-                    <th scope="col" className={DATA_TABLE_TH_CLASS}>
-                      Xác minh thời gian
+                    <th scope="col" className={cn(DATA_TABLE_TH_CLASS, "text-center")}>
+                      Thời gian
                     </th>
                     <th scope="col" className={DATA_TABLE_TH_CLASS}>
                       Tọa độ GPS &amp; ghi chú
@@ -2011,8 +2011,8 @@ export function AttendanceReportManager({
                           </div>
                         </td>
                         <td
-                          data-label="Xác minh thời gian"
-                          className={DATA_TABLE_TD_CLASS}
+                          data-label="Thời gian"
+                          className={cn(DATA_TABLE_TD_CLASS, "text-center")}
                         >
                           <TimeVerificationCell item={item} />
                         </td>
