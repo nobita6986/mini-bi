@@ -81,8 +81,8 @@ function buildSubLedgerHref(vendorId: string, sub: VendorFinanceListSubLedgerIte
   return `/finance/vendors/${encodeURIComponent(vendorId)}?${sp.toString()}`;
 }
 
-const LIST_TH_CLASS = `${DATA_TABLE_TH_CLASS} !px-2 !py-2.5 text-[11px] leading-tight`;
-const LIST_TD_CLASS = `${DATA_TABLE_TD_CLASS} !px-2 !py-2.5 align-top`;
+const LIST_TH_CLASS = `${DATA_TABLE_TH_CLASS} !px-2 !py-2.5 text-[11px] leading-tight align-middle`;
+const LIST_TD_CLASS = `${DATA_TABLE_TD_CLASS} !px-2 !py-2.5 align-middle`;
 
 export function VendorFinanceListView({
   initialCanRecord = false,
@@ -883,7 +883,7 @@ export function VendorFinanceListView({
                               <Link
                                 key={subKey}
                                 href={buildSubLedgerHref(vendor.vendor_id, sub)}
-                                className="flex flex-wrap items-start justify-between gap-2 rounded-lg border border-border bg-surface-muted/40 px-2 py-1.5 text-xs hover:border-primary/40 hover:bg-surface-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                                className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-surface-muted/40 px-2 py-1.5 text-xs hover:border-primary/40 hover:bg-surface-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
                               >
                                 <span className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 leading-snug">
                                   <StatusBadge

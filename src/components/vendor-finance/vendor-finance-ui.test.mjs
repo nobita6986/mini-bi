@@ -395,6 +395,8 @@ test("Compact Vendor Finance UI: streamlined PageHeaders, aligned filter grids w
   assert.match(listView, /<th scope="col"[^>]*>\s*Giao dịch gần nhất\s*<\/th>/);
   assert.match(listView, /data-label="Giao dịch gần nhất"/);
   assert.match(listView, /whitespace-nowrap/);
+  assert.match(listView, /LIST_TD_CLASS\s*=\s*`\$\{DATA_TABLE_TD_CLASS\}[^`]*align-middle`/);
+  assert.doesNotMatch(listView, /align-top/);
 
   // 2. Monthly report view
   assert.match(monthlyReportView, /<PageHeader\s+title="Báo cáo công nợ Vendor theo Dự án & Tháng"\s+actions=\{/);
@@ -402,6 +404,8 @@ test("Compact Vendor Finance UI: streamlined PageHeaders, aligned filter grids w
   assert.match(monthlyReportView, /grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5/);
   assert.match(monthlyReportView, /whitespace-normal break-words/);
   assert.match(monthlyReportView, /whitespace-nowrap/);
+  assert.match(monthlyReportView, /REPORT_TD_CLASS\s*=\s*`\$\{DATA_TABLE_TD_CLASS\}[^`]*align-middle`/);
+  assert.doesNotMatch(monthlyReportView, /align-top/);
 
   // 3. Vendor detail view
   assert.match(detailView, /<PageHeader\s+title=\{vendor \? vendor\.display_name : "Chi tiết tài chính Vendor"\}\s+badge=\{/);

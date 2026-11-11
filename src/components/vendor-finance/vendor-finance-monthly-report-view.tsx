@@ -83,8 +83,8 @@ function rowDrillKey(row: VendorFinanceMonthlyReportRow): string {
   return `${row.project_id}:${row.accountant_ref}:${row.vendor_id}:${row.contract_type}`;
 }
 
-const REPORT_TH_CLASS = `${DATA_TABLE_TH_CLASS} !px-2 !py-2.5 text-[11px] leading-tight`;
-const REPORT_TD_CLASS = `${DATA_TABLE_TD_CLASS} !px-2 !py-2.5 align-top`;
+const REPORT_TH_CLASS = `${DATA_TABLE_TH_CLASS} !px-2 !py-2.5 text-[11px] leading-tight align-middle`;
+const REPORT_TD_CLASS = `${DATA_TABLE_TD_CLASS} !px-2 !py-2.5 align-middle`;
 
 export function VendorFinanceMonthlyReportView({
   initialCanManageProjectAssignments = false,
@@ -1125,7 +1125,7 @@ export function VendorFinanceMonthlyReportView({
                                             {drill.entries.map((entry) => (
                                               <tr
                                                 key={entry.entry_id}
-                                                className="border-b border-border/60 last:border-b-0"
+                                                className="border-b border-border/60 last:border-b-0 align-middle"
                                               >
                                                 <td className="py-2 pr-3 font-mono font-semibold whitespace-nowrap">
                                                   <Link
