@@ -7,6 +7,7 @@ import {
   handleRecruitmentPostGet,
   handleRecruitmentPostList,
   handleRecruitmentPostListMine,
+  handleRecruitmentPostPublicFeedV1,
   handleRecruitmentPostUpdate,
   handleRecruitmentPostWithdraw,
 } from "./api.ts";
@@ -643,4 +644,188 @@ test("handleRecruitmentPostListMine enforces feature flag, session, authority gu
       page_size: 15,
     },
   ]);
+});
+
+test("handleRecruitmentPostPublicFeedV1 serves public JSON feed without authentication, reflects create/update/withdraw, disables cache, and distinguishes empty list (200) from RPC error (503)", async () => {
+  const makePublicJob = (overrides = {}) => ({
+    id: BRIEF_ID,
+    brief_id: BRIEF_ID,
+    version: 1,
+    published_at: SAMPLE_ITEM.published_at,
+    updated_at: SAMPLE_ITEM.updated_at,
+    location: {
+      province_code: SAMPLE_ITEM.province.province_code,
+      province_name: SAMPLE_ITEM.province.display_name,
+      industrial_park_code: SAMPLE_ITEM.industrial_park.industrial_park_code,
+      industrial_park_name: SAMPLE_ITEM.industrial_park.display_name,
+    },
+    general: {
+      customer_name: SAMPLE_ITEM.general.customer_name,
+      investment_origin: SAMPLE_ITEM.general.investment_origin,
+      manufacturing_industry: SAMPLE_ITEM.general.manufacturing_industry,
+      job_description: SAMPLE_ITEM.general.job_description,
+      environment_types: SAMPLE_ITEM.general.environment_types,
+      work_postures: SAMPLE_ITEM.general.work_postures,
+      shift_pattern: SAMPLE_ITEM.general.shift_pattern,
+      shift_details: SAMPLE_ITEM.general.shift_details,
+      labor_types: SAMPLE_ITEM.general.labor_types,
+      supply_schedule_text: SAMPLE_ITEM.general.supply_schedule_text,
+      expected_headcount: SAMPLE_ITEM.general.expected_headcount,
+    },
+    candidate: {
+      ...SAMPLE_ITEM.candidate,
+      gender_label: "Nam/Nữ",
+    },
+    compensation: SAMPLE_ITEM.compensation,
+    documents: SAMPLE_ITEM.documents,
+    ...overrides,
+  });
+
+  // 1. Empty list (zero PUBLISHED posts) -> 200 OK with { schema_version: 1, jobs: [] } and private, no-store
+  let currentJobs = [];
+  let rpcQueriesCount = 0;
+  const liveDeps = {
+    repository: {
+      listPublicFeedV1: async () => {
+        rpcQueriesCount += 1;
+        return {
+          ok: true,
+          data: {
+            schema_version: 1,
+            jobs: currentJobs,
+          },
+        };
+      },
+    },
+  };
+
+  const emptyRes = await handleRecruitmentPostPublicFeedV1(
+    new Request("https://bi.hrpvietnam.com/feeds/jobs.v1.json"),
+    liveDeps,
+  );
+  assert.equal(emptyRes.status, 200);
+  assert.equal(emptyRes.headers.get("cache-control"), "private, no-store");
+  assert.deepEqual(await emptyRes.json(), {
+    schema_version: 1,
+    jobs: [],
+  });
+  assert.equal(rpcQueriesCount, 1);
+
+  // 2. Newly published post appears on next GET with stable ID and "Nam/Nữ" gender label, and zero internal fields
+  currentJobs = [makePublicJob()];
+  const createdRes = await handleRecruitmentPostPublicFeedV1(
+    new Request("https://bi.hrpvietnam.com/feeds/jobs.v1.json"),
+    liveDeps,
+  );
+  assert.equal(createdRes.status, 200);
+  assert.equal(createdRes.headers.get("cache-control"), "private, no-store");
+  const createdJson = await createdRes.json();
+  assert.equal(createdJson.schema_version, 1);
+  assert.equal(createdJson.jobs.length, 1);
+  assert.equal(createdJson.jobs[0].id, BRIEF_ID);
+  assert.equal(createdJson.jobs[0].brief_id, BRIEF_ID);
+  assert.equal(createdJson.jobs[0].version, 1);
+  assert.equal(createdJson.jobs[0].candidate.gender_requirement, "ANY");
+  assert.equal(createdJson.jobs[0].candidate.gender_label, "Nam/Nữ");
+  assert.equal(JSON.stringify(createdJson).includes("0912345678"), false);
+  assert.equal(JSON.stringify(createdJson).includes("manager_phone"), false);
+  assert.equal(JSON.stringify(createdJson).includes("manager_name"), false);
+  assert.equal(JSON.stringify(createdJson).includes("allowed_actions"), false);
+  assert.equal(rpcQueriesCount, 2);
+
+  // 3. Edited post keeps exact same ID (`id` / `brief_id`) with updated version, job_description, and updated_at
+  currentJobs = [
+    makePublicJob({
+      version: 2,
+      updated_at: "2026-11-11T10:00:00.000000Z",
+      general: {
+        ...makePublicJob().general,
+        job_description: "Lắp ráp điện tử (đã cập nhật ca làm)",
+      },
+    }),
+  ];
+  const updatedRes = await handleRecruitmentPostPublicFeedV1(
+    new Request("https://bi.hrpvietnam.com/feeds/jobs.v1.json"),
+    liveDeps,
+  );
+  assert.equal(updatedRes.status, 200);
+  const updatedJson = await updatedRes.json();
+  assert.equal(updatedJson.jobs.length, 1);
+  assert.equal(updatedJson.jobs[0].id, BRIEF_ID);
+  assert.equal(updatedJson.jobs[0].brief_id, BRIEF_ID);
+  assert.equal(updatedJson.jobs[0].version, 2);
+  assert.equal(
+    updatedJson.jobs[0].general.job_description,
+    "Lắp ráp điện tử (đã cập nhật ca làm)",
+  );
+  assert.equal(updatedJson.jobs[0].updated_at, "2026-11-11T10:00:00.000000Z");
+  assert.equal(rpcQueriesCount, 3);
+
+  // 4. Withdrawn post disappears immediately on next GET
+  currentJobs = [];
+  const withdrawnRes = await handleRecruitmentPostPublicFeedV1(
+    new Request("https://bi.hrpvietnam.com/feeds/jobs.v1.json"),
+    liveDeps,
+  );
+  assert.equal(withdrawnRes.status, 200);
+  assert.deepEqual(await withdrawnRes.json(), {
+    schema_version: 1,
+    jobs: [],
+  });
+  assert.equal(rpcQueriesCount, 4);
+
+  // 5. Query failure or malformed projection returns 503 Service Unavailable (distinct from 200 jobs: [])
+  const errorRes = await handleRecruitmentPostPublicFeedV1(
+    new Request("https://bi.hrpvietnam.com/feeds/jobs.v1.json"),
+    {
+      repository: {
+        listPublicFeedV1: async () => ({
+          ok: false,
+          code: "RECRUITMENT_POST_UNAVAILABLE",
+        }),
+      },
+    },
+  );
+  assert.equal(errorRes.status, 503);
+  assert.equal(errorRes.headers.get("cache-control"), "private, no-store");
+  const errorJson = await errorRes.json();
+  assert.equal(errorJson.ok, false);
+  assert.equal(errorJson.code, "RECRUITMENT_POST_UNAVAILABLE");
+
+  const thrownRes = await handleRecruitmentPostPublicFeedV1(
+    new Request("https://bi.hrpvietnam.com/feeds/jobs.v1.json"),
+    {
+      repository: {
+        listPublicFeedV1: async () => {
+          throw new Error("DB connection timeout");
+        },
+      },
+    },
+  );
+  assert.equal(thrownRes.status, 503);
+
+  // Leaked internal field in repository response is caught by handler projection and returns 503
+  const leakedRes = await handleRecruitmentPostPublicFeedV1(
+    new Request("https://bi.hrpvietnam.com/feeds/jobs.v1.json"),
+    {
+      repository: {
+        listPublicFeedV1: async () => ({
+          ok: true,
+          data: {
+            schema_version: 1,
+            jobs: [
+              {
+                ...makePublicJob(),
+                general: {
+                  ...makePublicJob().general,
+                  manager_phone: "0912345678",
+                },
+              },
+            ],
+          },
+        }),
+      },
+    },
+  );
+  assert.equal(leakedRes.status, 503);
 });

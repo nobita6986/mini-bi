@@ -130,7 +130,7 @@ export const GENDER_REQUIREMENT_LABELS: Readonly<
 > = Object.freeze({
   FEMALE: "Nữ",
   MALE: "Nam",
-  ANY: "Cặp Nam/Nữ",
+  ANY: "Nam/Nữ",
 });
 
 export const EDUCATION_REQUIREMENT_LABELS: Readonly<

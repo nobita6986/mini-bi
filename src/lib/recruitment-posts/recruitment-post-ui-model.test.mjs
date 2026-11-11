@@ -465,7 +465,7 @@ test("FX-08 & FX-09: Card and 4-section Detail view-models map all BOD fields an
   assert.equal(card.expectedHeadcountDisplay, "150 người");
   assert.equal(
     card.genderAndAgeDisplay,
-    "Cặp Nam/Nữ · Độ tuổi: 18 – 38 tuổi",
+    "Nam/Nữ · Độ tuổi: 18 – 38 tuổi",
   );
   assert.match(card.baseSalaryAndIncomeDisplay, /LCB:\s*5\.500\.000\s*₫/);
   assert.match(
@@ -491,7 +491,7 @@ test("FX-08 & FX-09: Card and 4-section Detail view-models map all BOD fields an
   assert.equal(detail.section2CandidateRequirements.ageToDisplay, "38 tuổi");
   assert.equal(
     detail.section2CandidateRequirements.genderDisplay,
-    "Cặp Nam/Nữ",
+    "Nam/Nữ",
   );
   assert.equal(
     detail.section2CandidateRequirements.minimumEducationDisplay,
@@ -1332,7 +1332,8 @@ test("Markdown export: fetches GET /api/recruitment-posts/[briefId], builds 4 se
 
   assert.match(exportFile.content, /## 2\. Yêu cầu ứng viên/);
   assert.match(exportFile.content, /- \*\*Độ tuổi:\*\* 18 – 38 tuổi/);
-  assert.match(exportFile.content, /- \*\*Giới tính:\*\* Cặp Nam\/Nữ/);
+  assert.match(exportFile.content, /- \*\*Giới tính:\*\* Nam\/Nữ/);
+  assert.doesNotMatch(exportFile.content, /Cặp Nam\/Nữ/);
   assert.match(exportFile.content, /- \*\*Trình độ tối thiểu:\*\* THCS \(Cấp 2\)/);
   assert.match(
     exportFile.content,

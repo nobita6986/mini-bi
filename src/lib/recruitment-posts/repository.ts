@@ -5,6 +5,7 @@ import {
   projectRecruitmentPostGet,
   projectRecruitmentPostList,
   projectRecruitmentPostMutation,
+  projectRecruitmentPostPublicFeedV1,
 } from "./contract.ts";
 import type {
   ListMyRecruitmentPostsQuery,
@@ -14,7 +15,9 @@ import type {
   RecruitmentPostGetResult,
   RecruitmentPostList,
   RecruitmentPostMutationResult,
+  RecruitmentPostPublicFeedV1,
 } from "./contract.ts";
+import { GENDER_REQUIREMENT_LABELS } from "./recruitment-post-ui-model.ts";
 
 export type RecruitmentPostRpc = (
   name: string,
@@ -43,6 +46,7 @@ export type RecruitmentPostRepository = {
   listMine(
     input: RecruitmentPostActorRef & ListMyRecruitmentPostsQuery,
   ): Promise<RecruitmentPostOutcome<RecruitmentPostList>>;
+  listPublicFeedV1(): Promise<RecruitmentPostOutcome<RecruitmentPostPublicFeedV1>>;
   get(
     input: RecruitmentPostActorRef & { brief_id: string },
   ): Promise<RecruitmentPostOutcome<RecruitmentPostGetResult>>;
@@ -208,6 +212,14 @@ export function createRecruitmentPostRepository(
           p_page_size: input.page_size,
         },
         projectRecruitmentPostList,
+      );
+    },
+    listPublicFeedV1() {
+      return invoke(
+        "recruitment_post_public_feed_v1",
+        {},
+        (raw) =>
+          projectRecruitmentPostPublicFeedV1(raw, GENDER_REQUIREMENT_LABELS),
       );
     },
     get(input) {
