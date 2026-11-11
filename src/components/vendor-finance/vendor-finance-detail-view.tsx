@@ -880,10 +880,12 @@ export function VendorFinanceDetailView({
       </div>
 
       <PageHeader
-        eyebrow={`Mã Vendor: ${vendorId}`}
         title={vendor ? vendor.display_name : "Chi tiết tài chính Vendor"}
         badge={
           <div className="flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center rounded-md border border-border bg-surface-muted px-2 py-0.5 font-mono text-xs text-muted">
+              Mã Vendor: {vendorId}
+            </span>
             {vendor ? (
               <StatusBadge tone={vendor.active ? "success" : "neutral"} dot>
                 {vendor.active ? "Đang hoạt động" : "Ngừng hoạt động"}
@@ -901,7 +903,6 @@ export function VendorFinanceDetailView({
             ) : null}
           </div>
         }
-        description="Sổ cái bất biến (append-only) tách riêng theo từng cặp Dự án × Kế toán phụ trách; không bù trừ số dư giữa các dự án hoặc kế toán khác nhau."
         actions={
           <>
             <Button
@@ -996,13 +997,13 @@ export function VendorFinanceDetailView({
               </div>
               <p
                 data-testid="vfin-detail-shared-advance-balance"
-                className="font-mono text-2xl font-bold tabular-nums text-foreground"
+                className="whitespace-nowrap font-mono text-2xl font-bold tabular-nums text-foreground"
               >
                 {formatVndMinor(sharedAdvanceBalanceMinor)}
               </p>
               <p className="text-xs text-muted">
                 Số dư ứng dùng chung cấp Vendor độc lập với số dư phải trả của từng sổ dự án. Đã khấu trừ vào dự án lũy kế:{" "}
-                <strong className="font-mono text-foreground">
+                <strong className="whitespace-nowrap font-mono text-foreground">
                   {formatVndMinor(vendor.totals.advance_offset_recorded_minor)}
                 </strong>
               </p>
@@ -1149,10 +1150,10 @@ export function VendorFinanceDetailView({
                       </StatusBadge>
                     </div>
                     <div className="mt-2 flex items-baseline justify-between gap-2 border-t border-border/60 pt-1.5">
-                      <span className="font-mono text-sm font-bold tabular-nums text-foreground">
+                      <span className="whitespace-nowrap font-mono text-sm font-bold tabular-nums text-foreground">
                         {subPresentation.signedText}
                       </span>
-                      <span className="font-mono text-[11px] text-muted">
+                      <span className="whitespace-nowrap font-mono text-[11px] text-muted">
                         {sub.entry_count} bút toán
                       </span>
                     </div>
@@ -1205,7 +1206,7 @@ export function VendorFinanceDetailView({
             </p>
             <p
               data-testid="vfin-detail-current-balance"
-              className="mt-1.5 font-mono text-xl font-semibold tabular-nums text-foreground"
+              className="mt-1.5 whitespace-nowrap font-mono text-xl font-semibold tabular-nums text-foreground"
             >
               {balancePresentation ? balancePresentation.signedText : "—"}
             </p>
@@ -1220,7 +1221,7 @@ export function VendorFinanceDetailView({
 
           <Card className="p-4">
             <p className="text-xs font-medium text-muted">Tổng phát sinh công nợ</p>
-            <p className="mt-1.5 font-mono text-lg font-semibold tabular-nums text-foreground">
+            <p className="mt-1.5 whitespace-nowrap font-mono text-lg font-semibold tabular-nums text-foreground">
               {vendor ? formatVndMinor(vendor.totals.debt_recorded_minor) : "—"}
             </p>
             <p className="mt-1 text-xs text-muted">Ghi nhận phát sinh (+)</p>
@@ -1228,7 +1229,7 @@ export function VendorFinanceDetailView({
 
           <Card className="p-4">
             <p className="text-xs font-medium text-muted">Lương đã ghi nhận</p>
-            <p className="mt-1.5 font-mono text-lg font-semibold tabular-nums text-foreground">
+            <p className="mt-1.5 whitespace-nowrap font-mono text-lg font-semibold tabular-nums text-foreground">
               {vendor ? formatVndMinor(vendor.totals.payroll_recorded_minor) : "—"}
             </p>
             <p className="mt-1 text-xs text-muted">Bảng lương phải trả (+)</p>
@@ -1236,7 +1237,7 @@ export function VendorFinanceDetailView({
 
           <Card className="p-4">
             <p className="text-xs font-medium text-muted">Đã thanh toán</p>
-            <p className="mt-1.5 font-mono text-lg font-semibold tabular-nums text-foreground">
+            <p className="mt-1.5 whitespace-nowrap font-mono text-lg font-semibold tabular-nums text-foreground">
               {vendor ? formatVndMinor(vendor.totals.payment_recorded_minor) : "—"}
             </p>
             <p className="mt-1 text-xs text-muted">Thanh toán cho Vendor (-)</p>
@@ -1244,7 +1245,7 @@ export function VendorFinanceDetailView({
 
           <Card className="p-4">
             <p className="text-xs font-medium text-muted">Đã tạm ứng</p>
-            <p className="mt-1.5 font-mono text-lg font-semibold tabular-nums text-foreground">
+            <p className="mt-1.5 whitespace-nowrap font-mono text-lg font-semibold tabular-nums text-foreground">
               {vendor ? formatVndMinor(vendor.totals.advance_recorded_minor) : "—"}
             </p>
             <p className="mt-1 text-xs text-muted">Chi tạm ứng (-)</p>
@@ -1255,13 +1256,13 @@ export function VendorFinanceDetailView({
           <div className="grid grid-cols-2 gap-2 rounded-xl border border-border bg-surface px-4 py-3 text-xs sm:grid-cols-6">
             <div>
               <span className="text-muted">Đầu kỳ phải trả: </span>
-              <strong className="font-mono tabular-nums text-foreground">
+              <strong className="whitespace-nowrap font-mono tabular-nums text-foreground">
                 {formatVndMinor(vendor.totals.opening_payable_minor)}
               </strong>
             </div>
             <div>
               <span className="text-muted">Đầu kỳ dư ứng: </span>
-              <strong className="font-mono tabular-nums text-foreground">
+              <strong className="whitespace-nowrap font-mono tabular-nums text-foreground">
                 {formatVndMinor(vendor.totals.opening_advance_minor)}
               </strong>
             </div>
@@ -1269,26 +1270,26 @@ export function VendorFinanceDetailView({
               <span className="text-muted">Đã khấu trừ ứng: </span>
               <strong
                 data-testid="vfin-detail-total-advance-offset"
-                className="font-mono tabular-nums text-foreground"
+                className="whitespace-nowrap font-mono tabular-nums text-foreground"
               >
                 {formatVndMinor(vendor.totals.advance_offset_recorded_minor)}
               </strong>
             </div>
             <div>
               <span className="text-muted">Điều chỉnh tăng: </span>
-              <strong className="font-mono tabular-nums text-foreground">
+              <strong className="whitespace-nowrap font-mono tabular-nums text-foreground">
                 {formatVndMinor(vendor.totals.adjustment_increase_minor)}
               </strong>
             </div>
             <div>
               <span className="text-muted">Điều chỉnh giảm: </span>
-              <strong className="font-mono tabular-nums text-foreground">
+              <strong className="whitespace-nowrap font-mono tabular-nums text-foreground">
                 {formatVndMinor(vendor.totals.adjustment_decrease_minor)}
               </strong>
             </div>
             <div>
               <span className="text-muted">Đã hoàn tác: </span>
-              <strong className="font-mono tabular-nums text-foreground">
+              <strong className="whitespace-nowrap font-mono tabular-nums text-foreground">
                 {vendor.totals.reversed_entry_count} bút toán
               </strong>
             </div>
@@ -1420,8 +1421,11 @@ export function VendorFinanceDetailView({
             ) : null
           }
         >
-          <div className="max-w-xs space-y-1">
-            <label htmlFor={entryTypeFilterId} className="block text-xs font-medium text-muted">
+          <div className="max-w-xs space-y-1.5">
+            <label
+              htmlFor={entryTypeFilterId}
+              className="block text-xs sm:text-sm font-semibold text-foreground"
+            >
               Lọc theo loại bút toán
             </label>
             <select
@@ -1486,25 +1490,25 @@ export function VendorFinanceDetailView({
             <table className={DATA_TABLE_CLASS}>
               <thead className={DATA_TABLE_HEAD_CLASS}>
                 <tr>
-                  <th scope="col" className={DATA_TABLE_TH_CLASS}>
+                  <th scope="col" className={`${DATA_TABLE_TH_CLASS} !px-2.5 !py-2.5 md:max-w-[16rem]`}>
                     Chứng từ / Sổ dự án
                   </th>
-                  <th scope="col" className={DATA_TABLE_TH_CLASS}>
+                  <th scope="col" className={`${DATA_TABLE_TH_CLASS} !px-2.5 !py-2.5 whitespace-nowrap`}>
                     Ngày hiệu lực
                   </th>
-                  <th scope="col" className={DATA_TABLE_TH_CLASS}>
+                  <th scope="col" className={`${DATA_TABLE_TH_CLASS} !px-2.5 !py-2.5`}>
                     Loại bút toán & Lý do
                   </th>
-                  <th scope="col" className={`${DATA_TABLE_TH_CLASS} text-right`}>
+                  <th scope="col" className={`${DATA_TABLE_TH_CLASS} !px-2.5 !py-2.5 text-right whitespace-nowrap`}>
                     Biến động (VND)
                   </th>
-                  <th scope="col" className={`${DATA_TABLE_TH_CLASS} text-right`}>
+                  <th scope="col" className={`${DATA_TABLE_TH_CLASS} !px-2.5 !py-2.5 text-right whitespace-nowrap`}>
                     Số dư sổ sau GD
                   </th>
-                  <th scope="col" className={DATA_TABLE_TH_CLASS}>
+                  <th scope="col" className={`${DATA_TABLE_TH_CLASS} !px-2.5 !py-2.5 whitespace-nowrap`}>
                     Bằng chứng
                   </th>
-                  <th scope="col" className={`${DATA_TABLE_TH_CLASS} text-right`}>
+                  <th scope="col" className={`${DATA_TABLE_TH_CLASS} !px-2.5 !py-2.5 text-right whitespace-nowrap`}>
                     Thao tác
                   </th>
                 </tr>
@@ -1519,7 +1523,10 @@ export function VendorFinanceDetailView({
 
                   return (
                     <tr key={entry.entry_id} className={DATA_TABLE_ROW_CLASS}>
-                      <td data-card-header="true" className={DATA_TABLE_TD_CLASS}>
+                      <td
+                        data-card-header="true"
+                        className={`${DATA_TABLE_TD_CLASS} !px-2.5 !py-2.5 md:max-w-[16rem] whitespace-normal break-words`}
+                      >
                         <div className="space-y-0.5">
                           <div className="flex flex-wrap items-center gap-1.5">
                             <Link
@@ -1532,7 +1539,7 @@ export function VendorFinanceDetailView({
                               {CONTRACT_TYPE_LABELS_VI[entry.contract_type]}
                             </StatusBadge>
                           </div>
-                          <p className="text-xs font-medium text-foreground">
+                          <p className="text-xs font-medium text-foreground break-words">
                             {entry.ledger_scope === "LEGACY_UNALLOCATED"
                               ? "Sổ lịch sử VFIN-01"
                               : `${entry.project_display_name_snapshot ?? entry.project_id} · KT: ${entry.responsible_accountant_display_name ?? "—"}`}
@@ -1544,7 +1551,7 @@ export function VendorFinanceDetailView({
                         </div>
                       </td>
 
-                      <td data-label="Ngày hiệu lực" className={DATA_TABLE_TD_CLASS}>
+                      <td data-label="Ngày hiệu lực" className={`${DATA_TABLE_TD_CLASS} !px-2.5 !py-2.5`}>
                         <div className="space-y-0.5 text-xs">
                           <p className="font-mono font-medium text-foreground">
                             {formatVietnamDateLabel(entry.effective_date)}
@@ -1553,7 +1560,7 @@ export function VendorFinanceDetailView({
                         </div>
                       </td>
 
-                      <td data-label="Loại & Lý do" className={DATA_TABLE_TD_CLASS}>
+                      <td data-label="Loại & Lý do" className={`${DATA_TABLE_TD_CLASS} !px-2.5 !py-2.5`}>
                         <div className="space-y-1 max-w-md">
                           <div className="flex flex-wrap items-center gap-1.5">
                             <StatusBadge tone={isReversal ? "danger" : "primary"}>
@@ -1576,13 +1583,13 @@ export function VendorFinanceDetailView({
 
                       <td
                         data-label="Biến động (VND)"
-                        className={`${DATA_TABLE_TD_CLASS} text-right font-mono tabular-nums`}
+                        className={`${DATA_TABLE_TD_CLASS} !px-2.5 !py-2.5 text-right font-mono tabular-nums`}
                       >
                         <div className="space-y-0.5">
-                          <p className="font-semibold text-foreground">
+                          <p className="whitespace-nowrap font-semibold text-foreground">
                             {formatSignedVndDelta(entry.balance_delta_minor)}
                           </p>
-                          <p className="text-xs text-muted">
+                          <p className="whitespace-nowrap text-xs text-muted">
                             Gốc: {formatVndMinor(entry.amount_minor)}
                           </p>
                         </div>
@@ -1590,19 +1597,19 @@ export function VendorFinanceDetailView({
 
                       <td
                         data-label="Số dư sổ sau GD"
-                        className={`${DATA_TABLE_TD_CLASS} text-right font-mono tabular-nums`}
+                        className={`${DATA_TABLE_TD_CLASS} !px-2.5 !py-2.5 text-right font-mono tabular-nums`}
                       >
                         <div className="space-y-0.5">
-                          <p className="font-semibold text-foreground">
+                          <p className="whitespace-nowrap font-semibold text-foreground">
                             {formatVndMinor(entry.balance_after_minor)}
                           </p>
-                          <p className="text-xs text-muted">
+                          <p className="whitespace-nowrap text-xs text-muted">
                             Trước: {formatVndMinor(entry.balance_before_minor)}
                           </p>
                         </div>
                       </td>
 
-                      <td data-label="Bằng chứng" className={DATA_TABLE_TD_CLASS}>
+                      <td data-label="Bằng chứng" className={`${DATA_TABLE_TD_CLASS} !px-2.5 !py-2.5`}>
                         {entry.evidence ? (
                           <StatusBadge tone="success" dot>
                             Có ảnh
@@ -1614,7 +1621,7 @@ export function VendorFinanceDetailView({
 
                       <td
                         data-card-actions="true"
-                        className={`${DATA_TABLE_TD_CLASS} text-right`}
+                        className={`${DATA_TABLE_TD_CLASS} !px-2.5 !py-2.5 text-right`}
                       >
                         <RowActionCluster>
                           <Link
@@ -1723,19 +1730,19 @@ export function VendorFinanceDetailView({
             <div className="grid grid-cols-1 gap-2 text-xs sm:grid-cols-3">
               <div>
                 <span className="text-muted">Số hệ thống: </span>
-                <strong className="font-mono text-foreground">
+                <strong className="whitespace-nowrap font-mono text-foreground">
                   {formatVndMinor(vendor.latest_reconciliation.system_balance_minor)}
                 </strong>
               </div>
               <div>
                 <span className="text-muted">Số xác nhận: </span>
-                <strong className="font-mono text-foreground">
+                <strong className="whitespace-nowrap font-mono text-foreground">
                   {formatVndMinor(vendor.latest_reconciliation.confirmed_balance_minor)}
                 </strong>
               </div>
               <div>
                 <span className="text-muted">Chênh lệch: </span>
-                <strong className="font-mono text-foreground">
+                <strong className="whitespace-nowrap font-mono text-foreground">
                   {formatSignedVndDelta(vendor.latest_reconciliation.difference_minor)}
                 </strong>
               </div>
@@ -1840,16 +1847,20 @@ export function VendorFinanceDetailView({
 
                       <td
                         data-label="Số dư hệ thống"
-                        className={`${DATA_TABLE_TD_CLASS} text-right font-mono tabular-nums`}
+                        className={`${DATA_TABLE_TD_CLASS} text-right font-mono tabular-nums whitespace-nowrap`}
                       >
-                        {formatVndMinor(rec.system_balance_minor)}
+                        <span className="whitespace-nowrap">
+                          {formatVndMinor(rec.system_balance_minor)}
+                        </span>
                       </td>
 
                       <td
                         data-label="Số dư xác nhận"
-                        className={`${DATA_TABLE_TD_CLASS} text-right font-mono tabular-nums`}
+                        className={`${DATA_TABLE_TD_CLASS} text-right font-mono tabular-nums whitespace-nowrap`}
                       >
-                        {formatVndMinor(rec.confirmed_balance_minor)}
+                        <span className="whitespace-nowrap">
+                          {formatVndMinor(rec.confirmed_balance_minor)}
+                        </span>
                       </td>
 
                       <td
@@ -1857,7 +1868,7 @@ export function VendorFinanceDetailView({
                         className={`${DATA_TABLE_TD_CLASS} text-right font-mono tabular-nums`}
                       >
                         <div className="inline-flex flex-col items-end gap-1">
-                          <span className="font-semibold">
+                          <span className="whitespace-nowrap font-semibold">
                             {formatSignedVndDelta(rec.difference_minor)}
                           </span>
                           <StatusBadge tone={isMatched ? "success" : "warning"}>
@@ -1980,8 +1991,11 @@ export function VendorFinanceDetailView({
               ) : null
             }
           >
-            <div className="max-w-xs space-y-1">
-              <label htmlFor={movementTypeFilterId} className="block text-xs font-medium text-muted">
+            <div className="max-w-xs space-y-1.5">
+              <label
+                htmlFor={movementTypeFilterId}
+                className="block text-xs sm:text-sm font-semibold text-foreground"
+              >
                 Lọc theo loại giao dịch ứng
               </label>
               <select
@@ -2162,10 +2176,10 @@ export function VendorFinanceDetailView({
                           className={`${DATA_TABLE_TD_CLASS} text-right font-mono tabular-nums`}
                         >
                           <div className="space-y-0.5">
-                            <p className="font-semibold text-foreground">
+                            <p className="whitespace-nowrap font-semibold text-foreground">
                               {formatSignedVndDelta(movement.balance_delta_minor)}
                             </p>
-                            <p className="text-xs text-muted">
+                            <p className="whitespace-nowrap text-xs text-muted">
                               Gốc: {formatVndMinor(movement.amount_minor)}
                             </p>
                           </div>
@@ -2176,10 +2190,10 @@ export function VendorFinanceDetailView({
                           className={`${DATA_TABLE_TD_CLASS} text-right font-mono tabular-nums`}
                         >
                           <div className="space-y-0.5">
-                            <p className="font-semibold text-foreground">
+                            <p className="whitespace-nowrap font-semibold text-foreground">
                               {formatVndMinor(movement.balance_after_minor)}
                             </p>
-                            <p className="text-xs text-muted">
+                            <p className="whitespace-nowrap text-xs text-muted">
                               Trước: {formatVndMinor(movement.balance_before_minor)}
                             </p>
                           </div>
