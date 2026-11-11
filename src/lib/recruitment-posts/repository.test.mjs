@@ -349,4 +349,49 @@ test("createRecruitmentPostRepository calls all 7 RPCs with server-resolved acto
     ok: false,
     code: "RECRUITMENT_POST_UNAVAILABLE",
   });
+
+  // Public feed RPC (`recruitment_post_public_feed_v1`) takes no actor args and validates public allowlist
+  const publicFeedCalls = [];
+  const publicJobItem = {
+    id: BRIEF_ID,
+    brief_id: BRIEF_ID,
+    version: 1,
+    published_at: SAMPLE_ITEM.published_at,
+    updated_at: SAMPLE_ITEM.updated_at,
+    location: {
+      province_code: SAMPLE_ITEM.province.province_code,
+      province_name: SAMPLE_ITEM.province.display_name,
+      industrial_park_code: SAMPLE_ITEM.industrial_park.industrial_park_code,
+      industrial_park_name: SAMPLE_ITEM.industrial_park.display_name,
+    },
+    general: {
+      customer_name: SAMPLE_ITEM.general.customer_name,
+      investment_origin: SAMPLE_ITEM.general.investment_origin,
+      manufacturing_industry: SAMPLE_ITEM.general.manufacturing_industry,
+      job_description: SAMPLE_ITEM.general.job_description,
+      environment_types: SAMPLE_ITEM.general.environment_types,
+      work_postures: SAMPLE_ITEM.general.work_postures,
+      shift_pattern: SAMPLE_ITEM.general.shift_pattern,
+      shift_details: SAMPLE_ITEM.general.shift_details,
+      labor_types: SAMPLE_ITEM.general.labor_types,
+      supply_schedule_text: SAMPLE_ITEM.general.supply_schedule_text,
+      expected_headcount: SAMPLE_ITEM.general.expected_headcount,
+    },
+    candidate: {
+      ...SAMPLE_ITEM.candidate,
+      gender_label: "Nam/Nữ",
+    },
+    compensation: SAMPLE_ITEM.compensation,
+    documents: SAMPLE_ITEM.documents,
+  };
+  const publicRepo = createRecruitmentPostRepository(async (name, args) => {
+    publicFeedCalls.push([name, args]);
+    return {
+      data: { schema_version: 1, jobs: [publicJobItem] },
+      error: null,
+    };
+  });
+  const publicFeedRes = await publicRepo.listPublicFeedV1();
+  assert.equal(publicFeedRes.ok, true);
+  assert.deepEqual(publicFeedCalls, [["recruitment_post_public_feed_v1", {}]]);
 });

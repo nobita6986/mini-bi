@@ -411,7 +411,8 @@ describe("Phase 3 — Recruitment Posts UI & Architecture Gate", () => {
     assert.match(html, /Lắp ráp bảng mạch, kiểm tra ngoại quan bằng kính hiển vi\./);
     assert.match(html, /Chính thức, Thời vụ/);
     assert.match(html, /150 người/);
-    assert.match(html, /Cặp Nam\/Nữ · Độ tuổi: 18 – 38 tuổi/);
+    assert.match(html, /Nam\/Nữ · Độ tuổi: 18 – 38 tuổi/);
+    assert.doesNotMatch(html, /Cặp Nam\/Nữ/);
     assert.match(html, /LCB:\s*5\.500\.000\s*₫\s*·\s*Thu nhập:\s*9\.500\.000\s*₫\s*–\s*13\.500\.000\s*₫/);
     assert.match(html, /Nguyễn Văn Quản Lý · 0912345678/);
     assert.doesNotMatch(html, /Trần Thị PM/);
@@ -521,7 +522,8 @@ describe("Phase 3 — Recruitment Posts UI & Architecture Gate", () => {
     assert.doesNotMatch(html, /yenlh\.td/);
 
     // Section 2 fields
-    assert.match(html, /Cặp Nam\/Nữ/);
+    assert.match(html, />Nam\/Nữ</);
+    assert.doesNotMatch(html, /Cặp Nam\/Nữ/);
     assert.match(html, /THCS \(Cấp 2\)/);
     assert.match(html, />Có</);
     assert.match(html, /Có nhận/);
@@ -1089,7 +1091,7 @@ describe("Phase 3 — Recruitment Posts UI & Architecture Gate", () => {
       }),
     );
 
-    // 4 BOD sections + NO standalone province input + NO missing KCN helper text + NO KCN search input + Project & KCN on same desktop row + NO manager name input + editable phone + 4 candidate fields in 1 desktop row + gender label "Cặp Nam/Nữ" + 6-item pre-submit confirmation block showing phone only
+    // 4 BOD sections + NO standalone province input + NO missing KCN helper text + NO KCN search input + Project & KCN on same desktop row + NO manager name input + editable phone + 4 candidate fields in 1 desktop row + gender label "Nam/Nữ" + 6-item pre-submit confirmation block showing phone only
     assert.match(createHtml, /1\. Thông tin chung dự án/);
     assert.match(createHtml, /2\. Yêu cầu ứng viên/);
     assert.match(createHtml, /3\. Lương, thưởng và phúc lợi/);
@@ -1243,7 +1245,8 @@ describe("Phase 3 — Recruitment Posts UI & Architecture Gate", () => {
       createHtml,
       /data-testid="recruitment-post-candidate-core-row"[^>]*class="[^"]*lg:grid-cols-4[^"]*"/,
     );
-    assert.match(createHtml, /<option value="ANY"[^>]*>Cặp Nam\/Nữ<\/option>/);
+    assert.match(createHtml, /<option value="ANY"[^>]*>Nam\/Nữ<\/option>/);
+    assert.doesNotMatch(createHtml, /Cặp Nam\/Nữ/);
     assert.doesNotMatch(createHtml, /Không giới hạn \(Nam\/Nữ\)/);
     assert.match(createHtml, /data-testid="recruitment-post-pre-submit-summary"/);
     assert.match(createHtml, /1\. Dự án/);

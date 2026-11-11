@@ -19,6 +19,8 @@ import {
   projectRecruitmentPostItem,
   projectRecruitmentPostList,
   projectRecruitmentPostMutation,
+  projectRecruitmentPostPublicFeedV1,
+  projectRecruitmentPostPublicJobItemV1,
   recruitmentPostHttpStatusForError,
 } from "./contract.ts";
 
@@ -692,4 +694,127 @@ test("fail-closed projections accept valid shapes and reject extra or missing ke
     }) !== null,
   );
   assert.equal(containsForbiddenClientAuthorityKey({ scope: "all" }), true);
+});
+
+test("projectRecruitmentPostPublicFeedV1 enforces explicit allowlist, gender_label 'Nam/Nữ', and rejects internal/admin fields", () => {
+  const item = makeValidProjectedItem();
+  const validPublicJob = {
+    id: item.brief_id,
+    brief_id: item.brief_id,
+    version: item.version,
+    published_at: item.published_at,
+    updated_at: item.updated_at,
+    location: {
+      province_code: item.province.province_code,
+      province_name: item.province.display_name,
+      industrial_park_code: item.industrial_park.industrial_park_code,
+      industrial_park_name: item.industrial_park.display_name,
+    },
+    general: {
+      customer_name: item.general.customer_name,
+      investment_origin: item.general.investment_origin,
+      manufacturing_industry: item.general.manufacturing_industry,
+      job_description: item.general.job_description,
+      environment_types: item.general.environment_types,
+      work_postures: item.general.work_postures,
+      shift_pattern: item.general.shift_pattern,
+      shift_details: item.general.shift_details,
+      labor_types: item.general.labor_types,
+      supply_schedule_text: item.general.supply_schedule_text,
+      expected_headcount: item.general.expected_headcount,
+    },
+    candidate: {
+      ...item.candidate,
+      gender_label: "Nam/Nữ",
+    },
+    compensation: item.compensation,
+    documents: item.documents,
+  };
+
+  const emptyFeed = projectRecruitmentPostPublicFeedV1({
+    schema_version: 1,
+    jobs: [],
+  });
+  assert.deepEqual(emptyFeed, { schema_version: 1, jobs: [] });
+
+  const validFeed = projectRecruitmentPostPublicFeedV1({
+    schema_version: 1,
+    jobs: [validPublicJob],
+  });
+  assert.ok(validFeed !== null);
+  assert.equal(validFeed.schema_version, 1);
+  assert.equal(validFeed.jobs.length, 1);
+  assert.equal(validFeed.jobs[0].id, BRIEF_ID);
+  assert.equal(validFeed.jobs[0].brief_id, BRIEF_ID);
+  assert.equal(validFeed.jobs[0].candidate.gender_requirement, "ANY");
+  assert.equal(validFeed.jobs[0].candidate.gender_label, "Nam/Nữ");
+  assert.equal("manager_phone" in validFeed.jobs[0].general, false);
+  assert.equal("manager_name" in validFeed.jobs[0].general, false);
+  assert.equal("allowed_actions" in validFeed.jobs[0], false);
+  assert.equal("created_by_display_name" in validFeed.jobs[0], false);
+  assert.equal("updated_by_display_name" in validFeed.jobs[0], false);
+
+  // Obsolete gender label "Cặp Nam/Nữ" must be rejected fail-closed
+  assert.equal(
+    projectRecruitmentPostPublicJobItemV1({
+      ...validPublicJob,
+      candidate: {
+        ...validPublicJob.candidate,
+        gender_label: "Cặp Nam/Nữ",
+      },
+    }),
+    null,
+  );
+
+  // Wrong schema_version must be rejected
+  assert.equal(
+    projectRecruitmentPostPublicFeedV1({
+      schema_version: 2,
+      jobs: [],
+    }),
+    null,
+  );
+
+  // Leaked internal fields (manager_phone, manager_name, created_by_display_name, allowed_actions, project_id) must be rejected fail-closed
+  for (const leakedJob of [
+    {
+      ...validPublicJob,
+      general: {
+        ...validPublicJob.general,
+        manager_phone: "0912345678",
+      },
+    },
+    {
+      ...validPublicJob,
+      general: {
+        ...validPublicJob.general,
+        manager_name: "Nguyễn Văn Quản Lý",
+      },
+    },
+    {
+      ...validPublicJob,
+      created_by_display_name: "Nguyễn Văn A",
+    },
+    {
+      ...validPublicJob,
+      updated_by_display_name: "Nguyễn Văn A",
+    },
+    {
+      ...validPublicJob,
+      allowed_actions: { can_edit: true, can_withdraw: true },
+    },
+    {
+      ...validPublicJob,
+      project_id: "PROJ_A",
+    },
+  ]) {
+    assert.equal(projectRecruitmentPostPublicJobItemV1(leakedJob), null);
+    assert.equal(
+      projectRecruitmentPostPublicFeedV1({
+        schema_version: 1,
+        jobs: [leakedJob],
+      }),
+      null,
+    );
+  }
 });

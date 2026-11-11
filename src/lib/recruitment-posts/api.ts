@@ -14,9 +14,11 @@ import {
   parseUpdateRecruitmentPostBody,
   parseUuidParam,
   parseWithdrawRecruitmentPostBody,
+  projectRecruitmentPostPublicFeedV1,
   recruitmentPostHttpStatusForError,
   type RecruitmentPostErrorCode,
 } from "./contract.ts";
+import { GENDER_REQUIREMENT_LABELS } from "./recruitment-post-ui-model.ts";
 import type { RecruitmentPostRepository } from "./repository.ts";
 
 const DISALLOWED_AUTHORITY_HEADERS = [
@@ -613,3 +615,33 @@ export async function handleRecruitmentPostWithdraw(
 }
 
 export const handleWithdrawRecruitmentPost = handleRecruitmentPostWithdraw;
+
+// -----------------------------------------------------------------------------
+// 7. GET /feeds/jobs.v1.json (Public Read-Only Feed, No Cookie/Token Required)
+// -----------------------------------------------------------------------------
+export type RecruitmentPostPublicFeedApiDependencies = {
+  repository: Pick<RecruitmentPostRepository, "listPublicFeedV1">;
+};
+
+export async function handleRecruitmentPostPublicFeedV1(
+  _request: Request,
+  dependencies: RecruitmentPostPublicFeedApiDependencies,
+): Promise<Response> {
+  try {
+    const result = await dependencies.repository.listPublicFeedV1();
+    if (!result.ok) {
+      return recruitmentPostError("RECRUITMENT_POST_UNAVAILABLE");
+    }
+    const projected = projectRecruitmentPostPublicFeedV1(
+      result.data,
+      GENDER_REQUIREMENT_LABELS,
+    );
+    if (!projected) {
+      return recruitmentPostError("RECRUITMENT_POST_UNAVAILABLE");
+    }
+    return noStoreJson(projected, 200);
+  } catch {
+    console.error("[recruitment-posts] public feed v1 failed");
+    return recruitmentPostError("RECRUITMENT_POST_UNAVAILABLE");
+  }
+}

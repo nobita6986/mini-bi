@@ -2016,3 +2016,362 @@ export function projectRecruitmentPostMutation(
     replayed: raw.replayed,
   };
 }
+
+export const PUBLIC_JOBS_FEED_V1_SCHEMA_VERSION = 1 as const;
+
+export const PUBLIC_JOBS_FEED_V1_TOP_KEYS = Object.freeze([
+  "schema_version",
+  "jobs",
+] as const);
+
+export const PUBLIC_JOBS_FEED_V1_ITEM_KEYS = Object.freeze([
+  "id",
+  "brief_id",
+  "version",
+  "published_at",
+  "updated_at",
+  "location",
+  "general",
+  "candidate",
+  "compensation",
+  "documents",
+] as const);
+
+export const PUBLIC_JOBS_FEED_V1_LOCATION_KEYS = Object.freeze([
+  "province_code",
+  "province_name",
+  "industrial_park_code",
+  "industrial_park_name",
+] as const);
+
+export const PUBLIC_JOBS_FEED_V1_GENERAL_KEYS = Object.freeze([
+  "customer_name",
+  "investment_origin",
+  "manufacturing_industry",
+  "job_description",
+  "environment_types",
+  "work_postures",
+  "shift_pattern",
+  "shift_details",
+  "labor_types",
+  "supply_schedule_text",
+  "expected_headcount",
+] as const);
+
+export const PUBLIC_JOBS_FEED_V1_CANDIDATE_KEYS = Object.freeze([
+  "age_min",
+  "age_max",
+  "gender_requirement",
+  "gender_label",
+  "education_requirement",
+  "experience_required",
+  "experience_details",
+  "accept_former_customer_workers",
+  "entry_assessment_text",
+  "other_requirements_text",
+] as const);
+
+export const PUBLIC_JOBS_FEED_V1_FORBIDDEN_INTERNAL_KEYS = Object.freeze([
+  "manager_name",
+  "manager_phone",
+  "project",
+  "project_id",
+  "industrial_park_id",
+  "province_id",
+  "created_by_app_user_id",
+  "created_by_display_name",
+  "updated_by_app_user_id",
+  "updated_by_display_name",
+  "withdrawn_by_app_user_id",
+  "withdrawn_by_display_name",
+  "withdrawn_at",
+  "allowed_actions",
+  "can_edit",
+  "can_withdraw",
+] as const);
+
+const DEFAULT_PUBLIC_FEED_GENDER_LABELS: Readonly<
+  Record<RecruitmentPostGenderRequirement, string>
+> = Object.freeze({
+  FEMALE: "Nữ",
+  MALE: "Nam",
+  ANY: "Nam/Nữ",
+});
+
+export type RecruitmentPostPublicJobLocationV1 = {
+  province_code: string;
+  province_name: string;
+  industrial_park_code: string;
+  industrial_park_name: string;
+};
+
+export type RecruitmentPostPublicJobGeneralV1 = {
+  customer_name: string;
+  investment_origin: string | null;
+  manufacturing_industry: string | null;
+  job_description: string;
+  environment_types: RecruitmentPostEnvironmentType[];
+  work_postures: RecruitmentPostWorkPosture[];
+  shift_pattern: RecruitmentPostShiftPattern;
+  shift_details: string | null;
+  labor_types: Array<{
+    labor_type_key: string;
+    display_name: string;
+  }>;
+  supply_schedule_text: string | null;
+  expected_headcount: number | null;
+};
+
+export type RecruitmentPostPublicJobCandidateV1 =
+  RecruitmentPostCandidateSection & {
+    gender_label: string;
+  };
+
+export type RecruitmentPostPublicJobItemV1 = {
+  id: string;
+  brief_id: string;
+  version: number;
+  published_at: string;
+  updated_at: string;
+  location: RecruitmentPostPublicJobLocationV1;
+  general: RecruitmentPostPublicJobGeneralV1;
+  candidate: RecruitmentPostPublicJobCandidateV1;
+  compensation: RecruitmentPostCompensationSection;
+  documents: RecruitmentPostDocumentsSection;
+};
+
+export type RecruitmentPostPublicFeedV1 = {
+  schema_version: typeof PUBLIC_JOBS_FEED_V1_SCHEMA_VERSION;
+  jobs: RecruitmentPostPublicJobItemV1[];
+};
+
+const FORBIDDEN_INTERNAL_KEY_SET = new Set<string>(
+  PUBLIC_JOBS_FEED_V1_FORBIDDEN_INTERNAL_KEYS,
+);
+
+function containsForbiddenPublicFeedKey(
+  value: unknown,
+  depth = 0,
+): boolean {
+  if (depth > 8 || value === null || typeof value !== "object") {
+    return false;
+  }
+  if (Array.isArray(value)) {
+    return value.some((item) => containsForbiddenPublicFeedKey(item, depth + 1));
+  }
+  if (!isPlainRecord(value)) {
+    return true;
+  }
+  for (const [key, nested] of Object.entries(value)) {
+    if (
+      FORBIDDEN_INTERNAL_KEY_SET.has(key) ||
+      FORBIDDEN_AUTHORITY_KEYS.has(normalizeAuthorityKey(key))
+    ) {
+      return true;
+    }
+    if (containsForbiddenPublicFeedKey(nested, depth + 1)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function projectRecruitmentPostPublicJobItemV1(
+  raw: unknown,
+  genderLabels: Readonly<
+    Record<RecruitmentPostGenderRequirement, string>
+  > = DEFAULT_PUBLIC_FEED_GENDER_LABELS,
+): RecruitmentPostPublicJobItemV1 | null {
+  if (
+    !isPlainRecord(raw) ||
+    containsForbiddenPublicFeedKey(raw) ||
+    !hasExactKeys(raw, PUBLIC_JOBS_FEED_V1_ITEM_KEYS)
+  ) {
+    return null;
+  }
+
+  const id = readUuid(raw.id);
+  const brief_id = readUuid(raw.brief_id);
+  const version =
+    typeof raw.version === "number" &&
+    Number.isSafeInteger(raw.version) &&
+    raw.version >= 1
+      ? raw.version
+      : null;
+  const published_at = readIsoTimestamp(raw.published_at);
+  const updated_at = readIsoTimestamp(raw.updated_at);
+
+  if (
+    !id ||
+    !brief_id ||
+    id !== brief_id ||
+    version === null ||
+    !published_at ||
+    !updated_at ||
+    !isPlainRecord(raw.location) ||
+    !hasExactKeys(raw.location, PUBLIC_JOBS_FEED_V1_LOCATION_KEYS) ||
+    !isPlainRecord(raw.general) ||
+    !hasExactKeys(raw.general, PUBLIC_JOBS_FEED_V1_GENERAL_KEYS) ||
+    !isPlainRecord(raw.candidate) ||
+    !hasExactKeys(raw.candidate, PUBLIC_JOBS_FEED_V1_CANDIDATE_KEYS) ||
+    !isPlainRecord(raw.compensation) ||
+    !hasExactKeys(raw.compensation, COMPENSATION_KEYS) ||
+    !isPlainRecord(raw.documents) ||
+    !hasExactKeys(raw.documents, DOCUMENTS_KEYS)
+  ) {
+    return null;
+  }
+
+  const province_code = readCatalogCode(raw.location.province_code);
+  const province_name = readNonEmptyDisplayText(raw.location.province_name, 256);
+  const industrial_park_code = readCatalogCode(
+    raw.location.industrial_park_code,
+  );
+  const industrial_park_name = readNonEmptyDisplayText(
+    raw.location.industrial_park_name,
+    256,
+  );
+  if (
+    !province_code ||
+    !province_name ||
+    !industrial_park_code ||
+    !industrial_park_name
+  ) {
+    return null;
+  }
+
+  if (
+    !Array.isArray(raw.general.labor_types) ||
+    raw.general.labor_types.length < 1
+  ) {
+    return null;
+  }
+  const labor_types: Array<{ labor_type_key: string; display_name: string }> =
+    [];
+  for (const lt of raw.general.labor_types) {
+    if (
+      !isPlainRecord(lt) ||
+      !hasExactKeys(lt, ["labor_type_key", "display_name"])
+    ) {
+      return null;
+    }
+    const key = readLaborTypeKey(lt.labor_type_key);
+    const name = readNonEmptyDisplayText(lt.display_name, 256);
+    if (!key || !name) return null;
+    labor_types.push({ labor_type_key: key, display_name: name });
+  }
+
+  const candidateWithoutLabel = {
+    age_min: raw.candidate.age_min,
+    age_max: raw.candidate.age_max,
+    gender_requirement: raw.candidate.gender_requirement,
+    education_requirement: raw.candidate.education_requirement,
+    experience_required: raw.candidate.experience_required,
+    experience_details: raw.candidate.experience_details,
+    accept_former_customer_workers:
+      raw.candidate.accept_former_customer_workers,
+    entry_assessment_text: raw.candidate.entry_assessment_text,
+    other_requirements_text: raw.candidate.other_requirements_text,
+  };
+
+  const parsedContent = parseRecruitmentPostContent({
+    general: {
+      customer_name: raw.general.customer_name,
+      investment_origin: raw.general.investment_origin,
+      manufacturing_industry: raw.general.manufacturing_industry,
+      job_description: raw.general.job_description,
+      environment_types: raw.general.environment_types,
+      work_postures: raw.general.work_postures,
+      shift_pattern: raw.general.shift_pattern,
+      shift_details: raw.general.shift_details,
+      manager_name: "Public Feed Internal Placeholder",
+      manager_phone: "000000",
+      labor_type_keys: labor_types.map((lt) => lt.labor_type_key),
+      supply_schedule_text: raw.general.supply_schedule_text,
+      expected_headcount: raw.general.expected_headcount,
+    },
+    candidate: candidateWithoutLabel,
+    compensation: raw.compensation,
+    documents: raw.documents,
+  });
+
+  if (!parsedContent.ok) {
+    return null;
+  }
+
+  const expectedGenderLabel =
+    genderLabels[parsedContent.value.candidate.gender_requirement];
+  if (
+    typeof raw.candidate.gender_label !== "string" ||
+    raw.candidate.gender_label.trim() !== expectedGenderLabel
+  ) {
+    return null;
+  }
+
+  return {
+    id,
+    brief_id,
+    version,
+    published_at,
+    updated_at,
+    location: {
+      province_code,
+      province_name,
+      industrial_park_code,
+      industrial_park_name,
+    },
+    general: {
+      customer_name: parsedContent.value.general.customer_name,
+      investment_origin: parsedContent.value.general.investment_origin,
+      manufacturing_industry: parsedContent.value.general.manufacturing_industry,
+      job_description: parsedContent.value.general.job_description,
+      environment_types: parsedContent.value.general.environment_types,
+      work_postures: parsedContent.value.general.work_postures,
+      shift_pattern: parsedContent.value.general.shift_pattern,
+      shift_details: parsedContent.value.general.shift_details,
+      labor_types,
+      supply_schedule_text: parsedContent.value.general.supply_schedule_text,
+      expected_headcount: parsedContent.value.general.expected_headcount,
+    },
+    candidate: {
+      ...parsedContent.value.candidate,
+      gender_label: expectedGenderLabel,
+    },
+    compensation: parsedContent.value.compensation,
+    documents: parsedContent.value.documents,
+  };
+}
+
+export function projectRecruitmentPostPublicFeedV1(
+  raw: unknown,
+  genderLabels: Readonly<
+    Record<RecruitmentPostGenderRequirement, string>
+  > = DEFAULT_PUBLIC_FEED_GENDER_LABELS,
+): RecruitmentPostPublicFeedV1 | null {
+  if (
+    !isPlainRecord(raw) ||
+    containsForbiddenPublicFeedKey(raw) ||
+    !hasExactKeys(raw, PUBLIC_JOBS_FEED_V1_TOP_KEYS) ||
+    raw.schema_version !== PUBLIC_JOBS_FEED_V1_SCHEMA_VERSION ||
+    !Array.isArray(raw.jobs)
+  ) {
+    return null;
+  }
+
+  const jobs: RecruitmentPostPublicJobItemV1[] = [];
+  for (const rawJob of raw.jobs) {
+    const projected = projectRecruitmentPostPublicJobItemV1(
+      rawJob,
+      genderLabels,
+    );
+    if (!projected) {
+      return null;
+    }
+    jobs.push(projected);
+  }
+
+  return {
+    schema_version: PUBLIC_JOBS_FEED_V1_SCHEMA_VERSION,
+    jobs,
+  };
+}

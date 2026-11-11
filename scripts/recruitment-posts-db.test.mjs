@@ -13,10 +13,13 @@ import {
   projectRecruitmentPostGet,
   projectRecruitmentPostList,
   projectRecruitmentPostMutation,
+  projectRecruitmentPostPublicFeedV1,
 } from "../src/lib/recruitment-posts/contract.ts";
 import {
   RECRUITMENT_POST_LIST_MINE_MIGRATION_NAME,
   RECRUITMENT_POST_LIST_MINE_RPC_SIGNATURES,
+  RECRUITMENT_POST_PUBLIC_FEED_V1_MIGRATION_NAME,
+  RECRUITMENT_POST_PUBLIC_FEED_V1_RPC_SIGNATURES,
   RECRUITMENT_POSTS_MIGRATION_NAME,
   RECRUITMENT_POSTS_RPC_SIGNATURES,
   migrationSqlForTransaction,
@@ -155,6 +158,7 @@ const RPC_PARAMS = {
     "p_snapshot_token",
     "p_page_size",
   ],
+  recruitment_post_public_feed_v1: [],
   recruitment_post_get: ["p_auth_subject", "p_app_user_id", "p_brief_id"],
   recruitment_post_create: [
     "p_auth_subject",
@@ -462,9 +466,10 @@ const PARK_BA_THIEN_2 = parksByCode.VP_BA_THIEN_2;
 const PARK_KHAI_QUANG = parksByCode.VP_KHAI_QUANG;
 const PARK_PHU_HA = parksByCode.PT_PHU_HA;
 
-test("T-ACL-01, T-ACL-02 & T-AUTH-13: 7 public RPCs are service_role-only, all 10 internal helpers are revoked from all roles including service_role, no pair unique index exists, and zero hard-coded emails exist in SQL definitions", async () => {
+test("T-ACL-01, T-ACL-02 & T-AUTH-13: 8 public RPCs are service_role-only, all 10 internal helpers are revoked from all roles including service_role, no pair unique index exists, and zero hard-coded emails exist in SQL definitions", async () => {
   assert.equal(RECRUITMENT_POSTS_RPC_SIGNATURES.length, 6);
   assert.equal(RECRUITMENT_POST_LIST_MINE_RPC_SIGNATURES.length, 1);
+  assert.equal(RECRUITMENT_POST_PUBLIC_FEED_V1_RPC_SIGNATURES.length, 1);
 
   // Confirm pair unique index does NOT exist, while non-unique project published index DOES exist
   const { rows: idxRows } = await db.query(`
@@ -498,7 +503,7 @@ test("T-ACL-01, T-ACL-02 & T-AUTH-13: 7 public RPCs are service_role-only, all 1
      where n.nspname = 'public'
        and p.proname like 'recruitment_post%'
   `);
-  assert.equal(fnDefs.length, 17);
+  assert.equal(fnDefs.length, 18);
   for (const row of fnDefs) {
     assert.equal(
       row.fn_def.includes("@"),
@@ -1903,4 +1908,162 @@ test("T-MINE-01..07: recruitment_post_list_mine creator-only PUBLISHED + WITHDRA
   });
   assert.equal(errCrossActorMineToken?.code, "22023");
   assert.equal(errCrossActorMineToken?.message, "RECRUITMENT_POST_SNAPSHOT_INVALID");
+
+  // =========================================================================
+  // 10. Public Feed v1 (`recruitment_post_public_feed_v1`) ACL, lifecycle & allowlist
+  // =========================================================================
+  assert.equal(
+    RECRUITMENT_POST_PUBLIC_FEED_V1_MIGRATION_NAME,
+    "20261111190000_recruitment_post_public_feed_v1.sql",
+  );
+  assert.deepEqual(RECRUITMENT_POST_PUBLIC_FEED_V1_RPC_SIGNATURES, [
+    "public.recruitment_post_public_feed_v1()",
+  ]);
+
+  // T-PUB-01: anon and authenticated cannot execute recruitment_post_public_feed_v1; service_role can
+  for (const deniedRole of ["anon", "authenticated"]) {
+    await db.exec(`set role ${deniedRole}`);
+    try {
+      const deniedErr = await rpcError(db, "recruitment_post_public_feed_v1");
+      assert.equal(
+        deniedErr?.code,
+        "42501",
+        `${deniedRole} must be denied EXECUTE on recruitment_post_public_feed_v1`,
+      );
+    } finally {
+      await db.exec("reset role");
+    }
+  }
+
+  // T-PUB-02: Create -> Update -> Withdraw lifecycle and empty feed in an isolated transaction
+  await db.exec("begin");
+  try {
+    // Withdraw all currently PUBLISHED posts so feed becomes genuinely empty
+    const { rows: activeBriefRows } = await db.query(
+      `select brief_id, version
+         from public.recruitment_project_briefs
+        where status = 'PUBLISHED'`,
+    );
+    let drainSeq = 9000;
+    for (const row of activeBriefRows) {
+      drainSeq += 1;
+      await rpc(db, "recruitment_post_withdraw", {
+        p_auth_subject: NOBITA_ADMIN.auth,
+        p_app_user_id: NOBITA_ADMIN.app,
+        p_brief_id: row.brief_id,
+        p_expected_version: row.version,
+        p_idempotency_key: KEY(drainSeq),
+      });
+    }
+
+    await db.exec("set local role service_role");
+    const emptyPublicFeed = await rpc(db, "recruitment_post_public_feed_v1");
+    await db.exec("reset role");
+    assert.deepEqual(emptyPublicFeed, {
+      schema_version: 1,
+      jobs: [],
+    });
+    assert.deepEqual(
+      projectRecruitmentPostPublicFeedV1(emptyPublicFeed),
+      emptyPublicFeed,
+    );
+
+    // Create a new PUBLISHED post (with gender_requirement = 'ANY' and internal manager_phone/manager_name)
+    const createdForPub = await rpc(db, "recruitment_post_create", {
+      p_auth_subject: PM_A.auth,
+      p_app_user_id: PM_A.app,
+      p_payload: makeCreatePayload("PROJ_RP_A", PARK_BA_THIEN_1.industrial_park_id, {
+        general: {
+          customer_name: "Công ty Điện tử Public Feed",
+          job_description: "Vận hành máy SMT ban đầu",
+          manager_name: "Nội Bộ Không Được Lộ",
+          manager_phone: "0999888777",
+        },
+        candidate: {
+          gender_requirement: "ANY",
+        },
+      }),
+      p_idempotency_key: KEY(9501),
+    });
+    const pubBriefId = createdForPub.post.brief_id;
+
+    await db.exec("set local role service_role");
+    const feedAfterCreate = await rpc(db, "recruitment_post_public_feed_v1");
+    await db.exec("reset role");
+    const projectedCreateFeed = projectRecruitmentPostPublicFeedV1(feedAfterCreate);
+    assert.ok(projectedCreateFeed !== null, "Public feed after create must pass contract projection");
+    assert.equal(projectedCreateFeed.schema_version, 1);
+    assert.equal(projectedCreateFeed.jobs.length, 1);
+    assert.equal(projectedCreateFeed.jobs[0].id, pubBriefId);
+    assert.equal(projectedCreateFeed.jobs[0].brief_id, pubBriefId);
+    assert.equal(projectedCreateFeed.jobs[0].version, 1);
+    assert.equal(
+      projectedCreateFeed.jobs[0].general.job_description,
+      "Vận hành máy SMT ban đầu",
+    );
+    assert.equal(projectedCreateFeed.jobs[0].candidate.gender_requirement, "ANY");
+    assert.equal(projectedCreateFeed.jobs[0].candidate.gender_label, "Nam/Nữ");
+    // Internal fields must never appear in the serialized feed
+    const rawCreateFeedStr = JSON.stringify(feedAfterCreate);
+    assert.equal(rawCreateFeedStr.includes("0999888777"), false);
+    assert.equal(rawCreateFeedStr.includes("Nội Bộ Không Được Lộ"), false);
+    assert.equal(rawCreateFeedStr.includes("manager_phone"), false);
+    assert.equal(rawCreateFeedStr.includes("manager_name"), false);
+    assert.equal(rawCreateFeedStr.includes("allowed_actions"), false);
+    assert.equal(rawCreateFeedStr.includes("created_by"), false);
+    assert.equal(rawCreateFeedStr.includes("updated_by"), false);
+
+    // Update the post -> keeps exact same ID (`id` / `brief_id`), increments version, updates content & updated_at
+    await rpc(db, "recruitment_post_update", {
+      p_auth_subject: PM_A.auth,
+      p_app_user_id: PM_A.app,
+      p_brief_id: pubBriefId,
+      p_expected_version: 1,
+      p_payload: makeBriefContent({
+        general: {
+          customer_name: "Công ty Điện tử Public Feed",
+          job_description: "Vận hành máy SMT đã cập nhật",
+          manager_name: "Nội Bộ Không Được Lộ",
+          manager_phone: "0999888777",
+        },
+        candidate: {
+          gender_requirement: "ANY",
+        },
+      }),
+      p_idempotency_key: KEY(9502),
+    });
+
+    await db.exec("set local role service_role");
+    const feedAfterUpdate = await rpc(db, "recruitment_post_public_feed_v1");
+    await db.exec("reset role");
+    const projectedUpdateFeed = projectRecruitmentPostPublicFeedV1(feedAfterUpdate);
+    assert.ok(projectedUpdateFeed !== null);
+    assert.equal(projectedUpdateFeed.jobs.length, 1);
+    assert.equal(projectedUpdateFeed.jobs[0].id, pubBriefId);
+    assert.equal(projectedUpdateFeed.jobs[0].brief_id, pubBriefId);
+    assert.equal(projectedUpdateFeed.jobs[0].version, 2);
+    assert.equal(
+      projectedUpdateFeed.jobs[0].general.job_description,
+      "Vận hành máy SMT đã cập nhật",
+    );
+
+    // Withdraw the post -> disappears on the next read
+    await rpc(db, "recruitment_post_withdraw", {
+      p_auth_subject: PM_A.auth,
+      p_app_user_id: PM_A.app,
+      p_brief_id: pubBriefId,
+      p_expected_version: 2,
+      p_idempotency_key: KEY(9503),
+    });
+
+    await db.exec("set local role service_role");
+    const feedAfterWithdraw = await rpc(db, "recruitment_post_public_feed_v1");
+    await db.exec("reset role");
+    assert.deepEqual(feedAfterWithdraw, {
+      schema_version: 1,
+      jobs: [],
+    });
+  } finally {
+    await db.exec("rollback");
+  }
 });
