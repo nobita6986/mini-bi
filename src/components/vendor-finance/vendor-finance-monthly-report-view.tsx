@@ -83,9 +83,10 @@ function rowDrillKey(row: VendorFinanceMonthlyReportRow): string {
   return `${row.project_id}:${row.accountant_ref}:${row.vendor_id}:${row.contract_type}`;
 }
 
+const REPORT_TH_CLASS = `${DATA_TABLE_TH_CLASS} !px-2 !py-2.5 text-[11px] leading-tight`;
+const REPORT_TD_CLASS = `${DATA_TABLE_TD_CLASS} !px-2 !py-2.5 align-top`;
+
 export function VendorFinanceMonthlyReportView({
-  initialCanRecord = false,
-  initialCanReconcile = false,
   initialCanManageProjectAssignments = false,
 }: {
   initialCanRecord?: boolean;
@@ -417,8 +418,6 @@ export function VendorFinanceMonthlyReportView({
     return Array.from(map.entries()).sort((a, b) => a[1].localeCompare(b[1], "vi"));
   })();
 
-  const canRecord = reportData ? reportData.allowed_actions.can_record : initialCanRecord;
-  const canReconcile = reportData ? reportData.allowed_actions.can_reconcile : initialCanReconcile;
   const canManage = reportData
     ? reportData.allowed_actions.can_manage_project_assignments
     : initialCanManageProjectAssignments;
@@ -452,23 +451,7 @@ export function VendorFinanceMonthlyReportView({
       </div>
 
       <PageHeader
-        eyebrow="Báo cáo quản trị tài chính dự án"
         title="Báo cáo công nợ Vendor theo Dự án & Tháng"
-        badge={
-          <div className="flex flex-wrap items-center gap-2">
-            {reportData?.allowed_actions.visibility_scope === "PROJECT_SCOPED" ? (
-              <StatusBadge tone="primary">Phạm vi dự án phụ trách</StatusBadge>
-            ) : (
-              <StatusBadge tone="info">Phạm vi toàn cục</StatusBadge>
-            )}
-            {!canRecord ? (
-              <StatusBadge tone="info">
-                {canReconcile ? "Xem & Đối soát" : "Chế độ chỉ xem"}
-              </StatusBadge>
-            ) : null}
-          </div>
-        }
-        description="Đối chiếu phát sinh nghĩa vụ phải trả, thanh toán/tạm ứng trong tháng và công nợ còn lại cuối tháng theo từng sổ Kế toán phụ trách × Dự án × Vendor (không bù trừ chéo)."
         actions={
           <Button
             variant="secondary"
@@ -515,25 +498,35 @@ export function VendorFinanceMonthlyReportView({
           <p className="text-xs font-medium text-muted">Tổng phải trả phát sinh trong tháng</p>
           <p
             data-testid="vfin-monthly-kpi-obligations"
-            className="mt-1.5 font-mono text-xl font-semibold tabular-nums text-foreground"
+            className="mt-1.5 whitespace-nowrap font-mono text-xl font-semibold tabular-nums text-foreground"
           >
             {totals ? formatVndMinor(totals.obligations_in_month_minor) : "—"}
           </p>
-          <p className="mt-1 text-xs text-muted">Công nợ, lương & điều chỉnh tăng trong tháng</p>
+          <p className="mt-1 text-xs text-muted">Công nợ, lương & điều chỉnh tăng (+)</p>
         </Card>
 
         <Card className="p-4">
           <p className="text-xs font-medium text-muted">Đã thanh toán & tạm ứng trong tháng</p>
           <p
             data-testid="vfin-monthly-kpi-paid-advanced"
-            className="mt-1.5 font-mono text-xl font-semibold tabular-nums text-foreground"
+            className="mt-1.5 whitespace-nowrap font-mono text-xl font-semibold tabular-nums text-foreground"
           >
             {totals ? formatVndMinor(totals.paid_and_advanced_in_month_minor) : "—"}
           </p>
           <p className="mt-1 text-xs text-muted">
-            {totals
-              ? `TT: ${formatVndMinor(totals.paid_in_month_minor)} · Ứng: ${formatVndMinor(totals.advanced_in_month_minor)}`
-              : "Đang tải…"}
+            {totals ? (
+              <>
+                <span className="whitespace-nowrap">
+                  TT: {formatVndMinor(totals.paid_in_month_minor)}
+                </span>{" "}
+                ·{" "}
+                <span className="whitespace-nowrap">
+                  Ứng: {formatVndMinor(totals.advanced_in_month_minor)}
+                </span>
+              </>
+            ) : (
+              "Đang tải…"
+            )}
           </p>
         </Card>
 
@@ -541,26 +534,24 @@ export function VendorFinanceMonthlyReportView({
           <p className="text-xs font-medium text-muted">Khấu trừ ứng trong tháng</p>
           <p
             data-testid="vfin-monthly-kpi-advance-offset"
-            className="mt-1.5 font-mono text-xl font-semibold tabular-nums text-foreground"
+            className="mt-1.5 whitespace-nowrap font-mono text-xl font-semibold tabular-nums text-foreground"
           >
             {totals ? formatVndMinor(totals.advance_offset_in_month_minor) : "—"}
           </p>
-          <p className="mt-1 text-xs text-muted">Khấu trừ từ số dư ứng dùng chung (-)</p>
+          <p className="mt-1 text-xs text-muted">Khấu trừ từ số dư ứng (-)</p>
         </Card>
 
         <Card className="p-4">
-          <p className="text-xs font-medium text-muted">
-            Số dư cuối tháng (Tách riêng — không bù trừ)
-          </p>
+          <p className="text-xs font-medium text-muted">Số dư cuối tháng</p>
           <p
             data-testid="vfin-monthly-kpi-closing-payable"
-            className="mt-1 font-mono text-base font-semibold tabular-nums text-foreground"
+            className="mt-1 whitespace-nowrap font-mono text-base font-semibold tabular-nums text-foreground"
           >
             Còn nợ: {totals ? formatVndMinor(totals.closing_payable_minor) : "—"}
           </p>
           <p
             data-testid="vfin-monthly-kpi-closing-advance"
-            className="mt-0.5 font-mono text-xs tabular-nums text-muted"
+            className="mt-0.5 whitespace-nowrap font-mono text-xs tabular-nums text-muted"
           >
             Dư ứng: {totals ? formatVndMinor(totals.closing_advance_minor) : "—"}
           </p>
@@ -571,7 +562,7 @@ export function VendorFinanceMonthlyReportView({
       <FilterToolbar
         dataTestId="vfin-monthly-filter-toolbar"
         summary={
-          <>
+          <div className="flex flex-wrap items-center gap-2">
             <span aria-live="polite" className="font-mono tabular-nums">
               {loading
                 ? "Đang tổng hợp báo cáo tháng…"
@@ -581,10 +572,11 @@ export function VendorFinanceMonthlyReportView({
             </span>
             {reportData ? (
               <span>
-                Ngày nghiệp vụ máy chủ: {formatVietnamDateLabel(reportData.authorization_date)}
+                · Ngày nghiệp vụ: {formatVietnamDateLabel(reportData.authorization_date)}
               </span>
             ) : null}
-          </>
+            <StatusBadge tone="info">{VFIN_UI_REFERENCE_TOTAL_LABEL_VI}</StatusBadge>
+          </div>
         }
         actions={
           hasSecondaryFilters ? (
@@ -604,9 +596,12 @@ export function VendorFinanceMonthlyReportView({
           ) : null
         }
       >
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-12">
-          <div className="md:col-span-2 space-y-1">
-            <label htmlFor={monthInputId} className="block text-xs font-medium text-muted">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+          <div className="space-y-1.5">
+            <label
+              htmlFor={monthInputId}
+              className="block text-xs sm:text-sm font-semibold text-foreground"
+            >
               Tháng báo cáo (YYYY-MM)
             </label>
             <input
@@ -618,8 +613,11 @@ export function VendorFinanceMonthlyReportView({
             />
           </div>
 
-          <div className="md:col-span-3 space-y-1">
-            <label htmlFor={projectSelectId} className="block text-xs font-medium text-muted">
+          <div className="space-y-1.5">
+            <label
+              htmlFor={projectSelectId}
+              className="block text-xs sm:text-sm font-semibold text-foreground"
+            >
               Lọc theo Dự án
             </label>
             <select
@@ -637,8 +635,11 @@ export function VendorFinanceMonthlyReportView({
             </select>
           </div>
 
-          <div className="md:col-span-2 space-y-1">
-            <label htmlFor={accountantSelectId} className="block text-xs font-medium text-muted">
+          <div className="space-y-1.5">
+            <label
+              htmlFor={accountantSelectId}
+              className="block text-xs sm:text-sm font-semibold text-foreground"
+            >
               Lọc theo Kế toán phụ trách sổ
             </label>
             <select
@@ -656,8 +657,11 @@ export function VendorFinanceMonthlyReportView({
             </select>
           </div>
 
-          <div className="md:col-span-2 space-y-1">
-            <label htmlFor={vendorSelectId} className="block text-xs font-medium text-muted">
+          <div className="space-y-1.5">
+            <label
+              htmlFor={vendorSelectId}
+              className="block text-xs sm:text-sm font-semibold text-foreground"
+            >
               Lọc theo Vendor
             </label>
             <select
@@ -675,8 +679,11 @@ export function VendorFinanceMonthlyReportView({
             </select>
           </div>
 
-          <div className="md:col-span-3 space-y-1">
-            <label htmlFor={contractTypeSelectId} className="block text-xs font-medium text-muted">
+          <div className="space-y-1.5">
+            <label
+              htmlFor={contractTypeSelectId}
+              className="block text-xs sm:text-sm font-semibold text-foreground"
+            >
               Lọc theo Loại hợp đồng (Sổ riêng)
             </label>
             <select
@@ -721,12 +728,9 @@ export function VendorFinanceMonthlyReportView({
               SECTION 1: SUMMARY BY (ACCOUNTANT x PROJECT) BOOK
              ================================================================= */}
           <section className="space-y-2.5" aria-label="Tổng hợp theo sổ Kế toán phụ trách × Dự án">
-            <div className="flex flex-wrap items-baseline justify-between gap-2">
-              <h2 className="text-base font-semibold text-foreground">
-                1. Tổng hợp tham khảo theo Kế toán phụ trách × Dự án
-              </h2>
-              <p className="text-xs text-muted">{VFIN_UI_REFERENCE_TOTAL_LABEL_VI}</p>
-            </div>
+            <h2 className="text-base font-semibold text-foreground">
+              1. Tổng hợp theo Kế toán phụ trách × Dự án
+            </h2>
 
             {reportData.project_accountant_summaries.length === 0 ? (
               <Card className="p-6 text-center text-sm text-muted">
@@ -737,28 +741,28 @@ export function VendorFinanceMonthlyReportView({
                 <table className={DATA_TABLE_CLASS}>
                   <thead className={DATA_TABLE_HEAD_CLASS}>
                     <tr>
-                      <th scope="col" className={DATA_TABLE_TH_CLASS}>
+                      <th scope="col" className={REPORT_TH_CLASS}>
                         Dự án
                       </th>
-                      <th scope="col" className={DATA_TABLE_TH_CLASS}>
-                        Kế toán phụ trách sổ
+                      <th scope="col" className={REPORT_TH_CLASS}>
+                        Kế toán phụ trách
                       </th>
-                      <th scope="col" className={DATA_TABLE_TH_CLASS}>
+                      <th scope="col" className={REPORT_TH_CLASS}>
                         Doanh thu dự án
                       </th>
-                      <th scope="col" className={`${DATA_TABLE_TH_CLASS} text-right`}>
-                        Phát sinh trong tháng
+                      <th scope="col" className={`${REPORT_TH_CLASS} text-right whitespace-nowrap`}>
+                        Phát sinh tháng
                       </th>
-                      <th scope="col" className={`${DATA_TABLE_TH_CLASS} text-right`}>
-                        Đã TT & tạm ứng trong tháng
+                      <th scope="col" className={`${REPORT_TH_CLASS} text-right whitespace-nowrap`}>
+                        Đã TT & tạm ứng
                       </th>
-                      <th scope="col" className={`${DATA_TABLE_TH_CLASS} text-right`}>
-                        Khấu trừ ứng trong tháng
+                      <th scope="col" className={`${REPORT_TH_CLASS} text-right whitespace-nowrap`}>
+                        Khấu trừ ứng
                       </th>
-                      <th scope="col" className={`${DATA_TABLE_TH_CLASS} text-right`}>
-                        Còn phải trả cuối tháng
+                      <th scope="col" className={`${REPORT_TH_CLASS} text-right whitespace-nowrap`}>
+                        Phải trả cuối tháng
                       </th>
-                      <th scope="col" className={`${DATA_TABLE_TH_CLASS} text-right`}>
+                      <th scope="col" className={`${REPORT_TH_CLASS} text-right whitespace-nowrap`}>
                         Dư ứng cuối tháng
                       </th>
                     </tr>
@@ -769,66 +773,88 @@ export function VendorFinanceMonthlyReportView({
                         key={`${sum.project_id}:${sum.accountant_ref}:${sum.contract_type}`}
                         className={DATA_TABLE_ROW_CLASS}
                       >
-                        <td data-card-header="true" className={DATA_TABLE_TD_CLASS}>
+                        <td
+                          data-card-header="true"
+                          className={`${REPORT_TD_CLASS} whitespace-normal break-words`}
+                        >
                           <div className="space-y-1">
                             <div className="flex flex-wrap items-center gap-1.5">
-                              <p className="font-semibold text-foreground">
+                              <p className="font-semibold text-foreground break-words">
                                 {sum.project_display_name}
                               </p>
-                              <StatusBadge tone={CONTRACT_TYPE_BADGE_TONES[sum.contract_type]}>
+                              <StatusBadge
+                                tone={CONTRACT_TYPE_BADGE_TONES[sum.contract_type]}
+                                className="shrink-0 whitespace-nowrap"
+                              >
                                 {CONTRACT_TYPE_LABELS_VI[sum.contract_type]}
                               </StatusBadge>
                             </div>
-                            <p className="font-mono text-xs text-muted">
+                            <p className="font-mono text-xs text-muted break-words">
                               {sum.project_id} · {sum.vendor_count} Vendor
                             </p>
                           </div>
                         </td>
-                        <td data-label="Kế toán phụ trách" className={DATA_TABLE_TD_CLASS}>
+                        <td
+                          data-label="Kế toán phụ trách"
+                          className={`${REPORT_TD_CLASS} whitespace-normal break-words`}
+                        >
                           <div className="space-y-0.5">
-                            <p className="font-medium text-foreground">
+                            <p className="font-medium text-foreground break-words">
                               {sum.responsible_accountant_display_name}
                             </p>
-                            <StatusBadge tone={sum.is_currently_assigned ? "success" : "neutral"}>
+                            <StatusBadge
+                              tone={sum.is_currently_assigned ? "success" : "neutral"}
+                              className="whitespace-nowrap"
+                            >
                               {sum.is_currently_assigned ? "Đang phụ trách" : "Sổ kỳ trước"}
                             </StatusBadge>
                           </div>
                         </td>
-                        <td data-label="Doanh thu dự án" className={DATA_TABLE_TD_CLASS}>
-                          <StatusBadge tone="neutral">
+                        <td data-label="Doanh thu dự án" className={REPORT_TD_CLASS}>
+                          <StatusBadge tone="neutral" className="whitespace-nowrap">
                             {PROJECT_REVENUE_MISSING_SOURCE_LABEL_VI}
                           </StatusBadge>
                         </td>
                         <td
                           data-label="Phát sinh tháng"
-                          className={`${DATA_TABLE_TD_CLASS} text-right font-mono tabular-nums`}
+                          className={`${REPORT_TD_CLASS} text-right font-mono tabular-nums whitespace-nowrap`}
                         >
-                          {formatVndMinor(sum.obligations_in_month_minor)}
+                          <span className="whitespace-nowrap">
+                            {formatVndMinor(sum.obligations_in_month_minor)}
+                          </span>
                         </td>
                         <td
-                          data-label="Đã TT & Ứng"
-                          className={`${DATA_TABLE_TD_CLASS} text-right font-mono tabular-nums`}
+                          data-label="Đã TT & tạm ứng"
+                          className={`${REPORT_TD_CLASS} text-right font-mono tabular-nums whitespace-nowrap`}
                         >
-                          {formatVndMinor(sum.paid_and_advanced_in_month_minor)}
+                          <span className="whitespace-nowrap">
+                            {formatVndMinor(sum.paid_and_advanced_in_month_minor)}
+                          </span>
                         </td>
                         <td
                           data-label="Khấu trừ ứng"
                           data-testid="vfin-monthly-summary-advance-offset"
-                          className={`${DATA_TABLE_TD_CLASS} text-right font-mono tabular-nums`}
+                          className={`${REPORT_TD_CLASS} text-right font-mono tabular-nums whitespace-nowrap`}
                         >
-                          {formatVndMinor(sum.advance_offset_in_month_minor)}
+                          <span className="whitespace-nowrap">
+                            {formatVndMinor(sum.advance_offset_in_month_minor)}
+                          </span>
                         </td>
                         <td
-                          data-label="Còn phải trả"
-                          className={`${DATA_TABLE_TD_CLASS} text-right font-mono font-semibold tabular-nums`}
+                          data-label="Phải trả cuối tháng"
+                          className={`${REPORT_TD_CLASS} text-right font-mono font-semibold tabular-nums whitespace-nowrap`}
                         >
-                          {formatVndMinor(sum.closing_payable_minor)}
+                          <span className="whitespace-nowrap">
+                            {formatVndMinor(sum.closing_payable_minor)}
+                          </span>
                         </td>
                         <td
-                          data-label="Dư ứng"
-                          className={`${DATA_TABLE_TD_CLASS} text-right font-mono tabular-nums`}
+                          data-label="Dư ứng cuối tháng"
+                          className={`${REPORT_TD_CLASS} text-right font-mono tabular-nums whitespace-nowrap`}
                         >
-                          {formatVndMinor(sum.closing_advance_minor)}
+                          <span className="whitespace-nowrap">
+                            {formatVndMinor(sum.closing_advance_minor)}
+                          </span>
                         </td>
                       </tr>
                     ))}
@@ -858,28 +884,28 @@ export function VendorFinanceMonthlyReportView({
                 <table className={DATA_TABLE_CLASS}>
                   <thead className={DATA_TABLE_HEAD_CLASS}>
                     <tr>
-                      <th scope="col" className={DATA_TABLE_TH_CLASS}>
-                        Dự án & Kế toán sổ
+                      <th scope="col" className={REPORT_TH_CLASS}>
+                        Dự án & Kế toán
                       </th>
-                      <th scope="col" className={DATA_TABLE_TH_CLASS}>
-                        Vendor & Loại hợp đồng (Sổ riêng)
+                      <th scope="col" className={REPORT_TH_CLASS}>
+                        Vendor & Loại HĐ
                       </th>
-                      <th scope="col" className={`${DATA_TABLE_TH_CLASS} text-right`}>
+                      <th scope="col" className={`${REPORT_TH_CLASS} text-right whitespace-nowrap`}>
                         Đầu tháng
                       </th>
-                      <th scope="col" className={`${DATA_TABLE_TH_CLASS} text-right`}>
-                        Phát sinh tháng (+)
+                      <th scope="col" className={`${REPORT_TH_CLASS} text-right whitespace-nowrap`}>
+                        Phát sinh (+)
                       </th>
-                      <th scope="col" className={`${DATA_TABLE_TH_CLASS} text-right`}>
-                        TT & Tạm ứng tháng (-)
+                      <th scope="col" className={`${REPORT_TH_CLASS} text-right whitespace-nowrap`}>
+                        TT & Tạm ứng (-)
                       </th>
-                      <th scope="col" className={`${DATA_TABLE_TH_CLASS} text-right`}>
-                        Khấu trừ ứng tháng (-)
+                      <th scope="col" className={`${REPORT_TH_CLASS} text-right whitespace-nowrap`}>
+                        Khấu trừ ứng (-)
                       </th>
-                      <th scope="col" className={`${DATA_TABLE_TH_CLASS} text-right`}>
-                        Cuối tháng (Không bù trừ)
+                      <th scope="col" className={`${REPORT_TH_CLASS} text-right whitespace-nowrap`}>
+                        Cuối tháng
                       </th>
-                      <th scope="col" className={`${DATA_TABLE_TH_CLASS} text-right`}>
+                      <th scope="col" className={`${REPORT_TH_CLASS} text-right whitespace-nowrap`}>
                         Lịch sử GD
                       </th>
                     </tr>
@@ -893,85 +919,114 @@ export function VendorFinanceMonthlyReportView({
                         current_balance_minor: row.closing_balance_minor,
                         balance_direction: row.closing_direction,
                         entry_count: row.total_entry_count,
-                        has_opening_entry: row.opening_payable_in_month_minor !== "0" || row.opening_advance_in_month_minor !== "0",
+                        has_opening_entry:
+                          row.opening_payable_in_month_minor !== "0" ||
+                          row.opening_advance_in_month_minor !== "0",
                       });
                       const subLedgerDetailHref = `/finance/vendors/${encodeURIComponent(row.vendor_id)}?ledgerScope=PROJECT_ACCOUNTANT&projectId=${encodeURIComponent(row.project_id)}&accountantRef=${encodeURIComponent(row.accountant_ref)}&contractType=${encodeURIComponent(row.contract_type)}`;
 
                       return (
                         <Fragment key={dKey}>
                           <tr className={DATA_TABLE_ROW_CLASS}>
-                            <td data-card-header="true" className={DATA_TABLE_TD_CLASS}>
+                            <td
+                              data-card-header="true"
+                              className={`${REPORT_TD_CLASS} whitespace-normal break-words`}
+                            >
                               <div className="space-y-0.5">
-                                <p className="font-semibold text-foreground">
+                                <p className="font-semibold text-foreground break-words">
                                   {row.project_display_name}
                                 </p>
-                                <p className="text-xs text-muted">
-                                  KT: <strong className="text-foreground">{row.responsible_accountant_display_name}</strong>
+                                <p className="text-xs text-muted break-words">
+                                  KT:{" "}
+                                  <strong className="text-foreground">
+                                    {row.responsible_accountant_display_name}
+                                  </strong>
                                 </p>
                               </div>
                             </td>
 
-                            <td data-label="Vendor & Loại HĐ" className={DATA_TABLE_TD_CLASS}>
+                            <td
+                              data-label="Vendor & Loại HĐ"
+                              className={`${REPORT_TD_CLASS} whitespace-normal break-words`}
+                            >
                               <div className="space-y-1">
                                 <div className="flex flex-wrap items-center gap-1.5">
                                   <Link
                                     href={subLedgerDetailHref}
-                                    className="font-semibold text-primary hover:underline"
+                                    className="font-semibold text-primary hover:underline break-words"
                                   >
                                     {row.vendor_display_name}
                                   </Link>
-                                  <StatusBadge tone={CONTRACT_TYPE_BADGE_TONES[row.contract_type]}>
+                                  <StatusBadge
+                                    tone={CONTRACT_TYPE_BADGE_TONES[row.contract_type]}
+                                    className="shrink-0 whitespace-nowrap"
+                                  >
                                     {CONTRACT_TYPE_LABELS_VI[row.contract_type]}
                                   </StatusBadge>
                                 </div>
-                                <p className="font-mono text-xs text-muted">{row.vendor_id}</p>
+                                <p className="font-mono text-xs text-muted break-all">
+                                  {row.vendor_id}
+                                </p>
                               </div>
                             </td>
 
                             <td
                               data-label="Đầu tháng"
-                              className={`${DATA_TABLE_TD_CLASS} text-right font-mono tabular-nums`}
+                              className={`${REPORT_TD_CLASS} text-right font-mono tabular-nums whitespace-nowrap`}
                             >
-                              {formatSignedVndDelta(row.balance_before_month_minor)}
+                              <span className="whitespace-nowrap">
+                                {formatSignedVndDelta(row.balance_before_month_minor)}
+                              </span>
                             </td>
 
                             <td
-                              data-label="Phát sinh tháng"
-                              className={`${DATA_TABLE_TD_CLASS} text-right font-mono tabular-nums`}
+                              data-label="Phát sinh (+)"
+                              className={`${REPORT_TD_CLASS} text-right font-mono tabular-nums whitespace-nowrap`}
                             >
-                              {formatVndMinor(row.obligations_in_month_minor)}
+                              <span className="whitespace-nowrap">
+                                {formatVndMinor(row.obligations_in_month_minor)}
+                              </span>
                             </td>
 
                             <td
-                              data-label="TT & Tạm ứng tháng"
-                              className={`${DATA_TABLE_TD_CLASS} text-right font-mono tabular-nums`}
+                              data-label="TT & Tạm ứng (-)"
+                              className={`${REPORT_TD_CLASS} text-right font-mono tabular-nums`}
                             >
                               <div className="space-y-0.5">
-                                <p>{formatVndMinor(row.paid_and_advanced_in_month_minor)}</p>
+                                <p className="whitespace-nowrap">
+                                  {formatVndMinor(row.paid_and_advanced_in_month_minor)}
+                                </p>
                                 <p className="text-[11px] text-muted">
-                                  TT: {formatVndMinor(row.paid_in_month_minor)} · Ứng:{" "}
-                                  {formatVndMinor(row.advanced_in_month_minor)}
+                                  <span className="whitespace-nowrap">
+                                    TT: {formatVndMinor(row.paid_in_month_minor)}
+                                  </span>{" "}
+                                  ·{" "}
+                                  <span className="whitespace-nowrap">
+                                    Ứng: {formatVndMinor(row.advanced_in_month_minor)}
+                                  </span>
                                 </p>
                               </div>
                             </td>
 
                             <td
-                              data-label="Khấu trừ ứng tháng"
+                              data-label="Khấu trừ ứng (-)"
                               data-testid="vfin-monthly-row-advance-offset"
-                              className={`${DATA_TABLE_TD_CLASS} text-right font-mono tabular-nums`}
+                              className={`${REPORT_TD_CLASS} text-right font-mono tabular-nums whitespace-nowrap`}
                             >
-                              {formatVndMinor(row.advance_offset_in_month_minor)}
+                              <span className="whitespace-nowrap">
+                                {formatVndMinor(row.advance_offset_in_month_minor)}
+                              </span>
                             </td>
 
                             <td
                               data-label="Cuối tháng"
-                              className={`${DATA_TABLE_TD_CLASS} text-right font-mono tabular-nums`}
+                              className={`${REPORT_TD_CLASS} text-right font-mono tabular-nums`}
                             >
                               <div className="inline-flex flex-col items-end gap-1">
-                                <span className="font-semibold text-foreground">
+                                <span className="whitespace-nowrap font-semibold text-foreground">
                                   {closingInfo.signedText}
                                 </span>
-                                <StatusBadge tone={closingInfo.tone}>
+                                <StatusBadge tone={closingInfo.tone} className="whitespace-nowrap">
                                   {row.closing_direction === "PAYABLE"
                                     ? "Còn phải trả"
                                     : row.closing_direction === "ADVANCE"
@@ -983,7 +1038,7 @@ export function VendorFinanceMonthlyReportView({
 
                             <td
                               data-card-actions="true"
-                              className={`${DATA_TABLE_TD_CLASS} text-right`}
+                              className={`${REPORT_TD_CLASS} text-right`}
                             >
                               <RowActionCluster>
                                 <Button
@@ -1023,7 +1078,8 @@ export function VendorFinanceMonthlyReportView({
                                       Lịch sử bút toán tháng {reportData.filters.month} —{" "}
                                       {row.project_display_name} · KT:{" "}
                                       {row.responsible_accountant_display_name} ·{" "}
-                                      {row.vendor_display_name} ({CONTRACT_TYPE_LABELS_VI[row.contract_type]})
+                                      {row.vendor_display_name} (
+                                      {CONTRACT_TYPE_LABELS_VI[row.contract_type]})
                                     </p>
                                     <Link
                                       href={subLedgerDetailHref}
@@ -1056,8 +1112,12 @@ export function VendorFinanceMonthlyReportView({
                                               <th className="py-2 pr-3">Ngày HL</th>
                                               <th className="py-2 pr-3">Loại bút toán</th>
                                               <th className="py-2 pr-3">Diễn giải & Người nhập</th>
-                                              <th className="py-2 pr-3 text-right">Biến động</th>
-                                              <th className="py-2 pr-3 text-right">Số dư sau GD</th>
+                                              <th className="py-2 pr-3 text-right whitespace-nowrap">
+                                                Biến động
+                                              </th>
+                                              <th className="py-2 pr-3 text-right whitespace-nowrap">
+                                                Số dư sau GD
+                                              </th>
                                               <th className="py-2 text-right">In</th>
                                             </tr>
                                           </thead>
@@ -1067,7 +1127,7 @@ export function VendorFinanceMonthlyReportView({
                                                 key={entry.entry_id}
                                                 className="border-b border-border/60 last:border-b-0"
                                               >
-                                                <td className="py-2 pr-3 font-mono font-semibold">
+                                                <td className="py-2 pr-3 font-mono font-semibold whitespace-nowrap">
                                                   <Link
                                                     href={`/finance/documents/${encodeURIComponent(entry.entry_id)}`}
                                                     className="text-primary hover:underline"
@@ -1075,7 +1135,7 @@ export function VendorFinanceMonthlyReportView({
                                                     {entry.document_no}
                                                   </Link>
                                                 </td>
-                                                <td className="py-2 pr-3 font-mono">
+                                                <td className="py-2 pr-3 font-mono whitespace-nowrap">
                                                   {formatVietnamDateLabel(entry.effective_date)}
                                                 </td>
                                                 <td className="py-2 pr-3">
@@ -1089,13 +1149,13 @@ export function VendorFinanceMonthlyReportView({
                                                     Người nhập: {entry.created_by_display_name}
                                                   </p>
                                                 </td>
-                                                <td className="py-2 pr-3 text-right font-mono font-semibold">
+                                                <td className="py-2 pr-3 text-right font-mono font-semibold whitespace-nowrap">
                                                   {formatSignedVndDelta(entry.balance_delta_minor)}
                                                 </td>
-                                                <td className="py-2 pr-3 text-right font-mono">
+                                                <td className="py-2 pr-3 text-right font-mono whitespace-nowrap">
                                                   {formatVndMinor(entry.balance_after_minor)}
                                                 </td>
-                                                <td className="py-2 text-right">
+                                                <td className="py-2 text-right whitespace-nowrap">
                                                   <Link
                                                     href={`/finance/documents/${encodeURIComponent(entry.entry_id)}`}
                                                     className="inline-flex items-center gap-1 text-primary hover:underline"
@@ -1151,19 +1211,19 @@ export function VendorFinanceMonthlyReportView({
                 <table className={DATA_TABLE_CLASS}>
                   <thead className={DATA_TABLE_HEAD_CLASS}>
                     <tr>
-                      <th scope="col" className={DATA_TABLE_TH_CLASS}>
+                      <th scope="col" className={REPORT_TH_CLASS}>
                         Vendor
                       </th>
-                      <th scope="col" className={`${DATA_TABLE_TH_CLASS} text-right`}>
+                      <th scope="col" className={`${REPORT_TH_CLASS} text-right whitespace-nowrap`}>
                         Đầu tháng
                       </th>
-                      <th scope="col" className={`${DATA_TABLE_TH_CLASS} text-right`}>
+                      <th scope="col" className={`${REPORT_TH_CLASS} text-right whitespace-nowrap`}>
                         Phát sinh tháng
                       </th>
-                      <th scope="col" className={`${DATA_TABLE_TH_CLASS} text-right`}>
+                      <th scope="col" className={`${REPORT_TH_CLASS} text-right whitespace-nowrap`}>
                         TT & Tạm ứng tháng
                       </th>
-                      <th scope="col" className={`${DATA_TABLE_TH_CLASS} text-right`}>
+                      <th scope="col" className={`${REPORT_TH_CLASS} text-right whitespace-nowrap`}>
                         Số dư cuối tháng
                       </th>
                     </tr>
@@ -1171,37 +1231,48 @@ export function VendorFinanceMonthlyReportView({
                   <tbody>
                     {reportData.legacy_unallocated_rows.map((leg) => (
                       <tr key={leg.vendor_id} className={DATA_TABLE_ROW_CLASS}>
-                        <td data-card-header="true" className={DATA_TABLE_TD_CLASS}>
+                        <td
+                          data-card-header="true"
+                          className={`${REPORT_TD_CLASS} whitespace-normal break-words`}
+                        >
                           <Link
                             href={`/finance/vendors/${encodeURIComponent(leg.vendor_id)}?ledgerScope=LEGACY_UNALLOCATED`}
-                            className="font-semibold text-primary hover:underline"
+                            className="font-semibold text-primary hover:underline break-words"
                           >
                             {leg.vendor_display_name}
                           </Link>
                         </td>
                         <td
                           data-label="Đầu tháng"
-                          className={`${DATA_TABLE_TD_CLASS} text-right font-mono tabular-nums`}
+                          className={`${REPORT_TD_CLASS} text-right font-mono tabular-nums whitespace-nowrap`}
                         >
-                          {formatSignedVndDelta(leg.balance_before_month_minor)}
+                          <span className="whitespace-nowrap">
+                            {formatSignedVndDelta(leg.balance_before_month_minor)}
+                          </span>
                         </td>
                         <td
                           data-label="Phát sinh tháng"
-                          className={`${DATA_TABLE_TD_CLASS} text-right font-mono tabular-nums`}
+                          className={`${REPORT_TD_CLASS} text-right font-mono tabular-nums whitespace-nowrap`}
                         >
-                          {formatVndMinor(leg.obligations_in_month_minor)}
+                          <span className="whitespace-nowrap">
+                            {formatVndMinor(leg.obligations_in_month_minor)}
+                          </span>
                         </td>
                         <td
                           data-label="TT & Tạm ứng"
-                          className={`${DATA_TABLE_TD_CLASS} text-right font-mono tabular-nums`}
+                          className={`${REPORT_TD_CLASS} text-right font-mono tabular-nums whitespace-nowrap`}
                         >
-                          {formatVndMinor(leg.paid_and_advanced_in_month_minor)}
+                          <span className="whitespace-nowrap">
+                            {formatVndMinor(leg.paid_and_advanced_in_month_minor)}
+                          </span>
                         </td>
                         <td
                           data-label="Cuối tháng"
-                          className={`${DATA_TABLE_TD_CLASS} text-right font-mono font-semibold tabular-nums`}
+                          className={`${REPORT_TD_CLASS} text-right font-mono font-semibold tabular-nums whitespace-nowrap`}
                         >
-                          {formatSignedVndDelta(leg.closing_balance_minor)}
+                          <span className="whitespace-nowrap">
+                            {formatSignedVndDelta(leg.closing_balance_minor)}
+                          </span>
                         </td>
                       </tr>
                     ))}

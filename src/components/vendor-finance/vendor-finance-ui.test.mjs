@@ -379,3 +379,33 @@ test("VFIN-04: Vendor shared advance balance, 4 shared advance dialogs, cross-pr
   assert.match(entryDialogs, /vfin-record-unlock-after-reconcile-btn/);
   assert.match(detailView, /openUnifiedOffsetDialog/);
 });
+
+test("Compact Vendor Finance UI: streamlined PageHeaders, aligned filter grids with bold foreground labels, updated table headers/data-labels, and single-line currency formatting", () => {
+  // 1. Vendor list view
+  assert.match(listView, /<PageHeader\s+title="Công nợ & Tạm ứng Vendor"\s+actions=\{/);
+  assert.doesNotMatch(listView, /eyebrow="Tài chính Vendor theo Dự án & Kế toán phụ trách"/);
+  assert.match(listView, /Không bù trừ chéo sổ/);
+  assert.match(listView, /grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4/);
+  assert.match(listView, /font-semibold text-foreground/);
+  assert.match(listView, /<th scope="col"[^>]*>\s*Sổ theo Dự án × Kế toán phụ trách × Loại HĐ\s*<\/th>/);
+  assert.doesNotMatch(listView, /Sổ theo Dự án × Kế toán phụ trách × Loại HĐ \(Không bù trừ\)/);
+  assert.match(listView, /data-label="Sổ theo Dự án × Kế toán phụ trách × Loại HĐ"/);
+  assert.match(listView, /<th\s+scope="col"\s+data-testid="vfin-th-shared-advance"[^>]*>\s*Dư ứng\s*<\/th>/);
+  assert.match(listView, /data-label="Dư ứng"/);
+  assert.match(listView, /<th scope="col"[^>]*>\s*Giao dịch gần nhất\s*<\/th>/);
+  assert.match(listView, /data-label="Giao dịch gần nhất"/);
+  assert.match(listView, /whitespace-nowrap/);
+
+  // 2. Monthly report view
+  assert.match(monthlyReportView, /<PageHeader\s+title="Báo cáo công nợ Vendor theo Dự án & Tháng"\s+actions=\{/);
+  assert.doesNotMatch(monthlyReportView, /eyebrow="Báo cáo quản trị tài chính dự án"/);
+  assert.match(monthlyReportView, /grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5/);
+  assert.match(monthlyReportView, /whitespace-normal break-words/);
+  assert.match(monthlyReportView, /whitespace-nowrap/);
+
+  // 3. Vendor detail view
+  assert.match(detailView, /<PageHeader\s+title=\{vendor \? vendor\.display_name : "Chi tiết tài chính Vendor"\}\s+badge=\{/);
+  assert.doesNotMatch(detailView, /eyebrow=\{`Mã Vendor: \$\{vendorId\}`\}/);
+  assert.match(detailView, /Mã Vendor: \{vendorId\}/);
+  assert.match(detailView, /whitespace-nowrap/);
+});
