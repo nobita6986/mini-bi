@@ -11,6 +11,7 @@ import {
   handleRecruitmentPostUpdate,
   handleRecruitmentPostWithdraw,
 } from "./api.ts";
+import { projectRecruitmentPostListWithFacets } from "./contract.ts";
 
 const ACTOR = {
   auth_subject: "11111111-1111-4111-8111-111111111111",
@@ -840,18 +841,37 @@ test("handleRecruitmentPostList supports include_facets=true&page_size=10 in one
     total_count: 25,
     industrial_parks: [
       {
+        industrial_park_id: "10000000-0000-4000-8000-000000000302",
+        industrial_park_code: "AA_ANG",
+        display_name: "KCN Ang",
+        active: true,
+        job_count: 3,
+      },
+      {
+        industrial_park_id: "10000000-0000-4000-8000-000000000301",
+        industrial_park_code: "ZZ_AN_NFD",
+        display_name: "KCN A\u0301n",
+        active: true,
+        job_count: 2,
+      },
+      {
         industrial_park_id: PARK_ID,
         industrial_park_code: "VP_BA_THIEN_1",
         display_name: "KCN Bá Thiện 1",
         active: true,
-        job_count: 25,
+        job_count: 20,
       },
     ],
     labor_types: [
       {
         labor_type_key: "CHINH_THUC",
         display_name: "Chính thức",
-        job_count: 25,
+        job_count: 20,
+      },
+      {
+        labor_type_key: "THOI_VU",
+        display_name: "Thời vụ",
+        job_count: 5,
       },
     ],
   };
@@ -872,6 +892,7 @@ test("handleRecruitmentPostList supports include_facets=true&page_size=10 in one
   assert.equal(calls[0][1].page_size, 10);
   const body = await res.json();
   assert.equal(body.ok, true);
+  assert.ok(projectRecruitmentPostListWithFacets(body.data) !== null);
   assert.deepEqual(Object.keys(body.data).sort(), [
     "has_more",
     "industrial_parks",
@@ -883,9 +904,18 @@ test("handleRecruitmentPostList supports include_facets=true&page_size=10 in one
     "total_count",
   ]);
   assert.equal(body.data.total_count, 25);
+  assert.deepEqual(
+    body.data.industrial_parks.map(
+      (p) => `${p.display_name} (${p.industrial_park_code})`,
+    ),
+    [
+      "KCN A\u0301n (ZZ_AN_NFD)",
+      "KCN Ang (AA_ANG)",
+      "KCN Bá Thiện 1 (VP_BA_THIEN_1)",
+    ],
+  );
   assert.equal(body.data.industrial_parks[0].active, true);
-  assert.equal(body.data.industrial_parks[0].job_count, 25);
-  assert.equal(body.data.labor_types[0].job_count, 25);
+  assert.equal(body.data.labor_types[0].job_count, 20);
 
   // Legacy request without include_facets returns exact 5 keys and defaults to page_size=15
   const legacyData = {

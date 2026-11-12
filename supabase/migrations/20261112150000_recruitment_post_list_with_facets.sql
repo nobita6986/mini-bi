@@ -49,16 +49,6 @@ declare
   v_total_count integer := 0;
   v_industrial_parks jsonb := '[]'::jsonb;
   v_labor_types jsonb := '[]'::jsonb;
-  v_vi_upper constant text :=
-    'ÀẢÃÁẠĂẰẲẴẮẶÂẦẨẪẤẬĐÈẺẼÉẸÊỀỂỄẾỆÌỈĨÍỊÒỎÕÓỌÔỒỔỖỐỘƠỜỞỠỚỢÙỦŨÚỤƯỪỬỮỨỰỲỶỸÝỴ';
-  v_vi_lower constant text :=
-    'àảãáạăằẳẵắặâầẩẫấậđèẻẽéẹêềểễếệìỉĩíịòỏõóọôồổỗốộơờởỡớợùủũúụưừửữứựỳỷỹýỵ';
-  v_vi_src constant text :=
-    'aàảãáạăằẳẵắặâầẩẫấậbcdđeèẻẽéẹêềểễếệfghiìỉĩíịjklmnoòỏõóọôồổỗốộơờởỡớợpqrstuùủũúụưừửữứựvwxyỳỷỹýỵz';
-  v_vi_base constant text :=
-    'AAAAAABBBBBBCCCCCCDEFGHHHHHHIIIIIIJKLMMMMMMNOPQRSSSSSSTTTTTTUUUUUUVWXYZaaaaaabbbbbbcdeffffffg';
-  v_vi_tone constant text :=
-    '012345012345012345000001234501234500001234500000012345012345012345000000123450123450000123450';
 begin
   v_base := public.recruitment_post_list(
     p_auth_subject,
@@ -89,25 +79,6 @@ begin
                'job_count', ip_facets.job_count
              )
              order by
-               pg_catalog.translate(
-                 pg_catalog.translate(
-                   pg_catalog.lower(ip_facets.display_name),
-                   v_vi_upper,
-                   v_vi_lower
-                 ),
-                 v_vi_src,
-                 v_vi_base
-               ) asc,
-               pg_catalog.translate(
-                 pg_catalog.translate(
-                   pg_catalog.lower(ip_facets.display_name),
-                   v_vi_upper,
-                   v_vi_lower
-                 ),
-                 v_vi_src,
-                 v_vi_tone
-               ) asc,
-               ip_facets.display_name asc,
                ip_facets.industrial_park_code asc,
                ip_facets.industrial_park_id asc
            ),

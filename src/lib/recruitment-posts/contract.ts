@@ -2047,6 +2047,31 @@ export function projectRecruitmentPostList(
   };
 }
 
+const VIETNAMESE_COLLATOR = new Intl.Collator("vi");
+
+export function compareRecruitmentPostIndustrialParkFacets(
+  a: Pick<
+    RecruitmentPostIndustrialParkFacet,
+    "display_name" | "industrial_park_code" | "industrial_park_id"
+  >,
+  b: Pick<
+    RecruitmentPostIndustrialParkFacet,
+    "display_name" | "industrial_park_code" | "industrial_park_id"
+  >,
+): number {
+  const byName = VIETNAMESE_COLLATOR.compare(a.display_name, b.display_name);
+  if (byName !== 0) {
+    return byName;
+  }
+  if (a.industrial_park_code !== b.industrial_park_code) {
+    return a.industrial_park_code < b.industrial_park_code ? -1 : 1;
+  }
+  if (a.industrial_park_id !== b.industrial_park_id) {
+    return a.industrial_park_id < b.industrial_park_id ? -1 : 1;
+  }
+  return 0;
+}
+
 export function projectRecruitmentPostIndustrialParkFacet(
   raw: unknown,
 ): RecruitmentPostIndustrialParkFacet | null {
@@ -2135,6 +2160,7 @@ export function projectRecruitmentPostListWithFacets(
     sumParkJobs += projected.job_count;
     industrial_parks.push(projected);
   }
+  industrial_parks.sort(compareRecruitmentPostIndustrialParkFacets);
 
   const labor_types: RecruitmentPostLaborTypeFacet[] = [];
   const seenLaborKeys = new Set<string>();
