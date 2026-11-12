@@ -829,3 +829,89 @@ test("handleRecruitmentPostPublicFeedV1 serves public JSON feed without authenti
   );
   assert.equal(leakedRes.status, 503);
 });
+
+test("handleRecruitmentPostList supports include_facets=true&page_size=10 in one repository call while preserving legacy 5-field response when omitted", async () => {
+  const facetsData = {
+    items: [SAMPLE_ITEM],
+    page_size: 10,
+    has_more: true,
+    next_cursor: `C1.1.${FILTER_HASH}.1762761600123456.${BRIEF_ID}`,
+    snapshot_token: `S1.1.${FILTER_HASH}`,
+    total_count: 25,
+    industrial_parks: [
+      {
+        industrial_park_id: PARK_ID,
+        industrial_park_code: "VP_BA_THIEN_1",
+        display_name: "KCN Bá Thiện 1",
+        active: true,
+        job_count: 25,
+      },
+    ],
+    labor_types: [
+      {
+        labor_type_key: "CHINH_THUC",
+        display_name: "Chính thức",
+        job_count: 25,
+      },
+    ],
+  };
+
+  const { calls, dependencies } = makeDeps({ ok: true, data: facetsData });
+  const res = await handleRecruitmentPostList(
+    new Request(
+      "https://app.test/api/recruitment-posts?include_facets=true&page_size=10",
+    ),
+    "true",
+    dependencies,
+  );
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get("cache-control"), "private, no-store");
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0], "list");
+  assert.equal(calls[0][1].include_facets, true);
+  assert.equal(calls[0][1].page_size, 10);
+  const body = await res.json();
+  assert.equal(body.ok, true);
+  assert.deepEqual(Object.keys(body.data).sort(), [
+    "has_more",
+    "industrial_parks",
+    "items",
+    "labor_types",
+    "next_cursor",
+    "page_size",
+    "snapshot_token",
+    "total_count",
+  ]);
+  assert.equal(body.data.total_count, 25);
+  assert.equal(body.data.industrial_parks[0].active, true);
+  assert.equal(body.data.industrial_parks[0].job_count, 25);
+  assert.equal(body.data.labor_types[0].job_count, 25);
+
+  // Legacy request without include_facets returns exact 5 keys and defaults to page_size=15
+  const legacyData = {
+    items: [SAMPLE_ITEM],
+    page_size: 15,
+    has_more: false,
+    next_cursor: null,
+    snapshot_token: `S1.1.${FILTER_HASH}`,
+  };
+  const legacyDeps = makeDeps({ ok: true, data: legacyData });
+  const legacyRes = await handleRecruitmentPostList(
+    new Request("https://app.test/api/recruitment-posts"),
+    "true",
+    legacyDeps.dependencies,
+  );
+  assert.equal(legacyRes.status, 200);
+  assert.equal(legacyDeps.calls.length, 1);
+  assert.equal(legacyDeps.calls[0][1].include_facets, false);
+  assert.equal(legacyDeps.calls[0][1].page_size, 15);
+  const legacyBody = await legacyRes.json();
+  assert.equal(legacyBody.ok, true);
+  assert.deepEqual(Object.keys(legacyBody.data).sort(), [
+    "has_more",
+    "items",
+    "next_cursor",
+    "page_size",
+    "snapshot_token",
+  ]);
+});
